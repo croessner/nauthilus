@@ -98,7 +98,7 @@ const (
 
 	RedisAddress     = Localhost4
 	RedisPort        = 6379
-	RedisPrefix      = "as_"
+	RedisPrefix      = "nt_"
 	RedisPosCacheTTL = 3600
 	RedisNegCacheTTL = 3600
 
