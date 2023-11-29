@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+
+  nauthilus:
+    image: gitlab.roessner-net.de:5050/croessner/nauthilus:latest
+    logging:
+      driver: journald
+      options:
+        tag: nauthilus
+    ports:
+      - "127.0.0.1:8180:8180"
+    environment:
+      NAUTHILUS_VERBOSE_LEVEL: "info"
+      NAUTHILUS_HTTP_ADDRESS: "0.0.0.0:8180"
+      NAUTHILUS_HTTP_USE_SSL: "false"
+      NAUTHILUS_HTTP_TLS_CERT: "/etc/nauthilus/cert.pem"
+      NAUTHILUS_HTTP_TLS_KEY: "/etc/nauthilus/key.pem"
+      NAUTHILUS_LDAP_STARTTLS: "true"
+      NAUTHILUS_LDAP_TLS_SKIP_VERIFY: "true"
+      NAUTHILUS_LDAP_SASL_EXTERNAL: "true"
+      NAUTHILUS_LDAP_SERVER_URIS: "ldap://ldap.roessner-net.de:389/"
+      NAUTHILUS_LDAP_BASEDN: "ou=people,ou=it,dc=roessner-net,dc=de"
+      NAUTHILUS_LDAP_TLS_CAFILE: "/etc/nauthilus/cacert.pem"
+      NAUTHILUS_LDAP_TLS_CLIENT_CERT: "/etc/nauthilus/cert.pem"
+      NAUTHILUS_LDAP_TLS_CLIENT_KEY: "/etc/nauthilus/key.pem"
+      NAUTHILUS_LDAP_FILTER_IMAP: "(&(objectClass=rnsMSDovecotAccount)(rnsMSEnableDovecot=TRUE)(|(uniqueIdentifier=%s)(rnsMSRecipientAddress=%s)))"
+      NAUTHILUS_LDAP_FILTER_SMTP: "(&(objectClass=rnsMSPostfixAccount)(rnsMSEnablePostfix=TRUE)(|(uniqueIdentifier=%s)(rnsMSRecipientAddress=%s)))"
+      NAUTHILUS_LDAP_RESULT_ATTRIBUTE: "rnsMSDovecotUser"
+    volumes:
+      - ./rnscacert.pem:/etc/nauthilus/cacert.pem:ro,Z
+      - ./mx.roessner-net.de.pem:/etc/nauthilus/cert.pem:ro,Z
+      - ./mx.roessner-net.de.key.pem:/etc/nauthilus/key.pem:ro,Z
+    healthcheck:
+      test: ["CMD", "/usr/app/healthcheck", "--url", "https://127.0.0.1:19443/ping", "--tls-skip-verify"]
+      timeout: 30s
+      interval: 10s
+      retries: 2
+      start_period: 10s

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="{{ .LanguageTag }}">
+
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#FFFFFF" />
+    <title>{{ .Title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+
+<body>
+    <header class="header-container">
+        <nav class="text-dark">
+            <span class="bold">{{ .LanguageCurrentName }}</span>
+            {{ range .LanguagePassive }}
+            <a class="text-dark" href="{{ .LanguageLink }}" role="button" aria-pressed="true">{{ .LanguageName }}</a>
+            {{ end }}
+        </nav>
+    </header>
+
+    <main class="main-container">
+        <section>
+            <article class="text">
+                {{ if .WantWelcome }}
+                <h1 class="center">{{ .Welcome }}</h1>
+                {{ end }}
+
+                <img src="{{ .LogoImage }}" class="logo" alt="{{ .LogoImageAlt }}"/>
+
+                <h2 class="center">{{ .ApplicationName }}</h2>
+
+                <div class="infobox-container notify center">
+                    <span>{{ .ConsentMessage }}</span>
+                </div>
+
+                <form action="{{ .PostConsentEndpoint }}/post" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"/>
+                    <input type="hidden" name="ory.hydra.consent_challenge" value="{{ .ConsentChallenge }}"/>
+
+                    <div class="infobox-container notify">
+                        {{ range .Scopes }}
+                        <div>
+                            <input type="checkbox" id="{{ .ScopeName }}" name="{{ .ScopeName }}" value="on" checked/>
+                            <label for="{{ .ScopeName }}">{{ .ScopeDescription }}</label>
+                        </div>
+                        {{ end }}
+                    </div>
+                    <div class="vs-5"></div>
+                    <button type="submit" id="accept" name="submit" value="accept">
+                        {{ .AcceptSubmit }}
+                    </button>
+                    <button type="submit" id="reject" name="submit" value="reject">
+                        {{ .RejectSubmit }}
+                    </button>
+                    <div class="vs-5"></div>
+                    <input type="checkbox" id="remember" name="remember" value="on"/>
+                    <label for="remember">{{ .Remember }}</label>
+                </form>
+
+                {{ if .WantAbout }}
+                <div class="vs-15"></div>
+                <hr class="hr">
+                <p class="center">
+                    <a class="text" href="{{ .AboutUri }}" target="_blank">{{ .About }}</a>
+                </p>
+                {{ end }}
+            </article>
+        </section>
+    </main>
+
+    {{ if .WantTos }}
+    {{ if .WantPolicy }}
+    <footer class="footer-container">
+        <ul class="navigation">
+            <li><a class="text-dark" href="{{ .PolicyUri }}" target="_blank">{{ .Policy }}</a></li>
+            <li><a class="text-dark" href="{{ .TosUri }}" target="_blank">{{ .Tos }}</a></li>
+        </ul>
+    </footer>
+    {{ end }}
+    {{ end }}
+</body>
+
+</html>

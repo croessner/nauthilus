@@ -1,0 +1,112 @@
+version: "3.8"
+
+services:
+
+  nauthilus:
+    image: gitlab.roessner-net.de:5050/croessner/nauthilus:features
+    container_name: nauthilus
+    restart: always
+    logging:
+      driver: journald
+      options:
+        tag: nauthilus
+    network_mode: host
+    environment:
+      NAUTHILUS_VERBOSE_LEVEL: "info"
+      NAUTHILUS_HTTP_ADDRESS: "127.0.0.1:9443"
+      NAUTHILUS_HTTP_USE_SSL: "true"
+      NAUTHILUS_HTTP_TLS_CERT: "/etc/nauthilus/localhost.localdomain_mail.pem"
+      NAUTHILUS_HTTP_TLS_KEY: "/etc/nauthilus/localhost.localdomain_mail.key.pem"
+      NAUTHILUS_HTTP_USE_BASIC_AUTH: "true"
+      NAUTHILUS_HTTP_BASIC_AUTH_USERNAME: ${HTTP_BASIC_AUTH_USERNAME}
+      NAUTHILUS_HTTP_BASIC_AUTH_PASSWORD: ${HTTP_BASIC_AUTH_PASSWORD}
+      NAUTHILUS_LDAP_STARTTLS: "true"
+      NAUTHILUS_LDAP_TLS_SKIP_VERIFY: "true"
+      NAUTHILUS_LDAP_SASL_EXTERNAL: "true"
+      NAUTHILUS_LDAP_SERVER_URIS: "ldap://localhost.localdomain:389/"
+      NAUTHILUS_LDAP_BASEDN: "ou=people,ou=it,dc=roessner-net,dc=de"
+      NAUTHILUS_LDAP_TLS_CAFILE: "/etc/nauthilus/cacert.pem"
+      NAUTHILUS_LDAP_TLS_CLIENT_CERT: "/etc/nauthilus/cert.pem"
+      NAUTHILUS_LDAP_TLS_CLIENT_KEY: "/etc/nauthilus/key.pem"
+      NAUTHILUS_LDAP_FILTER_IMAP: "(&(objectClass=rnsMSDovecotAccount)(rnsMSEnableDovecot=TRUE)(|(uniqueIdentifier=%s)(rnsMSRecipientAddress=%s))
+)"
+      NAUTHILUS_LDAP_FILTER_SMTP: "(&(objectClass=rnsMSPostfixAccount)(|(uniqueIdentifier=%s)(rnsMSRecipientAddress=%s)))"
+      NAUTHILUS_LDAP_RESULT_ATTRIBUTE: "rnsMSDovecotUser"
+    volumes:
+      - ./companycacert.pem:/etc/nauthilus/cacert.pem:ro,Z
+      - ./YOUR_MAILSERVER_CERT.pem:/etc/nauthilus/cert.pem:ro,Z
+      - ./YOUR_MAILSERVER_KEY.pem:/etc/nauthilus/key.pem:ro,Z
+      - ./nauthilus.yml:/etc/nauthilus/nauthilus.yml:ro,Z
+      - /etc/ssl/certs/localhost.localdomain_mail.pem:/etc/nauthilus/localhost.localdomain_mail.pem:ro,Z
+      - /etc/ssl/private/localhost.localdomain_mail.key.pem://etc/nauthilus/localhost.localdomain_mail.key.pem:ro,Z
+    healthcheck:
+      test: [ "CMD", "/usr/app/healthcheck", "--url", "https://127.0.0.1:19443/ping", "--tls-skip-verify" ]
+      timeout: 30s
+      interval: 10s
+      retries: 2
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nauthilus_prometheus
+    restart: always
+    logging:
+      driver: journald
+      options:
+        tag: prometheus
+    network_mode: host
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nauthilus_grafana
+    restart: always
+    logging:
+      driver: journald
+      options:
+        tag: grafana
+    network_mode: host
+    volumes:
+      - grafana_storage:/var/lib/grafana
+
+  mariadb:
+    image: mariadb:latest
+    container_name: nauthilus_mariadb
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+      MARIADB_DATABASE: "nauthilus"
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_AUTO_UPGRADE: "yes"
+    command: [ "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci" ]
+    volumes:
+      - mariadb:/var/lib/mysql
+
+  postgresql:
+    image: postgres:latest
+    container_name: nauthilus_postgresql
+    restart: always
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: "nauthilus"
+    volumes:
+      - postgresql:/var/lib/postgresql/data
+
+volumes:
+  prometheus_data:
+  grafana_storage:
+  mariadb:
+  postgresql:

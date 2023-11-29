@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="{{ .LanguageTag }}">
+
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#FFFFFF" />
+    <title>{{ .Title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+
+<body>
+    <header class="header-container">
+        <nav class="text-dark">
+            <span class="bold">{{ .LanguageCurrentName }}</span>
+            {{ range .LanguagePassive }}
+            <a class="text-dark" href="{{ .LanguageLink }}" role="button" aria-pressed="true">{{ .LanguageName }}</a>
+            {{ end }}
+        </nav>
+    </header>
+
+    <main class="main-container">
+        <section>
+            <article class="text">
+                {{ if .WantWelcome }}
+                <h1 class="center">{{ .Welcome }}</h1>
+                {{ end }}
+
+                <img src="{{ .LogoImage }}" class="logo" alt="{{ .LogoImageAlt }}"/>
+
+                <h2 class="center">{{ .Title }}</h2>
+                <div class="infobox-container notify center" role="alert">
+                    <span>{{ .NotifyMessage }}</span>
+                </div>
+            </article>
+        </section>
+    </main>
+</body>
+
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="{{ .LanguageTag }}">
+
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#FFFFFF" />
+    <title>{{ .Title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+
+<body>
+    <header class="header-container">
+        <nav class="text-dark">
+            <span class="bold">{{ .LanguageCurrentName }}</span>
+            {{ range .LanguagePassive }}
+            <a class="text-dark" href="{{ .LanguageLink }}" role="button" aria-pressed="true">{{ .LanguageName }}</a>
+            {{ end }}
+        </nav>
+    </header>
+
+    <main class="main-container">
+        <section>
+            <article class="text">
+                {{ if .WantWelcome }}
+                <h1 class="center">{{ .Welcome }}</h1>
+                {{ end }}
+
+                <img src="{{ .LogoImage }}" class="logo" alt="{{ .LogoImageAlt }}"/>
+
+                <h2 class="center">{{ .ApplicationName }}</h2>
+
+                {{ if .HaveError }}
+                <div class="infobox-container error center">
+                    <span>{{ .ErrorMessage }}</span>
+                </div>
+                {{ end }}
+
+                <form name="user_form">
+                    <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"/>
+                    <input type="hidden" name="ory.hydra.login_challenge" value="{{ .LoginChallenge }}"/>
+
+                    <label class="box-label" for="username">{{ .Login }}</label>
+                    <input type="text" id="username" name="username" aria-describedby="loginHelp" placeholder="{{ .LoginPlaceholder }}" autocomplete="off" autofocus/>
+                    <small id="loginHelp">{{ .Privacy }}</small>
+                    <label class="box-label" for="password">{{ .Password }}</label>
+                    <input type="password" id="password" name="password" placeholder="{{ .PasswordPlaceholder }}" autocomplete="off"/>
+                    <div class="vs-15"></div>
+                    <button type="submit" id="submit" name="submit" value="{{ .Submit }}" data-loginurl="{{ .PostLoginEndpoint }}/post">
+                        {{ .Submit }}
+                    </button>
+                    <p class="text center vs-5">{{ .Or }}</p>
+                    <div class="vs-15"></div>
+                    <button class="device" type="submit" id="device" name="device" value="{{ .Device }}" data-deviceurl="{{ .DeviceLoginEndpoint }}">
+                        {{ .Device }}
+                    </button>
+                    <div class="vs-5"></div>
+                    <input type="checkbox" id="remember" name="remember" value="on"/>
+                    <label for="remember">{{ .Remember }}</label>
+                </form>
+
+                {{ if .WantAbout }}
+                <div class="vs-15"></div>
+                <hr class="hr">
+                <p class="center">
+                    <a class="text" href="{{ .AboutUri }}" target="_blank">{{ .About }}</a>
+                </p>
+                {{ end }}
+            </article>
+        </section>
+    </main>
+
+    {{ if .WantTos }}
+    {{ if .WantPolicy }}
+    <footer class="footer-container">
+        <ul class="navigation">
+            <li><a class="text-dark" href="{{ .PolicyUri }}" target="_blank">{{ .Policy }}</a></li>
+            <li><a class="text-dark" href="{{ .TosUri }}" target="_blank">{{ .Tos }}</a></li>
+        </ul>
+    </footer>
+    {{ end }}
+    {{ end }}
+
+    <script src="/static/js/login/main.js" defer></script>
+</body>
+
+</html>

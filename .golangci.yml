@@ -1,0 +1,147 @@
+---
+# golang-ci-lint config file
+
+run:
+  concurrency: 4
+  timeout: 5m
+  issues-exit-code: 0
+  # Temp (currently no tests available):
+  tests: false
+  skip-dirs:
+    - contrib
+    - docker-healthcheck
+    - img
+    - .idea
+  skip-dirs-use-default: false
+  modules-download-mode: vendor
+
+output:
+  sort-results: true
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  goconst:
+    min-len: 2
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+  govet:
+    check-shadowing: true
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+linters:
+  disable-all: true
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - containedctx
+    - decorder
+    - depguard
+    - dogsled
+    - dupl
+    - durationcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - execinquery
+    - exhaustive
+    - exportloopref
+    - forbidigo
+    - forcetypeassert
+    - gci
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goerr113
+    - gofmt
+    - gofumpt
+    - goheader
+    - goimports
+    - gomnd
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - grouper
+    - importas
+    - ineffassign
+    - lll
+    - maintidx
+    - makezero
+    - misspell
+    - nilnil
+    - nlreturn
+    - nolintlint
+    - nosprintfhostport
+    - paralleltest
+    - prealloc
+    - predeclared
+    - promlinter
+    - revive
+    - staticcheck
+    - stylecheck
+    - tagliatelle
+    - tenv
+    - testpackage
+    - thelper
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - varnamelen
+    - whitespace
+    - wsl
+  #disable:
+  #  - bodyclose
+  #  - contextcheck 
+  #  - cyclop
+  #  - deadcode
+  #  - errcheck
+  #  - exhaustivestruct
+  #  - exhaustruct
+  #  - funlen
+  #  - golint
+  #  - ifshort
+  #  - interfacer
+  #  - ireturn
+  #  - maligned
+  #  - nakedret
+  #  - nestif
+  #  - nilerr 
+  #  - noctx
+  #  - nonamedreturns
+  #  - nosnakecase
+  #  - rowserrcheck 
+  #  - scopelint
+  #  - sqlclosecheck 
+  #  - structcheck 
+  #  - tparallel 
+  #  - varcheck
+  #  - wastedassign
+  #  - wrapcheck
+
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: true
+
+severity:
+  default-severity: error
+

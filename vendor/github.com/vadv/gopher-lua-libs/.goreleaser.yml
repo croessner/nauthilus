@@ -1,0 +1,16 @@
+builds:
+  - main: ./cmd/glua-libs
+    id: "glua-libs"
+    binary: glua-libs
+    goos:
+      - linux
+      - darwin
+      - windows
+    env:
+      - CGO_ENABLED=0
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'

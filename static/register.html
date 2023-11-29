@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="{{ .LanguageTag }}">
+
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#FFFFFF" />
+    <title>{{ .Title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+
+<body>
+    <header class="header-container">
+        <nav class="text-dark">
+            <span class="bold">{{ .LanguageCurrentName }}</span>
+            {{ range .LanguagePassive }}
+            <a class="text-dark" href="{{ .LanguageLink }}" role="button" aria-pressed="true">{{ .LanguageName }}</a>
+            {{ end }}
+        </nav>
+    </header>
+
+    <main class="main-container">
+        <section>
+            <article class="text">
+                {{ if .WantWelcome }}
+                <h1 class="center">{{ .Welcome }}</h1>
+                {{ end }}
+
+                <img src="{{ .LogoImage }}" class="logo" alt="{{ .LogoImageAlt }}"/>
+
+                <h2 class="center">{{ .ApplicationName }}</h2>
+
+                {{ if .HaveError }}
+                <div class="infobox-container error center">
+                    <span>{{ .ErrorMessage }}</span>
+                </div>
+                {{ end }}
+
+                <form action="{{ .PostLoginEndpoint }}/post" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"/>
+
+                    <label class="box-label" for="username">{{ .Login }}</label>
+                    <input type="text" id="username" name="username" aria-describedby="loginHelp" placeholder="{{ .LoginPlaceholder }}" autocomplete="off" required/>
+                    <small id="loginHelp">{{ .Privacy }}</small>
+                    <label class="box-label" for="password">{{ .Password }}</label>
+                    <input type="password" id="password" name="password" placeholder="{{ .PasswordPlaceholder }}" autocomplete="off" required/>
+                    <div class="vs-15"></div>
+                    <button type="submit" id="submit" name="submit" value="{{ .Submit }}">
+                        {{ .Submit }}
+                    </button>
+                </form>
+
+                {{ if .WantAbout }}
+                <div class="vs-15"></div>
+                <hr class="hr">
+                <p class="center">
+                    <a class="text" href="{{ .AboutUri }}" target="_blank">{{ .About }}</a>
+                </p>
+                {{ end }}
+            </article>
+        </section>
+    </main>
+
+    {{ if .WantTos }}
+    {{ if .WantPolicy }}
+    <footer class="footer-container">
+        <ul class="navigation">
+            <li><a class="text-dark" href="{{ .PolicyUri }}" target="_blank">{{ .Policy }}</a></li>
+            <li><a class="text-dark" href="{{ .TosUri }}" target="_blank">{{ .Tos }}</a></li>
+        </ul>
+    </footer>
+    {{ end }}
+    {{ end }}
+</body>
+
+</html>
