@@ -176,8 +176,8 @@ which is an indicator for errors that occurred in the script itself.
 
 #### Constants for the returned result
 
-| Constant                     | Meaning                                                         | Value | Category     |
-|------------------------------|-----------------------------------------------------------------|-------|--------------|
+| Constant                      | Meaning                                                         | Value | Category     |
+|-------------------------------|-----------------------------------------------------------------|-------|--------------|
 | nauthilus.FEATURE_TRIGGER_NO  | The feature has not been triggered                              | 0     | trigger      |
 | nauthilus.FEATURE_TRIGGER_YES | The feature has been triggered and the request must be rejected | 1     | trigger      |
 | nauthilus.FEATURES_ABORT_NO   | Process other built-in features                                 | 0     | skip_flag    |
@@ -233,8 +233,8 @@ Actions must return the script status constant.
 
 #### Constants for the returned result
 
-| Constant                    | Meaning                            | Value | Category      |
-|-----------------------------|------------------------------------|-------|---------------|
+| Constant                     | Meaning                            | Value | Category      |
+|------------------------------|------------------------------------|-------|---------------|
 | nauthilus.ACTION_RESULT_OK   | The script finished without errors | 0     | action_result |
 | nauthilus.ACTION_RESULT_FAIL | The script finished with errors    | 1     | action_result |
 
