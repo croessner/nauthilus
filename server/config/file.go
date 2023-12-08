@@ -744,6 +744,7 @@ func NewConfigFile() (newCfg *File, err error) {
 
 	viper.SetConfigName("nauthilus") // name of EnvConfig file (without extension)
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/usr/local/etc/nauthilus/")
 	viper.AddConfigPath("/etc/nauthilus/")
 	viper.AddConfigPath("$HOME/.nauthilus")
 	viper.AddConfigPath(".")
