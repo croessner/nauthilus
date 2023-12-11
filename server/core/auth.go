@@ -929,10 +929,7 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 	 * Verify user password
 	 */
 
-	var (
-		filterResult bool
-		passDBs      []*PassDBMap
-	)
+	var passDBs []*PassDBMap
 
 	useCache := false
 	backendPos := make(map[decl.Backend]int)
@@ -982,48 +979,6 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 		}
 
 		return decl.AuthResultTempFail
-	}
-
-	filterRequest := &filter.Request{
-		Debug:         config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
-		UserFound:     passDBResult.UserFound,
-		Authenticated: passDBResult.Authenticated,
-		NoAuth:        a.NoAuth,
-		Session:       *a.GUID,
-		ClientIP:      a.ClientIP,
-		ClientPort:    a.XClientPort,
-		ClientHost:    a.ClientHost,
-		ClientID:      a.XClientID,
-		LocalIP:       a.XLocalIP,
-		LocalPort:     a.XPort,
-		Username:      a.Username,
-		Account: func() string {
-			if passDBResult.UserFound {
-				return a.GetAccount()
-			}
-
-			return ""
-		}(),
-		UniqueUserID: a.GetUniqueUserID(),
-		DisplayName:  a.GetDisplayName(),
-		Protocol:     a.Protocol.String(),
-		Password:     a.Password,
-		Context:      a.Context,
-	}
-
-	filterResult, err = filterRequest.CallFilterLua(ctx)
-	if err != nil {
-		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err.Error())
-
-			return decl.AuthResultTempFail
-		}
-	} else {
-		for index := range *filterRequest.Logs {
-			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
-		}
-
-		passDBResult.Authenticated = !filterResult
 	}
 
 	if useCache && !a.NoAuth {
@@ -1105,9 +1060,64 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 		}
 	}
 
+	authResult = a.FilterLua(passDBResult, ctx)
+
 	a.PostLuaAction(passDBResult)
 
-	return decl.AuthResultOK
+	return authResult
+}
+
+// FilterLua calls Lua filters which can change the backend result.
+func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) decl.AuthResult {
+	filterRequest := &filter.Request{
+		Debug:         config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+		UserFound:     passDBResult.UserFound,
+		Authenticated: passDBResult.Authenticated,
+		NoAuth:        a.NoAuth,
+		Session:       *a.GUID,
+		ClientIP:      a.ClientIP,
+		ClientPort:    a.XClientPort,
+		ClientHost:    a.ClientHost,
+		ClientID:      a.XClientID,
+		LocalIP:       a.XLocalIP,
+		LocalPort:     a.XPort,
+		Username:      a.Username,
+		Account: func() string {
+			if passDBResult.UserFound {
+				return a.GetAccount()
+			}
+
+			return ""
+		}(),
+		UniqueUserID: a.GetUniqueUserID(),
+		DisplayName:  a.GetDisplayName(),
+		Protocol:     a.Protocol.String(),
+		Password:     a.Password,
+		Context:      a.Context,
+	}
+
+	filterResult, err := filterRequest.CallFilterLua(ctx)
+	if err != nil {
+		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
+			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err.Error())
+
+			return decl.AuthResultTempFail
+		}
+	} else {
+		for index := range *filterRequest.Logs {
+			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+		}
+
+		if filterResult {
+			return decl.AuthResultFail
+		}
+	}
+
+	if passDBResult.Authenticated {
+		return decl.AuthResultOK
+	}
+
+	return decl.AuthResultFail
 }
 
 // ListUserAccounts returns the list of all known users from the account databases.
