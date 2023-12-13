@@ -25,6 +25,7 @@ var (
 
 // LuaRequest is a subset from the Authentication struct.
 type LuaRequest struct {
+	Debug  bool
 	NoAuth bool
 
 	Function decl.LuaCommand
@@ -350,6 +351,7 @@ func LuaMainWorker(ctx context.Context) {
 					request.RawSetString(decl.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
 				}
 
+				request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(luaRequest.Debug))
 				request.RawSetString(decl.LuaRequestSession, lua.LString(*luaRequest.Session))
 
 				L.SetGlobal(decl.LuaDefaultTable, globals)
