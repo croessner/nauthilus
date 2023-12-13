@@ -223,6 +223,12 @@ type (
 	// This type specifies the signature of a password database.
 	PassDBOption func(auth *Authentication) (*PassDBResult, error)
 
+	// PassDBMap is a struct type that represents a mapping between a backend type and a PassDBOption function.
+	// It is used in the VerifyPassword method of the Authentication struct to perform password verification against multiple databases.
+	// The backend field represents the type of database backend (decl.Backend) and the fn field represents the PassDBOption function.
+	// The PassDBOption function takes an Authentication pointer as input and returns a PassDBResult pointer and an error.
+	// The PassDBResult pointer contains the result of the password verification process.
+	// This struct is used to store the database mappings in an array and loop through them in the VerifyPassword method.
 	PassDBMap struct {
 		backend decl.Backend
 		fn      PassDBOption
@@ -236,6 +242,7 @@ type (
 	// AccountListOption is the function signature for an account Database.
 	AccountListOption func(a *Authentication) (AccountList, error)
 
+	// AccountListMap is a struct type that represents a mapping between a backend and an account list option function for authentication.
 	AccountListMap struct {
 		backend decl.Backend
 		fn      AccountListOption
@@ -273,6 +280,10 @@ func (a *Authentication) String() string {
 	return result[1:]
 }
 
+// logLineGeoIP returns an array of key-value pairs representing the geoIP information of the Authentication object.
+// It includes the GUID, GeoIP ISO code, GeoIP country name, GeoIP city name, whether the GeoIP is in the European Union,
+// GeoIP accuracy radius, latitude, longitude, metro code, and time zone.
+// If any value is not available, it is replaced with the "N/A" constant
 func (a *Authentication) logLineGeoIP() []any {
 	var (
 		geoIPCityCountryName string
@@ -317,6 +328,31 @@ func (a *Authentication) logLineGeoIP() []any {
 	}
 }
 
+// LogLineMail returns an array of key-value pairs used for logging mail information.
+// The array includes the following information:
+// - session: the session GUID
+// - protocol: the protocol used
+// - local_ip: the local IP address
+// - port: the port number
+// - client_ip: the client IP address
+// - client_port: the client port number
+// - client_host: the client host
+// - tls_protocol: the TLS protocol used
+// - tls_cipher: the TLS cipher used
+// - auth_method: the authentication method
+// - username: the username
+// - orig_username: the original username
+// - passdb_backend: the used password database backend
+// - current_password_retries: the number of current password retries
+// - account_passwords_seen: the number of account passwords seen
+// - total_passwords_seen: the total number of passwords seen
+// - user_agent: the user agent
+// - client_id: the client ID
+// - brute_force_bucket: the brute force bucket name
+// - feature: the feature name
+// - status_message: the status message
+// - uri_path: the URI path
+// - authenticated: the authentication status
 func (a *Authentication) LogLineMail(status string, endpoint string) []any {
 	var keyvals []any
 
@@ -357,7 +393,8 @@ func (a *Authentication) LogLineMail(status string, endpoint string) []any {
 	return keyvals
 }
 
-// GetAccount returns the account name for a user. If there is no account, it returns the empty string "".
+// GetAccount returns the account value from the Authentication object. If the account field is not set or the account
+// value is not found in the attributes, an empty string is returned
 func (a *Authentication) GetAccount() string {
 	if a.AccountField == nil {
 		return ""
@@ -866,7 +903,7 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult decl.AuthR
 	return decl.AuthResultOK
 }
 
-// PostLuaAction is called after the password verification is completed.
+// PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
 	go func() {
 		finished := make(chan action.Done)
