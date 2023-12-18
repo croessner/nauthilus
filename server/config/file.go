@@ -20,91 +20,13 @@ import (
 
 var LoadableConfig *File //nolint:gochecknoglobals // System wide configuration from nauthilus.yml file
 
-type RBLSection struct {
-	Lists       []RBL
-	Threshold   int
-	IPWhiteList []string `mapstructure:"ip_whitelist"`
-}
-
-func (r *RBLSection) String() string {
-	return fmt.Sprintf("RBLSection: {Lists[%+v] Threshold[%+v] Whitelist[%+v]}", r.Lists, r.Threshold, r.IPWhiteList)
-}
-
-type RelayDomainsSection struct {
-	StaticDomains []string `mapstructure:"static"`
-}
-
-func (r *RelayDomainsSection) String() string {
-	return fmt.Sprintf("RelayDomainsSection: {Static[%+v]}", r.StaticDomains)
-}
-
-type Oauth2Section struct {
-	CustomScopes []Oauth2CustomScope `mapstructure:"custom_scopes"`
-	Clients      []Oauth2Client
-}
-
-func (o *Oauth2Section) String() string {
-	return fmt.Sprintf("OAuth2Section: {Oauth2Client[%+v]}", o.Clients)
-}
-
-type Oauth2Client struct {
-	SkipConsent bool   `mapstructure:"skip_consent"`
-	SkipTOTP    bool   `mapstructure:"skip_totp"`
-	ClientName  string `mapstructure:"name"`
-	ClientId    string `mapstructure:"client_id"`
-	Subject     string
-	Claims      IdTokenClaims `mapstructure:"claims"`
-}
-
-type Oauth2CustomScope struct {
-	Name        string
-	Description string
-	Claims      []OIDCCustomClaim
-	Other       map[string]any `mapstructure:",remain"`
-}
-
-type OIDCCustomClaim struct {
-	Name string
-	Type string
-}
-
-type LuaSection struct {
-	Actions  []LuaAction
-	Features []LuaFeature
-	Filters  []LuaFilter
-	Config   *LuaConf
-	Search   []LuaSearchProtocol
-}
-
-func (l *LuaSection) String() string {
-	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
-}
-
-type LDAPSection struct {
-	Config *LDAPConf
-	Search []LDAPSearchProtocol
-}
-
-func (l *LDAPSection) String() string {
-	return fmt.Sprintf("LDAPSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
-}
-
-type SQLSection struct {
-	Config *SQLConf
-	Search []SQLSearchProtocol
-}
-
-func (s *SQLSection) String() string {
-	return fmt.Sprintf("SQLSection: {Config[%+v] Search[%+v]}", s.Config, s.Search)
-}
-
-type BruteForceSection struct {
-	IPWhitelist []string         `mapstructure:"ip_whitelist"`
-	Buckets     []BruteForceRule `mapstructure:"buckets"`
-}
-
-func (b *BruteForceSection) String() string {
-	return fmt.Sprintf("Buckets: %+v, IP-Whitelist: %+v", b.Buckets, b.IPWhitelist)
+// GetterHandler is an interface that defines two methods: GetConfig and GetSearch.
+// Any type that implements this interface must provide implementations for both methods.
+// The GetConfig method takes a *File parameter and returns a value of any type.
+// The GetSearch method also takes a *File parameter and returns a value of any type.
+type GetterHandler interface {
+	GetConfig() any
+	GetProtocols() any
 }
 
 type File struct {
@@ -411,51 +333,63 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
  * Generic EnvConfig mapping
  */
 
+// RetrieveGetterMap returns a map of GetterHandler interfaces for each supported backend.
+// It creates a getterMap with a length of 3.
+// If an LDAPSection is found for the LDAP backend, it adds it to the getterMap.
+// If an SQLSection is found for the SQL backend, it adds it to the getterMap.
+// If a LuaSection is found for the Lua backend, it adds it to the getterMap.
+// Finally, it returns the getterMap.
+func (f *File) RetrieveGetterMap() map[decl.Backend]GetterHandler {
+	getterMap := make(map[decl.Backend]GetterHandler, 3)
+
+	if ldapSection, ok := f.GetSection(decl.BackendLDAP).(*LDAPSection); ok {
+		getterMap[decl.BackendLDAP] = ldapSection
+	}
+
+	if sqlSection, ok := f.GetSection(decl.BackendSQL).(*SQLSection); ok {
+		getterMap[decl.BackendSQL] = sqlSection
+	}
+
+	if luaSection, ok := f.GetSection(decl.BackendLua).(*LuaSection); ok {
+		getterMap[decl.BackendLua] = luaSection
+	}
+
+	return getterMap
+}
+
+// GetConfig returns the configuration handler for the specified backend.
+// The configuration handler is determined based on the backend type.
+// If the backend is found, it retrieves the configuration handler associated with it
+// and returns the result of calling the GetterHandler() method on the configuration handler.
+// If the configuration handler is not found, it returns nil.
 func (f *File) GetConfig(backend decl.Backend) any {
-	switch databaseBackend := f.GetSection(backend).(type) {
-	case *LDAPSection:
-		if databaseBackend == nil {
+	getterMap := f.RetrieveGetterMap()
+
+	if config, found := getterMap[backend]; found {
+		if config == nil {
 			return nil
 		}
 
-		return databaseBackend.Config
-	case *SQLSection:
-		if databaseBackend == nil {
-			return nil
-		}
-
-		return databaseBackend.Config
-	case *LuaSection:
-		if databaseBackend == nil {
-			return nil
-		}
-
-		return databaseBackend.Config
+		return config.GetConfig()
 	}
 
 	return nil
 }
 
+// GetProtocols returns the protocol handler for the specified backend.
+// The protocol handler is determined based on the backend type.
+// If the backend is found, it retrieves the protocol handler associated with it
+// and returns the result of calling the ProtoHandler() method on the protocol handler.
+// If the protocol handler is not found, it returns nil.
 func (f *File) GetProtocols(backend decl.Backend) any {
-	switch databaseBackend := f.GetSection(backend).(type) {
-	case *LDAPSection:
-		if databaseBackend == nil {
+	getterMap := f.RetrieveGetterMap()
+
+	if proto, found := getterMap[backend]; found {
+		if proto == nil {
 			return nil
 		}
 
-		return databaseBackend.Search
-	case *SQLSection:
-		if databaseBackend == nil {
-			return nil
-		}
-
-		return databaseBackend.Search
-	case *LuaSection:
-		if databaseBackend == nil {
-			return nil
-		}
-
-		return databaseBackend.Search
+		return proto.GetProtocols()
 	}
 
 	return nil
@@ -469,9 +403,9 @@ func (f *File) GetSection(backend decl.Backend) any {
 		return f.SQL
 	case decl.BackendLua:
 		return f.Lua
+	default:
+		return nil
 	}
-
-	return nil
 }
 
 func (*File) GetBruteForceRules() (rules []BruteForceRule) {

@@ -131,7 +131,7 @@ var backendResultMethods = map[string]lua.LGFunction{
 	"attributes":           backendResultGetSetAttributes,
 }
 
-// Getter and setter for the BackendResult#Authenticated field
+// GetterHandler and setter for the BackendResult#Authenticated field
 func backendResultGetSetAuthenticated(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -146,7 +146,7 @@ func backendResultGetSetAuthenticated(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#UserFound field
+// GetterHandler and setter for the BackendResult#UserFound field
 func backendResultGetSetUserFound(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -161,7 +161,7 @@ func backendResultGetSetUserFound(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#AcountField field
+// GetterHandler and setter for the BackendResult#AcountField field
 func backendResultGetSetAccountField(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -176,7 +176,7 @@ func backendResultGetSetAccountField(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#TOTPSecretField field
+// GetterHandler and setter for the BackendResult#TOTPSecretField field
 func backendResultGetSetTOTPSecretField(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -191,7 +191,7 @@ func backendResultGetSetTOTPSecretField(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#TOTPRecoveryField field
+// GetterHandler and setter for the BackendResult#TOTPRecoveryField field
 func backendResultGetSetTOTPRecoveryField(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -206,7 +206,7 @@ func backendResultGetSetTOTPRecoveryField(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#UniqueUserIDField field
+// GetterHandler and setter for the BackendResult#UniqueUserIDField field
 func backendResultGetSetUniqueUserIDField(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -221,7 +221,7 @@ func backendResultGetSetUniqueUserIDField(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#DisplayNameField field
+// GetterHandler and setter for the BackendResult#DisplayNameField field
 func backendResultGetSetDisplayNameField(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -236,7 +236,7 @@ func backendResultGetSetDisplayNameField(L *lua.LState) int {
 	return 1
 }
 
-// Getter and setter for the BackendResult#Attributes field
+// GetterHandler and setter for the BackendResult#Attributes field
 func backendResultGetSetAttributes(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 

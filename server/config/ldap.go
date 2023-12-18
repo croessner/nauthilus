@@ -7,6 +7,23 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 )
 
+type LDAPSection struct {
+	Config *LDAPConf
+	Search []LDAPSearchProtocol
+}
+
+func (l *LDAPSection) String() string {
+	return fmt.Sprintf("LDAPSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
+}
+
+func (l *LDAPSection) GetConfig() any {
+	return l.Config
+}
+
+func (l *LDAPSection) GetProtocols() any {
+	return l.Search
+}
+
 type LDAPConf struct {
 	StartTLS      bool
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`

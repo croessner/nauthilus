@@ -6,6 +6,23 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 )
 
+type SQLSection struct {
+	Config *SQLConf
+	Search []SQLSearchProtocol
+}
+
+func (s *SQLSection) String() string {
+	return fmt.Sprintf("SQLSection: {Config[%+v] Search[%+v]}", s.Config, s.Search)
+}
+
+func (s *SQLSection) GetConfig() any {
+	return s.Config
+}
+
+func (s *SQLSection) GetProtocols() any {
+	return s.Search
+}
+
 type SQLConf struct {
 	DSN   string
 	Crypt bool `mapstructure:"password_crypt"`

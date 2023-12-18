@@ -6,6 +6,26 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 )
 
+type LuaSection struct {
+	Actions  []LuaAction
+	Features []LuaFeature
+	Filters  []LuaFilter
+	Config   *LuaConf
+	Search   []LuaSearchProtocol
+}
+
+func (l *LuaSection) String() string {
+	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
+}
+
+func (l *LuaSection) GetConfig() any {
+	return l.Config
+}
+
+func (l *LuaSection) GetProtocols() any {
+	return l.Search
+}
+
 type LuaAction struct {
 	ActionType string `mapstructure:"type"`
 	ScriptPath string `mapstructure:"script_path"`

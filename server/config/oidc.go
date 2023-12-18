@@ -2,6 +2,36 @@ package config
 
 import "fmt"
 
+type Oauth2Section struct {
+	CustomScopes []Oauth2CustomScope `mapstructure:"custom_scopes"`
+	Clients      []Oauth2Client
+}
+
+func (o *Oauth2Section) String() string {
+	return fmt.Sprintf("OAuth2Section: {Oauth2Client[%+v]}", o.Clients)
+}
+
+type Oauth2Client struct {
+	SkipConsent bool   `mapstructure:"skip_consent"`
+	SkipTOTP    bool   `mapstructure:"skip_totp"`
+	ClientName  string `mapstructure:"name"`
+	ClientId    string `mapstructure:"client_id"`
+	Subject     string
+	Claims      IdTokenClaims `mapstructure:"claims"`
+}
+
+type Oauth2CustomScope struct {
+	Name        string
+	Description string
+	Claims      []OIDCCustomClaim
+	Other       map[string]any `mapstructure:",remain"`
+}
+
+type OIDCCustomClaim struct {
+	Name string
+	Type string
+}
+
 type IdTokenClaims struct {
 	// Scope: profile.
 	Name              string
