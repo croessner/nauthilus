@@ -305,12 +305,34 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 	}
 }
 
+func setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
+	if langFromURL == "" && langFromCookie == "" {
+		// 1. No language from URL and no cookie is set
+		needCookie = true
+		needRedirect = true
+	} else if langFromURL == "" && langFromCookie != "" {
+		// 2. No language from URL, but a cookie is set
+		lang = langFromCookie
+		needRedirect = true
+	} else if langFromURL != "" && langFromCookie == "" {
+		// 3. Language from URL and no cookie
+		lang = langFromURL
+		needCookie = true
+	} else if langFromURL != "" && langFromCookie != "" {
+		if langFromURL != langFromCookie {
+			// 4. Langauge given from URL and cookie, but both differ
+			needCookie = true
+		}
+
+		lang = langFromURL
+	}
+
+	return lang, needCookie, needRedirect
+}
+
 func withLanguageMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
-			needRedirect   bool
-			needCookie     bool
-			lang           string
 			langFromURL    string
 			langFromCookie string
 		)
@@ -322,33 +344,13 @@ func withLanguageMiddleware() gin.HandlerFunc {
 
 		// Try to get language tag from cookie
 		session := sessions.Default(ctx)
-		cookieValue := session.Get(decl.CookieLang)
 
+		cookieValue := session.Get(decl.CookieLang)
 		if cookieValue != nil {
 			langFromCookie, _ = cookieValue.(string)
 		}
 
-		if langFromURL == "" && langFromCookie == "" {
-			// 1. No language from URL and no cookie is set
-			needCookie = true
-			needRedirect = true
-		} else if langFromURL == "" && langFromCookie != "" {
-			// 2. No language from URL, but a cookie is set
-			lang = langFromCookie
-			needRedirect = true
-		} else if langFromURL != "" && langFromCookie == "" {
-			// 3. Language from URL and no cookie
-			lang = langFromURL
-			needCookie = true
-		} else if langFromURL != "" && langFromCookie != "" {
-			if langFromURL != langFromCookie {
-				// 4. Langauge given from URL and cookie, but both differ
-				needCookie = true
-			}
-
-			lang = langFromURL
-		}
-
+		lang, needCookie, needRedirect := setLanguageDetails(langFromURL, langFromCookie)
 		accept := ctx.Request.Header.Get("Accept-Language")
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
