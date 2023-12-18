@@ -1866,180 +1866,31 @@ func logoutPOSTHandler(ctx *gin.Context) {
 	}
 }
 
+// getClaimsFromConsentContext extracts claims from consentContext based on acceptedScopes
 func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentContext any) (
 	session *openapi.AcceptOAuth2ConsentRequestSession,
 ) {
-	var (
-		assertOk  bool
-		claimDict map[string]any
-	)
-
-	if claimDict, assertOk = consentContext.(map[string]any); !assertOk {
-		return
+	claimDict, assertOk := consentContext.(map[string]any)
+	if !assertOk {
+		return nil
 	}
 
 	claims := make(map[string]any)
-
-	for index := range acceptedScopes {
-		if acceptedScopes[index] == decl.ScopeProfile {
-			if value, found := claimDict[decl.ClaimName].(string); found {
-				claims[decl.ClaimName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimGivenName].(string); found {
-				claims[decl.ClaimGivenName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimFamilyName].(string); found {
-				claims[decl.ClaimFamilyName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimMiddleName].(string); found {
-				claims[decl.ClaimMiddleName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimNickName].(string); found {
-				claims[decl.ClaimNickName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimPreferredUserName].(string); found {
-				claims[decl.ClaimPreferredUserName] = value
-			}
-
-			if value, found := claimDict[decl.ClaimProfile].(string); found {
-				claims[decl.ClaimProfile] = value
-			}
-
-			if value, found := claimDict[decl.ClaimWebsite].(string); found {
-				claims[decl.ClaimWebsite] = value
-			}
-
-			if value, found := claimDict[decl.ClaimPicture].(string); found {
-				claims[decl.ClaimPicture] = value
-			}
-
-			if value, found := claimDict[decl.ClaimGender].(string); found {
-				claims[decl.ClaimGender] = value
-			}
-
-			if value, found := claimDict[decl.ClaimBirtDate].(string); found {
-				claims[decl.ClaimBirtDate] = value
-			}
-
-			if value, found := claimDict[decl.ClaimZoneInfo].(string); found {
-				claims[decl.ClaimZoneInfo] = value
-			}
-
-			if value, found := claimDict[decl.ClaimLocale].(string); found {
-				claims[decl.ClaimLocale] = value
-			}
-
-			if value, found := claimDict[decl.ClaimUpdatedAt].(float64); found {
-				claims[decl.ClaimUpdatedAt] = value
-			}
+	for index, scope := range acceptedScopes {
+		switch scope {
+		case decl.ScopeProfile:
+			processProfileClaim(claimDict, claims)
+		case decl.ScopeEmail:
+			processEmailClaim(claimDict, claims)
+		case decl.ScopeAddress:
+			processAddressClaim(claimDict, claims)
+		case decl.ScopePhone:
+			processPhoneClaim(claimDict, claims)
+		case decl.ScopeGroups:
+			processGroupsClaim(claimDict, claims)
 		}
 
-		if acceptedScopes[index] == decl.ScopeEmail {
-			if value, found := claimDict[decl.ClaimEmail].(string); found {
-				claims[decl.ClaimEmail] = value
-			}
-
-			if value, found := claimDict[decl.ClaimEmailVerified].(bool); found {
-				claims[decl.ClaimEmailVerified] = value
-			}
-		}
-
-		if acceptedScopes[index] == decl.ScopeAddress {
-			claims[decl.ClaimAddress] = claimDict[decl.ClaimAddress]
-		}
-
-		if acceptedScopes[index] == decl.ScopePhone {
-			if value, found := claimDict[decl.ClaimPhoneNumber].(string); found {
-				claims[decl.ClaimPhoneNumber] = value
-			}
-
-			if value, found := claimDict[decl.ClaimPhoneNumberVerified].(bool); found {
-				claims[decl.ClaimPhoneNumberVerified] = value
-			}
-		}
-
-		if acceptedScopes[index] == decl.ScopeGroups {
-			util.DebugModule(
-				decl.DbgHydra,
-				decl.LogKeyGUID, guid,
-				"groups", fmt.Sprintf("%#v", claimDict[decl.ClaimGroups]),
-			)
-
-			if value, found := claimDict[decl.ClaimGroups].([]any); found {
-				var stringSlice []string
-
-				for anyIndex := range value {
-					if arg, assertOk := value[anyIndex].(string); assertOk {
-						stringSlice = append(stringSlice, arg)
-					}
-				}
-
-				claims[decl.ClaimGroups] = value
-			}
-		}
-
-		for scopeIndex := range config.LoadableConfig.Oauth2.CustomScopes {
-			customScope := config.LoadableConfig.Oauth2.CustomScopes[scopeIndex]
-
-			if acceptedScopes[index] != customScope.Name {
-				continue
-			}
-
-			for claimIndex := range customScope.Claims {
-				customClaimName := customScope.Claims[claimIndex].Name
-				customClaimType := customScope.Claims[claimIndex].Type
-				valueTypeMatch := false
-
-				util.DebugModule(
-					decl.DbgHydra,
-					decl.LogKeyGUID, guid,
-					"custom_claim_name", customClaimName,
-					"custom_claim_type", customClaimType,
-					"value", fmt.Sprintf("%#v", claimDict[customClaimName]),
-				)
-
-				if customClaimType == decl.ClaimTypeString {
-					if value, found := claimDict[customClaimName].(string); found {
-						claims[customClaimName] = value
-						valueTypeMatch = true
-					}
-				} else if customClaimType == decl.ClaimTypeFloat {
-					if value, found := claimDict[customClaimName].(float64); found {
-						claims[customClaimName] = value
-						valueTypeMatch = true
-					}
-				} else if customClaimType == decl.ClaimTypeInteger {
-					if value, found := claimDict[customClaimName].(int64); found {
-						claims[customClaimName] = value
-						valueTypeMatch = true
-					} else if value, found := claimDict[customClaimName].(float64); found {
-						// XXX: It may happen that the integer is represented as exponential value :-/
-						claims[customClaimName] = int64(value)
-						valueTypeMatch = true
-					}
-				} else if customClaimType == decl.ClaimTypeBoolean {
-					if value, found := claimDict[customClaimName].(bool); found {
-						claims[customClaimName] = value
-						valueTypeMatch = true
-					}
-				}
-
-				if !valueTypeMatch {
-					level.Error(logging.DefaultErrLogger).Log(
-						decl.LogKeyGUID, guid,
-						"custom_claim_name", customClaimName,
-						decl.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
-					)
-				}
-			}
-
-			break
-		}
+		processCustomScopes(claimDict, claims, acceptedScopes, index)
 	}
 
 	util.DebugModule(decl.DbgHydra, decl.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
@@ -2049,4 +1900,161 @@ func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentCo
 	}
 
 	return
+}
+
+// processProfileClaim processes the profile claims from the claim dictionary and adds them to the claims map.
+// The profile claims include: ClaimName, ClaimGivenName, ClaimFamilyName, ClaimMiddleName, ClaimNickName,
+// ClaimPreferredUserName, ClaimProfile, ClaimWebsite, ClaimPicture, ClaimGender, ClaimBirtDate, ClaimZoneInfo, ClaimLocale.
+// For each profile claim found in the claim dictionary, it is added to the claims map.
+// If ClaimUpdatedAt is found in the claim dictionary as a float64, it is added to the claims map as well.
+func processProfileClaim(claimDict map[string]any, claims map[string]any) {
+	profileClaims := []string{
+		decl.ClaimName, decl.ClaimGivenName, decl.ClaimFamilyName, decl.ClaimMiddleName, decl.ClaimNickName,
+		decl.ClaimPreferredUserName, decl.ClaimProfile, decl.ClaimWebsite, decl.ClaimPicture, decl.ClaimGender,
+		decl.ClaimBirtDate, decl.ClaimZoneInfo, decl.ClaimLocale,
+	}
+
+	for _, key := range profileClaims {
+		if value, found := claimDict[key]; found {
+			claims[key] = value
+		}
+	}
+
+	if value, found := claimDict[decl.ClaimUpdatedAt].(float64); found {
+		claims[decl.ClaimUpdatedAt] = value
+	}
+}
+
+// processEmailClaim updates the claims map with the email and email_verified claims
+func processEmailClaim(claimDict map[string]any, claims map[string]any) {
+	keys := []string{decl.ClaimEmail, decl.ClaimEmailVerified}
+	for _, key := range keys {
+		if value, found := claimDict[key]; found {
+			claims[key] = value
+		}
+	}
+}
+
+// processAddressClaim updates the claims map with the address claim from the claimDict.
+// The address claim is stored under the key "address".
+func processAddressClaim(claimDict map[string]any, claims map[string]any) {
+	claims[decl.ClaimAddress] = claimDict[decl.ClaimAddress]
+}
+
+// processPhoneClaim processes the phone claims from the claim dictionary and adds them to the claims map.
+func processPhoneClaim(claimDict map[string]any, claims map[string]any) {
+	keys := []string{decl.ClaimPhoneNumber, decl.ClaimPhoneNumberVerified}
+	for _, key := range keys {
+		if value, found := claimDict[key]; found {
+			claims[key] = value
+		}
+	}
+}
+
+// processGroupsClaim processes the groups claim from the claimDict and adds it to the claims map.
+//
+// If the groups claim is found in the claimDict, it extracts the string values and adds them to a string slice.
+// The string slice is then assigned to the groups claim in the claims map.
+func processGroupsClaim(claimDict map[string]any, claims map[string]any) {
+	if value, found := claimDict[decl.ClaimGroups].([]any); found {
+		var stringSlice []string
+
+		for anyIndex := range value {
+			if arg, assertOk := value[anyIndex].(string); assertOk {
+				stringSlice = append(stringSlice, arg)
+			}
+		}
+
+		claims[decl.ClaimGroups] = value
+	}
+}
+
+// processCustomScopes iterates through the custom scopes defined in the configuration file and processes the corresponding claims for the accepted scope at the given index.
+// For each custom scope, it calls the processCustomClaim function to process its claims.
+// If the accepted scope at the given index does not match the name of a custom scope, it continues to the next custom scope.
+// It breaks out of the loop after processing the first matched custom scope.
+// Arguments:
+// - claimDict: A map[string]any representing the dictionary of claims.
+// - claims: A map[string]any representing the processed claims.
+// - acceptedScopes: A []string representing the list of accepted scopes.
+// - index: An int indicating the index of the accepted scope to process.
+func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int) {
+	for scopeIndex := range config.LoadableConfig.Oauth2.CustomScopes {
+		customScope := config.LoadableConfig.Oauth2.CustomScopes[scopeIndex]
+
+		if acceptedScopes[index] != customScope.Name {
+			continue
+		}
+
+		for claimIndex := range customScope.Claims {
+			customClaim := customScope.Claims[claimIndex]
+			claims = processCustomClaim(claimDict, customClaim, claims)
+		}
+
+		break
+	}
+}
+
+// Extracted method for processing custom claim type
+func processCustomClaim(claimDict map[string]any, customClaim config.OIDCCustomClaim, claims map[string]any) map[string]any {
+	customClaimName := customClaim.Name
+	customClaimType := customClaim.Type
+	valueTypeMatch := false
+
+	valueTypeMatch, claims = assignClaimValueByType(claimDict, customClaimName, customClaimType, claims)
+
+	if !valueTypeMatch {
+		logUnknownClaimTypeError(customClaimName, customClaimType)
+	}
+
+	return claims
+}
+
+// Assigns claim type-specific value and returns updated claims' map
+func assignClaimValueByType(claimDict map[string]any, customClaimName string, customClaimType string, claims map[string]any) (bool, map[string]any) {
+	valueTypeMatch := false
+
+	switch customClaimType {
+	case decl.ClaimTypeString:
+		if value, found := claimDict[customClaimName].(string); found {
+			claims[customClaimName] = value
+			valueTypeMatch = true
+		}
+	case decl.ClaimTypeFloat:
+		if value, found := claimDict[customClaimName].(float64); found {
+			claims[customClaimName] = value
+			valueTypeMatch = true
+		}
+	case decl.ClaimTypeInteger:
+		if value, found := handleIntegerClaimType(claimDict, customClaimName); found {
+			claims[customClaimName] = value
+			valueTypeMatch = true
+		}
+	case decl.ClaimTypeBoolean:
+		if value, found := claimDict[customClaimName].(bool); found {
+			claims[customClaimName] = value
+			valueTypeMatch = true
+		}
+	}
+
+	return valueTypeMatch, claims
+}
+
+// Handling specific case for Integer claim type
+func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (int64, bool) {
+	if value, found := claimDict[customClaimName].(int64); found {
+		return value, found
+	} else if value, found := claimDict[customClaimName].(float64); found {
+		return int64(value), found
+	}
+
+	return 0, false
+}
+
+// Logs error for unknown claim type
+func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
+	level.Error(logging.DefaultErrLogger).Log(
+		"custom_claim_name", customClaimName,
+		decl.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
+	)
 }
