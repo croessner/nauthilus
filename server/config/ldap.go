@@ -17,10 +17,18 @@ func (l *LDAPSection) String() string {
 }
 
 func (l *LDAPSection) GetConfig() any {
+	if l == nil {
+		return nil
+	}
+
 	return l.Config
 }
 
 func (l *LDAPSection) GetProtocols() any {
+	if l == nil {
+		return nil
+	}
+
 	return l.Search
 }
 

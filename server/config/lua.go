@@ -19,10 +19,18 @@ func (l *LuaSection) String() string {
 }
 
 func (l *LuaSection) GetConfig() any {
+	if l == nil {
+		return nil
+	}
+
 	return l.Config
 }
 
 func (l *LuaSection) GetProtocols() any {
+	if l == nil {
+		return nil
+	}
+
 	return l.Search
 }
 

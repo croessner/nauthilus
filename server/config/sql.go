@@ -16,10 +16,18 @@ func (s *SQLSection) String() string {
 }
 
 func (s *SQLSection) GetConfig() any {
+	if s == nil {
+		return nil
+	}
+
 	return s.Config
 }
 
 func (s *SQLSection) GetProtocols() any {
+	if s == nil {
+		return nil
+	}
+
 	return s.Search
 }
 
