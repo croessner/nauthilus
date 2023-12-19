@@ -565,10 +565,10 @@ func (a *ApiConfig) handleAuthentication() {
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
 	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
 
-	userData := createUserdata(session, decl.CookieUsername, decl.CookieAuthStatus)
+	userData := createUserdata(session, decl.CookieUsername, decl.CookieAuthResult)
 
 	// Handle TOTP request
-	if pre2FA && userData[decl.CookieAuthStatus] != decl.AuthResultUnset {
+	if pre2FA && userData[decl.CookieAuthResult] != decl.AuthResultUnset {
 		twoFactorData := &TwoFactorData{
 			Title: getLocalized(a.ctx, "Login"),
 			WantWelcome: func() bool {
@@ -769,13 +769,13 @@ func loginPOSTHandler(ctx *gin.Context) {
 		session.Delete(decl.CookieUsername)
 	}
 
-	if cookieValue = session.Get(decl.CookieAuthStatus); cookieValue != nil {
+	if cookieValue = session.Get(decl.CookieAuthResult); cookieValue != nil {
 		authResult = decl.AuthResult(cookieValue.(uint8))
 		if authResult != decl.AuthResultUnset {
 			post2FA = true
 		}
 
-		session.Delete(decl.CookieAuthStatus)
+		session.Delete(decl.CookieAuthResult)
 	}
 
 	if cookieValue = session.Get(decl.CookieSubject); cookieValue != nil {
@@ -855,7 +855,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 		if !post2FA {
 			if !config.GetSkipTOTP(*clientId) {
 				if _, found = auth.GetTOTPSecretOk(); found {
-					session.Set(decl.CookieAuthStatus, uint8(authResult))
+					session.Set(decl.CookieAuthResult, uint8(authResult))
 					session.Set(decl.CookieUsername, ctx.Request.Form.Get("username"))
 					session.Set(decl.CookieSubject, subject)
 					session.Set(decl.CookieRemember, ctx.Request.Form.Get("remember"))
@@ -986,7 +986,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 		if !post2FA {
 			if !config.GetSkipTOTP(*clientId) {
 				if _, found := auth.GetTOTPSecretOk(); found {
-					session.Set(decl.CookieAuthStatus, uint8(authResult))
+					session.Set(decl.CookieAuthResult, uint8(authResult))
 					session.Set(decl.CookieUsername, ctx.Request.Form.Get("username"))
 
 					session.Save()

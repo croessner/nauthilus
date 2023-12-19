@@ -260,7 +260,7 @@ const (
 	CookieDisplayName  = "display_name"
 	CookieLang         = "lang"
 	CookieUsername     = "username"
-	CookieAuthStatus   = "auth_status"
+	CookieAuthResult   = "auth_result"
 	CookieSubject      = "subject"
 	CookieRemember     = "remember"
 	CookieRegistration = "webauthn_registration"
