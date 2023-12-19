@@ -62,6 +62,7 @@ const (
 	LogKeyStatsTotalAlloc        = "total_alloc"
 	LogKeyStatsNumGC             = "num_gc"
 	LogKeyLDAPPoolName           = "pool"
+	LogKeyLoginSkip              = "login_skip"
 
 	NotAvailable = "N/A"
 )
