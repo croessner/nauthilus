@@ -199,11 +199,10 @@ func handleErr(ctx *gin.Context, err error) {
 
 func notifyGETHandler(ctx *gin.Context) {
 	var (
-		found           bool
-		msg             string
-		value           any
-		languagePassive []Language
-		httpStatusCode  = http.StatusOK
+		found          bool
+		msg            string
+		value          any
+		httpStatusCode = http.StatusOK
 	)
 
 	statusTitle := getLocalized(ctx, "Information")
@@ -231,24 +230,7 @@ func notifyGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: viper.GetString("notify_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
-	}
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 	notifyData := NotifyPageData{
 		Title: statusTitle,
@@ -393,38 +375,72 @@ func withLanguageMiddleware() gin.HandlerFunc {
 	}
 }
 
+func createHttpClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")}},
+		Timeout:   30 * time.Second,
+	}
+}
+
+func createConfiguration(httpClient *http.Client) *openapi.Configuration {
+	return &openapi.Configuration{
+		HTTPClient: httpClient,
+		Servers:    []openapi.ServerConfiguration{{URL: viper.GetString("hydra_admin_uri")}},
+	}
+}
+
+func createUserdata(session sessions.Session, keys ...string) map[string]any {
+	userData := make(map[string]any, len(keys))
+	for _, key := range keys {
+		value := session.Get(key)
+		if value != nil {
+			userData[key] = value
+		}
+	}
+	return userData
+}
+
+func createLanguagePassive(ctx *gin.Context, languageTags []language.Tag, currentName string) []Language {
+	var languagePassive []Language
+
+	for _, languageTag := range languageTags {
+		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
+		if languageName != currentName {
+			baseName, _ := languageTag.Base()
+			languagePassive = append(
+				languagePassive,
+				Language{
+					LanguageLink: viper.GetString("login_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
+					LanguageName: languageName,
+				},
+			)
+		}
+	}
+
+	return languagePassive
+}
+
 // Page '/login'
 func loginGETHandler(ctx *gin.Context) {
 	var (
-		wantAbout       bool
-		wantPolicy      bool
-		wantTos         bool
-		haveError       bool
-		pre2FA          bool
-		policyUri       string
-		tosUri          string
-		clientUri       string
-		imageUri        string
-		errorMessage    string
-		languagePassive []Language
-		err             error
-		clientId        *string
-		userData        map[string]any
-		guid            = ctx.Value(decl.GUIDKey).(string)
-		csrfToken       = ctx.Value(decl.CSRFTokenKey).(string)
-		loginRequest    *openapi.OAuth2LoginRequest
-		acceptRequest   *openapi.OAuth2RedirectTo
-		httpResponse    *http.Response
+		wantAbout     bool
+		wantPolicy    bool
+		wantTos       bool
+		haveError     bool
+		pre2FA        bool
+		policyUri     string
+		tosUri        string
+		clientUri     string
+		imageUri      string
+		errorMessage  string
+		err           error
+		clientId      *string
+		guid          = ctx.Value(decl.GUIDKey).(string)
+		csrfToken     = ctx.Value(decl.CSRFTokenKey).(string)
+		loginRequest  *openapi.OAuth2LoginRequest
+		acceptRequest *openapi.OAuth2RedirectTo
+		httpResponse  *http.Response
 	)
-
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
@@ -433,14 +449,8 @@ func loginGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	loginRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
@@ -489,35 +499,9 @@ func loginGETHandler(ctx *gin.Context) {
 
 		languageCurrentTag := language.MustParse(cookieValue.(string))
 		languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
+		languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
-		for _, languageTag := range config.DefaultLanguageTags {
-			languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-			if languageName == languageCurrentName {
-				continue
-			}
-
-			baseName, _ := languageTag.Base()
-
-			languagePassive = append(
-				languagePassive,
-				Language{
-					LanguageLink: viper.GetString("login_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-					LanguageName: languageName,
-				},
-			)
-		}
-
-		userData = make(map[string]any, 2)
-
-		if cookieValue = session.Get(decl.CookieUsername); cookieValue != nil {
-			userData[decl.CookieUsername] = cookieValue.(string)
-		}
-
-		if cookieValue = session.Get(decl.CookieAuthStatus); cookieValue != nil {
-			userData[decl.CookieAuthStatus] = decl.AuthResult(cookieValue.(uint8))
-			pre2FA = true
-		}
+		userData := createUserdata(session, decl.CookieUsername, decl.CookieAuthStatus)
 
 		// Handle TOTP request
 		if pre2FA && userData[decl.CookieAuthStatus] != decl.AuthResultUnset {
@@ -705,15 +689,6 @@ func loginPOSTHandler(ctx *gin.Context) {
 		httpResponse    *http.Response
 	)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
-
 	loginChallenge := ctx.PostForm("ory.hydra.login_challenge")
 	if loginChallenge == "" {
 		handleErr(ctx, errors2.ErrNoLoginChallenge)
@@ -721,15 +696,10 @@ func loginPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
+
 	auth := &Authentication{
 		HTTPClientContext: ctx,
 		Username:          ctx.PostForm("username"),
@@ -1018,33 +988,22 @@ func loginPOSTHandler(ctx *gin.Context) {
 // Page '/device'
 func deviceGETHandler(ctx *gin.Context) {
 	var (
-		wantAbout       bool
-		wantPolicy      bool
-		wantTos         bool
-		haveError       bool
-		policyUri       string
-		tosUri          string
-		clientUri       string
-		imageUri        string
-		errorMessage    string
-		languagePassive []Language
-		err             error
-		clientId        *string
-		userData        map[string]any
-		guid            = ctx.Value(decl.GUIDKey).(string)
-		csrfToken       = ctx.Value(decl.CSRFTokenKey).(string)
-		loginRequest    *openapi.OAuth2LoginRequest
-		httpResponse    *http.Response
+		wantAbout    bool
+		wantPolicy   bool
+		wantTos      bool
+		haveError    bool
+		policyUri    string
+		tosUri       string
+		clientUri    string
+		imageUri     string
+		errorMessage string
+		err          error
+		clientId     *string
+		guid         = ctx.Value(decl.GUIDKey).(string)
+		csrfToken    = ctx.Value(decl.CSRFTokenKey).(string)
+		loginRequest *openapi.OAuth2LoginRequest
+		httpResponse *http.Response
 	)
-
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
@@ -1053,14 +1012,8 @@ func deviceGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	loginRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
@@ -1106,34 +1059,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: viper.GetString("device_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
-	}
-
-	userData = make(map[string]any, 2)
-
-	if cookieValue = session.Get(decl.CookieUsername); cookieValue != nil {
-		userData[decl.CookieUsername] = cookieValue.(string)
-	}
-
-	if cookieValue = session.Get(decl.CookieAuthStatus); cookieValue != nil {
-		userData[decl.CookieAuthStatus] = decl.AuthResult(cookieValue.(uint8))
-	}
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 	loginData := &LoginPageData{
 		Title: getLocalized(ctx, "Login"),
@@ -1192,32 +1118,22 @@ func devicePOSTHandler(ctx *gin.Context) {
 // Page '/consent'
 func consentGETHandler(ctx *gin.Context) {
 	var (
-		wantAbout       bool
-		wantPolicy      bool
-		wantTos         bool
-		skipConsent     bool
-		policyUri       string
-		tosUri          string
-		clientUri       string
-		imageUri        string
-		languagePassive []Language
-		err             error
-		clientId        *string
-		guid            = ctx.Value(decl.GUIDKey).(string)
-		csrfToken       = ctx.Value(decl.CSRFTokenKey).(string)
-		consentRequest  *openapi.OAuth2ConsentRequest
-		acceptRequest   *openapi.OAuth2RedirectTo
-		httpResponse    *http.Response
+		wantAbout      bool
+		wantPolicy     bool
+		wantTos        bool
+		skipConsent    bool
+		policyUri      string
+		tosUri         string
+		clientUri      string
+		imageUri       string
+		err            error
+		clientId       *string
+		guid           = ctx.Value(decl.GUIDKey).(string)
+		csrfToken      = ctx.Value(decl.CSRFTokenKey).(string)
+		consentRequest *openapi.OAuth2ConsentRequest
+		acceptRequest  *openapi.OAuth2RedirectTo
+		httpResponse   *http.Response
 	)
-
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
 
 	consentChallenge := ctx.Query("consent_challenge")
 	if consentChallenge == "" {
@@ -1226,14 +1142,8 @@ func consentGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	consentRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
@@ -1341,24 +1251,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 		languageCurrentTag := language.MustParse(cookieValue.(string))
 		languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-		for _, languageTag := range config.DefaultLanguageTags {
-			languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-			if languageName == languageCurrentName {
-				continue
-			}
-
-			baseName, _ := languageTag.Base()
-
-			languagePassive = append(
-				languagePassive,
-				Language{
-					LanguageLink: viper.GetString("consent_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-					LanguageName: languageName,
-				},
-			)
-		}
+		languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 		consentData := &ConsentPageData{
 			Title: getLocalized(ctx, "Consent"),
@@ -1493,15 +1386,6 @@ func consentPOSTHandler(ctx *gin.Context) {
 		httpResponse   *http.Response
 	)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
-
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
 	if consentChallenge == "" {
 		handleErr(ctx, errors2.ErrNoLoginChallenge)
@@ -1509,14 +1393,8 @@ func consentPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	consentRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
@@ -1661,21 +1539,18 @@ func consentPOSTHandler(ctx *gin.Context) {
 // Page '/logout'
 func logoutGETHandler(ctx *gin.Context) {
 	var (
-		languagePassive []Language
-		err             error
-		guid            = ctx.Value(decl.GUIDKey).(string)
-		csrfToken       = ctx.Value(decl.CSRFTokenKey).(string)
-		logoutRequest   *openapi.OAuth2LogoutRequest
-		httpResponse    *http.Response
+		err           error
+		guid          = ctx.Value(decl.GUIDKey).(string)
+		csrfToken     = ctx.Value(decl.CSRFTokenKey).(string)
+		logoutRequest *openapi.OAuth2LogoutRequest
+		httpResponse  *http.Response
 	)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
+	logoutChallenge := ctx.Query("logout_challenge")
+	if logoutChallenge == "" {
+		handleErr(ctx, errors2.ErrNoLoginChallenge)
 
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
+		return
 	}
 
 	postLogout := ctx.Query("logout")
@@ -1690,21 +1565,8 @@ func logoutGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	logoutChallenge := ctx.Query("logout_challenge")
-	if logoutChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
-
-		return
-	}
-
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	logoutRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
@@ -1725,24 +1587,7 @@ func logoutGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: viper.GetString("logout_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
-	}
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 	logoutData := &LogoutPageData{
 		Title: getLocalized(ctx, "Logout"),
@@ -1785,15 +1630,6 @@ func logoutPOSTHandler(ctx *gin.Context) {
 		httpResponse  *http.Response
 	)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")},
-	}
-
-	httpClient := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
-
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
 	if logoutChallenge == "" {
 		handleErr(ctx, errors2.ErrNoLoginChallenge)
@@ -1801,14 +1637,8 @@ func logoutPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	configuration := openapi.NewConfiguration()
-	configuration.HTTPClient = httpClient
-	configuration.Servers = []openapi.ServerConfiguration{
-		{
-			URL: viper.GetString("hydra_admin_uri"), // Admin API
-		},
-	}
-
+	httpClient := createHttpClient()
+	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	logoutRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
