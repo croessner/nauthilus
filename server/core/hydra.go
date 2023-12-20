@@ -656,12 +656,14 @@ func createConfiguration(httpClient *http.Client) *openapi.Configuration {
 // - userData: a map containing the user data
 func createUserdata(session sessions.Session, keys ...string) map[string]any {
 	userData := make(map[string]any, len(keys))
+
 	for _, key := range keys {
 		value := session.Get(key)
 		if value != nil {
 			userData[key] = value
 		}
 	}
+
 	return userData
 }
 
@@ -833,7 +835,6 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		wantPolicy   bool
 		wantTos      bool
 		haveError    bool
-		pre2FA       bool
 		policyUri    string
 		tosUri       string
 		clientUri    string
@@ -874,49 +875,51 @@ func (a *ApiConfig) handleLoginNoSkip() {
 	userData := createUserdata(session, decl.CookieUsername, decl.CookieAuthResult)
 
 	// Handle TOTP request
-	if pre2FA && userData[decl.CookieAuthResult] != decl.AuthResultUnset {
-		twoFactorData := &TwoFactorData{
-			Title: getLocalized(a.ctx, "Login"),
-			WantWelcome: func() bool {
-				if viper.GetString("login_page_welcome") != "" {
-					return true
-				}
+	if authResult, found := userData[decl.CookieAuthResult]; found {
+		if authResult != decl.AuthResultUnset {
+			twoFactorData := &TwoFactorData{
+				Title: getLocalized(a.ctx, "Login"),
+				WantWelcome: func() bool {
+					if viper.GetString("login_page_welcome") != "" {
+						return true
+					}
 
-				return false
-			}(),
-			Welcome:             viper.GetString("login_page_welcome"),
-			ApplicationName:     applicationName,
-			WantAbout:           wantAbout,
-			About:               getLocalized(a.ctx, "Get further information about this application..."),
-			AboutUri:            clientUri,
-			LogoImage:           imageUri,
-			LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
-			WantPolicy:          wantPolicy,
-			Code:                getLocalized(a.ctx, "OTP-Code"),
-			Policy:              getLocalized(a.ctx, "Privacy policy"),
-			PolicyUri:           policyUri,
-			WantTos:             wantTos,
-			Tos:                 getLocalized(a.ctx, "Terms of service"),
-			TosUri:              tosUri,
-			Submit:              getLocalized(a.ctx, "Submit"),
-			PostLoginEndpoint:   viper.GetString("login_page"),
-			LanguageTag:         session.Get(decl.CookieLang).(string),
-			LanguageCurrentName: languageCurrentName,
-			LanguagePassive:     languagePassive,
-			CSRFToken:           a.csrfToken,
-			LoginChallenge:      a.challenge,
+					return false
+				}(),
+				Welcome:             viper.GetString("login_page_welcome"),
+				ApplicationName:     applicationName,
+				WantAbout:           wantAbout,
+				About:               getLocalized(a.ctx, "Get further information about this application..."),
+				AboutUri:            clientUri,
+				LogoImage:           imageUri,
+				LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
+				WantPolicy:          wantPolicy,
+				Code:                getLocalized(a.ctx, "OTP-Code"),
+				Policy:              getLocalized(a.ctx, "Privacy policy"),
+				PolicyUri:           policyUri,
+				WantTos:             wantTos,
+				Tos:                 getLocalized(a.ctx, "Terms of service"),
+				TosUri:              tosUri,
+				Submit:              getLocalized(a.ctx, "Submit"),
+				PostLoginEndpoint:   viper.GetString("login_page"),
+				LanguageTag:         session.Get(decl.CookieLang).(string),
+				LanguageCurrentName: languageCurrentName,
+				LanguagePassive:     languagePassive,
+				CSRFToken:           a.csrfToken,
+				LoginChallenge:      a.challenge,
+			}
+
+			a.ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
+
+			util.DebugModule(
+				decl.DbgHydra,
+				decl.LogKeyGUID, a.guid,
+				decl.LogKeyMsg, "Two factor authentication",
+				decl.LogKeyUsername, userData[decl.CookieUsername].(string),
+			)
+
+			return
 		}
-
-		a.ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
-
-		util.DebugModule(
-			decl.DbgHydra,
-			decl.LogKeyGUID, a.guid,
-			decl.LogKeyMsg, "Two factor authentication",
-			decl.LogKeyUsername, userData[decl.CookieUsername].(string),
-		)
-
-		return
 	}
 
 	if errorMessage = a.ctx.Query("_error"); errorMessage != "" {
@@ -1347,6 +1350,8 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.Initialize()
 
+	apiConfig.challenge = loginChallenge
+
 	auth, err := initializeAuthLogin(ctx)
 	if err != nil {
 		handleErr(ctx, err)
@@ -1362,7 +1367,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 	}
 
 	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
-		loginChallenge).Execute()
+		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
 
