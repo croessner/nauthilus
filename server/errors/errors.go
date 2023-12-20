@@ -154,6 +154,8 @@ var (
 	ErrHTTPRequestGone  = errors.New("http request gone")
 	ErrHydraNoClientId  = errors.New("no client_id returned from hydra server")
 	ErrNoTLS            = errors.New("no tls connection")
+	ErrTOTPCodeInvalid  = errors.New("totp code invalid")
+	ErrNoTOTPCode       = errors.New("totp code not found")
 )
 
 // features.
