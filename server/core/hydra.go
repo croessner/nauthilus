@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	logStdLib "log"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -389,7 +388,15 @@ type ApiConfig struct {
 	challenge    string
 }
 
-// handleErr is a helper that prints a log line for a given error and sets the HTTP error handler.
+// handleErr handles an error by logging the error details and printing a goroutine dump.
+// It sets the "failure" and "message" values in the context, and then calls the notifyGETHandler function.
+// If the error is of type *errors2.DetailedError, it logs the error details along with the error message.
+// Otherwise, it logs only the error message.
+// The function also prints the goroutine dump with the corresponding GUID.
+// Finally, it cleans up the session using the SessionCleaner function.
+//
+// ctx: The Gin context.
+// err: The error to handle.
 func handleErr(ctx *gin.Context, err error) {
 	var detailedError *errors2.DetailedError
 
@@ -412,7 +419,7 @@ func handleErr(ctx *gin.Context, err error) {
 		)
 	}
 
-	logStdLib.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
+	fmt.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
 
 	SessionCleaner(ctx)
 
