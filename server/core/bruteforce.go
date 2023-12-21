@@ -21,6 +21,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+// isRepeatingWrongPassword is a method associated with the Authentication struct used to check for repeated wrong password usage.
+// It retrieves and loads a password history from Redis using a certain key.
+// The function then checks if the current password has previously been within the loaded history and if it's attempt count exceeds one.
+// In such a case, it reloads the password history from Redis with an updated key.
+// Finally, if the count of password attempts plus a predefined limit is greater or equal to the total count of attempts,
+// an information log is created and the function returns 'true', signifying the excessive usage of the same wrong password.
+// If none of these conditions are met, the function will return 'false', indicating the absence of repeated wrong password usage.
 func (a *Authentication) isRepeatingWrongPassword() (repeating bool, err error) {
 	if key := a.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
 		a.loadBruteForcePasswordHistoryFromRedis(key)
@@ -58,6 +65,23 @@ func (a *Authentication) isRepeatingWrongPassword() (repeating bool, err error) 
 	return false, nil
 }
 
+// userExists checks if a user exists in the backend.
+// It calls the LookupUserAccountFromRedis function to lookup the user's account name in Redis.
+// If an error occurs during the lookup, the function returns the error.
+// If the account name is empty, indicating that the user is not found, the function returns false.
+// Otherwise, if the user exists, the function returns true.
+//
+// Usage example:
+//
+//	foundUser, err := a.userExists()
+//	if err != nil {
+//	    // handle error
+//	}
+//	if foundUser {
+//	    // user exists
+//	} else {
+//	    // user does not exist
+//	}
 func (a *Authentication) userExists() (bool, error) {
 	accountName, err := backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
@@ -71,6 +95,13 @@ func (a *Authentication) userExists() (bool, error) {
 	return true, nil
 }
 
+// checkEnforceBruteForceComputation checks the enforcement rules for brute force computation.
+// - If the user exists and has a known UCN, the function checks for repeated wrong passwords.
+//   - If this condition is met or an error occurs during checking, the function returns with false indicating "buckets" are not to be increased.
+//   - If the user is not repeating wrong passwords and no cached negative password history is found, a warning is logged, and the function returns with false, signaling no bucket increase.
+//
+// - If the user does not exist, true is returned, enforcing the brute force computation leading to an increased bucket.
+// In case of any error during user existence check, the function returns the error with a false.
 func (a *Authentication) checkEnforceBruteForceComputation() (bool, error) {
 	var (
 		foundUser bool
@@ -112,6 +143,26 @@ func (a *Authentication) checkEnforceBruteForceComputation() (bool, error) {
 	return true, nil
 }
 
+// getNetwork is a method of the Authentication struct that is used to retrieve the network IP range based on a given BruteForceRule.
+// It takes a pointer to a BruteForceRule struct as a parameter and returns a pointer to a net.IPNet and an error.
+// The method first parses the ClientIP string into an IP address using net.ParseIP.
+// If the parse is unsuccessful, it returns an error ErrWrongIPAddress.
+// If the IP address has IPv6 format, it uses the netaddr.ParseIPv6 function to validate it.
+// If the IP address is IPv4 and the rule does not allow IPv4, it returns nil.
+// If the IP address is IPv6 and the rule does not allow IPv6, it returns nil.
+// Finally, it parses the CIDR block by concatenating the ClientIP and the CIDR value from the rule,
+// and returns the network IP range along with a nil error.
+// If there's any error during the parsing process, it returns the error.
+//
+// Example usage:
+//
+//	network, err := a.getNetwork(rule)
+//	if err != nil {
+//	    log.Println("Error:", err)
+//	}
+//	if network == nil {
+//	    log.Println("Network is nil")
+//	}
 func (a *Authentication) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) {
 	ipAddress := net.ParseIP(a.ClientIP)
 
@@ -144,6 +195,14 @@ func (a *Authentication) getNetwork(rule *config.BruteForceRule) (*net.IPNet, er
 	return network, nil
 }
 
+// This function 'getBruteForcePasswordHistoryRedisHashKey' belongs to the Authentication struct.
+// It is used to generate a unique Redis hash key based on whether a username is being included or not.
+// If the 'withUsername' boolean parameter is true, the Redis hash key is generated
+// using the Redis prefix, password hash key, the original username, and the client's IP address.
+// If 'withUsername' is false, the Redis hash key is generated just appending the Redis prefix,
+// password hash key, and the client's IP without the original username.
+// This key is used for storing and retrieving the history of password usage in the context of preventing brute force attacks.
+// An additional feature of this function is to log the generated key along with some context information (GUID and Client IP)
 func (a *Authentication) getBruteForcePasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
 		key = config.EnvConfig.RedisPrefix + decl.RedisPwHashKey + fmt.Sprintf(":%s:%s", a.UsernameOrig, a.ClientIP)
@@ -161,6 +220,32 @@ func (a *Authentication) getBruteForcePasswordHistoryRedisHashKey(withUsername b
 	return
 }
 
+// This function belongs to the Authentication struct. It is used to generate a unique
+// Redis key for brute force rule tracking.
+//
+// For a given brute force rule, this function generates a Redis key that is used to
+// maintain a record of failed requests. The key contains various components including
+// the period of rule enforcement, the CIDR block, and the number of failed requests.
+// Additional details related to IP version (IPv4 or IPv6) and network string are also
+// incorporated as part of the Redis key.
+//
+// The function begins by checking the rule's network details. In cases where an error
+// occurs while fetching network details or if the network details do not exist, the
+// function logs the error (if any) and returns without generating a key.
+//
+// For IPv4 and IPv6 rules, the function assigns the IP protocol number accordingly.
+// The Redis key for tracking brute force is constructed on RedisPrefix followed by
+// an identifier, then it includes the rule's period, CIDR, number of failed requests,
+// IP protocol version and the network string.
+//
+// Upon successfully generating the key, the function logs debugging information, which
+// can be used for diagnostic or analytical purposes.
+//
+// Parameters:
+// rule - The brute force rule that this function is generating a Redis key for.
+//
+// Returns:
+// key - The generated Redis key for the given brute force rule.
 func (a *Authentication) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	var ipProto string
 
@@ -201,6 +286,17 @@ func (a *Authentication) getBruteForceBucketRedisKey(rule *config.BruteForceRule
 	return
 }
 
+// loadBruteForcePasswordHistoryFromRedis loads password history related to brute force attacks from Redis for a given key.
+// The function will fetch all associated passwords in the form of a hash along with a counter.
+// The Redis key is created for each unique user presented by the variable `key` which is a GUID,
+// This helps in keeping the track of the number of attempts a user has made for password authentication.
+// The function will generate an error logs for unsuccessful retrieval of password history data from Redis.
+// The password history data is stored in the Authentication's `PasswordHistory` field.
+//
+// Parameters:
+//   - key: A string that represents the unique GUID of a user
+//
+// Note: If the passed key is an empty string, the function will return immediately.
 func (a *Authentication) loadBruteForcePasswordHistoryFromRedis(key string) {
 	if key == "" {
 		return
@@ -236,6 +332,14 @@ func (a *Authentication) loadBruteForcePasswordHistoryFromRedis(key string) {
 	}
 }
 
+// getAllPasswordHistories is a method of the Authentication struct.
+// This method fetches and processes all password histories for the user represented by 'a'.
+// This method performs two major operations.
+// In the first phase, it fetches the password history specific to the current user using the Redis hash key.
+// The password history is stored in a local variable and processed to compute login attempts and seen account passwords.
+// In the second phase, it retrieves the overall password history again using the Redis hash key.
+// This overall history is then used to compute the total number of seen passwords.
+// Each of these phases are independent and are executed if the Redis hash key retrieval and the password history fetch operations are successful.
 func (a *Authentication) getAllPasswordHistories() {
 	// Get password history for the current used username
 	if key := a.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
@@ -261,6 +365,19 @@ func (a *Authentication) getAllPasswordHistories() {
 	}
 }
 
+// saveBruteForcePasswordToRedis is a method of the Authentication struct that is responsible for handling brute force attempts.
+// It works by saving password attempts to Redis data store. When a password is entered incorrectly,
+// the function stores this incorrect password's hash within a Redis key that is specific to the account in question.
+//
+// This method will save keys for both brute force history and current attempt, and then for each key in the list of keys:
+//
+//  1. It increments the value of this key by one, creating the key if it does not already exist.
+//     This increments a counter for each bad password attempt.
+//  2. Logs an error message if there is an error incrementing the key's value
+//  3. Sets an expiry time on the key. This has the effect of automatically deleting the keys after a certain period of time.
+//  4. Logs an error message if there is an error setting expiry time
+//
+// The function concludes by logging that the process has finished.
 func (a *Authentication) saveBruteForcePasswordToRedis() {
 	var keys []string
 
@@ -307,6 +424,12 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 	)
 }
 
+// loadBruteForceBucketCounterFromRedis is a method on the Authentication struct that loads the brute force
+// bucket counter from Redis and updates the BruteForceCounter map. The given BruteForceRule is used to generate the Redis key.
+// If the key is not empty, it retrieves the counter value from Redis using the backend.LoadCacheFromRedis function.
+// If an error occurs while loading the cache, the function returns.
+// If the BruteForceCounter is not initialized, it creates a new map.
+// Finally, it updates the BruteForceCounter map with the counter value retrieved from Redis using the rule name as the key.
 func (a *Authentication) loadBruteForceBucketCounterFromRedis(rule *config.BruteForceRule) {
 	cache := new(backend.BruteForceBucketCache)
 
@@ -325,6 +448,13 @@ func (a *Authentication) loadBruteForceBucketCounterFromRedis(rule *config.Brute
 	a.BruteForceCounter[rule.Name] = uint(*cache)
 }
 
+// saveBruteForceBucketCounterToRedis is a method on the Authentication struct that saves brute force
+// attempt information to Redis. This helps in maintaining a counter for each unique brute force rule.
+// The brute force rule, that is passed as param, is used to generate the key for Redis.
+// If the key is not empty, the related counter is incremented in Redis.
+// Note that the counter is not incremented if 'BruteForceName' is equal to the 'Name' in the given rule.
+// The function also sets the key expiration time in Redis as per the 'Period' field given in the rule.
+// In case of any errors (while incrementing the counter or setting the expiration), the error is logged.
 func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
 		util.DebugModule(decl.DbgBf, decl.LogKeyGUID, a.GUID, "store_key", key)
@@ -342,7 +472,8 @@ func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteFo
 	}
 }
 
-// SetPreResultBruteForceRedis adds the current IP address to a Redis hash map
+// SetPreResultBruteForceRedis sets the BruteForceRule name in the Redis hash map based on the network IP address obtained from the given BruteForceRule parameter.
+// If there is an error during the operation, it logs the error using the DefaultErrLogger.
 func (a *Authentication) SetPreResultBruteForceRedis(rule *config.BruteForceRule) {
 	key := config.EnvConfig.RedisPrefix + decl.RedisBruteForceHashKey
 
@@ -354,7 +485,10 @@ func (a *Authentication) SetPreResultBruteForceRedis(rule *config.BruteForceRule
 	}
 }
 
-// GetPreResultBruteForceRedis checks the Redis Database for a known brute force attacker based on the client IP address.
+// GetPreResultBruteForceRedis retrieves the name of the BruteForceRule from the Redis hash map, based on the network IP address obtained from the given BruteForceRule parameter.
+// If there is an error during the retrieval, it will log the error using the DefaultErrLogger.
+// If the key-value pair does not exist in the Redis hash map, it will return an empty string.
+// The retrieved rule name will be returned as the result.
 func (a *Authentication) GetPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string) {
 	key := config.EnvConfig.RedisPrefix + decl.RedisBruteForceHashKey
 
@@ -370,8 +504,10 @@ func (a *Authentication) GetPreResultBruteForceRedis(rule *config.BruteForceRule
 	return
 }
 
-// DelIPBruteForceRedis removes an IP address from Redis by its rule name. The wildcard '*' removes the IP address
-// regardless of any rule name.
+// DelIPBruteForceRedis deletes the IP address from the Redis hash map for brute force prevention.
+// It checks if the IP address is present in the hash map and matches the provided rule name or if the rule name is "*".
+// If there's a match, it retrieves the network associated with the rule, constructs the hash map key, and deletes the IP address from the hash map using Redis HDEL command.
+// If there's an error, it logs the error using the DefaultErrLogger.
 func (a *Authentication) DelIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) {
 	key := config.EnvConfig.RedisPrefix + decl.RedisBruteForceHashKey
 
@@ -389,8 +525,23 @@ func (a *Authentication) DelIPBruteForceRedis(rule *config.BruteForceRule, ruleN
 	}
 }
 
-// CheckBruteForce is called after a user has sent its credentials. It checks, if the user is already over limits. The
-// main password verification process ends, if a rule has triggered and no authentication is done at all.
+// CheckBruteForce is a method of the `Authentication` struct and is responsible for
+// ascertaining whether the client IP should be blocked due to unrestricted unauthorized access attempts
+// (i.e., a Brute Force attack on the system).
+//
+// The implementation works as follows:
+//   - It initializes a handful of variables used for later computation.
+//   - It verifies if the `BruteForce` property in the configuration is defined.
+//   - The method logs several useful debugging properties such as client IP, username, port, etc.
+//   - It looks for certain conditions such as `NoAuth` or `ListAccounts` under which the method returns 'false' immediately.
+//   - The method verifies if the client IP is localhost or unavailable and logs relevant info if it is.
+//   - It checks if Brute Force security is enabled for the current protocol being used, logging the data if it's not enabled.
+//   - The function checks if the current client IP is in the IP whitelist and logs the relevant data if it is.
+//   - It iterates over various Brute Force rules to determine if the client IP falls into any predefined rule and logs the data.
+//   - Lastly, it checks if any Brute Force rule is triggered, whereupon it saves some information in Redis, retrieves it back, logs
+//     the appropriate message, and runs a Lua script for handling the detected brute force attempt.
+//
+// It returns 'true' if a Brute Force attack is detected, otherwise returns 'false'.
 func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 	var (
 		useCache         bool
@@ -604,7 +755,15 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 	return false
 }
 
-// UpdateBruteForceBucketsCounter is called after a CheckBruteForce call had triggered.
+// UpdateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
+// It checks if brute force is enabled for the current protocol and if the client IP is not in the whitelist
+// Then it iterates through the loaded brute force rules and saves the bucket counter to Redis
+// The method also logs debug information related to the authentication
+//
+// Parameters:
+//   - a: a pointer to the Authentication struct which contains the authentication details
+//
+// Returns: none
 func (a *Authentication) UpdateBruteForceBucketsCounter() {
 	if config.LoadableConfig.BruteForce == nil {
 		return
