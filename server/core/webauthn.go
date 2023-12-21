@@ -118,7 +118,7 @@ func beginRegistration(ctx *gin.Context) {
 
 	session := sessions.Default(ctx)
 
-	cookieValue := session.Get(decl.CookieAuthStatus)
+	cookieValue := session.Get(decl.CookieAuthResult)
 	if cookieValue == nil || decl.AuthResult(cookieValue.(uint8)) != decl.AuthResultOK {
 		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 		SessionCleaner(ctx)
@@ -239,7 +239,7 @@ func finishRegistration(ctx *gin.Context) {
 
 	defer SessionCleaner(ctx)
 
-	cookieValue := session.Get(decl.CookieAuthStatus)
+	cookieValue := session.Get(decl.CookieAuthResult)
 	if cookieValue == nil || decl.AuthResult(cookieValue.(uint8)) != decl.AuthResultOK {
 		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 

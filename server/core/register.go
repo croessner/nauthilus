@@ -69,7 +69,7 @@ func SessionCleaner(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 
 	// Cleanup
-	session.Delete(decl.CookieAuthStatus)
+	session.Delete(decl.CookieAuthResult)
 	session.Delete(decl.CookieUsername)
 	session.Delete(decl.CookieAccount)
 	session.Delete(decl.CookieHaveTOTP)
@@ -221,7 +221,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 			session.Set(decl.CookieDisplayName, displayName)
 		}
 
-		session.Set(decl.CookieAuthStatus, uint8(authResult))
+		session.Set(decl.CookieAuthResult, uint8(authResult))
 		session.Set(decl.CookieUsername, ctx.PostForm("username"))
 		session.Set(decl.CookieAccount, account)
 		session.Set(decl.CookieUserBackend, uint8(auth.SourcePassDBBackend))
@@ -279,7 +279,7 @@ func register2FAHomeHandler(ctx *gin.Context) {
 		haveTOTP = cookieValue.(bool)
 	}
 
-	cookieValue = session.Get(decl.CookieAuthStatus)
+	cookieValue = session.Get(decl.CookieAuthResult)
 	if cookieValue == nil || decl.AuthResult(cookieValue.(uint8)) != decl.AuthResultOK {
 		handleErr(ctx, errors2.ErrNotLoggedIn)
 
@@ -359,7 +359,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 	cookieValue := session.Get(decl.CookieHaveTOTP)
 	if cookieValue != nil {
 		if cookieValue.(bool) {
-			session.Delete(decl.CookieAuthStatus)
+			session.Delete(decl.CookieAuthResult)
 			session.Delete(decl.CookieAccount)
 			session.Delete(decl.CookieHaveTOTP)
 
@@ -371,7 +371,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 		}
 	}
 
-	cookieValue = session.Get(decl.CookieAuthStatus)
+	cookieValue = session.Get(decl.CookieAuthResult)
 	if cookieValue == nil || decl.AuthResult(cookieValue.(uint8)) != decl.AuthResultOK {
 		handleErr(ctx, errors2.ErrNotLoggedIn)
 

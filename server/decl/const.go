@@ -62,6 +62,7 @@ const (
 	LogKeyStatsTotalAlloc        = "total_alloc"
 	LogKeyStatsNumGC             = "num_gc"
 	LogKeyLDAPPoolName           = "pool"
+	LogKeyLoginSkip              = "login_skip"
 
 	NotAvailable = "N/A"
 )
@@ -259,7 +260,7 @@ const (
 	CookieDisplayName  = "display_name"
 	CookieLang         = "lang"
 	CookieUsername     = "username"
-	CookieAuthStatus   = "auth_status"
+	CookieAuthResult   = "auth_result"
 	CookieSubject      = "subject"
 	CookieRemember     = "remember"
 	CookieRegistration = "webauthn_registration"

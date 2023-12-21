@@ -15,6 +15,7 @@ func LuaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
+		Debug:               config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
 		NoAuth:              auth.NoAuth,
 		Function:            decl.LuaCommandPassDB,
 		Session:             auth.GUID,
@@ -110,6 +111,7 @@ func LuaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
+		Debug:        config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
 		Session:      auth.GUID,
 		ClientIP:     auth.ClientIP,
 		ClientPort:   auth.XClientPort,
@@ -151,6 +153,7 @@ func LuaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
+		Debug:        config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
 		Session:      auth.GUID,
 		Username:     auth.Username,
 		ClientIP:     auth.ClientIP,
