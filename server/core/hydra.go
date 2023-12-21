@@ -1114,23 +1114,64 @@ func handleSessionDataLogin(ctx *gin.Context, auth *Authentication) (
 //
 // Returns:
 // - err: an error if any occurred during the process
-func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool) (err error) {
+func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool) error {
 	var (
-		acceptRequest *openapi.OAuth2RedirectTo
-		found         bool
-		account       string
-		subject       string
-		totpSecret    string
-		claims        map[string]any
+		redirectFlag bool
+		redirectTo   string
+		err          error
 	)
 
-	session := sessions.Default(a.ctx)
-	oauth2Client := a.loginRequest.GetClient()
-
-	if account, found = auth.GetAccountOk(); !found {
+	account, found := auth.GetAccountOk()
+	if !found {
 		return errors2.ErrNoAccount
 	}
 
+	subject, claims := a.getSubjectAndClaims(account, auth)
+
+	if post2FA {
+		if recentSubject != subject {
+			return errors2.ErrNoAccount
+		}
+
+		err = a.handlePost2FA(auth, account)
+		if err != nil {
+			return err
+		}
+	} else {
+		session := sessions.Default(a.ctx)
+
+		redirectFlag, err = a.handleNonPost2FA(auth, session, authResult, subject)
+		if err != nil {
+			return err
+		}
+
+		if redirectFlag {
+			return nil
+		}
+	}
+
+	remember := a.isRemember(rememberPost2FA, post2FA)
+	if redirectTo, err = a.acceptLogin(claims, subject, remember); err != nil {
+		return err
+	}
+
+	a.logInfo(subject, redirectTo)
+
+	return nil
+}
+
+// getSubjectAndClaims retrieves the subject and claims for a given account and authentication object.
+// If available, it uses the OAuth2 client to get the subject and claims from the authentication object.
+// If the OAuth2 client is not available or the subject is empty, it uses the account as the subject.
+// If the subject is empty, it logs a warning message using the `guid` field from the `ApiConfig` object and the account value.
+// It returns the subject and claims as a string and map respectively.
+func (a *ApiConfig) getSubjectAndClaims(account string, auth *Authentication) (string, map[string]any) {
+	var (
+		subject string
+		claims  map[string]any
+	)
+
+	oauth2Client := a.loginRequest.GetClient()
 	if config.LoadableConfig.Oauth2 != nil {
 		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
@@ -1144,92 +1185,89 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.Aut
 		)
 	}
 
-	// Call totp.html for second factor
-	if !post2FA {
-		if !config.GetSkipTOTP(*a.clientId) {
-			if _, found = auth.GetTOTPSecretOk(); found {
-				session.Set(decl.CookieAuthResult, uint8(authResult))
-				session.Set(decl.CookieUsername, a.ctx.Request.Form.Get("username"))
-				session.Set(decl.CookieSubject, subject)
-				session.Set(decl.CookieRemember, a.ctx.Request.Form.Get("remember"))
+	return subject, claims
+}
 
-				err = session.Save()
-				if err != nil {
-					return
-				}
-
-				a.ctx.Redirect(
-					http.StatusFound,
-					viper.GetString("login_page")+"?login_challenge="+a.challenge,
-				)
-
-				return
-			}
-		}
-	} else {
-		var key *otp.Key
-
-		if recentSubject != subject {
-			return errors2.ErrNoAccount
-		}
-
-		code := a.ctx.PostForm("code")
-
-		// No code given
-		if code == "" {
-			return errors2.ErrNoTOTPCode
-		}
-
-		if totpSecret, found = auth.GetTOTPSecretOk(); found {
-			var (
-				codeValid     bool
-				urlComponents []string
-			)
-
-			urlComponents = append(urlComponents, "otpauth://totp/")
-			urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
-			urlComponents = append(urlComponents, ":")
-			urlComponents = append(urlComponents, account)
-			urlComponents = append(urlComponents, "?secret=")
-			urlComponents = append(urlComponents, totpSecret)
-			urlComponents = append(urlComponents, "&issuer=")
-			urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
-			urlComponents = append(urlComponents, "&algorithm=SHA1")
-			urlComponents = append(urlComponents, "&digits=6")
-			urlComponents = append(urlComponents, "&period=30")
-
-			totpURL := strings.Join(urlComponents, "")
-
-			if key, err = otp.NewKeyFromURL(totpURL); err != nil {
-				return
-			}
-
-			if config.EnvConfig.Verbosity.Level() >= decl.LogLevelDebug && config.EnvConfig.DevMode {
-				util.DebugModule(
-					decl.DbgHydra,
-					decl.LogKeyGUID, a.guid,
-					"totp_key", fmt.Sprintf("%+v", key),
-				)
-			}
-
-			codeValid, err = totp.ValidateCustom(code, key.Secret(), time.Now(), totp.ValidateOpts{
-				Period:    30,
-				Skew:      viper.GetUint("totp_skew"),
-				Digits:    otp.DigitsSix,
-				Algorithm: otp.AlgorithmSHA1,
-			})
-
-			if !codeValid {
-				return errors2.ErrTOTPCodeInvalid
-			}
-		} else {
-			return errors2.ErrNoTOTPCode
-		}
+// handleNonPost2FA handles the logic for non-post 2FA authentication.
+// It checks if 2FA authentication is skipped for the client, if not it checks if the TOTP secret exists.
+// If the TOTP secret exists, it sets the session variables for authentication and redirects the request to the login page.
+// Returns true if the redirection is performed, otherwise returns false.
+// If an error occurs, it will be returned.
+//
+// Params:
+// - auth: The Authentication object.
+// - session: The session object.
+// - authResult: The authentication result.
+// - subject: The authentication subject.
+//
+// Returns:
+// - bool: Indicates whether redirection is performed or not.
+// - error: The error if any occurs.
+func (a *ApiConfig) handleNonPost2FA(auth *Authentication, session sessions.Session, authResult decl.AuthResult, subject string) (bool, error) {
+	if config.GetSkipTOTP(*a.clientId) {
+		return false, nil
 	}
 
-	rememberFor := int64(viper.GetInt("login_remember_for"))
-	remember := false
+	if _, found := auth.GetTOTPSecretOk(); found {
+		if err := a.setSessionVariablesForAuth(session, authResult, subject); err != nil {
+			return false, err
+		}
 
+		a.ctx.Redirect(
+			http.StatusFound,
+			viper.GetString("login_page")+"?login_challenge="+a.challenge,
+		)
+
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// handlePost2FA handles the post-2FA authentication process.
+// It retrieves the TOTP code from the POST form and checks for its presence.
+// Then, it gets the TOTP secret from the authentication object and checks for its presence.
+// If both the code and secret are present, it performs TOTP validation using the code, account, and secret.
+// If the validation is successful, it returns nil.
+// Otherwise, it returns an error, specifically ErrNoTOTPCode if either the code or secret is missing.
+func (a *ApiConfig) handlePost2FA(auth *Authentication, account string) error {
+	code := a.ctx.PostForm("code")
+	if code == "" {
+		return errors2.ErrNoTOTPCode
+	}
+
+	totpSecret, found := auth.GetTOTPSecretOk()
+	if !found {
+		return errors2.ErrNoTOTPCode
+	}
+
+	err := a.totpValidation(code, account, totpSecret)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// isRemember checks if the user wants to be remembered for future logins.
+// It takes two arguments:
+// - rememberPost2FA: a string indicating if the user wants to be remembered after 2FA authentication.
+//   - If it is "on", remember will be set to true.
+//
+// - post2FA: a boolean indicating if the authentication is done after 2FA.
+//   - If it is true, remember will be set to true only if rememberPost2FA is "on".
+//   - If it is false, remember will be set to true if the "remember" field in the ctx PostForm is set to "on".
+//
+// It returns a boolean indicating if the user wants to be remembered.
+//
+// Example usage:
+//
+//	remember := a.isRemember(rememberPost2FA, post2FA)
+//
+// Dependencies:
+// - None
+func (a *ApiConfig) isRemember(rememberPost2FA string, post2FA bool) bool {
+	remember := false
 	if post2FA {
 		if rememberPost2FA == "on" {
 			remember = true
@@ -1238,6 +1276,27 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.Aut
 		remember = true
 	}
 
+	return remember
+}
+
+// acceptLogin accepts the OAuth2 login request and redirects the user to the appropriate page.
+//
+// Parameters:
+// - claims: A map containing context information for the login request.
+// - subject: The subject of the login request.
+// - remember: Boolean value indicating whether the user should be remembered or not.
+//
+// Returns:
+// - redirectTo: The URL where the user should be redirected.
+// - err: An error, if any.
+//
+// Example Usage:
+//
+//	redirectTo, err := apiConfig.acceptLogin(claims, subject, remember)
+func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember bool) (redirectTo string, err error) {
+	var acceptRequest *openapi.OAuth2RedirectTo
+
+	rememberFor := int64(viper.GetInt("login_remember_for"))
 	acceptLoginRequest := a.apiClient.OAuth2Api.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
 		openapi.AcceptOAuth2LoginRequest{
 			Context:     claims,
@@ -1251,8 +1310,28 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.Aut
 		return
 	}
 
-	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
+	redirectTo = acceptRequest.GetRedirectTo()
 
+	a.ctx.Redirect(http.StatusFound, redirectTo)
+
+	return
+}
+
+// logInfo logs the information for an authentication event with the given subject and redirect URL.
+// It uses the DefaultLogger from the logging package.
+//
+// Parameters:
+// - subject: The authentication subject
+// - redirectTo: The URL to redirect to after authentication
+//
+// Example usage:
+// apiConfig.logInfo("john_doe", "/dashboard")
+//
+// Dependencies:
+// - DefaultLogger from the logging package
+//
+// Note: This method assumes that the ApiConfig object is properly initialized with the relevant fields.
+func (a *ApiConfig) logInfo(subject string, redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
 		decl.LogKeyClientID, *a.clientId,
@@ -1262,10 +1341,107 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.Aut
 		decl.LogKeyUsername, a.ctx.PostForm("username"),
 		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
 		decl.LogKeyUriPath, viper.GetString("login_page")+"/post",
-		decl.LogKeyRedirectTo, acceptRequest.GetRedirectTo(),
+		decl.LogKeyRedirectTo, redirectTo,
 	)
+}
 
-	return
+// totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
+// It constructs the TOTP URL and generates the key from the URL. It then validates the code using the key and additional options.
+//
+// Parameters:
+// - code: The TOTP code to validate.
+// - account: The account associated with the TOTP code.
+// - totpSecret: The TOTP secret used to generate the TOTP code.
+//
+// Returns:
+// - error: If the TOTP code is invalid or if there was an error generating the key.
+//
+// Example usage:
+//
+//	err := apiConfig.totpValidation(code, account, totpSecret)
+//	if err != nil {
+//		// Handle the error
+//	}
+//
+// Dependencies:
+// - viper.GetString("totp_issuer"): The issuer used in the TOTP URL.
+// - url.QueryEscape(): A function to escape special characters in the URL components.
+// - strings.Join(): A function to join the URL components into a single string.
+// - otp.NewKeyFromURL(): A function to generate the key from the TOTP URL.
+// - totp.ValidateCustom(): A function to validate the TOTP code using the key and additional options.
+//
+// Note: This method assumes that the `ApiConfig` object is properly initialized with the `guid` field set.
+func (a *ApiConfig) totpValidation(code string, account string, totpSecret string) error {
+	var urlComponents []string
+
+	urlComponents = append(urlComponents, "otpauth://totp/")
+	urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
+	urlComponents = append(urlComponents, ":")
+	urlComponents = append(urlComponents, account)
+	urlComponents = append(urlComponents, "?secret=")
+	urlComponents = append(urlComponents, totpSecret)
+	urlComponents = append(urlComponents, "&issuer=")
+	urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
+	urlComponents = append(urlComponents, "&algorithm=SHA1")
+	urlComponents = append(urlComponents, "&digits=6")
+	urlComponents = append(urlComponents, "&period=30")
+
+	totpURL := strings.Join(urlComponents, "")
+
+	key, err := otp.NewKeyFromURL(totpURL)
+	if err != nil {
+		return err
+	}
+
+	if config.EnvConfig.Verbosity.Level() >= decl.LogLevelDebug && config.EnvConfig.DevMode {
+		util.DebugModule(
+			decl.DbgHydra,
+			decl.LogKeyGUID, a.guid,
+			"totp_key", fmt.Sprintf("%+v", key),
+		)
+	}
+
+	codeValid, err := totp.ValidateCustom(code, key.Secret(), time.Now(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      viper.GetUint("totp_skew"),
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+
+	if !codeValid {
+		return errors2.ErrTOTPCodeInvalid
+	}
+
+	return nil
+}
+
+// setSessionVariablesForAuth sets the necessary session variables for authentication.
+// It takes a `sessions.Session` object, `authResult` of type `decl.AuthResult`, and the `subject` string as parameters.
+// It sets the following session variables:
+// - `decl.CookieAuthResult`: uint8 value of `authResult`
+// - `decl.CookieUsername`: value of `username` field from the request form
+// - `decl.CookieSubject`: value of `subject`
+// - `decl.CookieRemember`: value of `remember` field from the request form
+// It returns an `error` if there is any error saving the session.
+//
+// Example usage:
+//
+//	session := sessions.Default(ctx)
+//	err := setSessionVariablesForAuth(session, authResult, subject)
+//	if err != nil {
+//	    // Handle error
+//	}
+func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authResult decl.AuthResult, subject string) error {
+	session.Set(decl.CookieAuthResult, uint8(authResult))
+	session.Set(decl.CookieUsername, a.ctx.Request.Form.Get("username"))
+	session.Set(decl.CookieSubject, subject)
+	session.Set(decl.CookieRemember, a.ctx.Request.Form.Get("remember"))
+
+	if err := session.Save(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // processAuthFailLogin handles the processing of a failed login authentication.
