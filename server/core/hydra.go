@@ -1164,7 +1164,7 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult decl.Aut
 		return err
 	}
 
-	a.logInfo(subject, redirectTo)
+	a.logInfoLoginAccept(subject, redirectTo)
 
 	return nil
 }
@@ -1326,7 +1326,7 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 	return
 }
 
-// logInfo logs the information for an authentication event with the given subject and redirect URL.
+// logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
 // It uses the DefaultLogger from the logging package.
 //
 // Parameters:
@@ -1334,13 +1334,13 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 // - redirectTo: The URL to redirect to after authentication
 //
 // Example usage:
-// apiConfig.logInfo("john_doe", "/dashboard")
+// apiConfig.logInfoLoginAccept("john_doe", "/dashboard")
 //
 // Dependencies:
 // - DefaultLogger from the logging package
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the relevant fields.
-func (a *ApiConfig) logInfo(subject string, redirectTo string) {
+func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
 		decl.LogKeyClientID, *a.clientId,
@@ -2245,14 +2245,120 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig.HandleLogout()
 }
 
+// HandleLogoutSubmit handles the logout submit action.
+// If the "submit" value in the request's post form is "accept", it calls the acceptLogout function.
+// Otherwise, it calls the rejectLogout function.
+//
+// Example usage:
+//
+//	apiConfig.HandleLogoutSubmit()
+//
+// Dependencies:
+// - None
+//
+// Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
+func (a *ApiConfig) HandleLogoutSubmit() {
+	if a.ctx.PostForm("submit") == "accept" {
+		a.acceptLogout()
+	} else {
+		a.rejectLogout()
+	}
+}
+
+// acceptLogout sends an accept request for a logout challenge
+//
+// This method initiates the logout process by sending an accept request to the OAuth2 API with the specified logout challenge.
+// If the request is successful, the user will be redirected to the returned redirect URL.
+//
+// Dependencies:
+// - `a.apiClient`: An initialized instance of the `openapi.APIClient` struct.
+//
+// Parameters:
+// - `a.challenge`: The logout challenge string.
+//
+// Returns:
+// - None.
+//
+// Example usage:
+// ```
+// apiConfig.acceptLogout()
+// ```
+//
+// Note: This method assumes that the `ApiConfig` object is properly initialized with the `a.apiClient` field set.
+//
+// Note: This method logs information about the accept process, including the redirect URL.
+func (a *ApiConfig) acceptLogout() {
+	var (
+		err           error
+		acceptRequest *openapi.OAuth2RedirectTo
+		httpResponse  *http.Response
+	)
+
+	acceptLogoutRequest := a.apiClient.OAuth2Api.AcceptOAuth2LogoutRequest(a.ctx)
+
+	acceptRequest, httpResponse, err = acceptLogoutRequest.LogoutChallenge(a.challenge).Execute()
+	if err != nil {
+		handleHydraErr(a.ctx, err, httpResponse)
+
+		return
+	}
+
+	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
+
+	a.logInfoLogoutAccept(acceptRequest.GetRedirectTo())
+}
+
+// rejectLogout rejects the logout request by sending a request to the OAuth2Api endpoint of the API client.
+// If the request is successful, it redirects the user to the specified homepage or aborts the request with a status of 200 OK.
+// If the request encounters an error, it handles the error and returns.
+func (a *ApiConfig) rejectLogout() {
+	rejectLogoutRequest := a.apiClient.OAuth2Api.RejectOAuth2LogoutRequest(a.ctx)
+
+	httpResponse, err := rejectLogoutRequest.LogoutChallenge(a.challenge).Execute()
+	if err != nil {
+		handleHydraErr(a.ctx, err, httpResponse)
+
+		return
+	}
+
+	redirectTo := viper.GetString("homepage")
+	if redirectTo != "" {
+		a.ctx.Redirect(http.StatusFound, redirectTo)
+	} else {
+		redirectTo = "unknown"
+		a.ctx.AbortWithStatus(http.StatusOK)
+	}
+
+	a.logInfoLogoutReject(redirectTo)
+}
+
+func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
+		decl.LogKeyUriPath, viper.GetString("logout_page")+"/post",
+		decl.LogKeyRedirectTo, redirectTo,
+	)
+}
+
+func (a *ApiConfig) logInfoLogoutReject(redirectTo string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthReject,
+		decl.LogKeyUriPath, viper.GetString("logout_page")+"/post",
+		decl.LogKeyRedirectTo, redirectTo,
+	)
+}
+
 // Page '/logout/post'
 func logoutPOSTHandler(ctx *gin.Context) {
 	var (
-		err           error
-		guid          = ctx.Value(decl.GUIDKey).(string)
-		logoutRequest *openapi.OAuth2LogoutRequest
-		acceptRequest *openapi.OAuth2RedirectTo
-		httpResponse  *http.Response
+		err          error
+		httpResponse *http.Response
 	)
 
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
@@ -2262,65 +2368,21 @@ func logoutPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := createHttpClient()
-	configuration := createConfiguration(httpClient)
-	apiClient := openapi.NewAPIClient(configuration)
+	apiConfig := &ApiConfig{ctx: ctx}
 
-	logoutRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
-		logoutChallenge).Execute()
+	apiConfig.Initialize()
+
+	apiConfig.challenge = logoutChallenge
+
+	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
+		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
 
 		return
 	}
 
-	if ctx.PostForm("submit") == "accept" {
-		acceptLogoutRequest := apiClient.OAuth2Api.AcceptOAuth2LogoutRequest(ctx)
-
-		acceptRequest, httpResponse, err = acceptLogoutRequest.LogoutChallenge(logoutChallenge).Execute()
-		if err != nil {
-			handleHydraErr(ctx, err, httpResponse)
-
-			return
-		}
-
-		ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyAuthSubject, logoutRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, logoutChallenge,
-			decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
-			decl.LogKeyUriPath, viper.GetString("logout_page")+"/post",
-			decl.LogKeyRedirectTo, acceptRequest.GetRedirectTo(),
-		)
-	} else {
-		rejectLogoutRequest := apiClient.OAuth2Api.RejectOAuth2LogoutRequest(ctx)
-
-		httpResponse, err = rejectLogoutRequest.LogoutChallenge(logoutChallenge).Execute()
-		if err != nil {
-			handleHydraErr(ctx, err, httpResponse)
-
-			return
-		}
-
-		redirectTo := viper.GetString("homepage")
-		if redirectTo != "" {
-			ctx.Redirect(http.StatusFound, redirectTo)
-		} else {
-			redirectTo = "unknown"
-			ctx.AbortWithStatus(http.StatusOK)
-		}
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyAuthSubject, logoutRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, logoutChallenge,
-			decl.LogKeyAuthStatus, decl.LogKeyAuthReject,
-			decl.LogKeyUriPath, viper.GetString("logout_page")+"/post",
-			decl.LogKeyRedirectTo, redirectTo,
-		)
-	}
+	apiConfig.HandleLogoutSubmit()
 }
 
 // getClaimsFromConsentContext extracts claims from consentContext based on acceptedScopes
