@@ -377,15 +377,17 @@ type NotifyPageData struct {
 }
 
 type ApiConfig struct {
-	httpClient   *http.Client
-	apiClient    *openapi.APIClient
-	ctx          *gin.Context
-	loginRequest *openapi.OAuth2LoginRequest
-	clientId     *string
-	guid         string
-	csrfToken    string
-	clientName   string
-	challenge    string
+	httpClient     *http.Client
+	apiClient      *openapi.APIClient
+	ctx            *gin.Context
+	loginRequest   *openapi.OAuth2LoginRequest
+	consentRequest *openapi.OAuth2ConsentRequest
+	logoutRequest  *openapi.OAuth2LogoutRequest
+	clientId       *string
+	guid           string
+	csrfToken      string
+	clientName     string
+	challenge      string
 }
 
 // handleErr handles an error by logging the error details and printing a goroutine dump.
@@ -2147,14 +2149,58 @@ func consentPOSTHandler(ctx *gin.Context) {
 	}
 }
 
+// HandleLogout handles the logout functionality of the API.
+// It retrieves the session and gets the value of the language cookie.
+// It then parses the language value into a language tag and builds the language name.
+// It creates the LogoutPageData struct with the necessary fields for the logout page template.
+// Finally, it renders the logout.html template with the logoutData and logs the logout event.
+//
+// Example usage:
+// apiConfig.HandleLogout()
+func (a *ApiConfig) HandleLogout() {
+	session := sessions.Default(a.ctx)
+	cookieValue := session.Get(decl.CookieLang)
+
+	languageCurrentTag := language.MustParse(cookieValue.(string))
+	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
+	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
+
+	logoutData := &LogoutPageData{
+		Title: getLocalized(a.ctx, "Logout"),
+		WantWelcome: func() bool {
+			if viper.GetString("login_page_welcome") != "" {
+				return true
+			}
+
+			return false
+		}(),
+		Welcome:             viper.GetString("logout_page_welcome"),
+		LogoutMessage:       getLocalized(a.ctx, "Do you really want to log out?"),
+		AcceptSubmit:        getLocalized(a.ctx, "Yes"),
+		RejectSubmit:        getLocalized(a.ctx, "No"),
+		LanguageTag:         session.Get(decl.CookieLang).(string),
+		LanguageCurrentName: languageCurrentName,
+		LanguagePassive:     languagePassive,
+		CSRFToken:           a.csrfToken,
+		LogoutChallenge:     a.challenge,
+		PostLogoutEndpoint:  viper.GetString("logout_page"),
+	}
+
+	a.ctx.HTML(http.StatusOK, "logout.html", logoutData)
+
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyUriPath, viper.GetString("logout_page"),
+	)
+}
+
 // Page '/logout'
 func logoutGETHandler(ctx *gin.Context) {
 	var (
-		err           error
-		guid          = ctx.Value(decl.GUIDKey).(string)
-		csrfToken     = ctx.Value(decl.CSRFTokenKey).(string)
-		logoutRequest *openapi.OAuth2LogoutRequest
-		httpResponse  *http.Response
+		err          error
+		httpResponse *http.Response
 	)
 
 	logoutChallenge := ctx.Query("logout_challenge")
@@ -2176,11 +2222,14 @@ func logoutGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := createHttpClient()
-	configuration := createConfiguration(httpClient)
-	apiClient := openapi.NewAPIClient(configuration)
+	apiConfig := ApiConfig{ctx: ctx}
 
-	logoutRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
+	apiConfig.Initialize()
+
+	apiConfig.challenge = logoutChallenge
+	apiConfig.csrfToken = ctx.Value(decl.CSRFTokenKey).(string)
+
+	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		logoutChallenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -2188,47 +2237,12 @@ func logoutGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	if logoutRequest.GetRpInitiated() {
+	if apiConfig.logoutRequest.GetRpInitiated() {
 		// We could skip the UI
-		util.DebugModule(decl.DbgHydra, decl.LogKeyGUID, guid, decl.LogKeyMsg, "rp_initiated==true")
+		util.DebugModule(decl.DbgHydra, decl.LogKeyGUID, apiConfig.guid, decl.LogKeyMsg, "rp_initiated==true")
 	}
 
-	session := sessions.Default(ctx)
-	cookieValue := session.Get(decl.CookieLang)
-
-	languageCurrentTag := language.MustParse(cookieValue.(string))
-	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
-
-	logoutData := &LogoutPageData{
-		Title: getLocalized(ctx, "Logout"),
-		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
-				return true
-			}
-
-			return false
-		}(),
-		Welcome:             viper.GetString("logout_page_welcome"),
-		LogoutMessage:       getLocalized(ctx, "Do you really want to log out?"),
-		AcceptSubmit:        getLocalized(ctx, "Yes"),
-		RejectSubmit:        getLocalized(ctx, "No"),
-		LanguageTag:         session.Get(decl.CookieLang).(string),
-		LanguageCurrentName: languageCurrentName,
-		LanguagePassive:     languagePassive,
-		CSRFToken:           csrfToken,
-		LogoutChallenge:     logoutChallenge,
-		PostLogoutEndpoint:  viper.GetString("logout_page"),
-	}
-
-	ctx.HTML(http.StatusOK, "logout.html", logoutData)
-
-	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyGUID, guid,
-		decl.LogKeyAuthSubject, logoutRequest.GetSubject(),
-		decl.LogKeyAuthChallenge, logoutChallenge,
-		decl.LogKeyUriPath, viper.GetString("logout_page"),
-	)
+	apiConfig.HandleLogout()
 }
 
 // Page '/logout/post'
