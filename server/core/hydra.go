@@ -1728,24 +1728,364 @@ func devicePOSTHandler(ctx *gin.Context) {
 	handleErr(ctx, errors.New("not implemented yet"))
 }
 
+// handleRequestedScopes is a function that analyzes requested scopes from the user in a session.
+// It then finds the corresponding descriptions for these scope requests and encapsulates them within a 'Scope' entity
+// to be returned in a list.
+//
+// Parameters
+// * ctx: It is the gin.Context object that encapsulates all functionalities for handling HTTP requests and responses.
+// * requestedScopes: It is the slice of string that contains all requested scopes.
+// * session: It is the sessions.Session object where the session data is saved.
+// * guid: It is a string parameter that uniquely identifies a specific session.
+//
+// Returns
+// It returns a slice of Scope; each Scope contains a scope name along with its corresponding description.
+//
+// Usage
+// This function is typically used to gather all scopes a user requested in a particular session identified by 'guid' parameter.
+func handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session sessions.Session) []Scope {
+	var (
+		scopes           []Scope
+		scopeDescription string
+	)
+
+	cookieValue := session.Get(decl.CookieLang)
+
+	for _, requestedScope := range requestedScopes {
+		scopeDescription = getScopeDescription(ctx, requestedScope, cookieValue)
+		scopes = append(scopes, Scope{ScopeName: requestedScope, ScopeDescription: scopeDescription})
+	}
+
+	return scopes
+}
+
+// getScopeDescription function acquires a descriptive string correspondent to
+// the type of OAuth scope requested. The 'ctx' argument must be a gin Context
+// and the 'requestedScope' must be a string defining a specific OAuth scope.
+// While the 'cookieValue' is used when requesting for a custom scope.
+// Predefined scopes provide standard access to user's data like email, address,
+// phone number, identity information etc. For scopes that do not match with
+// predefined ones, a custom scope is sought.
+//
+// Parameters:
+// ctx : Pointer to gin.Context: A context of gin framework for handling HTTP requests
+// requestedScope: String: Type of OAuth scope requested.
+// cookieValue: interface{}: Data to be used for custom scope requests.
+//
+// Returns:
+// String: A string corresponding to the type of OAuth scope requested
+func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue interface{}) string {
+	switch requestedScope {
+	case decl.ScopeOpenId:
+		return getLocalized(ctx, "Allow access to identity information")
+	case decl.ScopeOfflineAccess:
+		return getLocalized(ctx, "Allow an application access to private data without your personal presence")
+	case decl.ScopeProfile:
+		return getLocalized(ctx, "Allow access to personal profile data")
+	case decl.ScopeEmail:
+		return getLocalized(ctx, "Allow access to your email address")
+	case decl.ScopeAddress:
+		return getLocalized(ctx, "Allow access to your home address")
+	case decl.ScopePhone:
+		return getLocalized(ctx, "Allow access to your phone number")
+	case decl.ScopeGroups:
+		return getLocalized(ctx, "Allow access to group memberships")
+	default:
+		return getCustomScopeDescription(ctx, requestedScope, cookieValue)
+	}
+}
+
+// getCustomScopeDescription is a method that retrieves the description of a custom OAuth2 scope.
+// It takes three arguments; a gin context, the name of the requested scope, and a cookie value.
+//
+// It iterates over the list of custom scopes defined in the loaded configuration. If it finds a match with the requested scope,
+// it fetches the description associated with it. If the custom scope object has 'Other' values and these contain a localized
+// description, this is used instead. This localization is defined based on the value provided in the cookie.
+//
+// If no custom scope matching the requested name can be found, or the custom scope has no description, the method returns the
+// default localized message "Allow access to a specific scope".
+//
+// Parameters:
+// ctx: The Gin context from which the function is called.
+// requestedScope: The requested OAuth2 scope. The function uses this value to find the corresponding custom scope in the loaded configuration.
+// cookieValue: A value derived from a cookie. This is used to determine which localization to use if localized descriptions are available.
+//
+// Returns:
+// It returns a string representing the description of the requested scope.
+func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
+	var scopeDescription string
+	if config.LoadableConfig.Oauth2 != nil {
+		for _, customScope := range config.LoadableConfig.Oauth2.CustomScopes {
+			if customScope.Name != requestedScope {
+				continue
+			}
+
+			scopeDescription = customScope.Description
+			if len(customScope.Other) > 0 {
+				lang := cookieValue.(string)
+				if value, assertOk := customScope.Other["description_"+lang]; assertOk {
+					scopeDescription = value.(string)
+				}
+			}
+
+			break
+		}
+	}
+
+	if scopeDescription == "" {
+		scopeDescription = getLocalized(ctx, "Allow access to a specific scope")
+	}
+
+	return scopeDescription
+}
+
+// processConsent handles the processing and rendering of the consent page.
+//
+// This method retrieves and handles data needed for rendering the consent page, such as the client's requested scopes,
+// logo image URI, policy URI, terms of service URI, application name, language settings, and consent page messages.
+// It then creates a ConsentPageData struct with the necessary data and passes it to the consent.html template for rendering.
+//
+// Note: This method assumes that all necessary dependencies and configurations have been properly set up before calling it.
+// It also assumes that all required templates exist and are properly configured.
+//
+// Example usage:
+// a.processConsent()
+func (a *ApiConfig) processConsent() {
+	var (
+		wantAbout  bool
+		wantPolicy bool
+		wantTos    bool
+		policyUri  string
+		tosUri     string
+		clientUri  string
+		imageUri   string
+	)
+
+	// Get session
+	session := sessions.Default(a.ctx)
+
+	// Handle scopes
+	scopes := handleRequestedScopes(a.ctx, a.consentRequest.GetRequestedScope(), session)
+
+	oauth2Client := a.consentRequest.GetClient()
+
+	imageUri = oauth2Client.GetLogoUri()
+	if imageUri == "" {
+		imageUri = viper.GetString("default_logo_image")
+	}
+
+	if policyUri = oauth2Client.GetPolicyUri(); policyUri != "" {
+		wantPolicy = true
+	}
+
+	if tosUri = oauth2Client.GetTosUri(); tosUri != "" {
+		wantTos = true
+	}
+
+	if clientUri = oauth2Client.GetClientUri(); clientUri != "" {
+		wantAbout = true
+	}
+
+	applicationName := oauth2Client.GetClientName()
+
+	languageCurrentTag := language.MustParse(session.Get(decl.CookieLang).(string))
+	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
+	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
+
+	consentData := &ConsentPageData{
+		Title: getLocalized(a.ctx, "Consent"),
+		WantWelcome: func() bool {
+			if viper.GetString("login_page_welcome") != "" {
+				return true
+			}
+
+			return false
+		}(),
+		Welcome:             viper.GetString("consent_page_welcome"),
+		LogoImage:           imageUri,
+		LogoImageAlt:        viper.GetString("consent_page_logo_image_alt"),
+		ConsentMessage:      getLocalized(a.ctx, "An application requests access to your data"),
+		ApplicationName:     applicationName,
+		WantAbout:           wantAbout,
+		About:               getLocalized(a.ctx, "Get further information about this application..."),
+		AboutUri:            clientUri,
+		Scopes:              scopes,
+		WantPolicy:          wantPolicy,
+		Policy:              getLocalized(a.ctx, "Privacy policy"),
+		PolicyUri:           policyUri,
+		WantTos:             wantTos,
+		Tos:                 getLocalized(a.ctx, "Terms of service"),
+		TosUri:              tosUri,
+		Remember:            getLocalized(a.ctx, "Do not ask me again"),
+		AcceptSubmit:        getLocalized(a.ctx, "Accept access"),
+		RejectSubmit:        getLocalized(a.ctx, "Deny access"),
+		LanguageTag:         session.Get(decl.CookieLang).(string),
+		LanguageCurrentName: languageCurrentName,
+		LanguagePassive:     languagePassive,
+		CSRFToken:           a.csrfToken,
+		ConsentChallenge:    a.challenge,
+		PostConsentEndpoint: viper.GetString("consent_page"),
+	}
+
+	a.ctx.HTML(http.StatusOK, "consent.html", consentData)
+
+	a.logInfoConsent()
+}
+
+// redirectWithConsent is a method of the ApiConfig struct.
+//
+// The method helps to redirect the user with an OAuth2 consent.
+// It starts by initializing the session and then retrieving the context and the requested scope from the consent request.
+// It also prepares the interval for which the consent should be remembered using "login_remember_for" configuration.
+//
+// Then, based on the requested scopes, it checks if the scope 'openid' is included among the others
+// and if so, it indicates that claims are needed and retrieves the claims from the consent context.
+//
+// The method proceeds to prepare a structured data (openapi.AcceptOAuth2ConsentRequest) for accepting an OAuth2 consent request,
+// which includes details such as the Access Token audience, granted scopes, whether to remember the consent,
+// duration for remembering the consent, and the session information if 'openid' scope was requested.
+//
+// Finally, it submits the prepared consent request to be processed and in case of success, it triggers a redirect response to the client with the redirected URL.
+// If an error occurs while executing the consent request, it is handled by the 'handleHydraErr' function.
+//
+// redirectWithConsent logs the redirected URL using the 'logInfoRedirectWithConsent' method.
+//
+// Remember: All the error handling and debug information/reporting is done internally within the method.
+func (a *ApiConfig) redirectWithConsent() {
+	var session *openapi.AcceptOAuth2ConsentRequestSession
+
+	consentContext := a.consentRequest.GetContext()
+	acceptedScopes := a.consentRequest.GetRequestedScope()
+	rememberFor := int64(viper.GetInt("login_remember_for"))
+
+	util.DebugModule(
+		decl.DbgHydra,
+		decl.LogKeyGUID, a.guid,
+		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
+	)
+
+	needClaims := false
+
+	for index := range acceptedScopes {
+		if acceptedScopes[index] != decl.ScopeOpenId {
+			continue
+		}
+
+		needClaims = true
+
+		break
+	}
+
+	if needClaims {
+		util.DebugModule(
+			decl.DbgHydra,
+			decl.LogKeyGUID, a.guid,
+			decl.LogKeyMsg, "Scope 'openid' found, need claims",
+		)
+
+		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext)
+	}
+
+	acceptConsentRequest := a.apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
+		openapi.AcceptOAuth2ConsentRequest{
+			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
+			GrantScope:               acceptedScopes,
+			Remember: func() *bool {
+				if config.GetSkipConsent(*a.clientId) {
+					remember := true
+
+					return &remember
+				}
+
+				return a.consentRequest.Skip
+			}(),
+			RememberFor: &rememberFor,
+			Session:     session,
+		})
+
+	acceptRequest, httpResponse, err := acceptConsentRequest.ConsentChallenge(a.challenge).Execute()
+	if err != nil {
+		handleHydraErr(a.ctx, err, httpResponse)
+
+		return
+	}
+
+	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
+
+	a.logInfoRedirectWithConsent(acceptRequest.GetRedirectTo())
+}
+
+// logInfoConsent logs information about the consent request.
+// It uses the level.Info() function from the logging package to log the information.
+// The logged information includes the GUID, skip flag, client ID, client name,
+// authentication subject, authentication challenge, and URI path.
+//
+// Example usage:
+//
+//	apiConfig.logInfoConsent()
+//
+// Dependencies:
+//   - logging.DefaultLogger
+//
+// Note: This method assumes that the ApiConfig object is properly initialized.
+func (a *ApiConfig) logInfoConsent() {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeySkip, false,
+		decl.LogKeyClientID, *a.clientId,
+		decl.LogKeyClientName, a.clientName,
+		decl.LogKeyAuthSubject, a.consentRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyUriPath, viper.GetString("consent_page"),
+	)
+}
+
+// logInfoRedirectWithConsent logs an info level message with the given parameters
+// to the default logger.
+//
+// Parameters:
+// - redirectTo: the URI to which the user will be redirected
+//
+// Dependencies:
+// - DefaultLogger from the logging package
+//
+// This method assumes that the ApiConfig object is properly initialized and the following fields are set:
+// - guid (string)
+// - clientId (*string)
+// - clientName (string)
+// - consentRequest (a struct with a GetSubject method)
+// - challenge (string)
+//
+// Example usage:
+//
+//	apiConfig := &ApiConfig{
+//	    guid: "sample-guid",
+//	    clientId: "sample-clientId",
+//	    clientName: "sample-clientName",
+//	    consentRequest: ConsentRequest{Subject: "sample-subject"},
+//	    challenge: "sample-challenge",
+//	}
+//
+// apiConfig.logInfoRedirectWithConsent("sample-redirectUri")
+func (a *ApiConfig) logInfoRedirectWithConsent(redirectTo string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeySkip, true,
+		decl.LogKeyClientID, *a.clientId,
+		decl.LogKeyClientName, a.clientName,
+		decl.LogKeyAuthSubject, a.consentRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
+		decl.LogKeyUriPath, viper.GetString("consent_page"),
+		decl.LogKeyRedirectTo, redirectTo,
+	)
+}
+
 // Page '/consent'
 func consentGETHandler(ctx *gin.Context) {
 	var (
-		wantAbout      bool
-		wantPolicy     bool
-		wantTos        bool
-		skipConsent    bool
-		policyUri      string
-		tosUri         string
-		clientUri      string
-		imageUri       string
-		err            error
-		clientId       *string
-		guid           = ctx.Value(decl.GUIDKey).(string)
-		csrfToken      = ctx.Value(decl.CSRFTokenKey).(string)
-		consentRequest *openapi.OAuth2ConsentRequest
-		acceptRequest  *openapi.OAuth2RedirectTo
-		httpResponse   *http.Response
+		err          error
+		httpResponse *http.Response
 	)
 
 	consentChallenge := ctx.Query("consent_challenge")
@@ -1755,235 +2095,43 @@ func consentGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := createHttpClient()
-	configuration := createConfiguration(httpClient)
-	apiClient := openapi.NewAPIClient(configuration)
+	apiConfig := &ApiConfig{ctx: ctx}
 
-	consentRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
-		consentChallenge).Execute()
+	apiConfig.Initialize()
+
+	apiConfig.challenge = consentChallenge
+	apiConfig.csrfToken = ctx.Value(decl.CSRFTokenKey).(string)
+
+	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
+		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
 
 		return
 	}
 
-	oauth2Client := consentRequest.GetClient()
+	oauth2Client := apiConfig.consentRequest.GetClient()
 
 	clientIdFound := false
-	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
+	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
 		handleErr(ctx, errors2.ErrHydraNoClientId)
 
 		return
 	}
 
-	clientName := oauth2Client.GetClientName()
+	apiConfig.clientName = oauth2Client.GetClientName()
 
 	util.DebugModule(
 		decl.DbgHydra,
-		decl.LogKeyGUID, guid,
-		"skip_hydra", fmt.Sprintf("%v", consentRequest.GetSkip()),
-		"skip_config", fmt.Sprintf("%v", skipConsent),
+		decl.LogKeyGUID, apiConfig.guid,
+		"skip_hydra", fmt.Sprintf("%v", apiConfig.consentRequest.GetSkip()),
+		"skip_config", fmt.Sprintf("%v", config.GetSkipConsent(*apiConfig.clientId)),
 	)
 
-	if !(consentRequest.GetSkip() || config.GetSkipConsent(*clientId)) {
-		var (
-			scopes           []Scope
-			scopeDescription string
-		)
-
-		requestedScopes := consentRequest.GetRequestedScope()
-
-		session := sessions.Default(ctx)
-		cookieValue := session.Get(decl.CookieLang)
-
-		for index := range requestedScopes {
-			switch requestedScopes[index] {
-			case decl.ScopeOpenId:
-				scopeDescription = getLocalized(ctx, "Allow access to identity information")
-			case decl.ScopeOfflineAccess:
-				scopeDescription = getLocalized(ctx, "Allow an application access to private data without your personal presence")
-			case decl.ScopeProfile:
-				scopeDescription = getLocalized(ctx, "Allow access to personal profile data")
-			case decl.ScopeEmail:
-				scopeDescription = getLocalized(ctx, "Allow access to your email address")
-			case decl.ScopeAddress:
-				scopeDescription = getLocalized(ctx, "Allow access to your home address")
-			case decl.ScopePhone:
-				scopeDescription = getLocalized(ctx, "Allow access to your phone number")
-			case decl.ScopeGroups:
-				scopeDescription = getLocalized(ctx, "Allow access to group memberships")
-			default:
-				scopeDescription = ""
-
-				if config.LoadableConfig.Oauth2 != nil {
-					for customScopeIndex := range config.LoadableConfig.Oauth2.CustomScopes {
-						if config.LoadableConfig.Oauth2.CustomScopes[customScopeIndex].Name != requestedScopes[index] {
-							continue
-						}
-
-						scopeDescription = config.LoadableConfig.Oauth2.CustomScopes[customScopeIndex].Description
-
-						if len(config.LoadableConfig.Oauth2.CustomScopes[customScopeIndex].Other) > 0 {
-							lang := cookieValue.(string)
-
-							if value, assertOk := config.LoadableConfig.Oauth2.CustomScopes[customScopeIndex].Other["description_"+lang]; assertOk {
-								scopeDescription = value.(string)
-							}
-						}
-
-						break
-					}
-				}
-
-				if scopeDescription == "" {
-					scopeDescription = getLocalized(ctx, "Allow access to a specific scope")
-				}
-			}
-
-			scopes = append(scopes, Scope{ScopeName: requestedScopes[index], ScopeDescription: scopeDescription})
-		}
-
-		imageUri = oauth2Client.GetLogoUri()
-		if imageUri == "" {
-			imageUri = viper.GetString("default_logo_image")
-		}
-
-		if policyUri = oauth2Client.GetPolicyUri(); policyUri != "" {
-			wantPolicy = true
-		}
-
-		if tosUri = oauth2Client.GetTosUri(); tosUri != "" {
-			wantTos = true
-		}
-
-		if clientUri = oauth2Client.GetClientUri(); clientUri != "" {
-			wantAbout = true
-		}
-
-		applicationName := oauth2Client.GetClientName()
-
-		languageCurrentTag := language.MustParse(cookieValue.(string))
-		languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-		languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
-
-		consentData := &ConsentPageData{
-			Title: getLocalized(ctx, "Consent"),
-			WantWelcome: func() bool {
-				if viper.GetString("login_page_welcome") != "" {
-					return true
-				}
-
-				return false
-			}(),
-			Welcome:             viper.GetString("consent_page_welcome"),
-			LogoImage:           imageUri,
-			LogoImageAlt:        viper.GetString("consent_page_logo_image_alt"),
-			ConsentMessage:      getLocalized(ctx, "An application requests access to your data"),
-			ApplicationName:     applicationName,
-			WantAbout:           wantAbout,
-			About:               getLocalized(ctx, "Get further information about this application..."),
-			AboutUri:            clientUri,
-			Scopes:              scopes,
-			WantPolicy:          wantPolicy,
-			Policy:              getLocalized(ctx, "Privacy policy"),
-			PolicyUri:           policyUri,
-			WantTos:             wantTos,
-			Tos:                 getLocalized(ctx, "Terms of service"),
-			TosUri:              tosUri,
-			Remember:            getLocalized(ctx, "Do not ask me again"),
-			AcceptSubmit:        getLocalized(ctx, "Accept access"),
-			RejectSubmit:        getLocalized(ctx, "Deny access"),
-			LanguageTag:         session.Get(decl.CookieLang).(string),
-			LanguageCurrentName: languageCurrentName,
-			LanguagePassive:     languagePassive,
-			CSRFToken:           csrfToken,
-			ConsentChallenge:    consentChallenge,
-			PostConsentEndpoint: viper.GetString("consent_page"),
-		}
-
-		ctx.HTML(http.StatusOK, "consent.html", consentData)
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeySkip, false,
-			decl.LogKeyClientID, *clientId,
-			decl.LogKeyClientName, clientName,
-			decl.LogKeyAuthSubject, consentRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, consentChallenge,
-			decl.LogKeyUriPath, viper.GetString("consent_page"),
-		)
+	if !(apiConfig.consentRequest.GetSkip() || config.GetSkipConsent(*apiConfig.clientId)) {
+		apiConfig.processConsent()
 	} else {
-		var session *openapi.AcceptOAuth2ConsentRequestSession
-
-		consentContext := consentRequest.GetContext()
-		acceptedScopes := consentRequest.GetRequestedScope()
-		rememberFor := int64(viper.GetInt("login_remember_for"))
-
-		util.DebugModule(
-			decl.DbgHydra,
-			decl.LogKeyGUID, guid,
-			"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
-		)
-
-		needClaims := false
-
-		for index := range acceptedScopes {
-			if acceptedScopes[index] != decl.ScopeOpenId {
-				continue
-			}
-
-			needClaims = true
-
-			break
-		}
-
-		if needClaims {
-			util.DebugModule(
-				decl.DbgHydra,
-				decl.LogKeyGUID, guid,
-				decl.LogKeyMsg, "Scope 'openid' found, need claims",
-			)
-
-			session = getClaimsFromConsentContext(guid, acceptedScopes, consentContext)
-		}
-
-		acceptConsentRequest := apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(ctx).AcceptOAuth2ConsentRequest(
-			openapi.AcceptOAuth2ConsentRequest{
-				GrantAccessTokenAudience: consentRequest.GetRequestedAccessTokenAudience(),
-				GrantScope:               acceptedScopes,
-				Remember: func() *bool {
-					if skipConsent {
-						remember := false
-
-						return &remember
-					}
-
-					return consentRequest.Skip
-				}(),
-				RememberFor: &rememberFor,
-				Session:     session,
-			})
-
-		acceptRequest, httpResponse, err = acceptConsentRequest.ConsentChallenge(consentChallenge).Execute()
-		if err != nil {
-			handleHydraErr(ctx, err, httpResponse)
-
-			return
-		}
-
-		ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeySkip, true,
-			decl.LogKeyClientID, *clientId,
-			decl.LogKeyClientName, clientName,
-			decl.LogKeyAuthSubject, consentRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, consentChallenge,
-			decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
-			decl.LogKeyUriPath, viper.GetString("consent_page"),
-			decl.LogKeyRedirectTo, acceptRequest.GetRedirectTo(),
-		)
+		apiConfig.redirectWithConsent()
 	}
 }
 
