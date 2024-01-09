@@ -139,7 +139,7 @@ func main() {
 	action.WorkerEndChan = make(chan lualib.Done)
 	luaActionCtx, luaActionCancel = context.WithCancel(ctx)
 
-	go action.Worker(luaActionCtx)
+	go action.NewWorker().Work(luaActionCtx)
 
 	go func() {
 		sig := <-sigsTerminate
@@ -229,7 +229,7 @@ func main() {
 				luaActionCtx, luaActionCancel = context.WithCancel(ctx)
 
 				// Restart action worker.
-				go action.Worker(luaActionCtx)
+				go action.NewWorker().Work(luaActionCtx)
 
 				if err := config.ReloadConfigFile(); err != nil {
 					level.Error(logging.DefaultErrLogger).Log(

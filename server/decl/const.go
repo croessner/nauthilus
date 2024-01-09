@@ -403,6 +403,8 @@ const (
 
 const (
 	LuaDefaultTable = "nauthilus"
+	LuaSuccess      = "success"
+	LuaFail         = "fail"
 
 	LuaFeatureTriggerNo  = "FEATURE_TRIGGER_NO"
 	LuaFeatureTriggerYes = "FEATURE_TRIGGER_YES"
