@@ -850,17 +850,7 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
 
-	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyGUID, a.guid,
-		decl.LogKeySkip, true,
-		decl.LogKeyClientID, *a.clientId,
-		decl.LogKeyClientName, a.clientName,
-		decl.LogKeyAuthSubject, a.loginRequest.GetSubject(),
-		decl.LogKeyAuthChallenge, a.challenge,
-		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
-		decl.LogKeyUriPath, viper.GetString("login_page"),
-		decl.LogKeyRedirectTo, acceptRequest.GetRedirectTo(),
-	)
+	a.logInfoLoginSkip(acceptRequest.GetRedirectTo())
 }
 
 // handleLoginNoSkip handles the login process when skip is false.
@@ -1026,6 +1016,26 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 	a.ctx.HTML(http.StatusOK, "login.html", loginData)
 
+	a.logInfoLoginNoSkip()
+}
+
+// logInfoLoginSkip logs the login skip event with the provided details.
+func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeySkip, true,
+		decl.LogKeyClientID, *a.clientId,
+		decl.LogKeyClientName, a.clientName,
+		decl.LogKeyAuthSubject, a.loginRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
+		decl.LogKeyUriPath, viper.GetString("login_page"),
+		decl.LogKeyRedirectTo, redirectTo,
+	)
+}
+
+// logInfoLoginNoSkip logs information about the login operation without skipping any step.
+func (a *ApiConfig) logInfoLoginNoSkip() {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
 		decl.LogKeySkip, false,
@@ -1370,19 +1380,6 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 }
 
 // logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
-// It uses the DefaultLogger from the logging package.
-//
-// Parameters:
-// - subject: The authentication subject
-// - redirectTo: The URL to redirect to after authentication
-//
-// Example usage:
-// apiConfig.logInfoLoginAccept("john_doe", "/dashboard")
-//
-// Dependencies:
-// - DefaultLogger from the logging package
-//
-// Note: This method assumes that the ApiConfig object is properly initialized with the relevant fields.
 func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
@@ -1857,6 +1854,7 @@ func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue in
 // It returns a string representing the description of the requested scope.
 func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	var scopeDescription string
+
 	if config.LoadableConfig.Oauth2 != nil {
 		for _, customScope := range config.LoadableConfig.Oauth2.CustomScopes {
 			if customScope.Name != requestedScope {
@@ -1880,6 +1878,29 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 	}
 
 	return scopeDescription
+}
+
+// HandleConsentSkip handles the consent skipping logic.
+// If the consent request skip flag is false and the skip consent config flag is false, it processes the consent.
+// Otherwise, it redirects with consent.
+//
+// Example usage:
+//
+//	apiConfig := &ApiConfig{ctx: ctx}
+//	apiConfig.Initialize()
+//	apiConfig.HandleConsentSkip()
+//
+// Dependencies:
+//   - a.consentRequest.GetSkip() (from Initialize)
+//   - config.GetSkipConsent(*a.clientId) (from Initialize)
+//
+// Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
+func (a *ApiConfig) HandleConsentSkip() {
+	if !(a.consentRequest.GetSkip() || config.GetSkipConsent(*a.clientId)) {
+		a.processConsent()
+	} else {
+		a.redirectWithConsent()
+	}
 }
 
 // processConsent handles the processing and rendering of the consent page.
@@ -2059,18 +2080,6 @@ func (a *ApiConfig) redirectWithConsent() {
 }
 
 // logInfoConsent logs information about the consent request.
-// It uses the level.Info() function from the logging package to log the information.
-// The logged information includes the GUID, skip flag, client ID, client name,
-// authentication subject, authentication challenge, and URI path.
-//
-// Example usage:
-//
-//	apiConfig.logInfoConsent()
-//
-// Dependencies:
-//   - logging.DefaultLogger
-//
-// Note: This method assumes that the ApiConfig object is properly initialized.
 func (a *ApiConfig) logInfoConsent() {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
@@ -2085,31 +2094,6 @@ func (a *ApiConfig) logInfoConsent() {
 
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
-//
-// Parameters:
-// - redirectTo: the URI to which the user will be redirected
-//
-// Dependencies:
-// - DefaultLogger from the logging package
-//
-// This method assumes that the ApiConfig object is properly initialized and the following fields are set:
-// - guid (string)
-// - clientId (*string)
-// - clientName (string)
-// - consentRequest (a struct with a GetSubject method)
-// - challenge (string)
-//
-// Example usage:
-//
-//	apiConfig := &ApiConfig{
-//	    guid: "sample-guid",
-//	    clientId: "sample-clientId",
-//	    clientName: "sample-clientName",
-//	    consentRequest: ConsentRequest{Subject: "sample-subject"},
-//	    challenge: "sample-challenge",
-//	}
-//
-// apiConfig.logInfoRedirectWithConsent("sample-redirectUri")
 func (a *ApiConfig) logInfoRedirectWithConsent(redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
@@ -2171,23 +2155,206 @@ func consentGETHandler(ctx *gin.Context) {
 		"skip_config", fmt.Sprintf("%v", config.GetSkipConsent(*apiConfig.clientId)),
 	)
 
-	if !(apiConfig.consentRequest.GetSkip() || config.GetSkipConsent(*apiConfig.clientId)) {
-		apiConfig.processConsent()
+	apiConfig.HandleConsentSkip()
+}
+
+// HandleConsentSubmit processes the form submission for the consent page.
+// If the submit value is "accept", it calls the processConsentAccept method.
+// Otherwise, it calls the processConsentReject method.
+//
+// Example usage:
+//
+//	apiConfig := &ApiConfig{ctx: ctx}
+//	apiConfig.Initialize()
+//
+//	// Use the initialized ApiConfig object
+//	apiConfig.HandleConsentSubmit()
+//
+// Dependencies:
+// - processConsentAccept method
+// - processConsentReject method
+func (a *ApiConfig) HandleConsentSubmit() {
+	if a.ctx.Request.Form.Get("submit") == "accept" {
+		a.processConsentAccept()
 	} else {
-		apiConfig.redirectWithConsent()
+		a.processConsentReject()
 	}
+}
+
+// processConsentAccept processes the consent acceptance request.
+// It retrieves the requested scopes and consent context from the consent request.
+// It then checks which scopes the user has accepted and creates a list of accepted scopes.
+// The scopes that the user has accepted are determined based on the POST form data.
+// If the "openid" scope is among the accepted scopes, it indicates that claims are needed.
+// If claims are needed, it calls the getClaimsFromConsentContext function to retrieve the claims from the consent context.
+// It then retrieves the remember and rememberFor values from the POST form data.
+// Finally, it calls the AcceptOAuth2ConsentRequest function of the API client to accept the consent request and redirects the user to the appropriate page.
+//
+// Example usage:
+//
+//	apiConfig.HandleConsentSubmit()
+//
+// Dependencies:
+//
+//	getClaimsFromConsentContext function
+//	handleHydraErr function
+//
+// Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx`, `consentRequest`, `apiClient`, and `challenge` fields set.
+func (a *ApiConfig) processConsentAccept() {
+	var (
+		session        *openapi.AcceptOAuth2ConsentRequestSession
+		acceptedScopes []string
+	)
+
+	requestedScopes := a.consentRequest.GetRequestedScope()
+	consentContext := a.consentRequest.GetContext()
+
+	// https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims
+	for index := range requestedScopes {
+		if a.ctx.PostForm(requestedScopes[index]) == "on" {
+			acceptedScopes = append(acceptedScopes, requestedScopes[index])
+		}
+	}
+
+	util.DebugModule(
+		decl.DbgHydra,
+		decl.LogKeyGUID, a.guid,
+		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
+	)
+
+	needClaims := false
+
+	for index := range acceptedScopes {
+		if acceptedScopes[index] != decl.ScopeOpenId {
+			continue
+		}
+
+		needClaims = true
+
+		break
+	}
+
+	if needClaims {
+		util.DebugModule(decl.DbgHydra, decl.LogKeyGUID, a.guid, decl.LogKeyMsg, "Scope 'openid' found, need claims")
+
+		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext)
+	}
+
+	rememberFor := int64(viper.GetInt("login_remember_for"))
+	remember := false
+
+	if a.ctx.PostForm("remember") == "on" {
+		remember = true
+	}
+
+	acceptConsentRequest := a.apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
+		openapi.AcceptOAuth2ConsentRequest{
+			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
+			GrantScope:               acceptedScopes,
+			Remember:                 &remember,
+			RememberFor:              &rememberFor,
+			Session:                  session,
+		})
+
+	acceptRequest, httpResponse, err := acceptConsentRequest.ConsentChallenge(a.challenge).Execute()
+	if err != nil {
+		handleHydraErr(a.ctx, err, httpResponse)
+
+		return
+	}
+
+	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
+
+	a.logInfoConsentAccept(acceptRequest.GetRedirectTo())
+}
+
+// processConsentReject processes the rejection of the OAuth2 consent request.
+// It sends a reject request to the OAuth2 API and handles the response.
+//
+// Example usage:
+//
+//	apiConfig := &ApiConfig{ctx: ctx}
+//	apiConfig.processConsentReject()
+//
+// Dependencies:
+//   - a.apiClient: The API client for making requests to the OAuth2 API.
+//   - a.challenge: The challenge value for the consent request.
+//   - handleHydraErr: A function for handling Hydra errors.
+//   - decl.PasswordFail: A constant for the password failure message.
+//
+// Dependencies:
+// - handleHydraErr function
+// - decl.PasswordFail constant
+//
+// Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx`, `apiClient`, and `challenge` fields set.
+func (a *ApiConfig) processConsentReject() {
+	var (
+		redirectTo *string
+		isSet      bool
+	)
+
+	errorDescription := "Access denied by user"
+	statusCode := int64(http.StatusForbidden)
+
+	rejectConsentRequest := a.apiClient.OAuth2Api.RejectOAuth2ConsentRequest(a.ctx).RejectOAuth2Request(
+		openapi.RejectOAuth2Request{
+			ErrorDescription: &errorDescription,
+			ErrorHint:        nil,
+			StatusCode:       &statusCode,
+		})
+
+	rejectRequest, httpResponse, err := rejectConsentRequest.ConsentChallenge(a.challenge).Execute()
+	if err != nil {
+		handleHydraErr(a.ctx, err, httpResponse)
+
+		return
+	}
+
+	if redirectTo, isSet = rejectRequest.GetRedirectToOk(); isSet {
+		a.ctx.Redirect(http.StatusFound, *redirectTo)
+	} else {
+		redirectToValue := "unknown"
+		redirectTo = &redirectToValue
+
+		a.ctx.String(http.StatusForbidden, decl.PasswordFail)
+	}
+
+	a.LogInfoConsentReject(redirectTo)
+}
+
+// logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
+func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeyClientID, *a.clientId,
+		decl.LogKeyClientName, a.clientName,
+		decl.LogKeyAuthSubject, a.consentRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
+		decl.LogKeyUriPath, viper.GetString("consent_page")+"/post",
+		decl.LogKeyRedirectTo, redirectTo,
+	)
+}
+
+// LogInfoConsentReject logs the information about a rejected consent request.
+func (a *ApiConfig) LogInfoConsentReject(redirectTo *string) {
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyGUID, a.guid,
+		decl.LogKeyClientID, *a.clientId,
+		decl.LogKeyClientName, a.clientName,
+		decl.LogKeyAuthSubject, a.consentRequest.GetSubject(),
+		decl.LogKeyAuthChallenge, a.challenge,
+		decl.LogKeyAuthStatus, decl.LogKeyAuthReject,
+		decl.LogKeyUriPath, viper.GetString("consent_page")+"/post",
+		decl.LogKeyRedirectTo, *redirectTo,
+	)
 }
 
 // Page '/consent/post'
 func consentPOSTHandler(ctx *gin.Context) {
 	var (
-		err            error
-		clientId       *string
-		guid           = ctx.Value(decl.GUIDKey).(string)
-		consentRequest *openapi.OAuth2ConsentRequest
-		acceptRequest  *openapi.OAuth2RedirectTo
-		rejectRequest  *openapi.OAuth2RedirectTo
-		httpResponse   *http.Response
+		err          error
+		httpResponse *http.Response
 	)
 
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
@@ -2197,147 +2364,32 @@ func consentPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := createHttpClient()
-	configuration := createConfiguration(httpClient)
-	apiClient := openapi.NewAPIClient(configuration)
+	apiConfig := &ApiConfig{ctx: ctx}
 
-	consentRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
-		consentChallenge).Execute()
+	apiConfig.Initialize()
+
+	apiConfig.challenge = consentChallenge
+
+	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
+		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
 
 		return
 	}
 
-	oauth2Client := consentRequest.GetClient()
+	oauth2Client := apiConfig.consentRequest.GetClient()
 
 	clientIdFound := false
-	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
+	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
 		handleErr(ctx, errors2.ErrHydraNoClientId)
 
 		return
 	}
 
-	clientName := oauth2Client.GetClientName()
+	apiConfig.clientName = oauth2Client.GetClientName()
 
-	if ctx.Request.Form.Get("submit") == "accept" {
-		var (
-			session        *openapi.AcceptOAuth2ConsentRequestSession
-			acceptedScopes []string
-		)
-
-		requestedScopes := consentRequest.GetRequestedScope()
-		consentContext := consentRequest.GetContext()
-
-		// https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims
-		for index := range requestedScopes {
-			if ctx.PostForm(requestedScopes[index]) == "on" {
-				acceptedScopes = append(acceptedScopes, requestedScopes[index])
-			}
-		}
-
-		util.DebugModule(
-			decl.DbgHydra,
-			decl.LogKeyGUID, guid,
-			"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
-		)
-
-		needClaims := false
-
-		for index := range acceptedScopes {
-			if acceptedScopes[index] != decl.ScopeOpenId {
-				continue
-			}
-
-			needClaims = true
-
-			break
-		}
-
-		if needClaims {
-			util.DebugModule(decl.DbgHydra, decl.LogKeyGUID, guid, decl.LogKeyMsg, "Scope 'openid' found, need claims")
-
-			session = getClaimsFromConsentContext(guid, acceptedScopes, consentContext)
-		}
-
-		rememberFor := int64(viper.GetInt("login_remember_for"))
-		remember := false
-
-		if ctx.PostForm("remember") == "on" {
-			remember = true
-		}
-
-		acceptConsentRequest := apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(ctx).AcceptOAuth2ConsentRequest(
-			openapi.AcceptOAuth2ConsentRequest{
-				GrantAccessTokenAudience: consentRequest.GetRequestedAccessTokenAudience(),
-				GrantScope:               acceptedScopes,
-				Remember:                 &remember,
-				RememberFor:              &rememberFor,
-				Session:                  session,
-			})
-
-		acceptRequest, httpResponse, err = acceptConsentRequest.ConsentChallenge(consentChallenge).Execute()
-		if err != nil {
-			handleHydraErr(ctx, err, httpResponse)
-
-			return
-		}
-
-		ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyClientID, *clientId,
-			decl.LogKeyClientName, clientName,
-			decl.LogKeyAuthSubject, consentRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, consentChallenge,
-			decl.LogKeyAuthStatus, decl.LogKeyAuthAccept,
-			decl.LogKeyUriPath, viper.GetString("consent_page")+"/post",
-			decl.LogKeyRedirectTo, acceptRequest.GetRedirectTo(),
-		)
-	} else {
-		var (
-			redirectTo *string
-			isSet      bool
-		)
-
-		errorDescription := "Access denied by user"
-		statusCode := int64(http.StatusForbidden)
-
-		rejectConsentRequest := apiClient.OAuth2Api.RejectOAuth2ConsentRequest(ctx).RejectOAuth2Request(
-			openapi.RejectOAuth2Request{
-				ErrorDescription: &errorDescription,
-				ErrorHint:        nil,
-				StatusCode:       &statusCode,
-			})
-
-		rejectRequest, httpResponse, err = rejectConsentRequest.ConsentChallenge(consentChallenge).Execute()
-		if err != nil {
-			handleHydraErr(ctx, err, httpResponse)
-
-			return
-		}
-
-		if redirectTo, isSet = rejectRequest.GetRedirectToOk(); isSet {
-			ctx.Redirect(http.StatusFound, *redirectTo)
-		} else {
-			redirectToValue := "unknown"
-			redirectTo = &redirectToValue
-
-			ctx.String(http.StatusForbidden, decl.PasswordFail)
-		}
-
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyClientID, *clientId,
-			decl.LogKeyClientName, clientName,
-			decl.LogKeyAuthSubject, consentRequest.GetSubject(),
-			decl.LogKeyAuthChallenge, consentChallenge,
-			decl.LogKeyAuthStatus, decl.LogKeyAuthReject,
-			decl.LogKeyUriPath, viper.GetString("consent_page")+"/post",
-			decl.LogKeyRedirectTo, *redirectTo,
-		)
-	}
+	apiConfig.HandleConsentSubmit()
 }
 
 // HandleLogout handles the logout functionality of the API.
@@ -2379,6 +2431,11 @@ func (a *ApiConfig) HandleLogout() {
 
 	a.ctx.HTML(http.StatusOK, "logout.html", logoutData)
 
+	a.logInfoLogout()
+}
+
+// logInfoLogout logs information about a logout action.
+func (a *ApiConfig) logInfoLogout() {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
 		decl.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
@@ -2523,6 +2580,7 @@ func (a *ApiConfig) rejectLogout() {
 	a.logInfoLogoutReject(redirectTo)
 }
 
+// logInfoLogoutAccept logs information about the logout request acceptance.
 func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
@@ -2534,6 +2592,7 @@ func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
 	)
 }
 
+// logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
 func (a *ApiConfig) logInfoLogoutReject(redirectTo string) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, a.guid,
