@@ -400,17 +400,57 @@ type ApiConfig struct {
 // ctx: The Gin context.
 // err: The error to handle.
 func handleErr(ctx *gin.Context, err error) {
+	processErrorLogging(ctx, err)
+	SessionCleaner(ctx)
+	ctx.Set("failure", true)
+	ctx.Set("message", err)
+	notifyGETHandler(ctx)
+}
+
+// processErrorLogging logs the error details and prints a goroutine dump.
+// It takes the Gin context and the error as inputs.
+// It retrieves the GUID from the context and logs the error using the logError function.
+// It then creates a buffer and uses the runtime.Stack function to fill the buffer with a goroutine dump.
+// Finally, it prints the goroutine dump along with the GUID to the console.
+//
+// ctx: The Gin context.
+// err: The error to log.
+// Usage example:
+//
+//	handleErr(ctx, err)
+//	SessionCleaner(ctx)
+//	ctx.Set("failure", true)
+//	ctx.Set("message", err)
+//	notifyGETHandler(ctx)
+//
+// See logError, decl.GUIDKey, and runtime.Stack for additional information.
+func processErrorLogging(ctx *gin.Context, err error) {
+	guid := ctx.Value(decl.GUIDKey).(string)
+
+	logError(ctx, err)
+
+	buf := make([]byte, 1<<20)
+	stackLen := runtime.Stack(buf, false)
+
+	fmt.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
+}
+
+// logError logs the error details along with the corresponding GUID, client IP, and error message.
+// If the error is of type *errors2.DetailedError, it logs the error details using logging.DefaultErrLogger.Log method.
+// Otherwise, it logs only the error message.
+//
+// ctx: The Gin context.
+// err: The error to log.
+func logError(ctx *gin.Context, err error) {
 	var detailedError *errors2.DetailedError
 
 	guid := ctx.Value(decl.GUIDKey).(string)
-	buf := make([]byte, 1<<20)
-	stackLen := runtime.Stack(buf, false)
 
 	if errors.As(err, &detailedError) {
 		level.Error(logging.DefaultErrLogger).Log(
 			decl.LogKeyGUID, guid,
-			decl.LogKeyError, detailedError.Error(),
-			decl.LogKeyErrorDetails, detailedError.GetDetails(),
+			decl.LogKeyError, (*detailedError).Error(),
+			decl.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			decl.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
@@ -420,15 +460,6 @@ func handleErr(ctx *gin.Context, err error) {
 			decl.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	}
-
-	fmt.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
-
-	SessionCleaner(ctx)
-
-	ctx.Set("failure", true)
-	ctx.Set("message", err)
-
-	notifyGETHandler(ctx)
 }
 
 // notifyGETHandler handles the GET request for the notification page.
@@ -511,6 +542,18 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	return localization
 }
 
+// handleHydraErr handles an error by checking the status code of the http response.
+// If the status code is StatusNotFound, it calls the handleErr function with errors2.ErrUnknownJSON as the error.
+// If the status code is StatusGone, it calls the handleErr function with errors2.ErrHTTPRequestGone as the error.
+// Otherwise, it calls the handleErr function with the original error.
+// If the http response is nil, it calls the handleErr function with the original error.
+//
+// ctx: The Gin context.
+// err: The error to handle.
+// httpResponse: The http response object.
+// handleErr: The function that handles an error.
+// errors2.ErrUnknownJSON: The error representing an unknown JSON response.
+// errors2.ErrHTTPRequestGone: The error representing a gone http request.
 func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 	if httpResponse != nil {
 		switch httpResponse.StatusCode {
