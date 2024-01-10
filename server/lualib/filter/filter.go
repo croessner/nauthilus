@@ -227,6 +227,8 @@ func setGlobals(r *Request, L *lua.LState, globals *lua.LTable) {
 	globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
 	globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+
+	L.SetGlobal(decl.LuaDefaultTable, globals)
 }
 
 // setRequest fills a provided *lua.LTable with corresponding values obtained from a supplied *Request object.
