@@ -63,6 +63,7 @@ const (
 	LogKeyStatsNumGC             = "num_gc"
 	LogKeyLDAPPoolName           = "pool"
 	LogKeyLoginSkip              = "login_skip"
+	LogKeyLuaScripttimeout       = "lua_script_timeout"
 
 	NotAvailable = "N/A"
 )
@@ -465,4 +466,10 @@ const (
 	LuaRequestXSSLProtocol        = "ssl_protocol"
 	LuaRequestXSSLCipher          = "ssl_cipher"
 	LuaRequestTOTPSecret          = "totp_secret"
+)
+
+// Exit status codes.
+const (
+	ResultOk   = 0
+	ResultFail = 1
 )
