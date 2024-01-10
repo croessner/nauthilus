@@ -33,14 +33,22 @@ import (
 )
 
 // Scope represents a scope used in the ConsentPageData struct. It contains the name and description of the scope.
+// Scope represents the scope of an object.
 type Scope struct {
-	ScopeName        string
+	// ScopeName represents the name of the scope.
+	ScopeName string
+
+	// ScopeDescription represents a detailed description of the scope.
 	ScopeDescription string
 }
 
 // Language represents a language used in various page data structs.
+// Language represents a programming language
 type Language struct {
+	// LanguageLink represents the link associated with the language
 	LanguageLink string
+
+	// LanguageName represents the name of the language
 	LanguageName string
 }
 
@@ -145,6 +153,9 @@ type LoginPageData struct {
 	LanguagePassive []Language
 }
 
+// TwoFactorData is a struct that includes parameters for processing two-factor
+// authentication. It handles various attributes ranging from welcome messages,
+// terms of service, about sections, among others.
 type TwoFactorData struct {
 	// WantWelcome indicates if a welcome message is desired
 	WantWelcome bool
@@ -376,18 +387,42 @@ type NotifyPageData struct {
 	LanguagePassive []Language
 }
 
+// ApiConfig is a struct that encapsulates configuration and parameters for
+// HTTP communication with OAuth2 OpenID-Connect server via OpenAPI. This includes
+// configurations for HTTP client, authorization parameters, and request context.
 type ApiConfig struct {
-	httpClient     *http.Client
-	apiClient      *openapi.APIClient
-	ctx            *gin.Context
-	loginRequest   *openapi.OAuth2LoginRequest
+	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-Connect server.
+	httpClient *http.Client
+
+	// apiClient holds the client information to interact with the OpenAPI.
+	apiClient *openapi.APIClient
+
+	// ctx provides context for HTTP request made against Gin framework.
+	ctx *gin.Context
+
+	// loginRequest is used to store parameters required for OAuth2LoginRequest.
+	loginRequest *openapi.OAuth2LoginRequest
+
+	// consentRequest is used to store parameters required for OAuth2ConsentRequest.
 	consentRequest *openapi.OAuth2ConsentRequest
-	logoutRequest  *openapi.OAuth2LogoutRequest
-	clientId       *string
-	guid           string
-	csrfToken      string
-	clientName     string
-	challenge      string
+
+	// logoutRequest is used to store parameters required for OAuth2LogoutRequest.
+	logoutRequest *openapi.OAuth2LogoutRequest
+
+	// clientId holds client identification which is unique for each application.
+	clientId *string
+
+	// guid is a unique identifier for a specific message or request.
+	guid string
+
+	// csrfToken is used to prevent Cross-Site Request Forgery.
+	csrfToken string
+
+	// clientName holds the name of the client application.
+	clientName string
+
+	// challenge is a unique string used in the authorization process.
+	challenge string
 }
 
 // handleErr handles an error by logging the error details and printing a goroutine dump.

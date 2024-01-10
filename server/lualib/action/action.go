@@ -19,58 +19,121 @@ import (
 )
 
 var (
-	RequestChan   chan *Action
+	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
+	RequestChan chan *Action
+
+	// WorkerEndChan is a buffered channel of type `lualib.Done` used to signal the end of a worker.
 	WorkerEndChan chan lualib.Done
 )
 
+// Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
 
+// LuaScriptAction represents an action that can be executed using Lua script.
 type LuaScriptAction struct {
-	ScriptPath     string
+	// ScriptPath is the path to the Lua script file.
+	ScriptPath string
+
+	// ScriptCompiled is the compiled Lua function.
 	ScriptCompiled *lua.FunctionProto
-	LuaAction      decl.LuaAction
+
+	// LuaAction is the type of Lua action.
+	LuaAction decl.LuaAction
 }
 
 // Action contains a subset of the Authentication structure.
+// Action represents all the information related to a user's action in the system.
 type Action struct {
+	// LuaAction stores the user's desired action in Lua format.
 	LuaAction decl.LuaAction
 
-	Debug         bool
-	Repeating     bool
-	UserFound     bool
-	Authenticated bool
-	NoAuth        bool
+	// Debug is a flag indicating if the action is executed in debug mode.
+	Debug bool
 
+	// Repeating is a flag indicating if the action would be repeated.
+	Repeating bool
+
+	// UserFound is a flag indicating if the user executing the action was found in the system.
+	UserFound bool
+
+	// Authenticated is a flag indicating if the user is authenticated.
+	Authenticated bool
+
+	// NoAuth is a flag indicating if the action requires no authentication.
+	NoAuth bool
+
+	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
 	BruteForceCounter uint
 
-	Session      string // GUID
-	ClientIP     string
-	ClientPort   string
-	ClientNet    string
-	ClientHost   string
-	ClientID     string
-	LocalIP      string
-	LocalPort    string
-	Username     string
-	Account      string
+	// Session stores the unique session identifier.
+	Session string // GUID
+
+	// ClientIP stores the IP address of the client.
+	ClientIP string
+
+	// ClientPort stores the port number used by the client.
+	ClientPort string
+
+	// ClientNet stores the network used by the client.
+	ClientNet string
+
+	// ClientHost stores the hostname of the client.
+	ClientHost string
+
+	// ClientID stores the unique identifier for the client.
+	ClientID string
+
+	// LocalIP stores the IP address of the local machine.
+	LocalIP string
+
+	// LocalPort stores the port number used by the local machine.
+	LocalPort string
+
+	// Username stores the username of the user that was used to authenticate.
+	Username string
+
+	// Account stores the user's account information.
+	Account string
+
+	// UniqueUserID stores the unique user identifier.
 	UniqueUserID string
-	DisplayName  string
-	Password     string
-	Protocol     string
 
+	// DisplayName stores the user's display name.
+	DisplayName string
+
+	// Password stores the user's password.
+	Password string
+
+	// Protocol stores the protocol that the user used to authenticate.
+	Protocol string
+
+	// BruteForceName stores the name of the brute force protection mechanism.
 	BruteForceName string
-	FeatureName    string
 
+	// FeatureName is a feature that triggered the action.
+	FeatureName string
+
+	// Context represents the shared Lua context which is used by all Lua states accross the request.
 	*lualib.Context
 
+	// FinishedChan is a channel signaling the completion of the action.
 	FinishedChan chan Done
 }
 
+// Worker struct holds the data required for a worker process.
 type Worker struct {
-	ctx              *context.Context
+	// ctx is a pointer to a Context object used for managing and carrying context deadlines, cancel signals, and other request-scoped values across API boundaries and between processes.
+	ctx *context.Context
+
+	// luaActionRequest is a pointer to an Action. This specifies the action to be performed by the Lua scripting environment.
 	luaActionRequest *Action
-	actionScripts    []*LuaScriptAction
-	resultMap        map[int]string
+
+	// actionScripts is a slice of pointers to LuaScriptAction. This holds a collection of scripts that are to be executed by the worker process.
+	actionScripts []*LuaScriptAction
+
+	// resultMap is a map where the key is an int representing the exit code from an executed action, and the value is the corresponding textual representation or description of the exit code.
+	// The exit code is a system-generated status code returned when an action is executed. It allows for the determination of whether the script completed successfully, or an error occurred during its execution.
+	resultMap map[int]string
 }
 
 // NewWorker creates a new instance of the Worker struct.
