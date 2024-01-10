@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
+	"github.com/tengattack/gluacrypto"
+	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -336,6 +338,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 	defer LuaFilters.Mu.RUnlock()
 
 	L := lua.NewState()
+
+	libs.Preload(L)
+	gluacrypto.Preload(L)
 
 	globals := L.NewTable()
 	setGlobals(r, L, globals)
