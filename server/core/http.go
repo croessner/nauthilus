@@ -600,6 +600,8 @@ func HTTPApp(ctx context.Context) {
 	apiV1.POST("/:category/:service", httpQueryHandler)
 	apiV1.DELETE("/:category/:service", httpCacheHandler)
 
+	www.SetKeepAlivesEnabled(false)
+
 	if config.EnvConfig.HTTPOptions.UseSSL {
 		www.TLSConfig = &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
