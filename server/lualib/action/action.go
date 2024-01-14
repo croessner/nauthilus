@@ -256,6 +256,8 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 func (aw *Worker) handleRequest() {
 	L := lua.NewState()
 
+	defer L.Close()
+
 	libs.Preload(L)
 	gluacrypto.Preload(L)
 

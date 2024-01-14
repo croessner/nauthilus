@@ -341,6 +341,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 
 	L := lua.NewState()
 
+	defer L.Close()
+
 	libs.Preload(L)
 	gluacrypto.Preload(L)
 

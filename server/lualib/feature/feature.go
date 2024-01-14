@@ -229,6 +229,8 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	L := lua.NewState()
 
+	defer L.Close()
+
 	libs.Preload(L)
 	gluacrypto.Preload(L)
 

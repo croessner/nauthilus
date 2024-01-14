@@ -7,7 +7,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// Context is a system wide Lua context designed to exchange Lua LValues between all Lua levels. Even it implements all
+// Context is a system-wide Lua context designed to exchange Lua LValues between all Lua levels. Even it implements all
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
 type Context struct {

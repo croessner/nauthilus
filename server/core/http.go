@@ -17,6 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -309,6 +310,12 @@ func loggerMiddleware() gin.HandlerFunc {
 	}
 }
 
+func luaContextMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Set(decl.DataExchangeKey, lualib.NewContext())
+	}
+}
+
 func HTTPApp(ctx context.Context) {
 	var err error
 
@@ -344,6 +351,10 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
+	if !(config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug && config.EnvConfig.DevMode) {
+		pprof.Register(router)
+	}
+
 	sessionStore := cookie.NewStore([]byte(config.LoadableConfig.CookieStoreAuthKey), []byte(config.LoadableConfig.CookieStoreEncKey))
 	sessionStore.Options(sessions.Options{
 		Path:     "/",
@@ -351,12 +362,8 @@ func HTTPApp(ctx context.Context) {
 		SameSite: http.SameSiteStrictMode,
 	})
 
-	// Add central data exchange map and wrap the GoKit logger
-	router.Use(func() gin.HandlerFunc {
-		return func(ctx *gin.Context) {
-			ctx.Set(decl.DataExchangeKey, lualib.NewContext())
-		}
-	}(), loggerMiddleware())
+	// Wrap the GoKit logger
+	router.Use(loggerMiddleware())
 
 	www := &http.Server{
 		Addr:              config.EnvConfig.HTTPAddress,
@@ -419,18 +426,22 @@ func HTTPApp(ctx context.Context) {
 	loginRouter := router.Group(viper.GetString("login_page"), adapter.Wrap(nosurf.NewPure))
 	loginRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	loginRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginGETHandler)
 	loginRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginGETHandler)
 	loginRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginPOSTHandler)
 	loginRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginPOSTHandler)
@@ -439,18 +450,22 @@ func HTTPApp(ctx context.Context) {
 	deviceRouter := router.Group(viper.GetString("device_page"), adapter.Wrap(nosurf.NewPure))
 	deviceRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	deviceRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		deviceGETHandler)
 	deviceRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		deviceGETHandler)
 	deviceRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		devicePOSTHandler)
 	deviceRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		devicePOSTHandler)
@@ -459,18 +474,22 @@ func HTTPApp(ctx context.Context) {
 	consentRouter := router.Group(viper.GetString("consent_page"), adapter.Wrap(nosurf.NewPure))
 	consentRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	consentRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		consentGETHandler)
 	consentRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		consentGETHandler)
 	consentRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		consentPOSTHandler)
 	consentRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		consentPOSTHandler)
@@ -479,18 +498,22 @@ func HTTPApp(ctx context.Context) {
 	logoutRouter := router.Group(viper.GetString("logout_page"), adapter.Wrap(nosurf.NewPure))
 	logoutRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	logoutRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		logoutGETHandler)
 	logoutRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		logoutGETHandler)
 	logoutRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		logoutPOSTHandler)
 	logoutRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		logoutPOSTHandler)
@@ -502,49 +525,59 @@ func HTTPApp(ctx context.Context) {
 	twoFARootRouter := router.Group(decl.TwoFAv1Root, adapter.Wrap(nosurf.NewPure))
 
 	// This page handles the user login request to do a two-factor authentication
-	twoFactorRouter := twoFARootRouter.Group(viper.GetString("login_2fa_page"))
+	twoFactorRouter := twoFARootRouter.Group(viper.GetString("login_2fa_page"), adapter.Wrap(nosurf.NewPure))
 	twoFactorRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	twoFactorRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginGET2FAHandler)
 	twoFactorRouter.GET(":languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginGET2FAHandler)
 	twoFactorRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginPOST2FAHandler)
 	twoFactorRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		loginPOST2FAHandler)
 	twoFactorRouter.GET("/home",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		register2FAHomeHandler)
 	twoFactorRouter.GET("/home/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		register2FAHomeHandler)
 
 	// This page handles the TOTP registration
-	registerTotpRouter := twoFARootRouter.Group(viper.GetString("totp_page"))
+	registerTotpRouter := twoFARootRouter.Group(viper.GetString("totp_page"), adapter.Wrap(nosurf.NewPure))
 	registerTotpRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	registerTotpRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		registerTotpGETHandler)
 	registerTotpRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		registerTotpGETHandler)
 	registerTotpRouter.POST("/post",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		registerTotpPOSTHandler)
 	registerTotpRouter.POST("/post/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		registerTotpPOSTHandler)
@@ -578,10 +611,12 @@ func HTTPApp(ctx context.Context) {
 	notifyRouter := router.Group(viper.GetString("notify_page"))
 	notifyRouter.Use(sessions.Sessions(decl.SessionName, sessionStore))
 	notifyRouter.GET("/",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		notifyGETHandler)
 	notifyRouter.GET("/:languageTag",
+		luaContextMiddleware(),
 		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
 		notifyGETHandler)
@@ -596,8 +631,8 @@ func HTTPApp(ctx context.Context) {
 		apiV1.Use(basicAuthMiddleware())
 	}
 
-	apiV1.GET("/:category/:service", httpQueryHandler)
-	apiV1.POST("/:category/:service", httpQueryHandler)
+	apiV1.GET("/:category/:service", luaContextMiddleware(), httpQueryHandler)
+	apiV1.POST("/:category/:service", luaContextMiddleware(), httpQueryHandler)
 	apiV1.DELETE("/:category/:service", httpCacheHandler)
 
 	www.SetKeepAlivesEnabled(false)
