@@ -310,6 +310,7 @@ func (aw *Worker) createRequestTable(L *lua.LState) *lua.LTable {
 	request.RawSet(lua.LString(decl.LuaRequestNoAuth), lua.LBool(aw.luaActionRequest.NoAuth))
 	request.RawSet(lua.LString(decl.LuaRequestAuthenticated), lua.LBool(aw.luaActionRequest.Authenticated))
 	request.RawSet(lua.LString(decl.LuaRequestUserFound), lua.LBool(aw.luaActionRequest.UserFound))
+
 	request.RawSetString(decl.LuaRequestSession, lua.LString(aw.luaActionRequest.Session))
 	request.RawSetString(decl.LuaRequestClientIP, lua.LString(aw.luaActionRequest.ClientIP))
 	request.RawSetString(decl.LuaRequestClientPort, lua.LString(aw.luaActionRequest.ClientPort))

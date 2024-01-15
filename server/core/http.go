@@ -351,7 +351,7 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
-	if !(config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug && config.EnvConfig.DevMode) {
+	if config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug {
 		pprof.Register(router)
 	}
 
