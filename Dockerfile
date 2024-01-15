@@ -30,7 +30,7 @@ RUN apk --no-cache --upgrade add ca-certificates
 # Copy binary to destination image
 
 # TESTING
-COPY --from=builder ["/build", "/"]
+COPY --from=builder ["/build", "/build"]
 
 COPY --from=builder ["/build/server/nauthilus", "./"]
 COPY --from=builder ["/build/server/resources", "./resources/"]
