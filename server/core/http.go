@@ -15,6 +15,7 @@ import (
 	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
@@ -311,8 +312,7 @@ func loggerMiddleware() gin.HandlerFunc {
 
 func luaContextMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// TESTING
-		// ctx.Set(decl.DataExchangeKey, lualib.NewContext())
+		ctx.Set(decl.DataExchangeKey, lualib.NewContext())
 	}
 }
 

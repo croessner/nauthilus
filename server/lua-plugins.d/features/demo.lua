@@ -15,17 +15,6 @@ function nauthilus_call_feature(request)
 
     print(result)
 
-    local function foo()
-        print("This is me: " .. request.client_ip)
-    end
-
-    nauthilus.context_set("fn", foo)
-    nauthilus.context_set("fn2", function() print("Hello from here") end)
-
-    some_tbl = {}
-    some_tbl.abc = "123"
-
-    nauthilus.context_set("mytable", some_tbl)
     nauthilus.context_set("silly_dog", "Wuff!")
 
     -- Example on how to track the result of features, ... with a result table (rt)

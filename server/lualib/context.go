@@ -1,9 +1,13 @@
 package lualib
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/logging"
+	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -11,68 +15,69 @@ import (
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
 type Context struct {
-	data map[string]lua.LValue
+	data map[any]any
 	mu   sync.RWMutex
 }
 
 // NewContext initializes a new Lua Context.
 func NewContext() *Context {
 	ctx := &Context{}
-	ctx.data = make(map[string]lua.LValue)
+	ctx.data = make(map[any]any)
 
 	return ctx
 }
 
 // Set sets or replaces a new key/value pair in the Lua Context map.
-func (c *Context) Set(key string, value lua.LValue) {
+func (c *Context) Set(key any, value any) {
 	if c == nil {
 		return
 	}
 
-	// TESTING
-	if false {
-		c.mu.Lock()
+	c.mu.Lock()
 
-		c.data[key] = value
+	c.data[key] = value
 
-		c.mu.Unlock()
-	}
+	c.mu.Unlock()
 }
 
 // Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
-func (c *Context) Get(key string) lua.LValue {
+func (c *Context) Get(key any) any {
 	if c == nil {
-		return lua.LNil
+		return nil
 	}
 
-	// TESTING
-	if false {
-		c.mu.RLock()
+	c.mu.RLock()
 
-		defer c.mu.RUnlock()
+	defer c.mu.RUnlock()
 
-		if value, assertOk := c.data[key]; assertOk {
-			return value
-		}
+	if value, assertOk := c.data[key]; assertOk {
+		return value
 	}
 
-	return lua.LNil
+	return nil
 }
 
 // Delete removes a key and its value from the Lua Context.
-func (c *Context) Delete(key string) {
+func (c *Context) Delete(key lua.LValue) {
 	if c == nil {
 		return
 	}
 
-	// TESTING
-	if false {
-		c.mu.Lock()
+	c.mu.Lock()
 
-		delete(c.data, key)
-
-		c.mu.Unlock()
+	switch mappedKey := key.(type) {
+	case lua.LString:
+		delete(c.data, string(mappedKey))
+	case lua.LBool:
+		delete(c.data, bool(mappedKey))
+	case lua.LNumber:
+		delete(c.data, float64(mappedKey))
+	default:
+		level.Warn(logging.DefaultLogger).Log(
+			decl.LogKeyWarning, fmt.Sprintf("Lua key '%v' unsupported", mappedKey))
 	}
+
+	c.mu.Unlock()
 }
 
 // Deadline is not currently used
@@ -90,13 +95,8 @@ func (c *Context) Err() error {
 	return nil
 }
 
-// Value implements the context.Context Value() method and is currently a mapper to the Get(...) method
-func (c *Context) Value(key any) lua.LValue {
-	switch k := key.(type) {
-	case string:
-		return c.Get(k)
-	}
-
+// Value not currently used
+func (c *Context) Value(_ any) lua.LValue {
 	return lua.LNil
 }
 
@@ -104,10 +104,21 @@ func (c *Context) Value(key any) lua.LValue {
 // Lua function.
 func ContextSet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-		value := L.Get(2)
+		key := L.Get(1)
 
-		ctx.Set(key, value)
+		switch value := L.Get(2).(type) {
+		case lua.LString:
+			ctx.Set(key, string(value))
+		case lua.LBool:
+			ctx.Set(key, bool(value))
+		case lua.LNumber:
+			ctx.Set(key, float64(value))
+		case *lua.LTable:
+			ctx.Set(key, LuaTableToMap(value))
+		default:
+			level.Warn(logging.DefaultLogger).Log(
+				decl.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
+		}
 
 		return 0
 	}
@@ -117,10 +128,24 @@ func ContextSet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextGet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.CheckString(1)
-		value := ctx.Get(key)
+		key := L.Get(1)
 
-		L.Push(value)
+		switch value := ctx.Get(key).(type) {
+		case string:
+			L.Push(lua.LString(value))
+		case bool:
+			L.Push(lua.LBool(value))
+		case float64:
+			L.Push(lua.LNumber(value))
+		case map[any]any:
+			L.Push(MapToLuaTable(L, value))
+		case nil:
+			L.Push(lua.LNil)
+		default:
+			level.Warn(logging.DefaultLogger).Log(
+				decl.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
+			L.Push(lua.LNil)
+		}
 
 		return 1
 	}
@@ -130,7 +155,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextDelete(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.CheckString(1)
+		key := L.Get(1)
 
 		ctx.Delete(key)
 
