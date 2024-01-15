@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/coreos/go-oidc/v3 v3.7.0
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
+	github.com/easonlin404/limit v0.0.0-20190114092031-3d7b09b656e2
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-smtp v0.18.1
 	github.com/gin-contrib/pprof v1.4.0

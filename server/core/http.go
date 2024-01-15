@@ -17,6 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/easonlin404/limit"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -383,6 +384,9 @@ func HTTPApp(ctx context.Context) {
 
 		return
 	}()
+
+	// Do not accept HTTP requests above a fixed limit.
+	router.Use(limit.Limit(viper.GetInt("max_http_requests")))
 
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	router.Use(gin.Recovery())
