@@ -1584,7 +1584,8 @@ func (a *Authentication) WithDefaults(ctx *gin.Context) *Authentication {
 	a.UsedPassDBBackend = decl.BackendUnknown
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.Param("service")
-	a.Context = ctx.Value(decl.DataExchangeKey).(*lualib.Context)
+	// TESTING
+	// a.Context = ctx.Value(decl.DataExchangeKey).(*lualib.Context)
 
 	if a.Protocol.Get() == "" {
 		a.Protocol.Set(decl.ProtoDefault)

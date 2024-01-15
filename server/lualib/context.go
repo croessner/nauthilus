@@ -29,11 +29,14 @@ func (c *Context) Set(key string, value lua.LValue) {
 		return
 	}
 
-	c.mu.Lock()
+	// TESTING
+	if false {
+		c.mu.Lock()
 
-	c.data[key] = value
+		c.data[key] = value
 
-	c.mu.Unlock()
+		c.mu.Unlock()
+	}
 }
 
 // Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
@@ -42,12 +45,15 @@ func (c *Context) Get(key string) lua.LValue {
 		return lua.LNil
 	}
 
-	c.mu.RLock()
+	// TESTING
+	if false {
+		c.mu.RLock()
 
-	defer c.mu.RUnlock()
+		defer c.mu.RUnlock()
 
-	if value, assertOk := c.data[key]; assertOk {
-		return value
+		if value, assertOk := c.data[key]; assertOk {
+			return value
+		}
 	}
 
 	return lua.LNil
@@ -59,11 +65,14 @@ func (c *Context) Delete(key string) {
 		return
 	}
 
-	c.mu.Lock()
+	// TESTING
+	if false {
+		c.mu.Lock()
 
-	delete(c.data, key)
+		delete(c.data, key)
 
-	c.mu.Unlock()
+		c.mu.Unlock()
+	}
 }
 
 // Deadline is not currently used
