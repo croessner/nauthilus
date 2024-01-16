@@ -313,7 +313,7 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyGUID, r.Session,
 		"name", script.Name,
-		"Iua Filter finished",
+		decl.LogKeyMsg, "Lua filter finished",
 		"action", action,
 		"result", resultMap[ret],
 	)
