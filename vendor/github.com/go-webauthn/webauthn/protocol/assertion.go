@@ -51,6 +51,9 @@ func ParseCredentialRequestResponse(response *http.Request) (*ParsedCredentialAs
 		return nil, ErrBadRequest.WithDetails("No response given")
 	}
 
+	defer response.Body.Close()
+	defer io.Copy(io.Discard, response.Body)
+
 	return ParseCredentialRequestResponseBody(response.Body)
 }
 
@@ -60,8 +63,8 @@ func ParseCredentialRequestResponse(response *http.Request) (*ParsedCredentialAs
 func ParseCredentialRequestResponseBody(body io.Reader) (par *ParsedCredentialAssertionData, err error) {
 	var car CredentialAssertionResponse
 
-	if err = json.NewDecoder(body).Decode(&car); err != nil {
-		return nil, ErrBadRequest.WithDetails("Parse error for Assertion")
+	if err = decodeBody(body, &car); err != nil {
+		return nil, ErrBadRequest.WithDetails("Parse error for Assertion").WithInfo(err.Error())
 	}
 
 	return car.Parse()

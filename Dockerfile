@@ -12,9 +12,7 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthchec
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s -w" -o fakeimap .
 
-# FROM alpine:3.18
-# TESTING
-FROM golang:1.21-alpine3.18
+FROM alpine:3.18
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
@@ -28,10 +26,6 @@ RUN addgroup -S nauthilus; \
 RUN apk --no-cache --upgrade add ca-certificates
 
 # Copy binary to destination image
-
-# TESTING
-COPY --from=builder ["/build", "/build"]
-
 COPY --from=builder ["/build/server/nauthilus", "./"]
 COPY --from=builder ["/build/server/resources", "./resources/"]
 COPY --from=builder ["/build/server/lua-plugins.d", "./lua-plugins.d/"]

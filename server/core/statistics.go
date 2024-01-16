@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"strings"
 
@@ -56,26 +57,52 @@ func init() {
 	prometheus.Register(HTTPResponseTimeSecondsHist)
 }
 
-//nolint:gomnd // Convert bits to bytes
-func bToMb(b uint64) uint64 {
-	return b / 1024 / 1024
+// bToKb calculates the number of kilobytes (KB) equivalent to the given number of bytes (B).
+func bToKb(b uint64) uint64 {
+	return b / 1024
 }
 
-// PrintStats prints a log line with the current system load information.
+// kbSuffix returns a string representation of the given value
+// with the suffix "KiB" appended to it.
+//
+// Example: kbSuffix(1024) returns "1024KiB"
+func kbSuffix(value uint64) string {
+	return fmt.Sprintf("%dKB", value)
+}
+
+// PrintStats prints various memory statistics using the default logger.
+// It retrieves the memory statistics using the runtime.ReadMemStats function
+// and then logs the statistics using level.Info from the logging package.
+// The statistics logged include:
+//   - alloc: The number of kilobytes (KB) allocated.
+//   - heap_alloc: The number of kilobytes (KB) allocated on the heap.
+//   - heap_in_use: The number of kilobytes (KB) in use on the heap.
+//   - heap_idle: The number of kilobytes (KB) idle on the heap.
+//   - stack_in_use: The number of kilobytes (KB) in use on the stack.
+//   - stack_sys: The stack size of the program.
+//   - sys: The total memory allocated by the program.
+//   - total_alloc: The total number of kilobytes (KB) allocated.
+//   - num_gc: The number of garbage collections performed.
+//
+// It uses the kbSuffix function to convert the memory values in bytes to kilobytes (KB)
+// by dividing them by 1024.
+// The logging is performed using the DefaultLogger from the logging package.
+// Note: The declarations of logging.DefaultLogger, decl.LogKeyStatsAlloc, kbSuffix,
+// and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyStatsAlloc, bToMb(memStats.Alloc),
-		decl.LogKeyStatsHeapAlloc, bToMb(memStats.HeapAlloc),
-		decl.LogKeyStatsHeapInUse, bToMb(memStats.HeapInuse),
-		decl.LogKeyStatsHeapIdle, bToMb(memStats.HeapIdle),
-		decl.LogKeyStatsStackInUse, bToMb(memStats.StackInuse),
-		decl.LogKeyStatsStackSys, bToMb(memStats.StackSys),
-		decl.LogKeyStatsSys, bToMb(memStats.Sys),
-		decl.LogKeyStatsTotalAlloc, bToMb(memStats.TotalAlloc),
+		decl.LogKeyStatsAlloc, kbSuffix(bToKb(memStats.Alloc)),
+		decl.LogKeyStatsHeapAlloc, kbSuffix(bToKb(memStats.HeapAlloc)),
+		decl.LogKeyStatsHeapInUse, kbSuffix(bToKb(memStats.HeapInuse)),
+		decl.LogKeyStatsHeapIdle, kbSuffix(bToKb(memStats.HeapIdle)),
+		decl.LogKeyStatsStackInUse, kbSuffix(bToKb(memStats.StackInuse)),
+		decl.LogKeyStatsStackSys, kbSuffix(bToKb(memStats.StackSys)),
+		decl.LogKeyStatsSys, kbSuffix(bToKb(memStats.Sys)),
+		decl.LogKeyStatsTotalAlloc, kbSuffix(bToKb(memStats.TotalAlloc)),
 		decl.LogKeyStatsNumGC, memStats.NumGC,
 	)
 }
