@@ -847,9 +847,9 @@ func LDAPMainWorker(ctx context.Context) {
 				ldapReply.Result = result
 				ldapReply.RawResult = rawResult
 
-				if ldapRequest.HTTPClientContext.Err() == nil {
-					ldapReplyChan <- ldapReply
-				}
+				ldapReply.Err = ldapRequest.HTTPClientContext.Err()
+
+				ldapReplyChan <- ldapReply
 
 				ldapPool.conn[index].Mu.Lock()
 
@@ -912,9 +912,9 @@ func LDAPAuthWorker(ctx context.Context) {
 					ldapReply.Err = err
 				}
 
-				if ldapUserBindRequest.HTTPClientContext.Err() == nil {
-					ldapReplyChan <- ldapReply
-				}
+				ldapReply.Err = ldapUserBindRequest.HTTPClientContext.Err()
+
+				ldapReplyChan <- ldapReply
 
 				ldapPool.conn[index].Mu.Lock()
 
