@@ -24,49 +24,68 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"github.com/oschwald/maxminddb-golang"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
 )
 
 const version = "@@gittag@@-@@gitcommit@@"
 
-//nolint:gocognit // Ignore
-func main() {
-	var (
-		ldapCtx          context.Context
-		ldapAuthCtx      context.Context
-		luaActionCtx     context.Context
-		sqlCtx           context.Context
-		luaBackendCtx    context.Context
-		ldapCancel       context.CancelFunc
-		ldapAuthCancel   context.CancelFunc
-		luaActionCancel  context.CancelFunc
-		sqlCancel        context.CancelFunc
-		luaBackendCancel context.CancelFunc
-		err              error
-	)
+type contextTuple struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
 
+type contextStore struct {
+	ldapLookup *contextTuple
+	ldapAuth   *contextTuple
+	lua        *contextTuple
+	sql        *contextTuple
+	action     *contextTuple
+}
+
+func setupEnvironment() (err error) {
 	config.EnvConfig, err = config.NewConfig()
 	if err != nil {
-		logStdLib.Fatalf("Unable to load EnvConfig: %s", err)
+		return fmt.Errorf("unable to load EnvConfig: %w", err)
 	}
 
-	core.LangBundle = i18n.NewBundle(language.English)
-
-	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
-	if _, err := core.LangBundle.LoadMessageFile(viper.GetString("language_resources") + "/en.json"); err != nil {
-		panic(err.Error())
-	}
-	if _, err := core.LangBundle.LoadMessageFile(viper.GetString("language_resources") + "/de.json"); err != nil {
-		panic(err.Error())
-	}
-	if _, err := core.LangBundle.LoadMessageFile(viper.GetString("language_resources") + "/fr.json"); err != nil {
-		panic(err.Error())
-	}
+	loadLanguageBundles()
 
 	logging.SetupLogging(config.EnvConfig.Verbosity.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
 	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
+
+	setTimeZone()
+
+	config.LoadableConfig, err = config.NewConfigFile()
+	if err != nil {
+		level.Error(logging.DefaultErrLogger).Log(
+			decl.LogKeyWarning, err,
+		)
+
+		return fmt.Errorf("unable to load ConfigFile: %w", err)
+	}
+
+	return nil
+}
+
+func loadLanguageBundles() {
+	core.LangBundle = i18n.NewBundle(language.English)
+
+	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
+
+	loadLanguageBundle("en")
+	loadLanguageBundle("de")
+	loadLanguageBundle("fr")
+}
+
+func loadLanguageBundle(lang string) {
+	if _, err := core.LangBundle.LoadMessageFile(viper.GetString("language_resources") + "/" + lang + ".json"); err != nil {
+		panic(err.Error())
+	}
+}
+
+func setTimeZone() {
+	var err error
 
 	// Manually set time zone
 	if tz := os.Getenv("TZ"); tz != "" {
@@ -76,74 +95,56 @@ func main() {
 			)
 		}
 	}
+}
 
-	config.LoadableConfig, err = config.NewConfigFile()
-	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyWarning, err,
-		)
-
-		os.Exit(1)
+func setupFeatures() error {
+	if err := PreCompileFeatures(); err != nil {
+		return err
 	}
 
-	level.Debug(logging.DefaultLogger).Log(
-		"EnvConfig", config.EnvConfig,
-	)
-
-	if config.EnvConfig.HasFeature(decl.FeatureGeoIP) {
-		core.GeoIPReader = &core.GeoIP{}
-
-		core.GeoIPReader.Reader, err = maxminddb.Open(config.EnvConfig.GeoipPath)
-		if err != nil {
-			level.Error(logging.DefaultErrLogger).Log(
-				decl.LogKeyMsg, "Can not open GeoLite2-City Database file",
-				decl.LogKeyError, err,
-			)
-
-			core.GeoIPReader = nil
-		}
+	if err := PreCompileFilters(); err != nil {
+		return err
 	}
 
-	if config.EnvConfig.HasFeature(decl.FeatureLua) {
-		err = feature.PreCompileLuaFeatures()
-		if err != nil {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+	return nil
+}
 
-			os.Exit(1)
-		}
+func PreCompileFeatures() error {
+	if !config.EnvConfig.HasFeature(decl.FeatureLua) {
+		return nil
 	}
 
-	if config.LoadableConfig.Lua != nil && len(config.LoadableConfig.Lua.Filters) > 0 {
-		err = filter.PreCompileLuaFilters()
-		if err != nil {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
-
-			os.Exit(1)
-		}
+	if err := feature.PreCompileLuaFeatures(); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+func PreCompileFilters() error {
+	if config.LoadableConfig.Lua == nil {
+		return nil
+	}
+
+	if len(config.LoadableConfig.Lua.Filters) == 0 {
+		return nil
+	}
+
+	if err := filter.PreCompileLuaFilters(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTimer *time.Ticker) {
 	// Signal handling
-	sigsTerminate := make(chan os.Signal, 1)
-	sigsReload := make(chan os.Signal, 1)
-
-	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
-	signal.Notify(sigsReload, syscall.SIGHUP)
-
-	// The statsTimer is used to print frequent statistics.
-	statsTimer := time.NewTicker(decl.StatsDelay * time.Second)
-
-	// Root context
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Lua action end channel and worker context
-	action.WorkerEndChan = make(chan lualib.Done)
-	luaActionCtx, luaActionCancel = context.WithCancel(ctx)
-
-	go action.NewWorker().Work(luaActionCtx)
-
 	go func() {
-		sig := <-sigsTerminate
+		sigsTerminate := make(chan os.Signal, 1)
 
+		signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
+
+		sig := <-sigsTerminate
 		level.Info(logging.DefaultLogger).Log(
 			decl.LogKeyMsg, "Shutting down Nauthilus", "signal", sig,
 		)
@@ -158,12 +159,19 @@ func main() {
 			case decl.BackendLDAP:
 				<-backend.LDAPEndChan
 				<-backend.LDAPAuthEndChan
+
 			case decl.BackendMySQL, decl.BackendPostgres:
 				if backend.Database != nil && backend.Database.Conn != nil {
 					backend.Database.Conn.Close()
 				}
+
 			case decl.BackendLua:
 				<-backend.LuaMainWorkerEndChan
+
+			case decl.BackendCache:
+
+			default:
+				level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
 			}
 		}
 
@@ -179,96 +187,145 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// Another goroutine for handling reload signal
 	go func() {
+		sigsReload := make(chan os.Signal, 1)
+
+		signal.Notify(sigsReload, syscall.SIGHUP)
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-
 			case sig := <-sigsReload:
-				level.Info(logging.DefaultLogger).Log(
-					decl.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
-				)
-
-				for _, passDB := range config.EnvConfig.PassDBs {
-					switch passDB.Get() {
-					case decl.BackendLDAP:
-						ldapCancel()
-
-						<-backend.LDAPEndChan
-
-						ldapAuthCancel()
-
-						<-backend.LDAPAuthEndChan
-
-						// Create new context after stopping LDAP
-						ldapCtx, ldapCancel = context.WithCancel(ctx)
-						ldapAuthCtx, ldapAuthCancel = context.WithCancel(ctx)
-					case decl.BackendMySQL, decl.BackendPostgres:
-						if backend.Database != nil && backend.Database.Conn != nil {
-							backend.Database.Conn.Close()
-						}
-
-						sqlCancel()
-
-						// Create new context after stopping SQK
-						sqlCtx, sqlCancel = context.WithCancel(ctx)
-					case decl.BackendLua:
-						luaBackendCancel()
-
-						<-backend.LuaMainWorkerEndChan
-
-						luaBackendCtx, luaBackendCancel = context.WithCancel(ctx)
-					}
-				}
-
-				luaActionCancel()
-
-				<-action.WorkerEndChan
-
-				luaActionCtx, luaActionCancel = context.WithCancel(ctx)
-
-				// Restart action worker.
-				go action.NewWorker().Work(luaActionCtx)
-
-				if err := config.ReloadConfigFile(); err != nil {
-					level.Error(logging.DefaultErrLogger).Log(
-						decl.LogKeyError, err,
-					)
-				}
-
-				for _, passDB := range config.EnvConfig.PassDBs {
-					switch passDB.Get() {
-					case decl.BackendLDAP:
-						go backend.LDAPMainWorker(ldapCtx)
-						go backend.LDAPAuthWorker(ldapAuthCtx)
-					case decl.BackendMySQL, decl.BackendPostgres:
-						backend.Database = backend.NewDatabase(sqlCtx)
-					case decl.BackendLua:
-						go backend.LuaMainWorker(ctx)
-					}
-				}
-
-				if config.EnvConfig.HasFeature(decl.FeatureLua) {
-					err = feature.PreCompileLuaFeatures()
-					if err != nil {
-						level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
-					}
-				}
-
-				if config.LoadableConfig.Lua != nil && len(config.LoadableConfig.Lua.Filters) > 0 {
-					err = filter.PreCompileLuaFilters()
-					if err != nil {
-						level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
-					}
-				}
-
-				level.Debug(logging.DefaultLogger).Log(
-					decl.LogKeyMsg, "Reload complete",
-				)
+				handleReload(ctx, store, sig)
 			}
 		}
 	}()
+}
+
+func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
+	var err error
+
+	level.Info(logging.DefaultLogger).Log(
+		decl.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
+	)
+
+	for _, passDB := range config.EnvConfig.PassDBs {
+		switch passDB.Get() {
+		case decl.BackendLDAP:
+			store.ldapLookup.cancel()
+
+			<-backend.LDAPEndChan
+
+			store.ldapAuth.cancel()
+
+			<-backend.LDAPAuthEndChan
+
+			// Create new context after stopping LDAP
+			store.ldapLookup.ctx, store.ldapLookup.cancel = context.WithCancel(ctx)
+			store.ldapAuth.ctx, store.ldapAuth.cancel = context.WithCancel(ctx)
+
+		case decl.BackendMySQL, decl.BackendPostgres:
+			if backend.Database != nil && backend.Database.Conn != nil {
+				backend.Database.Conn.Close()
+			}
+
+			store.sql.cancel()
+
+			// Create new context after stopping SQK
+			store.sql.ctx, store.sql.cancel = context.WithCancel(ctx)
+
+		case decl.BackendLua:
+			store.lua.cancel()
+
+			<-backend.LuaMainWorkerEndChan
+
+			store.lua.ctx, store.lua.cancel = context.WithCancel(ctx)
+
+		case decl.BackendCache:
+
+		default:
+			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+		}
+	}
+
+	store.action.cancel()
+
+	<-action.WorkerEndChan
+
+	store.action.ctx, store.action.cancel = context.WithCancel(ctx)
+
+	// Restart action worker.
+	go action.NewWorker().Work(store.action.ctx)
+
+	if err := config.ReloadConfigFile(); err != nil {
+		level.Error(logging.DefaultErrLogger).Log(
+			decl.LogKeyError, err,
+		)
+	}
+
+	err = setupFeatures()
+	if err != nil {
+		level.Error(logging.DefaultErrLogger).Log(
+			decl.LogKeyMsg, "Unable to setup the features",
+			decl.LogKeyError, err,
+		)
+	}
+
+	for _, passDB := range config.EnvConfig.PassDBs {
+		switch passDB.Get() {
+		case decl.BackendLDAP:
+			go backend.LDAPMainWorker(store.ldapLookup.ctx)
+			go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+
+		case decl.BackendMySQL, decl.BackendPostgres:
+			backend.Database = backend.NewDatabase(store.sql.ctx)
+
+		case decl.BackendLua:
+			go backend.LuaMainWorker(ctx)
+
+		case decl.BackendCache:
+
+		default:
+			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+		}
+	}
+
+	level.Debug(logging.DefaultLogger).Log(
+		decl.LogKeyMsg, "Reload complete",
+	)
+}
+
+func main() {
+	// Declare shared variables
+	var (
+		ctx, cancel = context.WithCancel(context.Background())
+		err         error
+	)
+
+	err = setupEnvironment()
+	if err != nil {
+		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
+	}
+
+	err = setupFeatures()
+	if err != nil {
+		logStdLib.Fatalln("Unable to setup the features. Error:", err)
+	}
+
+	// The statsTimer is used to print frequent statistics.
+	statsTimer := time.NewTicker(decl.StatsDelay * time.Second)
+
+	// Create a store of contexts for all used backends.
+	store := &contextStore{}
+
+	// Lua action end channel and worker context
+	action.WorkerEndChan = make(chan lualib.Done)
+	store.action = &contextTuple{}
+	store.action.ctx, store.action.cancel = context.WithCancel(ctx)
+
+	go action.NewWorker().Work(store.action.ctx)
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
@@ -279,12 +336,15 @@ func main() {
 			backend.LDAPAuthEndChan = make(chan backend.Done)
 
 			// LDAP context
-			ldapCtx, ldapCancel = context.WithCancel(ctx)
-			ldapAuthCtx, ldapAuthCancel = context.WithCancel(ctx)
+			store.ldapLookup = &contextTuple{}
+			store.ldapAuth = &contextTuple{}
+
+			store.ldapLookup.ctx, store.ldapLookup.cancel = context.WithCancel(ctx)
+			store.ldapAuth.ctx, store.ldapAuth.cancel = context.WithCancel(ctx)
 
 			// Start LDAP worker process
-			go backend.LDAPMainWorker(ldapCtx)
-			go backend.LDAPAuthWorker(ldapAuthCtx)
+			go backend.LDAPMainWorker(store.ldapLookup.ctx)
+			go backend.LDAPAuthWorker(store.ldapAuth.ctx)
 		case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
 			if backend.Database != nil {
 				level.Warn(logging.DefaultLogger).Log(
@@ -294,18 +354,27 @@ func main() {
 				continue
 			}
 
-			sqlCtx, sqlCancel = context.WithCancel(ctx)
+			store.sql = &contextTuple{}
+			store.sql.ctx, store.sql.cancel = context.WithCancel(ctx)
 
-			backend.Database = backend.NewDatabase(sqlCtx)
+			backend.Database = backend.NewDatabase(store.sql.ctx)
 		case decl.BackendLua:
 			backend.LuaRequestChan = make(chan *backend.LuaRequest, decl.MaxChannelSize)
 			backend.LuaMainWorkerEndChan = make(chan backend.Done)
 
-			luaBackendCtx, luaBackendCancel = context.WithCancel(ctx)
+			store.lua = &contextTuple{}
+			store.lua.ctx, store.lua.cancel = context.WithCancel(ctx)
 
-			go backend.LuaMainWorker(luaBackendCtx)
+			go backend.LuaMainWorker(store.lua.ctx)
+
+		case decl.BackendCache:
+
+		default:
+			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend", "backend")
 		}
 	}
+
+	handleSignals(ctx, cancel, store, statsTimer)
 
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
