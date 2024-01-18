@@ -43,6 +43,19 @@ type contextStore struct {
 	action     *contextTuple
 }
 
+func NewContextStore() *contextStore {
+	store := &contextStore{}
+
+	return store
+}
+
+func NewContextTuple(ctx context.Context) *contextTuple {
+	tuple := &contextTuple{}
+	tuple.ctx, tuple.cancel = context.WithCancel(ctx)
+
+	return tuple
+}
+
 func setupEnvironment() (err error) {
 	config.EnvConfig, err = config.NewConfig()
 	if err != nil {
@@ -159,17 +172,13 @@ func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contex
 			case decl.BackendLDAP:
 				<-backend.LDAPEndChan
 				<-backend.LDAPAuthEndChan
-
 			case decl.BackendMySQL, decl.BackendPostgres:
 				if backend.Database != nil && backend.Database.Conn != nil {
 					backend.Database.Conn.Close()
 				}
-
 			case decl.BackendLua:
 				<-backend.LuaMainWorkerEndChan
-
 			case decl.BackendCache:
-
 			default:
 				level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
 			}
@@ -225,7 +234,6 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 			// Create new context after stopping LDAP
 			store.ldapLookup.ctx, store.ldapLookup.cancel = context.WithCancel(ctx)
 			store.ldapAuth.ctx, store.ldapAuth.cancel = context.WithCancel(ctx)
-
 		case decl.BackendMySQL, decl.BackendPostgres:
 			if backend.Database != nil && backend.Database.Conn != nil {
 				backend.Database.Conn.Close()
@@ -235,16 +243,13 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 
 			// Create new context after stopping SQK
 			store.sql.ctx, store.sql.cancel = context.WithCancel(ctx)
-
 		case decl.BackendLua:
 			store.lua.cancel()
 
 			<-backend.LuaMainWorkerEndChan
 
 			store.lua.ctx, store.lua.cancel = context.WithCancel(ctx)
-
 		case decl.BackendCache:
-
 		default:
 			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
 		}
@@ -278,15 +283,11 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 		case decl.BackendLDAP:
 			go backend.LDAPMainWorker(store.ldapLookup.ctx)
 			go backend.LDAPAuthWorker(store.ldapAuth.ctx)
-
 		case decl.BackendMySQL, decl.BackendPostgres:
 			backend.Database = backend.NewDatabase(store.sql.ctx)
-
 		case decl.BackendLua:
 			go backend.LuaMainWorker(ctx)
-
 		case decl.BackendCache:
-
 		default:
 			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
 		}
@@ -297,85 +298,65 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 	)
 }
 
-func main() {
-	// Declare shared variables
-	var (
-		ctx, cancel = context.WithCancel(context.Background())
-		err         error
-	)
-
-	err = setupEnvironment()
-	if err != nil {
-		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
-	}
-
-	err = setupFeatures()
-	if err != nil {
-		logStdLib.Fatalln("Unable to setup the features. Error:", err)
-	}
-
-	// The statsTimer is used to print frequent statistics.
-	statsTimer := time.NewTicker(decl.StatsDelay * time.Second)
-
-	// Create a store of contexts for all used backends.
-	store := &contextStore{}
-
-	// Lua action end channel and worker context
+func setupWorkers(ctx context.Context, store *contextStore) {
 	action.WorkerEndChan = make(chan lualib.Done)
-	store.action = &contextTuple{}
-	store.action.ctx, store.action.cancel = context.WithCancel(ctx)
 
 	go action.NewWorker().Work(store.action.ctx)
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
 		case decl.BackendLDAP:
-			backend.LDAPRequestChan = make(chan *backend.LDAPRequest, config.LoadableConfig.LDAP.Config.LookupPoolSize)
-			backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, config.LoadableConfig.LDAP.Config.LookupPoolSize)
-			backend.LDAPEndChan = make(chan backend.Done)
-			backend.LDAPAuthEndChan = make(chan backend.Done)
-
-			// LDAP context
-			store.ldapLookup = &contextTuple{}
-			store.ldapAuth = &contextTuple{}
-
-			store.ldapLookup.ctx, store.ldapLookup.cancel = context.WithCancel(ctx)
-			store.ldapAuth.ctx, store.ldapAuth.cancel = context.WithCancel(ctx)
-
-			// Start LDAP worker process
-			go backend.LDAPMainWorker(store.ldapLookup.ctx)
-			go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+			setupLDAPWorker(store, ctx)
 		case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
-			if backend.Database != nil {
-				level.Warn(logging.DefaultLogger).Log(
-					decl.LogKeyWarning, "Currently only one SQLConf Database is allowed!",
-					"skipping", passDB)
-
-				continue
-			}
-
-			store.sql = &contextTuple{}
-			store.sql.ctx, store.sql.cancel = context.WithCancel(ctx)
-
-			backend.Database = backend.NewDatabase(store.sql.ctx)
+			setupSQLWorker(store, ctx, passDB)
 		case decl.BackendLua:
-			backend.LuaRequestChan = make(chan *backend.LuaRequest, decl.MaxChannelSize)
-			backend.LuaMainWorkerEndChan = make(chan backend.Done)
-
-			store.lua = &contextTuple{}
-			store.lua.ctx, store.lua.cancel = context.WithCancel(ctx)
-
-			go backend.LuaMainWorker(store.lua.ctx)
-
+			setupLuaWorker(store, ctx)
 		case decl.BackendCache:
-
 		default:
 			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend", "backend")
 		}
 	}
+}
 
-	handleSignals(ctx, cancel, store, statsTimer)
+func setupLDAPWorker(store *contextStore, ctx context.Context) {
+	lookupPoolSize := config.LoadableConfig.LDAP.Config.LookupPoolSize
+	authPoolSize := config.LoadableConfig.LDAP.Config.AuthPoolSize
 
+	backend.LDAPRequestChan = make(chan *backend.LDAPRequest, lookupPoolSize)
+	backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
+	backend.LDAPEndChan = make(chan backend.Done)
+	backend.LDAPAuthEndChan = make(chan backend.Done)
+
+	store.ldapLookup = NewContextTuple(ctx)
+	store.ldapAuth = NewContextTuple(ctx)
+
+	go backend.LDAPMainWorker(store.ldapLookup.ctx)
+	go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+}
+
+func setupSQLWorker(store *contextStore, ctx context.Context, passDB *config.PassDB) {
+	if backend.Database != nil {
+		level.Warn(logging.DefaultLogger).Log(
+			decl.LogKeyWarning, "Currently only one SQLConf Database is allowed!",
+			"skipping", passDB)
+
+		return
+	}
+
+	store.sql = NewContextTuple(ctx)
+	backend.Database = backend.NewDatabase(store.sql.ctx)
+}
+
+func setupLuaWorker(store *contextStore, ctx context.Context) {
+	backend.LuaRequestChan = make(chan *backend.LuaRequest, decl.MaxChannelSize)
+	backend.LuaMainWorkerEndChan = make(chan backend.Done)
+
+	store.lua = NewContextTuple(ctx)
+
+	go backend.LuaMainWorker(store.lua.ctx)
+}
+
+func setupRedis() {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
@@ -385,9 +366,9 @@ func main() {
 	if backend.RedisHandleReplica == nil {
 		backend.RedisHandleReplica = backend.RedisHandle
 	}
+}
 
-	core.LoadStatsFromRedis()
-
+func startHTTPServer(ctx context.Context) {
 	level.Info(logging.DefaultLogger).Log(
 		decl.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
@@ -396,7 +377,9 @@ func main() {
 	core.HTTPEndChan = make(chan core.Done)
 
 	go core.HTTPApp(ctx)
+}
 
+func startStatsLoop(statsTimer *time.Ticker) {
 	for {
 		select {
 		case <-statsTimer.C:
@@ -404,4 +387,28 @@ func main() {
 			core.SaveStatsToRedis()
 		}
 	}
+}
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := setupEnvironment(); err != nil {
+		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
+	}
+
+	if err := setupFeatures(); err != nil {
+		logStdLib.Fatalln("Unable to setup the features. Error:", err)
+	}
+
+	statsTimer := time.NewTicker(decl.StatsDelay * time.Second)
+	store := NewContextStore()
+
+	store.action = NewContextTuple(ctx)
+
+	setupWorkers(ctx, store)
+	handleSignals(ctx, cancel, store, statsTimer)
+	setupRedis()
+	core.LoadStatsFromRedis()
+	startHTTPServer(ctx)
+	startStatsLoop(statsTimer)
 }
