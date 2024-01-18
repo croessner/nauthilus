@@ -151,66 +151,70 @@ func PreCompileFilters() error {
 }
 
 func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTimer *time.Ticker) {
-	// Signal handling
-	go func() {
-		sigsTerminate := make(chan os.Signal, 1)
+	go handleTerminateSignal(cancel, statsTimer)
+	go handleReloadSignal(ctx, store)
+}
 
-		signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
+func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
+	sigsTerminate := make(chan os.Signal, 1)
 
-		sig := <-sigsTerminate
-		level.Info(logging.DefaultLogger).Log(
-			decl.LogKeyMsg, "Shutting down Nauthilus", "signal", sig,
-		)
+	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
 
-		cancel()
+	sig := <-sigsTerminate
 
-		// Wait for HTTP server termination
-		<-core.HTTPEndChan
+	level.Info(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
 
-		for _, passDB := range config.EnvConfig.PassDBs {
-			switch passDB.Get() {
-			case decl.BackendLDAP:
-				<-backend.LDAPEndChan
-				<-backend.LDAPAuthEndChan
-			case decl.BackendMySQL, decl.BackendPostgres:
-				if backend.Database != nil && backend.Database.Conn != nil {
-					backend.Database.Conn.Close()
-				}
-			case decl.BackendLua:
-				<-backend.LuaMainWorkerEndChan
-			case decl.BackendCache:
-			default:
-				level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
-			}
+	cancel()
+
+	// Wait for HTTP server termination
+	<-core.HTTPEndChan
+
+	for _, passDB := range config.EnvConfig.PassDBs {
+		handleBackend(passDB)
+	}
+
+	<-action.WorkerEndChan
+
+	// Sync some Prometheus data to Redis
+	core.SaveStatsToRedis()
+
+	level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutdown complete")
+
+	statsTimer.Stop()
+
+	os.Exit(0)
+}
+
+func handleReloadSignal(ctx context.Context, store *contextStore) {
+	sigsReload := make(chan os.Signal, 1)
+
+	signal.Notify(sigsReload, syscall.SIGHUP)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig := <-sigsReload:
+			handleReload(ctx, store, sig)
 		}
+	}
+}
 
-		<-action.WorkerEndChan
-
-		// Sync some prometheus data to redis
-		core.SaveStatsToRedis()
-
-		level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutdown complete")
-
-		statsTimer.Stop()
-
-		os.Exit(0)
-	}()
-
-	// Another goroutine for handling reload signal
-	go func() {
-		sigsReload := make(chan os.Signal, 1)
-
-		signal.Notify(sigsReload, syscall.SIGHUP)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case sig := <-sigsReload:
-				handleReload(ctx, store, sig)
-			}
+func handleBackend(passDB *config.PassDB) {
+	switch passDB.Get() {
+	case decl.BackendLDAP:
+		<-backend.LDAPEndChan
+		<-backend.LDAPAuthEndChan
+	case decl.BackendMySQL, decl.BackendPostgres:
+		if backend.Database != nil && backend.Database.Conn != nil {
+			backend.Database.Conn.Close()
 		}
-	}()
+	case decl.BackendLua:
+		<-backend.LuaMainWorkerEndChan
+	case decl.BackendCache:
+	default:
+		level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+	}
 }
 
 func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contextTuple, *contextTuple) {
