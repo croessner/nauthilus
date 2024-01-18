@@ -261,10 +261,12 @@ func (l *LDAPPool) SetIdleConnections(guid string, bind bool) {
 	}
 
 	if openConnections < idlePoolSize {
+		diffConnections := idlePoolSize - openConnections
+
 		wg := sync.WaitGroup{}
 
 		// Initialize the idle pool
-		for index := openConnections; index < idlePoolSize; index++ {
+		for index := 0; index < idlePoolSize; index++ {
 			wg.Add(1)
 
 			util.DebugModule(
@@ -276,39 +278,45 @@ func (l *LDAPPool) SetIdleConnections(guid string, bind bool) {
 
 			guidStr := fmt.Sprintf("pool-#%d", index+1)
 
-			go func(index int) {
-				l.conn[index].Mu.Lock()
+			//go func(index int) {
+			l.conn[index].Mu.Lock()
 
-				if l.conn[index].state == decl.LDAPStateClosed {
-					err := l.conn[index].Connect(&guidStr, l.conf[index])
+			if l.conn[index].state == decl.LDAPStateClosed {
+				err := l.conn[index].Connect(&guidStr, l.conf[index])
+				if err != nil {
+					level.Error(logging.DefaultErrLogger).Log(
+						decl.LogKeyLDAPPoolName, l.name,
+						decl.LogKeyGUID, guid,
+						decl.LogKeyError, err,
+					)
+				} else if bind {
+					err = l.conn[index].Bind(&guidStr, l.conf[index])
 					if err != nil {
 						level.Error(logging.DefaultErrLogger).Log(
 							decl.LogKeyLDAPPoolName, l.name,
 							decl.LogKeyGUID, guid,
 							decl.LogKeyError, err,
 						)
-					} else if bind {
-						err = l.conn[index].Bind(&guidStr, l.conf[index])
-						if err != nil {
-							level.Error(logging.DefaultErrLogger).Log(
-								decl.LogKeyLDAPPoolName, l.name,
-								decl.LogKeyGUID, guid,
-								decl.LogKeyError, err,
-							)
-						}
 					}
-
-					if err == nil {
-						l.conn[index].state = decl.LDAPStateFree
-					}
-
-					l.conn[index].Mu.Unlock()
-					wg.Done()
 				}
-			}(index)
+
+				if err == nil {
+					l.conn[index].state = decl.LDAPStateFree
+					diffConnections--
+				}
+
+				l.conn[index].Mu.Unlock()
+				wg.Done()
+			}
+
+			if diffConnections == 0 {
+				break
+			}
 		}
 
-		wg.Wait()
+		if diffConnections != 0 {
+			wg.Wait()
+		}
 	}
 }
 
@@ -768,10 +776,7 @@ func (l *LDAPConnection) ModifyAdd(ldapRequest *LDAPRequest) (err error) {
 
 //nolint:gocognit,maintidx // Ignore
 func LDAPMainWorker(ctx context.Context) {
-	var (
-		ldapRequest   *LDAPRequest
-		ldapWaitGroup sync.WaitGroup
-	)
+	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := NewPool(ctx, decl.LDAPPoolLookup)
 	if ldapPool == nil {
@@ -790,7 +795,7 @@ func LDAPMainWorker(ctx context.Context) {
 
 			return
 
-		case ldapRequest = <-LDAPRequestChan:
+		case ldapRequest := <-LDAPRequestChan:
 			// Check that we have enough idle connections.
 			ldapPool.SetIdleConnections(*ldapRequest.GUID, true)
 
@@ -862,10 +867,7 @@ func LDAPMainWorker(ctx context.Context) {
 }
 
 func LDAPAuthWorker(ctx context.Context) {
-	var (
-		ldapAuthRequest *LDAPAuthRequest
-		ldapWaitGroup   sync.WaitGroup
-	)
+	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := NewPool(ctx, decl.LDAPPoolAuth)
 	if ldapPool == nil {
@@ -883,7 +885,7 @@ func LDAPAuthWorker(ctx context.Context) {
 			LDAPAuthEndChan <- Done{}
 
 			return
-		case ldapAuthRequest = <-LDAPAuthRequestChan:
+		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
 			ldapPool.SetIdleConnections(*ldapAuthRequest.GUID, true)
 
@@ -912,13 +914,19 @@ func LDAPAuthWorker(ctx context.Context) {
 					ldapReply.Err = err
 				}
 
+				// XXX: As the Unbind() call currently closes the connection, we do it explicitly.
+				ldapPool.conn[index].Conn.Unbind()
+				ldapPool.conn[index].Conn.Close()
+				ldapPool.conn[index].Conn = nil
+
 				ldapReply.Err = ldapUserBindRequest.HTTPClientContext.Err()
 
 				ldapReplyChan <- ldapReply
 
 				ldapPool.conn[index].Mu.Lock()
 
-				ldapPool.conn[index].state = decl.LDAPStateFree
+				// XXX: Unfortunately a Unbind()-operation terminates the connection.
+				ldapPool.conn[index].state = decl.LDAPStateClosed
 
 				ldapPool.conn[index].Mu.Unlock()
 			}(connNumber, ldapAuthRequest)

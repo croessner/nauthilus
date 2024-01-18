@@ -349,8 +349,6 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 // passing the compiled script, the request, and the context.
 // If the context is canceled, LuaMainWorker will send a Done signal to notify the caller.
 func LuaMainWorker(ctx context.Context) {
-	var luaRequest *LuaRequest
-
 	scriptPath := config.LoadableConfig.GetLuaScriptPath()
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
@@ -364,7 +362,7 @@ func LuaMainWorker(ctx context.Context) {
 			LuaMainWorkerEndChan <- Done{}
 			return
 
-		case luaRequest = <-LuaRequestChan:
+		case luaRequest := <-LuaRequestChan:
 			go handleLuaRequest(luaRequest, ctx, compiledScript)
 		}
 	}
