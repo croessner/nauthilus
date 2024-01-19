@@ -13,8 +13,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -25,6 +23,8 @@ var (
 	// WorkerEndChan is a buffered channel of type `lualib.Done` used to signal the end of a worker.
 	WorkerEndChan chan lualib.Done
 )
+
+var luaPool = lualib.NewLuaStatePool()
 
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
@@ -254,12 +254,10 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 // If an error occurs while executing the script, it logs the failure.
 // After executing the script, it logs the result and cancels the Lua context.
 func (aw *Worker) handleRequest() {
-	L := lua.NewState()
+	L := luaPool.Get()
 
-	defer L.Close()
-
-	libs.Preload(L)
-	gluacrypto.Preload(L)
+	defer luaPool.Put(L)
+	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	logs := new(lualib.CustomLogKeyValue)
 	aw.setupGlobalVariables(L, logs)

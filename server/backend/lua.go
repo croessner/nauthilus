@@ -13,8 +13,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -23,6 +21,8 @@ var LuaRequestChan chan *LuaRequest
 
 // LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
 var LuaMainWorkerEndChan chan Done
+
+var luaPool = lualib.NewLuaStatePool()
 
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
@@ -360,6 +360,7 @@ func LuaMainWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			LuaMainWorkerEndChan <- Done{}
+
 			return
 
 		case luaRequest := <-LuaRequestChan:
@@ -387,12 +388,13 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 	logs := new(lualib.CustomLogKeyValue)
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
-	L := lua.NewState()
+	L := luaPool.Get()
+
+	defer luaPool.Put(L)
 
 	L.SetContext(luaCtx)
 
 	defer luaCancel()
-	defer L.Close()
 
 	registerLibraries(L)
 	registerGlobals(luaRequest, L, logs)
@@ -412,8 +414,6 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 // registerLibraries registers various libraries to the given LState.
 // It preloads libraries, registers the backend result type, and preloads a module.
 func registerLibraries(L *lua.LState) {
-	libs.Preload(L)
-	gluacrypto.Preload(L)
 	registerBackendResultType(L)
 	L.PreloadModule(decl.LuaModUtil, lualib.Loader)
 }

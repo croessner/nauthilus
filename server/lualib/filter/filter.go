@@ -14,14 +14,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // LuaFilters holds pre-compiled Lua scripts for use across the application.
 // It allows faster access and execution of frequently used scripts.
 var LuaFilters *PreCompiledLuaFilters
+
+var luaPool = lualib.NewLuaStatePool()
 
 // PreCompileLuaFilters is a function that pre-compiles Lua filters.
 // It iterates over the filters available in the configuration. For each filter,
@@ -339,12 +339,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 
 	defer LuaFilters.Mu.RUnlock()
 
-	L := lua.NewState()
+	L := luaPool.Get()
 
-	defer L.Close()
-
-	libs.Preload(L)
-	gluacrypto.Preload(L)
+	defer luaPool.Put(L)
+	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	globals := L.NewTable()
 	setGlobals(r, L, globals)

@@ -15,8 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -38,6 +36,8 @@ import (
 // The executeScripts method is called to execute each pre-compiled Lua script in order, passing in the request and the Lua state.
 // If a script triggers or aborts the execution of features, the execution is halted and the method returns the appropriate values.
 var LuaFeatures *PreCompiledLuaFeatures
+
+var luaPool = lualib.NewLuaStatePool()
 
 // PreCompileLuaFeatures pre-compiles Lua features.
 // It checks if the configuration for Lua features is loaded and if the LuaFeatures variable is already set.
@@ -227,12 +227,10 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := lua.NewState()
+	L := luaPool.Get()
 
-	defer L.Close()
-
-	libs.Preload(L)
-	gluacrypto.Preload(L)
+	defer luaPool.Put(L)
+	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	globals := r.setGlobals(L)
 
