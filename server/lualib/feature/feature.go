@@ -16,6 +16,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	"github.com/tengattack/gluacrypto"
+	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -230,9 +231,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer L.Close()
 
-	// libs.Preload(L)
-	lualib.LoadSubset(L)
-
+	libs.Preload(L)
 	gluacrypto.Preload(L)
 
 	globals := r.setGlobals(L)

@@ -14,6 +14,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	"github.com/tengattack/gluacrypto"
+	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -411,9 +412,7 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 // registerLibraries registers various libraries to the given LState.
 // It preloads libraries, registers the backend result type, and preloads a module.
 func registerLibraries(L *lua.LState) {
-	// libs.Preload(L)
-	lualib.LoadSubset(L)
-
+	libs.Preload(L)
 	gluacrypto.Preload(L)
 	registerBackendResultType(L)
 	L.PreloadModule(decl.LuaModUtil, lualib.Loader)
