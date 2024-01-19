@@ -7,7 +7,8 @@ import (
 	"github.com/vadv/gopher-lua-libs/crypto"
 	"github.com/vadv/gopher-lua-libs/db"
 	"github.com/vadv/gopher-lua-libs/filepath"
-	"github.com/vadv/gopher-lua-libs/http/client"
+	httpclient "github.com/vadv/gopher-lua-libs/http/client"
+	httputil "github.com/vadv/gopher-lua-libs/http/util"
 	"github.com/vadv/gopher-lua-libs/humanize"
 	"github.com/vadv/gopher-lua-libs/inspect"
 	"github.com/vadv/gopher-lua-libs/ioutil"
@@ -166,7 +167,8 @@ func LoadSubset(L *lua.LState) {
 	crypto.Preload(L)
 	db.Preload(L)
 	filepath.Preload(L)
-	http.Preload(L)
+	httpclient.Preload(L)
+	httputil.Preload(L)
 	humanize.Preload(L)
 	inspect.Preload(L)
 	ioutil.Preload(L)
