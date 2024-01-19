@@ -914,10 +914,10 @@ func LDAPAuthWorker(ctx context.Context) {
 					ldapReply.Err = err
 				}
 
-				// XXX: As the Unbind() call currently closes the connection, we do it explicitly.
-				ldapPool.conn[index].Conn.Unbind()
-				ldapPool.conn[index].Conn.Close()
-				ldapPool.conn[index].Conn = nil
+				/*
+					// XXX: As the Unbind() call closes the connection, we re-bind...
+					ldapPool.conn[index].Conn.Unbind()
+				*/
 
 				ldapReply.Err = ldapUserBindRequest.HTTPClientContext.Err()
 
@@ -925,8 +925,7 @@ func LDAPAuthWorker(ctx context.Context) {
 
 				ldapPool.conn[index].Mu.Lock()
 
-				// XXX: Unfortunately a Unbind()-operation terminates the connection.
-				ldapPool.conn[index].state = decl.LDAPStateClosed
+				ldapPool.conn[index].state = decl.LDAPStateFree
 
 				ldapPool.conn[index].Mu.Unlock()
 			}(connNumber, ldapAuthRequest)
