@@ -14,7 +14,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -258,7 +257,9 @@ func (aw *Worker) handleRequest() {
 
 	defer L.Close()
 
-	libs.Preload(L)
+	// libs.Preload(L)
+	lualib.LoadSubset(L)
+
 	gluacrypto.Preload(L)
 
 	logs := new(lualib.CustomLogKeyValue)

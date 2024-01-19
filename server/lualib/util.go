@@ -2,6 +2,29 @@ package lualib
 
 import (
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/vadv/gopher-lua-libs/argparse"
+	"github.com/vadv/gopher-lua-libs/base64"
+	"github.com/vadv/gopher-lua-libs/crypto"
+	"github.com/vadv/gopher-lua-libs/db"
+	"github.com/vadv/gopher-lua-libs/filepath"
+	"github.com/vadv/gopher-lua-libs/http"
+	"github.com/vadv/gopher-lua-libs/humanize"
+	"github.com/vadv/gopher-lua-libs/inspect"
+	"github.com/vadv/gopher-lua-libs/ioutil"
+	"github.com/vadv/gopher-lua-libs/json"
+	"github.com/vadv/gopher-lua-libs/log"
+	"github.com/vadv/gopher-lua-libs/pprof"
+	"github.com/vadv/gopher-lua-libs/regexp"
+	"github.com/vadv/gopher-lua-libs/shellescape"
+	"github.com/vadv/gopher-lua-libs/storage"
+	"github.com/vadv/gopher-lua-libs/strings"
+	"github.com/vadv/gopher-lua-libs/tac"
+	"github.com/vadv/gopher-lua-libs/tcp"
+	"github.com/vadv/gopher-lua-libs/telegram"
+	"github.com/vadv/gopher-lua-libs/template"
+	"github.com/vadv/gopher-lua-libs/time"
+	"github.com/vadv/gopher-lua-libs/xmlpath"
+	"github.com/vadv/gopher-lua-libs/yaml"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -133,4 +156,32 @@ func comparePasswords(L *lua.LState) int {
 	}
 
 	return 2
+}
+
+// LoadSubset loads a subset of Lua libraries into the Lua state L.
+// The function preloads several commonly used libraries including argparse, base64, crypto, db, filepath, http, humanize, inspect, ioutil, json, log, pprof, regexp, shellescape, storage
+func LoadSubset(L *lua.LState) {
+	argparse.Preload(L)
+	base64.Preload(L)
+	crypto.Preload(L)
+	db.Preload(L)
+	filepath.Preload(L)
+	http.Preload(L)
+	humanize.Preload(L)
+	inspect.Preload(L)
+	ioutil.Preload(L)
+	json.Preload(L)
+	log.Preload(L)
+	pprof.Preload(L)
+	regexp.Preload(L)
+	shellescape.Preload(L)
+	storage.Preload(L)
+	strings.Preload(L)
+	tac.Preload(L)
+	tcp.Preload(L)
+	telegram.Preload(L)
+	template.Preload(L)
+	time.Preload(L)
+	xmlpath.Preload(L)
+	yaml.Preload(L)
 }
