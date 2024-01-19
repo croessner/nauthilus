@@ -7,7 +7,7 @@ import (
 	"github.com/vadv/gopher-lua-libs/crypto"
 	"github.com/vadv/gopher-lua-libs/db"
 	"github.com/vadv/gopher-lua-libs/filepath"
-	"github.com/vadv/gopher-lua-libs/http"
+	"github.com/vadv/gopher-lua-libs/http/client"
 	"github.com/vadv/gopher-lua-libs/humanize"
 	"github.com/vadv/gopher-lua-libs/inspect"
 	"github.com/vadv/gopher-lua-libs/ioutil"
