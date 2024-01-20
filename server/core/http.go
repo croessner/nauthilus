@@ -26,13 +26,17 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gwatts/gin-adapter"
 	"github.com/justinas/nosurf"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
 
-var HTTPEndChan chan Done //nolint:gochecknoglobals // Quit-Channel for HTTP on shutdown
+var (
+	HTTPEndChan chan Done    //nolint:gochecknoglobals // Quit-Channel for HTTP on shutdown
+	LangBundle  *i18n.Bundle //nolint:gochecknoglobals // System wide i18n bundle
+)
 
 // RESTResult is a generic JSON result object for the Nauthilus REST API.
 type RESTResult struct {
