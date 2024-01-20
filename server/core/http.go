@@ -17,7 +17,6 @@ import (
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/easonlin404/limit"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -27,17 +26,13 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gwatts/gin-adapter"
 	"github.com/justinas/nosurf"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
 
-var (
-	HTTPEndChan chan Done    //nolint:gochecknoglobals // Quit-Channel for HTTP on shutdown
-	LangBundle  *i18n.Bundle //nolint:gochecknoglobals // System wide i18n bundle
-)
+var HTTPEndChan chan Done //nolint:gochecknoglobals // Quit-Channel for HTTP on shutdown
 
 // RESTResult is a generic JSON result object for the Nauthilus REST API.
 type RESTResult struct {
@@ -202,6 +197,12 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 			ctx.Abort()
 
 			return
+		case decl.AuthResultUnset:
+		case decl.AuthResultOK:
+		case decl.AuthResultFail:
+		case decl.AuthResultTempFail:
+		case decl.AuthResultEmptyUsername:
+		case decl.AuthResultEmptyPassword:
 		}
 
 		ctx.Next()
@@ -670,7 +671,7 @@ func HTTPApp(ctx context.Context) {
 	go waitForShutdown(www, ctx)
 
 	// Do not accept HTTP requests above a fixed limit.
-	router.Use(limit.Limit(viper.GetInt("max_http_requests")))
+	// router.Use(limit.Limit(viper.GetInt("max_http_requests")))
 
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	router.Use(gin.Recovery())
@@ -699,7 +700,7 @@ func HTTPApp(ctx context.Context) {
 	setupNotifyEndpoint(router, store)
 	setupBackChannelEndpoints(router)
 
-	www.SetKeepAlivesEnabled(false)
+	// www.SetKeepAlivesEnabled(false)
 
 	if config.EnvConfig.HTTPOptions.UseSSL {
 		www.TLSConfig = &tls.Config{
