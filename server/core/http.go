@@ -674,9 +674,6 @@ func HTTPApp(ctx context.Context) {
 
 	go waitForShutdown(www, ctx)
 
-	// Do not accept HTTP requests above a fixed limit.
-	// router.Use(limit.Limit(viper.GetInt("max_http_requests")))
-
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	router.Use(gin.Recovery())
 

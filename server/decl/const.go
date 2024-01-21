@@ -107,8 +107,6 @@ const (
 	StatsDelay = 60
 
 	MaxChannelSize = 500
-
-	MaxHTTPConnections = 500
 )
 
 // Log level.

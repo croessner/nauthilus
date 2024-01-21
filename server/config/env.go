@@ -380,7 +380,6 @@ func NewConfig() (*Config, error) {
 
 	// Set defaults
 	viper.SetDefault("instance_name", decl.InstanceName)
-	viper.SetDefault("max_http_requests", decl.MaxHTTPConnections)
 	viper.SetDefault("log_format_json", false)
 	viper.SetDefault("log_debug_modules", []*DbgModule{
 		{decl.DbgAuthName, decl.DbgAuth},
