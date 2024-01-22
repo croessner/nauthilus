@@ -21,7 +21,8 @@ import (
 // It allows faster access and execution of frequently used scripts.
 var LuaFilters *PreCompiledLuaFilters
 
-var luaPool = lualib.NewLuaStatePool()
+// LuaPool is a pool of Lua state instances.
+var LuaPool = lualib.NewLuaStatePool()
 
 // PreCompileLuaFilters is a function that pre-compiles Lua filters.
 // It iterates over the filters available in the configuration. For each filter,
@@ -339,9 +340,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 
 	defer LuaFilters.Mu.RUnlock()
 
-	L := luaPool.Get()
+	L := LuaPool.Get()
 
-	defer luaPool.Put(L)
+	defer LuaPool.Put(L)
 	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	globals := L.NewTable()

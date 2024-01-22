@@ -234,6 +234,19 @@ func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contex
 	go handleReloadSignal(ctx, store)
 }
 
+// terminateLuaStatePools shuts down the Lua state pools used by various modules.
+// It calls the Shutdown method on each pool to gracefully terminate all active Lua states.
+// This function should be called before exiting the application to ensure proper cleanup of resources.
+// Example usage:
+//
+//	terminateLuaStatePools()
+func terminateLuaStatePools() {
+	filter.LuaPool.Shutdown()
+	feature.LuaPool.Shutdown()
+	action.LuaPool.Shutdown()
+	backend.LuaPool.Shutdown()
+}
+
 // handleTerminateSignal is a function which listens for system level termination signals (SIGINT, SIGTERM).
 // Upon receiving such signal, it initiates an orderly shutdown of the application by
 // cancelling context and executing cleanup tasks such as handling backend connections,
@@ -280,6 +293,8 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
 	level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutdown complete")
 
 	statsTimer.Stop()
+
+	terminateLuaStatePools()
 
 	os.Exit(0)
 }

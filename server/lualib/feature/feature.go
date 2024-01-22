@@ -22,7 +22,7 @@ import (
 //
 // The PreCompiledLuaFeatures struct has the following properties:
 // - `LuaScripts`: a slice of LuaFeature objects representing the individual pre-compiled Lua scripts.
-// - `Mu`: a mutex used to synchronize access to the LuaScripts slice.
+// - `mu`: a mutex used to synchronize access to the LuaScripts slice.
 //
 // The PreCompiledLuaFeatures has two methods:
 // - `Add(luaFeature *LuaFeature)`: adds a LuaFeature object to the LuaScripts slice.
@@ -37,7 +37,8 @@ import (
 // If a script triggers or aborts the execution of features, the execution is halted and the method returns the appropriate values.
 var LuaFeatures *PreCompiledLuaFeatures
 
-var luaPool = lualib.NewLuaStatePool()
+// LuaPool is a pool of Lua state instances.
+var LuaPool = lualib.NewLuaStatePool()
 
 // PreCompileLuaFeatures pre-compiles Lua features.
 // It checks if the configuration for Lua features is loaded and if the LuaFeatures variable is already set.
@@ -227,9 +228,9 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := luaPool.Get()
+	L := LuaPool.Get()
 
-	defer luaPool.Put(L)
+	defer LuaPool.Put(L)
 	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	globals := r.setGlobals(L)

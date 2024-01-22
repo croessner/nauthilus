@@ -379,6 +379,8 @@ const SamePasswordsDifferentAccountLimit = uint(5)
 
 const LuaMaxExecutionTime = 120
 
+const LuaBackendResultTypeName = "backend_result"
+
 const (
 	LuaCommandPassDB       LuaCommand = iota
 	LuaCommandListAccounts LuaCommand = iota

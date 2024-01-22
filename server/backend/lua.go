@@ -22,7 +22,8 @@ var LuaRequestChan chan *LuaRequest
 // LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
 var LuaMainWorkerEndChan chan Done
 
-var luaPool = lualib.NewLuaStatePool()
+// LuaPool is a pool of Lua state instances.
+var LuaPool = NewLuaBackendResultStatePool()
 
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
@@ -161,13 +162,32 @@ type LuaBackendResult struct {
 	Logs *lualib.CustomLogKeyValue
 }
 
-// luaBackendResultTypeName is a constant string that represents the name of the Lua backend result type.
-const luaBackendResultTypeName = "backend_result"
+// LuaBackendResultStatePool embeds the LuaStatePool type.
+// It provides methods for retrieving, returning, and shutting down Lua states.
+type LuaBackendResultStatePool struct {
+	*lualib.LuaStatePool
+}
+
+// NewLuaBackendResultStatePool creates a new instance of LuaBackendResultStatePool that implements the LuaBaseStatePool
+// interface. It initializes a LuaStatePool with a New function
+func NewLuaBackendResultStatePool() lualib.LuaBaseStatePool {
+	lp := &lualib.LuaStatePool{
+		New: func() *lua.LState {
+			L := lualib.NewLStateWithDefaultLibraries()
+
+			registerBackendResultType(L)
+
+			return L
+		},
+	}
+
+	return &LuaBackendResultStatePool{lp.InitializeStatePool()}
+}
 
 // registerBackendResultType registers the Lua type "backend_result" in the given Lua state.
 // It sets the type metatable with the given name and creates the necessary static attributes and methods.
 func registerBackendResultType(L *lua.LState) {
-	mt := L.NewTypeMetatable(luaBackendResultTypeName)
+	mt := L.NewTypeMetatable(decl.LuaBackendResultTypeName)
 
 	L.SetGlobal("backend_result", mt)
 
@@ -190,7 +210,7 @@ func newBackendResult(L *lua.LState) int {
 
 	userData.Value = backendResult
 
-	L.SetMetatable(userData, L.GetTypeMetatable(luaBackendResultTypeName))
+	L.SetMetatable(userData, L.GetTypeMetatable(decl.LuaBackendResultTypeName))
 	L.Push(userData)
 
 	return 1
@@ -388,9 +408,9 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 	logs := new(lualib.CustomLogKeyValue)
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
-	L := luaPool.Get()
+	L := LuaPool.Get()
 
-	defer luaPool.Put(L)
+	defer LuaPool.Put(L)
 
 	L.SetContext(luaCtx)
 
@@ -414,7 +434,6 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 // registerLibraries registers various libraries to the given LState.
 // It preloads libraries, registers the backend result type, and preloads a module.
 func registerLibraries(L *lua.LState) {
-	registerBackendResultType(L)
 	L.PreloadModule(decl.LuaModUtil, lualib.Loader)
 }
 

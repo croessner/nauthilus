@@ -24,7 +24,8 @@ var (
 	WorkerEndChan chan lualib.Done
 )
 
-var luaPool = lualib.NewLuaStatePool()
+// LuaPool is a pool of Lua state instances.
+var LuaPool = lualib.NewLuaStatePool()
 
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
@@ -254,9 +255,9 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 // If an error occurs while executing the script, it logs the failure.
 // After executing the script, it logs the result and cancels the Lua context.
 func (aw *Worker) handleRequest() {
-	L := luaPool.Get()
+	L := LuaPool.Get()
 
-	defer luaPool.Put(L)
+	defer LuaPool.Put(L)
 	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
 
 	logs := new(lualib.CustomLogKeyValue)
