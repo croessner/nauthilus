@@ -23,7 +23,6 @@ import (
 )
 
 var (
-
 	// LDAPEndChan is the quit-channel for LDAP on shutdown.
 	LDAPEndChan chan Done //nolint:gochecknoglobals // Quit-Channel for LDAP on shutdown
 
