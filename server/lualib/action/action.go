@@ -170,6 +170,7 @@ func (aw *Worker) Work(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			WorkerEndChan <- lualib.Done{}
+
 			break
 		case aw.luaActionRequest = <-RequestChan:
 			aw.handleRequest()

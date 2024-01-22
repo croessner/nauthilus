@@ -391,7 +391,7 @@ type NotifyPageData struct {
 // HTTP communication with OAuth2 OpenID-Connect server via OpenAPI. This includes
 // configurations for HTTP client, authorization parameters, and request context.
 type ApiConfig struct {
-	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-Connect server.
+	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-connect server.
 	httpClient *http.Client
 
 	// apiClient holds the client information to interact with the OpenAPI.
