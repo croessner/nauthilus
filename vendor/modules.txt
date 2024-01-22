@@ -116,9 +116,6 @@ github.com/dspinhirne/netaddr-go
 # github.com/dustin/go-humanize v1.0.1
 ## explicit; go 1.16
 github.com/dustin/go-humanize
-# github.com/easonlin404/limit v0.0.0-20190114092031-3d7b09b656e2
-## explicit
-github.com/easonlin404/limit
 # github.com/emersion/go-imap v1.2.1
 ## explicit; go 1.13
 github.com/emersion/go-imap
