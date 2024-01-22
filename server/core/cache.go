@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/util"
 )
 
@@ -17,7 +18,7 @@ func CachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	passDBResult = &PassDBResult{}
 
-	cacheNames := backend.GetCacheNames(auth.Protocol.Get(), backend.CacheAll)
+	cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
 
 	for _, cacheName := range cacheNames.GetStringSlice() {
 		accountName, err = auth.GetUserAccountFromRedis()

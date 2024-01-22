@@ -13,7 +13,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -106,7 +106,7 @@ func setupEnvironment() (err error) {
 	config.LoadableConfig, err = config.NewConfigFile()
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyWarning, err,
+			global.LogKeyWarning, err,
 		)
 
 		return fmt.Errorf("unable to load ConfigFile: %w", err)
@@ -160,7 +160,7 @@ func setTimeZone() {
 	if tz := os.Getenv("TZ"); tz != "" {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(
-				decl.LogKeyError, fmt.Sprintf("Error loading location '%s': %v", tz, err),
+				global.LogKeyError, fmt.Sprintf("Error loading location '%s': %v", tz, err),
 			)
 		}
 	}
@@ -183,11 +183,11 @@ func setupFeatures() error {
 }
 
 // PreCompileFeatures pre-compiles the features for the application based on the configuration.
-// If the application is configured without the Lua features (decl.FeatureLua), it performs no operation and returns nil.
+// If the application is configured without the Lua features (global.FeatureLua), it performs no operation and returns nil.
 // If the application is configured with the Lua features, it attempts to pre-compile the Lua features.
 // If pre-compilation of the Lua features encounters any errors, it returns the error. Otherwise, it returns nil.
 func PreCompileFeatures() error {
-	if !config.EnvConfig.HasFeature(decl.FeatureLua) {
+	if !config.EnvConfig.HasFeature(global.FeatureLua) {
 		return nil
 	}
 
@@ -280,7 +280,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
 
 	sig := <-sigsTerminate
 
-	level.Info(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
+	level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
 
 	cancel()
 
@@ -296,7 +296,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
 	// Sync some Prometheus data to Redis
 	core.SaveStatsToRedis()
 
-	level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, "Shutdown complete")
+	level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Shutdown complete")
 
 	statsTimer.Stop()
 
@@ -337,7 +337,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore) {
 // It will log a warning if an unrecognized backend is given.
 func handleBackend(passDB *config.PassDB) {
 	switch passDB.Get() {
-	case decl.BackendLDAP:
+	case global.BackendLDAP:
 		<-backend.LDAPEndChan
 		<-backend.LDAPAuthEndChan
 
@@ -345,18 +345,18 @@ func handleBackend(passDB *config.PassDB) {
 		close(backend.LDAPAuthEndChan)
 		close(backend.LDAPRequestChan)
 		close(backend.LDAPAuthRequestChan)
-	case decl.BackendMySQL, decl.BackendPostgres:
+	case global.BackendMySQL, global.BackendPostgres:
 		if backend.Database != nil && backend.Database.Conn != nil {
 			backend.Database.Conn.Close()
 		}
-	case decl.BackendLua:
+	case global.BackendLua:
 		<-backend.LuaMainWorkerEndChan
 
 		close(backend.LuaMainWorkerEndChan)
 		close(backend.LuaRequestChan)
-	case decl.BackendCache:
+	case global.BackendCache:
 	default:
-		level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+		level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
 	}
 }
 
@@ -475,20 +475,20 @@ func startLuaWorker(lua *contextTuple) {
 //	sig:     The signal that triggers the reloading of Nauthilus
 func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
+		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			store.ldapLookup, store.ldapAuth = handleLDAPBackend(store.ldapLookup, store.ldapAuth, ctx)
-		case decl.BackendMySQL, decl.BackendPostgres:
+		case global.BackendMySQL, global.BackendPostgres:
 			store.sql = handleSQLBackend(store.sql, ctx)
-		case decl.BackendLua:
+		case global.BackendLua:
 			store.lua = handleLuaBackend(store.lua, ctx)
-		case decl.BackendCache:
+		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
 		}
 	}
 
@@ -496,33 +496,33 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyError, err,
+			global.LogKeyError, err,
 		)
 	}
 
 	if err := setupFeatures(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyMsg, "Unable to setup the features",
-			decl.LogKeyError, err,
+			global.LogKeyMsg, "Unable to setup the features",
+			global.LogKeyError, err,
 		)
 	}
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			startLDAPWorkers(store.ldapLookup, store.ldapAuth)
-		case decl.BackendMySQL, decl.BackendPostgres:
+		case global.BackendMySQL, global.BackendPostgres:
 			backend.Database = backend.NewDatabase(store.sql.ctx)
-		case decl.BackendLua:
+		case global.BackendLua:
 			startLuaWorker(store.lua)
-		case decl.BackendCache:
+		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
+			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
 		}
 	}
 
 	level.Debug(logging.DefaultLogger).Log(
-		decl.LogKeyMsg, "Reload complete",
+		global.LogKeyMsg, "Reload complete",
 	)
 }
 
@@ -542,15 +542,15 @@ func setupWorkers(ctx context.Context, store *contextStore) {
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			setupLDAPWorker(store, ctx)
-		case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
+		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 			setupSQLWorker(store, ctx, passDB)
-		case decl.BackendLua:
+		case global.BackendLua:
 			setupLuaWorker(store, ctx)
-		case decl.BackendCache:
+		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend", "backend")
+			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend", "backend")
 		}
 	}
 }
@@ -586,7 +586,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 func setupSQLWorker(store *contextStore, ctx context.Context, passDB *config.PassDB) {
 	if backend.Database != nil {
 		level.Warn(logging.DefaultLogger).Log(
-			decl.LogKeyWarning, "Currently only one SQLConf Database is allowed!",
+			global.LogKeyWarning, "Currently only one SQLConf Database is allowed!",
 			"skipping", passDB)
 
 		return
@@ -602,7 +602,7 @@ func setupSQLWorker(store *contextStore, ctx context.Context, passDB *config.Pas
 // The context store is modified within the function where it initializes the LuaContext based on the provided context.
 // The Lua worker is then started with the initialized context.
 func setupLuaWorker(store *contextStore, ctx context.Context) {
-	backend.LuaRequestChan = make(chan *backend.LuaRequest, decl.MaxChannelSize)
+	backend.LuaRequestChan = make(chan *backend.LuaRequest, global.MaxChannelSize)
 	backend.LuaMainWorkerEndChan = make(chan backend.Done)
 
 	store.lua = newContextTuple(ctx)
@@ -634,7 +634,7 @@ func setupRedis() {
 // Any signal sent to close the server is sent through the HTTPEndChan channel of type Done.
 func startHTTPServer(ctx context.Context) {
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyMsg, "Starting Nauthilus HTTP server",
+		global.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
 	)
 
@@ -684,7 +684,7 @@ func main() {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)
 	}
 
-	statsTimer := time.NewTicker(decl.StatsDelay * time.Second)
+	statsTimer := time.NewTicker(global.StatsDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)

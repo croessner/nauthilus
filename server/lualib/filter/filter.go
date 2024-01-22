@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/gin-gonic/gin"
@@ -219,41 +219,41 @@ type Request struct {
 func setGlobals(r *Request, L *lua.LState, globals *lua.LTable) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
-	globals.RawSet(lua.LString(decl.LuaFilterAccept), lua.LBool(false))
-	globals.RawSet(lua.LString(decl.LuaFilterREJECT), lua.LBool(true))
-	globals.RawSet(lua.LString(decl.LuaFilterResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(decl.LuaFilterResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(global.LuaFilterAccept), lua.LBool(false))
+	globals.RawSet(lua.LString(global.LuaFilterREJECT), lua.LBool(true))
+	globals.RawSet(lua.LString(global.LuaFilterResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(global.LuaFilterResultFail), lua.LNumber(1))
 
-	globals.RawSetString(decl.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(r.Context)))
-	globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
-	globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
-	globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(r.Context)))
+	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
+	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
+	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 
-	L.SetGlobal(decl.LuaDefaultTable, globals)
+	L.SetGlobal(global.LuaDefaultTable, globals)
 }
 
 // setRequest fills a provided *lua.LTable with corresponding values obtained from a supplied *Request object.
 // The function key in the lua.LTable is set to the field name in the Request object, and the value in lua.LTable is the corresponding value in Request object.
-// For instance, a key like decl.LuaRequestDebug in lua.LTable corresponds to the Debug field in Request and its value is set to the Boost value in the Request object.
+// For instance, a key like global.LuaRequestDebug in lua.LTable corresponds to the Debug field in Request and its value is set to the Boost value in the Request object.
 func setRequest(r *Request, request *lua.LTable) {
-	request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(r.Debug))
-	request.RawSet(lua.LString(decl.LuaRequestNoAuth), lua.LBool(r.NoAuth))
-	request.RawSet(lua.LString(decl.LuaRequestAuthenticated), lua.LBool(r.Authenticated))
-	request.RawSet(lua.LString(decl.LuaRequestUserFound), lua.LBool(r.UserFound))
+	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))
+	request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(r.NoAuth))
+	request.RawSet(lua.LString(global.LuaRequestAuthenticated), lua.LBool(r.Authenticated))
+	request.RawSet(lua.LString(global.LuaRequestUserFound), lua.LBool(r.UserFound))
 
-	request.RawSetString(decl.LuaRequestSession, lua.LString(r.Session))
-	request.RawSetString(decl.LuaRequestClientIP, lua.LString(r.ClientIP))
-	request.RawSetString(decl.LuaRequestClientPort, lua.LString(r.ClientPort))
-	request.RawSetString(decl.LuaRequestClientHost, lua.LString(r.ClientHost))
-	request.RawSetString(decl.LuaRequestClientID, lua.LString(r.ClientID))
-	request.RawSetString(decl.LuaRequestLocalIP, lua.LString(r.LocalIP))
-	request.RawSetString(decl.LuaRequestLocalPort, lua.LString(r.LocalPort))
-	request.RawSetString(decl.LuaRequestUsername, lua.LString(r.Username))
-	request.RawSetString(decl.LuaRequestAccount, lua.LString(r.Account))
-	request.RawSetString(decl.LuaRequestUniqueUserID, lua.LString(r.UniqueUserID))
-	request.RawSetString(decl.LuaRequestDisplayName, lua.LString(r.DisplayName))
-	request.RawSetString(decl.LuaRequestPassword, lua.LString(r.Password))
-	request.RawSetString(decl.LuaRequestProtocol, lua.LString(r.Protocol))
+	request.RawSetString(global.LuaRequestSession, lua.LString(r.Session))
+	request.RawSetString(global.LuaRequestClientIP, lua.LString(r.ClientIP))
+	request.RawSetString(global.LuaRequestClientPort, lua.LString(r.ClientPort))
+	request.RawSetString(global.LuaRequestClientHost, lua.LString(r.ClientHost))
+	request.RawSetString(global.LuaRequestClientID, lua.LString(r.ClientID))
+	request.RawSetString(global.LuaRequestLocalIP, lua.LString(r.LocalIP))
+	request.RawSetString(global.LuaRequestLocalPort, lua.LString(r.LocalPort))
+	request.RawSetString(global.LuaRequestUsername, lua.LString(r.Username))
+	request.RawSetString(global.LuaRequestAccount, lua.LString(r.Account))
+	request.RawSetString(global.LuaRequestUniqueUserID, lua.LString(r.UniqueUserID))
+	request.RawSetString(global.LuaRequestDisplayName, lua.LString(r.DisplayName))
+	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
+	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
 }
 
 // executeScriptWithinContext executes a Lua script within a provided context.
@@ -262,7 +262,7 @@ func setRequest(r *Request, request *lua.LTable) {
 // It also calls the Lua function with the given parameters and logs the result.
 // The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(decl.LogKeyLuaScripttimeout)*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(global.LogKeyLuaScripttimeout)*time.Second)
 
 	defer luaCancel()
 
@@ -275,7 +275,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 		return false, scriptErr
 	}
 
-	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(decl.LuaFnCallFilter), NRet: 2, Protect: true}, request)
+	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(global.LuaFnCallFilter), NRet: 2, Protect: true}, request)
 	if callErr != nil {
 		logError(r, script, callErr)
 
@@ -300,21 +300,21 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 // It logs the Session GUID, the name of the script, and the error message to the default error logger with an Error level.
 func logError(r *Request, script *LuaFilter, err error) {
 	level.Error(logging.DefaultErrLogger).Log(
-		decl.LogKeyGUID, r.Session,
+		global.LogKeyGUID, r.Session,
 		"name", script.Name,
-		decl.LogKeyError, err,
+		global.LogKeyError, err,
 	)
 }
 
 // logResult logs the output of a LuaFilter execution for a given request.
 // The outcome (ok or fail) and whether an action was taken is logged along with the session ID and script name.
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
-	resultMap := map[int]string{decl.ResultOk: "ok", decl.ResultFail: "fail"}
+	resultMap := map[int]string{global.ResultOk: "ok", global.ResultFail: "fail"}
 
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyGUID, r.Session,
+		global.LogKeyGUID, r.Session,
 		"name", script.Name,
-		decl.LogKeyMsg, "Lua filter finished",
+		global.LogKeyMsg, "Lua filter finished",
 		"action", action,
 		"result", resultMap[ret],
 	)
@@ -343,7 +343,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)
-	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
+	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	globals := L.NewTable()
 	setGlobals(r, L, globals)

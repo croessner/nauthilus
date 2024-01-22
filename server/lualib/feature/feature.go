@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/gin-gonic/gin"
@@ -231,11 +231,11 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)
-	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
+	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	globals := r.setGlobals(L)
 
-	L.SetGlobal(decl.LuaDefaultTable, globals)
+	L.SetGlobal(global.LuaDefaultTable, globals)
 
 	request := r.setRequestFields(L)
 
@@ -264,17 +264,17 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
 
-	globals.RawSet(lua.LString(decl.LuaFeatureTriggerNo), lua.LBool(false))
-	globals.RawSet(lua.LString(decl.LuaFeatureTriggerYes), lua.LBool(true))
-	globals.RawSet(lua.LString(decl.LuaFeatureAbortNo), lua.LBool(false))
-	globals.RawSet(lua.LString(decl.LuaFeatureAbortYes), lua.LBool(true))
-	globals.RawSet(lua.LString(decl.LuaFeatureResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(decl.LuaFeatureResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(global.LuaFeatureTriggerNo), lua.LBool(false))
+	globals.RawSet(lua.LString(global.LuaFeatureTriggerYes), lua.LBool(true))
+	globals.RawSet(lua.LString(global.LuaFeatureAbortNo), lua.LBool(false))
+	globals.RawSet(lua.LString(global.LuaFeatureAbortYes), lua.LBool(true))
+	globals.RawSet(lua.LString(global.LuaFeatureResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(global.LuaFeatureResultFail), lua.LNumber(1))
 
-	globals.RawSetString(decl.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(r.Context)))
-	globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
-	globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
-	globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(r.Context)))
+	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
+	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
+	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 
 	return globals
 }
@@ -284,31 +284,31 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 func (r *Request) setRequestFields(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(r.Debug))
-	request.RawSetString(decl.LuaRequestSession, lua.LString(r.Session))
-	request.RawSetString(decl.LuaRequestClientIP, lua.LString(r.ClientIP))
-	request.RawSetString(decl.LuaRequestClientPort, lua.LString(r.ClientPort))
-	request.RawSetString(decl.LuaRequestUsername, lua.LString(r.Username))
-	request.RawSetString(decl.LuaRequestPassword, lua.LString(r.Password))
-	request.RawSetString(decl.LuaRequestProtocol, lua.LString(r.Protocol))
-	request.RawSetString(decl.LuaRequestClientID, lua.LString(r.ClientID))
-	request.RawSetString(decl.LuaRequestLocalIP, lua.LString(r.LocalIP))
-	request.RawSetString(decl.LuaRequestLocalPort, lua.LString(r.LocalPort))
-	request.RawSetString(decl.LuaRequestUserAgent, lua.LString(r.UserAgent))
-	request.RawSetString(decl.LuaRequestXSSL, lua.LString(r.XSSL))
-	request.RawSetString(decl.LuaRequestXSSSLSessionID, lua.LString(r.XSSLSessionID))
-	request.RawSetString(decl.LuaRequestXSSLClientVerify, lua.LString(r.XSSLClientVerify))
-	request.RawSetString(decl.LuaRequestXSSLClientDN, lua.LString(r.XSSLClientDN))
-	request.RawSetString(decl.LuaRequestXSSLClientCN, lua.LString(r.XSSLClientCN))
-	request.RawSetString(decl.LuaRequestXSSLIssuer, lua.LString(r.XSSLIssuer))
-	request.RawSetString(decl.LuaRequestXSSLClientNotBefore, lua.LString(r.XSSLClientNotBefore))
-	request.RawSetString(decl.LuaRequestXSSLClientNotAfter, lua.LString(r.XSSLClientNotAfter))
-	request.RawSetString(decl.LuaRequestXSSLSubjectDN, lua.LString(r.XSSLSubjectDN))
-	request.RawSetString(decl.LuaRequestXSSLIssuerDN, lua.LString(r.XSSLIssuerDN))
-	request.RawSetString(decl.LuaRequestXSSLClientSubjectDN, lua.LString(r.XSSLClientSubjectDN))
-	request.RawSetString(decl.LuaRequestXSSLClientIssuerDN, lua.LString(r.XSSLClientIssuerDN))
-	request.RawSetString(decl.LuaRequestXSSLProtocol, lua.LString(r.XSSLProtocol))
-	request.RawSetString(decl.LuaRequestXSSLCipher, lua.LString(r.XSSLCipher))
+	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))
+	request.RawSetString(global.LuaRequestSession, lua.LString(r.Session))
+	request.RawSetString(global.LuaRequestClientIP, lua.LString(r.ClientIP))
+	request.RawSetString(global.LuaRequestClientPort, lua.LString(r.ClientPort))
+	request.RawSetString(global.LuaRequestUsername, lua.LString(r.Username))
+	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
+	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
+	request.RawSetString(global.LuaRequestClientID, lua.LString(r.ClientID))
+	request.RawSetString(global.LuaRequestLocalIP, lua.LString(r.LocalIP))
+	request.RawSetString(global.LuaRequestLocalPort, lua.LString(r.LocalPort))
+	request.RawSetString(global.LuaRequestUserAgent, lua.LString(r.UserAgent))
+	request.RawSetString(global.LuaRequestXSSL, lua.LString(r.XSSL))
+	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(r.XSSLSessionID))
+	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(r.XSSLClientVerify))
+	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(r.XSSLClientDN))
+	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(r.XSSLClientCN))
+	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(r.XSSLIssuer))
+	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(r.XSSLClientNotBefore))
+	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(r.XSSLClientNotAfter))
+	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(r.XSSLSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(r.XSSLIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(r.XSSLClientSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(r.XSSLClientIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(r.XSSLProtocol))
+	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(r.XSSLCipher))
 
 	return request
 }
@@ -343,7 +343,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		}
 
 		if err = L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(decl.LuaFnCallFeature),
+			Fn:      L.GetGlobal(global.LuaFnCallFeature),
 			NRet:    3,
 			Protect: true,
 		}, request); err != nil {
@@ -378,9 +378,9 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string) {
 	level.Error(logging.DefaultErrLogger).Log(
-		decl.LogKeyGUID, r.Session,
+		global.LogKeyGUID, r.Session,
 		"name", scriptName,
-		decl.LogKeyError, err,
+		global.LogKeyError, err,
 	)
 
 	luaCancel()
@@ -402,8 +402,8 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 //
 // Dependencies:
 // - logging.DefaultErrLogger: the default error logger for logging the log entry
-// - decl.LogKeyGUID: the constant representing the log key for the session ID
-// - decl.LogKeyMsg: the constant representing the log key for the log message
+// - global.LogKeyGUID: the constant representing the log key for the session ID
+// - global.LogKeyMsg: the constant representing the log key for the log message
 // - r.formatResult: a helper method to format the feature result as a string
 //
 // Parameters:
@@ -415,9 +415,9 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 // Returns: none
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
 	level.Info(logging.DefaultErrLogger).Log(
-		decl.LogKeyGUID, r.Session,
+		global.LogKeyGUID, r.Session,
 		"name", scriptName,
-		decl.LogKeyMsg, "Lua feature finished",
+		global.LogKeyMsg, "Lua feature finished",
 		"triggered", triggered,
 		"abort_features", abortFeatures,
 		"result", func() string {
@@ -432,8 +432,8 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 // Otherwise, it returns a string formatted as "unknown(ret)".
 func (r *Request) formatResult(ret int) string {
 	resultMap := map[int]string{
-		0: decl.LuaSuccess,
-		1: decl.LuaFail,
+		0: global.LuaSuccess,
+		1: global.LuaFail,
 	}
 
 	if ret == 0 || ret == 1 {

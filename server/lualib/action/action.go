@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
@@ -39,14 +39,14 @@ type LuaScriptAction struct {
 	ScriptCompiled *lua.FunctionProto
 
 	// LuaAction is the type of Lua action.
-	LuaAction decl.LuaAction
+	LuaAction global.LuaAction
 }
 
 // Action contains a subset of the Authentication structure.
 // Action represents all the information related to a user's action in the system.
 type Action struct {
 	// LuaAction stores the user's desired action in Lua format.
-	LuaAction decl.LuaAction
+	LuaAction global.LuaAction
 
 	// Debug is a flag indicating if the action is executed in debug mode.
 	Debug bool
@@ -144,9 +144,9 @@ type Worker struct {
 func NewWorker() *Worker {
 	resultMap := make(map[int]string, 2)
 
-	resultMap[0] = decl.LuaSuccess
-	resultMap[1] = decl.LuaFail
-	RequestChan = make(chan *Action, decl.MaxChannelSize)
+	resultMap[0] = global.LuaSuccess
+	resultMap[1] = global.LuaFail
+	RequestChan = make(chan *Action, global.MaxChannelSize)
 
 	return &Worker{
 		resultMap: resultMap,
@@ -218,7 +218,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 
 	luaAction.LuaAction = getLuaActionType(actionType)
 
-	if luaAction.LuaAction != decl.LuaActionNone {
+	if luaAction.LuaAction != global.LuaActionNone {
 		aw.loadScript(luaAction, scriptPath)
 	}
 }
@@ -237,7 +237,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return
 	}
@@ -258,7 +258,7 @@ func (aw *Worker) handleRequest() {
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)
-	defer L.SetGlobal(decl.LuaDefaultTable, lua.LNil)
+	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	logs := new(lualib.CustomLogKeyValue)
 	aw.setupGlobalVariables(L, logs)
@@ -274,24 +274,24 @@ func (aw *Worker) handleRequest() {
 // setupGlobalVariables sets up global Lua variables for the Worker.
 // It creates a new Lua table to hold the global variables.
 // If the DevMode flag is true in the EnvConfig, it calls the DebugModule function to log debug information.
-// It sets the global variables LString(decl.LuaActionResultOk) and LString(decl.LuaActionResultFail) with the corresponding values.
-// It sets the global functions LString(decl.LuaFnCtxSet), LString(decl.LuaFnCtxGet), LString(decl.LuaFnCtxDelete), and LString(decl.LuaFnAddCustomLog) to their respective Lua functions
+// It sets the global variables LString(global.LuaActionResultOk) and LString(global.LuaActionResultFail) with the corresponding values.
+// It sets the global functions LString(global.LuaFnCtxSet), LString(global.LuaFnCtxGet), LString(global.LuaFnCtxDelete), and LString(global.LuaFnAddCustomLog) to their respective Lua functions
 func (aw *Worker) setupGlobalVariables(L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
 	globals := L.NewTable()
 
 	if config.EnvConfig.DevMode {
-		util.DebugModule(decl.DbgAction, decl.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
+		util.DebugModule(global.DbgAction, global.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 
-	globals.RawSet(lua.LString(decl.LuaActionResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(decl.LuaActionResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(global.LuaActionResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(global.LuaActionResultFail), lua.LNumber(1))
 
-	globals.RawSetString(decl.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(aw.luaActionRequest.Context)))
-	globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(aw.luaActionRequest.Context)))
-	globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(aw.luaActionRequest.Context)))
-	globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(aw.luaActionRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(aw.luaActionRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(aw.luaActionRequest.Context)))
+	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 
-	L.SetGlobal(decl.LuaDefaultTable, globals)
+	L.SetGlobal(global.LuaDefaultTable, globals)
 
 	return globals
 }
@@ -303,29 +303,29 @@ func (aw *Worker) setupGlobalVariables(L *lua.LState, logs *lualib.CustomLogKeyV
 func (aw *Worker) createRequestTable(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(aw.luaActionRequest.Debug))
-	request.RawSet(lua.LString(decl.LuaRequestRepeating), lua.LBool(aw.luaActionRequest.Repeating))
-	request.RawSet(lua.LString(decl.LuaRequestBruteForceCounter), lua.LNumber(aw.luaActionRequest.BruteForceCounter))
-	request.RawSet(lua.LString(decl.LuaRequestNoAuth), lua.LBool(aw.luaActionRequest.NoAuth))
-	request.RawSet(lua.LString(decl.LuaRequestAuthenticated), lua.LBool(aw.luaActionRequest.Authenticated))
-	request.RawSet(lua.LString(decl.LuaRequestUserFound), lua.LBool(aw.luaActionRequest.UserFound))
+	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(aw.luaActionRequest.Debug))
+	request.RawSet(lua.LString(global.LuaRequestRepeating), lua.LBool(aw.luaActionRequest.Repeating))
+	request.RawSet(lua.LString(global.LuaRequestBruteForceCounter), lua.LNumber(aw.luaActionRequest.BruteForceCounter))
+	request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(aw.luaActionRequest.NoAuth))
+	request.RawSet(lua.LString(global.LuaRequestAuthenticated), lua.LBool(aw.luaActionRequest.Authenticated))
+	request.RawSet(lua.LString(global.LuaRequestUserFound), lua.LBool(aw.luaActionRequest.UserFound))
 
-	request.RawSetString(decl.LuaRequestSession, lua.LString(aw.luaActionRequest.Session))
-	request.RawSetString(decl.LuaRequestClientIP, lua.LString(aw.luaActionRequest.ClientIP))
-	request.RawSetString(decl.LuaRequestClientPort, lua.LString(aw.luaActionRequest.ClientPort))
-	request.RawSetString(decl.LuaRequestClientNet, lua.LString(aw.luaActionRequest.ClientNet))
-	request.RawSetString(decl.LuaRequestClientHost, lua.LString(aw.luaActionRequest.ClientHost))
-	request.RawSetString(decl.LuaRequestClientID, lua.LString(aw.luaActionRequest.ClientID))
-	request.RawSetString(decl.LuaRequestLocalIP, lua.LString(aw.luaActionRequest.LocalIP))
-	request.RawSetString(decl.LuaRequestLocalPort, lua.LString(aw.luaActionRequest.LocalPort))
-	request.RawSetString(decl.LuaRequestUsername, lua.LString(aw.luaActionRequest.Username))
-	request.RawSetString(decl.LuaRequestAccount, lua.LString(aw.luaActionRequest.Account))
-	request.RawSetString(decl.LuaRequestUniqueUserID, lua.LString(aw.luaActionRequest.UniqueUserID))
-	request.RawSetString(decl.LuaRequestDisplayName, lua.LString(aw.luaActionRequest.DisplayName))
-	request.RawSetString(decl.LuaRequestPassword, lua.LString(aw.luaActionRequest.Password))
-	request.RawSetString(decl.LuaRequestProtocol, lua.LString(aw.luaActionRequest.Protocol))
-	request.RawSetString(decl.LuaRequestBruteForceBucket, lua.LString(aw.luaActionRequest.BruteForceName))
-	request.RawSetString(decl.LuaRequestFeature, lua.LString(aw.luaActionRequest.FeatureName))
+	request.RawSetString(global.LuaRequestSession, lua.LString(aw.luaActionRequest.Session))
+	request.RawSetString(global.LuaRequestClientIP, lua.LString(aw.luaActionRequest.ClientIP))
+	request.RawSetString(global.LuaRequestClientPort, lua.LString(aw.luaActionRequest.ClientPort))
+	request.RawSetString(global.LuaRequestClientNet, lua.LString(aw.luaActionRequest.ClientNet))
+	request.RawSetString(global.LuaRequestClientHost, lua.LString(aw.luaActionRequest.ClientHost))
+	request.RawSetString(global.LuaRequestClientID, lua.LString(aw.luaActionRequest.ClientID))
+	request.RawSetString(global.LuaRequestLocalIP, lua.LString(aw.luaActionRequest.LocalIP))
+	request.RawSetString(global.LuaRequestLocalPort, lua.LString(aw.luaActionRequest.LocalPort))
+	request.RawSetString(global.LuaRequestUsername, lua.LString(aw.luaActionRequest.Username))
+	request.RawSetString(global.LuaRequestAccount, lua.LString(aw.luaActionRequest.Account))
+	request.RawSetString(global.LuaRequestUniqueUserID, lua.LString(aw.luaActionRequest.UniqueUserID))
+	request.RawSetString(global.LuaRequestDisplayName, lua.LString(aw.luaActionRequest.DisplayName))
+	request.RawSetString(global.LuaRequestPassword, lua.LString(aw.luaActionRequest.Password))
+	request.RawSetString(global.LuaRequestProtocol, lua.LString(aw.luaActionRequest.Protocol))
+	request.RawSetString(global.LuaRequestBruteForceBucket, lua.LString(aw.luaActionRequest.BruteForceName))
+	request.RawSetString(global.LuaRequestFeature, lua.LString(aw.luaActionRequest.FeatureName))
 
 	return request
 }
@@ -357,23 +357,23 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 	L.Pop(1)
 	util.DebugModule(
-		decl.DbgAction,
+		global.DbgAction,
 		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 	)
 
 	if err == nil {
 		level.Info(logging.DefaultLogger).Log(
 			append([]any{
-				decl.LogKeyGUID, aw.luaActionRequest.Session,
+				global.LogKeyGUID, aw.luaActionRequest.Session,
 				"script", aw.actionScripts[index].ScriptPath,
 				"feature", func() string {
 					if aw.luaActionRequest.FeatureName != "" {
 						return aw.luaActionRequest.FeatureName
 					}
 
-					return decl.NotAvailable
+					return global.NotAvailable
 				}(),
-				decl.LogKeyMsg, "Lua action finished",
+				global.LogKeyMsg, "Lua action finished",
 				"result", aw.createResultLogMessage(ret),
 			}, toLoggable(logs)...)...,
 		)
@@ -391,7 +391,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 	}
 
 	if err := L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(decl.LuaFnCallAction),
+		Fn:      L.GetGlobal(global.LuaFnCallAction),
 		NRet:    1,
 		Protect: true,
 	}, request); err != nil {
@@ -407,9 +407,9 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
 	level.Error(logging.DefaultErrLogger).Log(
 		append([]any{
-			decl.LogKeyGUID, aw.luaActionRequest.Session,
+			global.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,
-			decl.LogKeyError, err,
+			global.LogKeyError, err,
 		}, toLoggable(logs)...)...,
 	)
 }
@@ -450,24 +450,24 @@ func toLoggable(logs *lualib.CustomLogKeyValue) []any {
 	return nil
 }
 
-// getLuaActionType maps a given actionName string to its corresponding decl.LuaAction constant.
+// getLuaActionType maps a given actionName string to its corresponding global.LuaAction constant.
 // If actionName matches any of the predefined names, the corresponding constant is returned.
-// Otherwise, decl.LuaActionNone is returned.
-func getLuaActionType(actionName string) decl.LuaAction {
+// Otherwise, global.LuaActionNone is returned.
+func getLuaActionType(actionName string) global.LuaAction {
 	switch actionName {
-	case decl.LuaActionBruteForceName:
-		return decl.LuaActionBruteForce
-	case decl.LuaActionRBLName:
-		return decl.LuaActionRBL
-	case decl.LuaActionTLSName:
-		return decl.LuaActionTLS
-	case decl.LuaActionRelayDomainsName:
-		return decl.LuaActionRelayDomains
-	case decl.LuaActionLuaName:
-		return decl.LuaActionLua
-	case decl.LuaActionPostName:
-		return decl.LuaActionPost
+	case global.LuaActionBruteForceName:
+		return global.LuaActionBruteForce
+	case global.LuaActionRBLName:
+		return global.LuaActionRBL
+	case global.LuaActionTLSName:
+		return global.LuaActionTLS
+	case global.LuaActionRelayDomainsName:
+		return global.LuaActionRelayDomains
+	case global.LuaActionLuaName:
+		return global.LuaActionLua
+	case global.LuaActionPostName:
+		return global.LuaActionPost
 	default:
-		return decl.LuaActionNone
+		return global.LuaActionNone
 	}
 }

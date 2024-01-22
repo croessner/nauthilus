@@ -1,4 +1,4 @@
-package decl
+package global
 
 // Logging strings.
 const (
@@ -474,4 +474,11 @@ const (
 const (
 	ResultOk   = 0
 	ResultFail = 1
+)
+
+const (
+	CacheAll  CacheNameBackend = iota
+	CacheLDAP CacheNameBackend = iota
+	CacheSQL  CacheNameBackend = iota
+	CacheLua  CacheNameBackend = iota
 )

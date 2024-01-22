@@ -8,7 +8,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -87,7 +87,7 @@ func kbSuffix(value uint64) string {
 // It uses the kbSuffix function to convert the memory values in bytes to kilobytes (KB)
 // by dividing them by 1024.
 // The logging is performed using the DefaultLogger from the logging package.
-// Note: The declarations of logging.DefaultLogger, decl.LogKeyStatsAlloc, kbSuffix,
+// Note: The declarations of logging.DefaultLogger, global.LogKeyStatsAlloc, kbSuffix,
 // and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
@@ -95,15 +95,15 @@ func PrintStats() {
 	runtime.ReadMemStats(&memStats)
 
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyStatsAlloc, kbSuffix(bToKb(memStats.Alloc)),
-		decl.LogKeyStatsHeapAlloc, kbSuffix(bToKb(memStats.HeapAlloc)),
-		decl.LogKeyStatsHeapInUse, kbSuffix(bToKb(memStats.HeapInuse)),
-		decl.LogKeyStatsHeapIdle, kbSuffix(bToKb(memStats.HeapIdle)),
-		decl.LogKeyStatsStackInUse, kbSuffix(bToKb(memStats.StackInuse)),
-		decl.LogKeyStatsStackSys, kbSuffix(bToKb(memStats.StackSys)),
-		decl.LogKeyStatsSys, kbSuffix(bToKb(memStats.Sys)),
-		decl.LogKeyStatsTotalAlloc, kbSuffix(bToKb(memStats.TotalAlloc)),
-		decl.LogKeyStatsNumGC, memStats.NumGC,
+		global.LogKeyStatsAlloc, kbSuffix(bToKb(memStats.Alloc)),
+		global.LogKeyStatsHeapAlloc, kbSuffix(bToKb(memStats.HeapAlloc)),
+		global.LogKeyStatsHeapInUse, kbSuffix(bToKb(memStats.HeapInuse)),
+		global.LogKeyStatsHeapIdle, kbSuffix(bToKb(memStats.HeapIdle)),
+		global.LogKeyStatsStackInUse, kbSuffix(bToKb(memStats.StackInuse)),
+		global.LogKeyStatsStackSys, kbSuffix(bToKb(memStats.StackSys)),
+		global.LogKeyStatsSys, kbSuffix(bToKb(memStats.Sys)),
+		global.LogKeyStatsTotalAlloc, kbSuffix(bToKb(memStats.TotalAlloc)),
+		global.LogKeyStatsNumGC, memStats.NumGC,
 	)
 }
 
@@ -112,7 +112,7 @@ func GetCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return 0
 	}
@@ -127,22 +127,22 @@ func LoadStatsFromRedis() {
 		err        error
 	)
 
-	util.DebugModule(decl.DbgStats, decl.LogKeyMsg, "Load counter statistics from redis")
+	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Load counter statistics from redis")
 
 	LoginsCounter.Reset()
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + decl.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
+	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
 
-	for _, counterType := range []string{decl.LabelSuccess, decl.LabelFailure} {
+	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
 		if redisValue, err = backend.RedisHandleReplica.HGet(backend.RedisHandleReplica.Context(), redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
-				level.Info(logging.DefaultLogger).Log(decl.LogKeyMsg, "No statistics on Redis server")
+				level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
 				return
 			}
 
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return
 		}
@@ -155,19 +155,19 @@ func LoadStatsFromRedis() {
 func SaveStatsToRedis() {
 	var err error
 
-	util.DebugModule(decl.DbgStats, decl.LogKeyMsg, "Save counter statistics to redis")
+	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
-		{Value: GetCounterValue(LoginsCounter, decl.LabelSuccess), Label: decl.LabelSuccess},
-		{Value: GetCounterValue(LoginsCounter, decl.LabelFailure), Label: decl.LabelFailure},
+		{Value: GetCounterValue(LoginsCounter, global.LabelSuccess), Label: global.LabelSuccess},
+		{Value: GetCounterValue(LoginsCounter, global.LabelFailure), Label: global.LabelFailure},
 	}
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + decl.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
+	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
 
 	for index := range metrics {
 		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return
 		}

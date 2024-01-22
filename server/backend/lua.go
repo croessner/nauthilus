@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
@@ -35,7 +35,7 @@ type LuaRequest struct {
 	NoAuth bool
 
 	// Function is the Lua command that will be executed.
-	Function decl.LuaCommand
+	Function global.LuaCommand
 
 	// Session is a pointer to a unique session ID for the current request.
 	Session *string
@@ -187,7 +187,7 @@ func NewLuaBackendResultStatePool() lualib.LuaBaseStatePool {
 // registerBackendResultType registers the Lua type "backend_result" in the given Lua state.
 // It sets the type metatable with the given name and creates the necessary static attributes and methods.
 func registerBackendResultType(L *lua.LState) {
-	mt := L.NewTypeMetatable(decl.LuaBackendResultTypeName)
+	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
 
 	L.SetGlobal("backend_result", mt)
 
@@ -210,7 +210,7 @@ func newBackendResult(L *lua.LState) int {
 
 	userData.Value = backendResult
 
-	L.SetMetatable(userData, L.GetTypeMetatable(decl.LuaBackendResultTypeName))
+	L.SetMetatable(userData, L.GetTypeMetatable(global.LuaBackendResultTypeName))
 	L.Push(userData)
 
 	return 1
@@ -434,7 +434,7 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 // registerLibraries registers various libraries to the given LState.
 // It preloads libraries, registers the backend result type, and preloads a module.
 func registerLibraries(L *lua.LState) {
-	L.PreloadModule(decl.LuaModUtil, lualib.Loader)
+	L.PreloadModule(global.LuaModUtil, lualib.Loader)
 }
 
 // registerGlobals registers global variables and functions used in Lua scripts.
@@ -447,15 +447,15 @@ func registerLibraries(L *lua.LState) {
 func registerGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
-	globals.RawSet(lua.LString(decl.LuaBackendResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(decl.LuaBackendResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(global.LuaBackendResultFail), lua.LNumber(1))
 
-	globals.RawSetString(decl.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(luaRequest.Context)))
-	globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
-	globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
-	globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 
-	L.SetGlobal(decl.LuaDefaultTable, globals)
+	L.SetGlobal(global.LuaDefaultTable, globals)
 }
 
 // setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
@@ -470,51 +470,51 @@ func registerGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomL
 // - nret: The number of return values.
 func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
 	switch luaRequest.Function {
-	case decl.LuaCommandPassDB:
-		luaCommand = decl.LuaFnBackendVerifyPassword
+	case global.LuaCommandPassDB:
+		luaCommand = global.LuaFnBackendVerifyPassword
 		nret = 2
 
-		request.RawSet(lua.LString(decl.LuaRequestNoAuth), lua.LBool(luaRequest.NoAuth))
+		request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(luaRequest.NoAuth))
 
-		request.RawSetString(decl.LuaRequestUsername, lua.LString(luaRequest.Username))
-		request.RawSetString(decl.LuaRequestPassword, lua.LString(luaRequest.Password))
-		request.RawSetString(decl.LuaRequestClientIP, lua.LString(luaRequest.ClientIP))
-		request.RawSetString(decl.LuaRequestClientPort, lua.LString(luaRequest.ClientPort))
-		request.RawSetString(decl.LuaRequestClientHost, lua.LString(luaRequest.ClientHost))
-		request.RawSetString(decl.LuaRequestClientID, lua.LString(luaRequest.ClientID))
-		request.RawSetString(decl.LuaRequestLocalIP, lua.LString(luaRequest.LocalIP))
-		request.RawSetString(decl.LuaRequestLocalPort, lua.LString(luaRequest.LocalPprt))
-		request.RawSetString(decl.LuaRequestUserAgent, lua.LString(luaRequest.UserAgent))
-		request.RawSetString(decl.LuaRequestService, lua.LString(luaRequest.Service))
-		request.RawSetString(decl.LuaRequestProtocol, lua.LString(luaRequest.Protocol.String()))
-		request.RawSetString(decl.LuaRequestXSSL, lua.LString(luaRequest.XSSL))
-		request.RawSetString(decl.LuaRequestXSSSLSessionID, lua.LString(luaRequest.XSSLSessionID))
-		request.RawSetString(decl.LuaRequestXSSLClientVerify, lua.LString(luaRequest.XSSLClientVerify))
-		request.RawSetString(decl.LuaRequestXSSLClientDN, lua.LString(luaRequest.XSSLClientDN))
-		request.RawSetString(decl.LuaRequestXSSLClientCN, lua.LString(luaRequest.XSSLClientCN))
-		request.RawSetString(decl.LuaRequestXSSLIssuer, lua.LString(luaRequest.XSSLIssuer))
-		request.RawSetString(decl.LuaRequestXSSLClientNotBefore, lua.LString(luaRequest.XSSLClientNotBefore))
-		request.RawSetString(decl.LuaRequestXSSLClientNotAfter, lua.LString(luaRequest.XSSLClientNotAfter))
-		request.RawSetString(decl.LuaRequestXSSLSubjectDN, lua.LString(luaRequest.XSSLSubjectDN))
-		request.RawSetString(decl.LuaRequestXSSLIssuerDN, lua.LString(luaRequest.XSSLIssuerDN))
-		request.RawSetString(decl.LuaRequestXSSLClientSubjectDN, lua.LString(luaRequest.XSSLClientSubjectDN))
-		request.RawSetString(decl.LuaRequestXSSLClientIssuerDN, lua.LString(luaRequest.XSSLClientIssuerDN))
-		request.RawSetString(decl.LuaRequestXSSLProtocol, lua.LString(luaRequest.XSSLProtocol))
-		request.RawSetString(decl.LuaRequestXSSLCipher, lua.LString(luaRequest.XSSLCipher))
+		request.RawSetString(global.LuaRequestUsername, lua.LString(luaRequest.Username))
+		request.RawSetString(global.LuaRequestPassword, lua.LString(luaRequest.Password))
+		request.RawSetString(global.LuaRequestClientIP, lua.LString(luaRequest.ClientIP))
+		request.RawSetString(global.LuaRequestClientPort, lua.LString(luaRequest.ClientPort))
+		request.RawSetString(global.LuaRequestClientHost, lua.LString(luaRequest.ClientHost))
+		request.RawSetString(global.LuaRequestClientID, lua.LString(luaRequest.ClientID))
+		request.RawSetString(global.LuaRequestLocalIP, lua.LString(luaRequest.LocalIP))
+		request.RawSetString(global.LuaRequestLocalPort, lua.LString(luaRequest.LocalPprt))
+		request.RawSetString(global.LuaRequestUserAgent, lua.LString(luaRequest.UserAgent))
+		request.RawSetString(global.LuaRequestService, lua.LString(luaRequest.Service))
+		request.RawSetString(global.LuaRequestProtocol, lua.LString(luaRequest.Protocol.String()))
+		request.RawSetString(global.LuaRequestXSSL, lua.LString(luaRequest.XSSL))
+		request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(luaRequest.XSSLSessionID))
+		request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(luaRequest.XSSLClientVerify))
+		request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(luaRequest.XSSLClientDN))
+		request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(luaRequest.XSSLClientCN))
+		request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(luaRequest.XSSLIssuer))
+		request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(luaRequest.XSSLClientNotBefore))
+		request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(luaRequest.XSSLClientNotAfter))
+		request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(luaRequest.XSSLSubjectDN))
+		request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(luaRequest.XSSLIssuerDN))
+		request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(luaRequest.XSSLClientSubjectDN))
+		request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(luaRequest.XSSLClientIssuerDN))
+		request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(luaRequest.XSSLProtocol))
+		request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(luaRequest.XSSLCipher))
 
-	case decl.LuaCommandListAccounts:
-		luaCommand = decl.LuaFnBackendListAccounts
+	case global.LuaCommandListAccounts:
+		luaCommand = global.LuaFnBackendListAccounts
 		nret = 2
 
-	case decl.LuaCommandAddMFAValue:
-		luaCommand = decl.LuaFnBackendAddTOTPSecret
+	case global.LuaCommandAddMFAValue:
+		luaCommand = global.LuaFnBackendAddTOTPSecret
 		nret = 1
 
-		request.RawSetString(decl.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
+		request.RawSetString(global.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
 	}
 
-	request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-	request.RawSetString(decl.LuaRequestSession, lua.LString(*luaRequest.Session))
+	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+	request.RawSetString(global.LuaRequestSession, lua.LString(*luaRequest.Session))
 
 	return luaCommand, nret
 }
@@ -581,15 +581,15 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 	}
 
 	switch luaRequest.Function {
-	case decl.LuaCommandPassDB:
+	case global.LuaCommandPassDB:
 		userData := L.ToUserData(-1)
 
 		if luaBackendResult, assertOk := userData.Value.(*LuaBackendResult); assertOk {
 			luaBackendResult.Logs = logs
 
 			util.DebugModule(
-				decl.DbgLua,
-				decl.LogKeyGUID, luaRequest.Session,
+				global.DbgLua,
+				global.LogKeyGUID, luaRequest.Session,
 				"result", fmt.Sprintf("%+v", luaBackendResult),
 			)
 
@@ -601,7 +601,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 			}
 		}
 
-	case decl.LuaCommandListAccounts:
+	case global.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &LuaBackendResult{
 			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
 			Logs:       logs,
@@ -621,9 +621,9 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 // Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
 func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
 	level.Error(logging.DefaultErrLogger).Log(
-		decl.LogKeyGUID, luaRequest.Session,
+		global.LogKeyGUID, luaRequest.Session,
 		"script", config.LoadableConfig.GetLuaScriptPath(),
-		decl.LogKeyError, err,
+		global.LogKeyError, err,
 	)
 
 	luaRequest.LuaReplyChan <- &LuaBackendResult{

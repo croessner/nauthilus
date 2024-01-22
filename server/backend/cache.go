@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -30,7 +30,7 @@ type PasswordHistory map[string]uint
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
-	Backend           decl.Backend   `redis:"passdb_backend"`
+	Backend           global.Backend `redis:"passdb_backend"`
 	Password          string         `redis:"password"`
 	AccountField      *string        `redis:"account_field"`
 	TOTPSecretField   *string        `redis:"totp_secret_field"`
@@ -45,18 +45,9 @@ type RedisCache interface {
 	PositivePasswordCache | BruteForceBucketCache
 }
 
-type CacheNameBackend uint8
-
-const (
-	CacheAll  CacheNameBackend = iota
-	CacheLDAP CacheNameBackend = iota
-	CacheSQL  CacheNameBackend = iota
-	CacheLua  CacheNameBackend = iota
-)
-
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(username string) (accountName string, err error) {
-	key := config.EnvConfig.RedisPrefix + decl.RedisUserHashKey
+	key := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
 
 	accountName, err = RedisHandleReplica.HGet(RedisHandleReplica.Context(), key, username).Result()
 	if err != nil {
@@ -80,7 +71,7 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
 			return nil
 		}
 
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return
 	}
@@ -88,14 +79,14 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
 	*cache = new(T)
 
 	if err = json.Unmarshal(redisValue, *cache); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return
 	}
 
 	util.DebugModule(
-		decl.DbgCache,
-		decl.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", **cache))
+		global.DbgCache,
+		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", **cache))
 
 	return nil
 }
@@ -106,16 +97,16 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 	var result string
 
 	util.DebugModule(
-		decl.DbgCache,
-		decl.LogKeyGUID, guid,
-		decl.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
+		global.DbgCache,
+		global.LogKeyGUID, guid,
+		global.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
 	)
 
 	redisValue, err := json.Marshal(cache)
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyError, err,
+			global.LogKeyGUID, guid,
+			global.LogKeyError, err,
 		)
 
 		return
@@ -124,18 +115,18 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 	//nolint:lll // Ignore
 	if result, err = RedisHandle.Set(RedisHandle.Context(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyGUID, guid,
-			decl.LogKeyError, err,
+			global.LogKeyGUID, guid,
+			global.LogKeyError, err,
 		)
 	}
 
 	util.DebugModule(
-		decl.DbgCache,
-		decl.LogKeyGUID, guid,
+		global.DbgCache,
+		global.LogKeyGUID, guid,
 		"redis", result)
 }
 
-func GetCacheNames(requestedProtocol string, backends CacheNameBackend) (cacheNames config.StringSet) {
+func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (cacheNames config.StringSet) {
 	var (
 		cacheName    string
 		protocolLDAP *config.LDAPSearchProtocol
@@ -145,7 +136,7 @@ func GetCacheNames(requestedProtocol string, backends CacheNameBackend) (cacheNa
 
 	cacheNames = config.NewStringSet()
 
-	if backends == CacheAll || backends == CacheLDAP {
+	if backends == global.CacheAll || backends == global.CacheLDAP {
 		if protocolLDAP, _ = config.LoadableConfig.GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
 			if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
@@ -153,7 +144,7 @@ func GetCacheNames(requestedProtocol string, backends CacheNameBackend) (cacheNa
 		}
 	}
 
-	if backends == CacheAll || backends == CacheSQL {
+	if backends == global.CacheAll || backends == global.CacheSQL {
 		if protocolSQL, _ = config.LoadableConfig.GetSQLSearchProtocol(requestedProtocol); protocolSQL != nil {
 			if cacheName, _ = protocolSQL.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
@@ -161,7 +152,7 @@ func GetCacheNames(requestedProtocol string, backends CacheNameBackend) (cacheNa
 		}
 	}
 
-	if backends == CacheAll || backends == CacheLua {
+	if backends == global.CacheAll || backends == global.CacheLua {
 		if protocolLua, _ = config.LoadableConfig.GetLuaSearchProtocol(requestedProtocol); protocolLua != nil {
 			if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
@@ -182,7 +173,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	key := "as_webauthn:user:" + uniqueUserId
 
 	if redisValue, err = RedisHandleReplica.Get(RedisHandleReplica.Context(), key).Bytes(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return nil, err
 	}
@@ -190,7 +181,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	user = &User{}
 
 	if err = json.Unmarshal(redisValue, user); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return nil, err
 	}
@@ -203,7 +194,7 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 
 	redisValue, err := json.Marshal(user)
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return err
 	}
@@ -212,10 +203,10 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 
 	//nolint:lll // Ignore
 	if result, err = RedisHandle.Set(RedisHandle.Context(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 	}
 
-	util.DebugModule(decl.DbgCache, "redis", result)
+	util.DebugModule(global.DbgCache, "redis", result)
 
 	return err
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -63,7 +63,7 @@ func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: decl.LDAPSearch,
+		Command: global.LDAPSearch,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,
@@ -91,7 +91,7 @@ func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	}
 
 	// User not found
-	if distinguishedNames, assertOk = ldapReply.Result[decl.DistinguishedName]; !assertOk {
+	if distinguishedNames, assertOk = ldapReply.Result[global.DistinguishedName]; !assertOk {
 		return
 	}
 
@@ -99,11 +99,11 @@ func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		return
 	}
 
-	dn := distinguishedNames.([]any)[decl.LDAPSingleValue].(string)
+	dn := distinguishedNames.([]any)[global.LDAPSingleValue].(string)
 
 	// If a DN was returned and an account field is present, the user was found in the backend.
 	passDBResult.UserFound = true
-	passDBResult.Backend = decl.BackendLDAP
+	passDBResult.Backend = global.BackendLDAP
 
 	if _, okay := ldapReply.Result[accountField]; okay {
 		passDBResult.AccountField = &accountField
@@ -144,7 +144,7 @@ func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ldapReply = <-ldapReplyChan
 
 		if ldapReply.Err != nil {
-			level.Debug(logging.DefaultLogger).Log(decl.LogKeyGUID, auth.GUID, decl.LogKeyMsg, err)
+			level.Debug(logging.DefaultLogger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
 
 			var ldapError *ldap.Error
 
@@ -206,7 +206,7 @@ func LDAPAccountDB(auth *Authentication) (accounts AccountList, err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: decl.LDAPSearch,
+		Command: global.LDAPSearch,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,
@@ -292,7 +292,7 @@ func LDAPAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: decl.LDAPModifyAdd,
+		Command: global.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,

@@ -1,4 +1,4 @@
-package decl
+package global
 
 // Backend is a numeric identifier for a database backend.
 type Backend uint8
@@ -42,3 +42,5 @@ type DbgModule uint8
 type LuaAction uint8
 
 type LuaCommand uint8
+
+type CacheNameBackend uint8

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
@@ -39,14 +39,14 @@ func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
 
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
 type CryptPassword struct {
-	decl.Algorithm
-	decl.PasswordOption
+	global.Algorithm
+	global.PasswordOption
 	Password string
 	Salt     []byte
 }
 
 // Generate creates the encrypted form of a plain text password.
-func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg decl.Algorithm, pwOption decl.PasswordOption) (
+func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.Algorithm, pwOption global.PasswordOption) (
 	string, error,
 ) {
 	var (
@@ -58,12 +58,12 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg decl.Alg
 	hashSalt = append([]byte(plainPassword), salt...)
 
 	switch alg {
-	case decl.SSHA512:
+	case global.SSHA512:
 		hashValue = sha512.New()
-		c.Algorithm = decl.SSHA512
-	case decl.SSHA256:
+		c.Algorithm = global.SSHA512
+	case global.SSHA256:
 		hashValue = sha256.New()
-		c.Algorithm = decl.SSHA256
+		c.Algorithm = global.SSHA256
 	default:
 		return "", errors2.ErrUnsupportedAlgorithm
 	}
@@ -71,12 +71,12 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg decl.Alg
 	hashValue.Write(hashSalt)
 
 	switch pwOption {
-	case decl.B64:
+	case global.B64:
 		c.Password = base64.StdEncoding.EncodeToString(append(hashValue.Sum(nil), salt...))
-		c.PasswordOption = decl.B64
-	case decl.HEX:
+		c.PasswordOption = global.B64
+	case global.HEX:
 		c.Password = hex.EncodeToString(append(hashValue.Sum(nil), salt...))
-		c.PasswordOption = decl.HEX
+		c.PasswordOption = global.HEX
 	default:
 		return "", errors2.ErrUnsupportedPasswordOption
 	}
@@ -86,7 +86,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg decl.Alg
 
 // GetParameters splits an encoded password into its components.
 func (c *CryptPassword) GetParameters(cryptedPassword string) (
-	salt []byte, alg decl.Algorithm, pwOption decl.PasswordOption, err error,
+	salt []byte, alg global.Algorithm, pwOption global.PasswordOption, err error,
 ) {
 	var decodedPwSasltSalt []byte
 
@@ -95,10 +95,10 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	passwordPrefix := re.FindString(cryptedPassword)
 
 	if strings.HasPrefix(passwordPrefix, "SSHA512") {
-		alg = decl.SSHA512
+		alg = global.SSHA512
 	} else {
 		if strings.HasPrefix(passwordPrefix, "SSHA256") {
-			alg = decl.SSHA256
+			alg = global.SSHA256
 		} else {
 			return salt, alg, pwOption, errors2.ErrUnsupportedAlgorithm
 		}
@@ -107,10 +107,10 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	c.Algorithm = alg
 
 	if strings.HasSuffix(passwordPrefix, ".B64") {
-		pwOption = decl.B64
+		pwOption = global.B64
 	} else {
 		if strings.HasSuffix(passwordPrefix, ".HEX") {
-			pwOption = decl.HEX
+			pwOption = global.HEX
 		} else {
 			return salt, alg, pwOption, errors2.ErrUnsupportedPasswordOption
 		}
@@ -120,15 +120,15 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 
 	// {SSHA256} or {SSHA512}
 	if len(passwordPrefix) == 7 { //nolint:gomnd // Ignore
-		pwOption = decl.B64
+		pwOption = global.B64
 	}
 
 	c.Password = cryptedPassword[strings.Index(cryptedPassword, "}")+1:]
 
 	switch pwOption {
-	case decl.B64:
+	case global.B64:
 		decodedPwSasltSalt, err = base64.StdEncoding.DecodeString(c.Password)
-	case decl.HEX:
+	case global.HEX:
 		decodedPwSasltSalt, err = hex.DecodeString(c.Password)
 	}
 
@@ -137,9 +137,9 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	}
 
 	switch alg {
-	case decl.SSHA512:
+	case global.SSHA512:
 		salt = decodedPwSasltSalt[64:]
-	case decl.SSHA256:
+	case global.SSHA256:
 		salt = decodedPwSasltSalt[32:]
 	}
 
@@ -227,13 +227,13 @@ func NewRedisReplicaClient() redis.UniversalClient {
 
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.EnvConfig.DNSResolver == "" {
-		level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, "Using default DNS resolver")
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Using default DNS resolver")
 
 		resolver = &net.Resolver{
 			PreferGo: true,
 		}
 	} else {
-		level.Debug(logging.DefaultLogger).Log(decl.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.EnvConfig.DNSResolver))
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.EnvConfig.DNSResolver))
 
 		resolver = &net.Resolver{
 			PreferGo: true,
@@ -294,52 +294,52 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 	return re.ReplaceAllString(value, sep)
 }
 
-func DebugModule(module decl.DbgModule, keyvals ...any) {
+func DebugModule(module global.DbgModule, keyvals ...any) {
 	var moduleName string
 
-	if config.EnvConfig.Verbosity.Level() < decl.LogLevelDebug {
+	if config.EnvConfig.Verbosity.Level() < global.LogLevelDebug {
 		return
 	}
 
 	switch module {
-	case decl.DbgAll:
-		moduleName = decl.DbgAllName
-	case decl.DbgAuth:
-		moduleName = decl.DbgAuthName
-	case decl.DbgHydra:
-		moduleName = decl.DbgHydraName
-	case decl.DbgWebAuthn:
-		moduleName = decl.DbgWebAuthnName
-	case decl.DbgStats:
-		moduleName = decl.DbgStatsName
-	case decl.DbgWhitelist:
-		moduleName = decl.DbgWhitelistName
-	case decl.DbgLDAP:
-		moduleName = decl.DbgLDAPName
-	case decl.DbgLDAPPool:
-		moduleName = decl.DbgLDAPPoolName
-	case decl.DbgSQL:
-		moduleName = decl.DbgSQLName
-	case decl.DbgCache:
-		moduleName = decl.DbgCacheName
-	case decl.DbgBf:
-		moduleName = decl.DbgBfName
-	case decl.DbgRBL:
-		moduleName = decl.DbgRBLName
-	case decl.DbgAction:
-		moduleName = decl.DbgActionName
-	case decl.DbgFeature:
-		moduleName = decl.DbgFeatureName
-	case decl.DbgLua:
-		moduleName = decl.DbgLuaName
-	case decl.DbgFilter:
-		moduleName = decl.DbgFilterName
+	case global.DbgAll:
+		moduleName = global.DbgAllName
+	case global.DbgAuth:
+		moduleName = global.DbgAuthName
+	case global.DbgHydra:
+		moduleName = global.DbgHydraName
+	case global.DbgWebAuthn:
+		moduleName = global.DbgWebAuthnName
+	case global.DbgStats:
+		moduleName = global.DbgStatsName
+	case global.DbgWhitelist:
+		moduleName = global.DbgWhitelistName
+	case global.DbgLDAP:
+		moduleName = global.DbgLDAPName
+	case global.DbgLDAPPool:
+		moduleName = global.DbgLDAPPoolName
+	case global.DbgSQL:
+		moduleName = global.DbgSQLName
+	case global.DbgCache:
+		moduleName = global.DbgCacheName
+	case global.DbgBf:
+		moduleName = global.DbgBfName
+	case global.DbgRBL:
+		moduleName = global.DbgRBLName
+	case global.DbgAction:
+		moduleName = global.DbgActionName
+	case global.DbgFeature:
+		moduleName = global.DbgFeatureName
+	case global.DbgLua:
+		moduleName = global.DbgLuaName
+	case global.DbgFilter:
+		moduleName = global.DbgFilterName
 	default:
-		moduleName = decl.DbgNoneName
+		moduleName = global.DbgNoneName
 	}
 
 	for index := range config.EnvConfig.DbgModule {
-		if !(config.EnvConfig.DbgModule[index].GetModule() == decl.DbgAll || config.EnvConfig.DbgModule[index].GetModule() == module) {
+		if !(config.EnvConfig.DbgModule[index].GetModule() == global.DbgAll || config.EnvConfig.DbgModule[index].GetModule() == module) {
 			continue
 		}
 
@@ -356,14 +356,14 @@ func DebugModule(module decl.DbgModule, keyvals ...any) {
 	}
 }
 
-// WithNotAvailable checks a list of string. If none of the strings does have a content, we return the decl.NotAvailable string.
+// WithNotAvailable checks a list of string. If none of the strings does have a content, we return the global.NotAvailable string.
 func WithNotAvailable(elements ...any) string {
 	var value string
 
 	value = CheckStrings(elements...)
 
 	if value == "" {
-		return decl.NotAvailable
+		return global.NotAvailable
 	}
 
 	return value
@@ -402,23 +402,23 @@ func GetProxyAddress(request *http.Request, clientIP string, clientPort string) 
 
 	if fwdAddress != "" {
 		DebugModule(
-			decl.DbgAuth,
-			decl.LogKeyMsg, "Found header X-Forwarded-For",
+			global.DbgAuth,
+			global.LogKeyMsg, "Found header X-Forwarded-For",
 		)
 
 		for _, trustedProxy := range viper.GetStringSlice("trusted_proxies") {
 			if clientIP != trustedProxy {
 				DebugModule(
-					decl.DbgAuth,
-					decl.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching '%s'", clientIP, trustedProxy),
+					global.DbgAuth,
+					global.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching '%s'", clientIP, trustedProxy),
 				)
 
 				continue
 			}
 
 			DebugModule(
-				decl.DbgAuth,
-				decl.LogKeyMsg, fmt.Sprintf(
+				global.DbgAuth,
+				global.LogKeyMsg, fmt.Sprintf(
 					"Client IP '%s' matching, forwarded for '%s'", clientIP, fwdAddress),
 			)
 
@@ -429,7 +429,7 @@ func GetProxyAddress(request *http.Request, clientIP string, clientPort string) 
 				clientIP = multipleIPs[0]
 			}
 
-			clientPort = decl.NotAvailable
+			clientPort = global.NotAvailable
 
 			break
 		}

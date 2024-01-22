@@ -3,7 +3,7 @@ package logging
 import (
 	"os"
 
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 )
@@ -26,15 +26,15 @@ func SetupLogging(configLogLevel int, formatJSON bool, instance string) {
 	}
 
 	switch configLogLevel {
-	case decl.LogLevelNone:
+	case global.LogLevelNone:
 		logLevel = level.AllowNone()
-	case decl.LogLevelError:
+	case global.LogLevelError:
 		logLevel = level.AllowError()
-	case decl.LogLevelWarn:
+	case global.LogLevelWarn:
 		logLevel = level.AllowWarn()
-	case decl.LogLevelInfo:
+	case global.LogLevelInfo:
 		logLevel = level.AllowInfo()
-	case decl.LogLevelDebug:
+	case global.LogLevelDebug:
 		logLevel = level.AllowDebug()
 	}
 
@@ -42,10 +42,10 @@ func SetupLogging(configLogLevel int, formatJSON bool, instance string) {
 
 	DefaultLogger = log.With(
 		DefaultLogger,
-		"ts", log.DefaultTimestamp, "caller", log.DefaultCaller, decl.LogKeyInstance, instance,
+		"ts", log.DefaultTimestamp, "caller", log.DefaultCaller, global.LogKeyInstance, instance,
 	)
 	DefaultErrLogger = log.With(
 		DefaultErrLogger,
-		"ts", log.DefaultTimestamp, "caller", log.DefaultCaller, decl.LogKeyInstance, instance,
+		"ts", log.DefaultTimestamp, "caller", log.DefaultCaller, global.LogKeyInstance, instance,
 	)
 }

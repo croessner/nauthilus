@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -37,7 +37,7 @@ func NewDatabase(ctx context.Context) *SQLDatabase {
 	dsn := config.LoadableConfig.GetSQLConfigDSN()
 	if dsn == "" {
 		level.Error(logging.DefaultErrLogger).Log(
-			decl.LogKeyError, errors.ErrSQLConfig.WithDetail("No DSN configured").GetDetails())
+			global.LogKeyError, errors.ErrSQLConfig.WithDetail("No DSN configured").GetDetails())
 
 		return nil
 	}
@@ -50,8 +50,8 @@ func NewDatabase(ctx context.Context) *SQLDatabase {
 	if err != nil {
 		newDatabase.Conn = nil
 
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
-		util.DebugModule(decl.DbgSQL, "sql_driver", newDatabase.driver)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+		util.DebugModule(global.DbgSQL, "sql_driver", newDatabase.driver)
 
 		return nil
 	}
@@ -73,7 +73,7 @@ func (s *SQLDatabase) init(ctx context.Context) {
 	}())
 
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return
 	}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"
@@ -21,7 +21,7 @@ func (a *Authentication) IsListed(ctx *gin.Context, rbl *config.RBL) (rblListSta
 		reverseIPAddr string
 	)
 
-	guid := ctx.Value(decl.GUIDKey).(string)
+	guid := ctx.Value(global.GUIDKey).(string)
 	ipAddress := net.ParseIP(a.ClientIP)
 	if ipAddress.IsLoopback() {
 		return false, "", nil
@@ -76,8 +76,8 @@ func (a *Authentication) IsListed(ctx *gin.Context, rbl *config.RBL) (rblListSta
 	for _, result := range results {
 		if result.String() == rbl.ReturnCode {
 			util.DebugModule(
-				decl.DbgRBL,
-				decl.LogKeyGUID, guid,
+				global.DbgRBL,
+				global.LogKeyGUID, guid,
 				"query", query, "result", result.String(), "rbl", rbl.Name,
 			)
 

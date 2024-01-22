@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
@@ -74,7 +74,7 @@ func (c *Context) Delete(key lua.LValue) {
 		delete(c.data, float64(mappedKey))
 	default:
 		level.Warn(logging.DefaultLogger).Log(
-			decl.LogKeyWarning, fmt.Sprintf("Lua key '%v' unsupported", mappedKey))
+			global.LogKeyWarning, fmt.Sprintf("Lua key '%v' unsupported", mappedKey))
 	}
 
 	c.mu.Unlock()
@@ -117,7 +117,7 @@ func ContextSet(ctx *Context) lua.LGFunction {
 			ctx.Set(key, LuaTableToMap(value))
 		default:
 			level.Warn(logging.DefaultLogger).Log(
-				decl.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
+				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
 		}
 
 		return 0
@@ -143,7 +143,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 			L.Push(lua.LNil)
 		default:
 			level.Warn(logging.DefaultLogger).Log(
-				decl.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
+				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
 			L.Push(lua.LNil)
 		}
 
