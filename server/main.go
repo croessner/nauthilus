@@ -247,6 +247,12 @@ func terminateLuaStatePools() {
 	backend.LuaPool.Shutdown()
 }
 
+// closeChannels closes the HTTPEndChan and WorkerEndChan channels.
+func closeChannels() {
+	close(core.HTTPEndChan)
+	close(action.WorkerEndChan)
+}
+
 // handleTerminateSignal is a function which listens for system level termination signals (SIGINT, SIGTERM).
 // Upon receiving such signal, it initiates an orderly shutdown of the application by
 // cancelling context and executing cleanup tasks such as handling backend connections,
@@ -295,6 +301,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
 	statsTimer.Stop()
 
 	terminateLuaStatePools()
+	closeChannels()
 
 	os.Exit(0)
 }
@@ -333,12 +340,20 @@ func handleBackend(passDB *config.PassDB) {
 	case decl.BackendLDAP:
 		<-backend.LDAPEndChan
 		<-backend.LDAPAuthEndChan
+
+		close(backend.LDAPEndChan)
+		close(backend.LDAPAuthEndChan)
+		close(backend.LDAPRequestChan)
+		close(backend.LDAPAuthRequestChan)
 	case decl.BackendMySQL, decl.BackendPostgres:
 		if backend.Database != nil && backend.Database.Conn != nil {
 			backend.Database.Conn.Close()
 		}
 	case decl.BackendLua:
 		<-backend.LuaMainWorkerEndChan
+
+		close(backend.LuaMainWorkerEndChan)
+		close(backend.LuaRequestChan)
 	case decl.BackendCache:
 	default:
 		level.Warn(logging.DefaultLogger).Log(decl.LogKeyWarning, "Unknown backend")
