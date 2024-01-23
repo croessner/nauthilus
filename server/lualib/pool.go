@@ -1,8 +1,13 @@
 package lualib
 
 import (
+	"fmt"
 	"sync"
+	"unsafe"
 
+	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/logging"
+	"github.com/go-kit/log/level"
 	"github.com/tengattack/gluacrypto"
 	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
@@ -23,6 +28,9 @@ type LuaBaseStatePool interface {
 
 	// Shutdown closes all the Lua states in the pool.
 	Shutdown()
+
+	// LogStatistics logs debugging information about the pool.
+	LogStatistics(poolName string)
 }
 
 // LuaStatePool is a type for managing a pool of Lua state instances.
@@ -124,4 +132,19 @@ func (pl *LuaStatePool) Shutdown() {
 	for _, L := range pl.saved {
 		L.Close()
 	}
+}
+
+// LogStatistics logs the current statistics of the Lua state pool.
+// It uses the Debug level of the DefaultLogger to log the following information:
+// - "Number of Lua states in the pool" as the message of the log
+// - "pool" as the LDAP pool name
+// - The number of states in the pool
+// - The size of the saved slice in bytes
+func (pl *LuaStatePool) LogStatistics(pool string) {
+	level.Debug(logging.DefaultLogger).Log(
+		global.LogKeyMsg, "Number of Lua states in the pool",
+		global.LogKeyLDAPPoolName, pool,
+		"states", len(pl.saved),
+		"size_saved", fmt.Sprintf("%dB", unsafe.Sizeof(pl.saved)),
+	)
 }

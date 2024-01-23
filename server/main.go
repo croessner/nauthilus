@@ -643,6 +643,14 @@ func startHTTPServer(ctx context.Context) {
 	go core.HTTPApp(ctx)
 }
 
+func logLuaStatePoolDebug() {
+	filter.LuaPool.LogStatistics("filter")
+	feature.LuaPool.LogStatistics("feature")
+	backend.LuaPool.LogStatistics("backend")
+	filter.LuaPool.LogStatistics("filter")
+	action.LuaPool.LogStatistics("action")
+}
+
 // startStatsLoop is a function that continuously loops over a time ticker.
 // On each tick, it prints the current statistics using the core.PrintStats() function
 // and persist them to Redis using core.SaveStatsToRedis().
@@ -659,6 +667,8 @@ func startStatsLoop(statsTimer *time.Ticker) {
 		case <-statsTimer.C:
 			core.PrintStats()
 			core.SaveStatsToRedis()
+
+			logLuaStatePoolDebug()
 		}
 	}
 }
