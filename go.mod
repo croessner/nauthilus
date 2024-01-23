@@ -3,6 +3,7 @@ module github.com/croessner/nauthilus
 go 1.21
 
 require (
+	github.com/DmitriyVTitov/size v1.5.0
 	github.com/coreos/go-oidc/v3 v3.9.0
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
 	github.com/emersion/go-imap v1.2.1

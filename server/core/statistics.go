@@ -2,7 +2,6 @@ package core
 
 import (
 	"errors"
-	"fmt"
 	"runtime"
 	"strings"
 
@@ -57,19 +56,6 @@ func init() {
 	prometheus.Register(HTTPResponseTimeSecondsHist)
 }
 
-// bToKb calculates the number of kilobytes (KB) equivalent to the given number of bytes (B).
-func bToKb(b uint64) uint64 {
-	return b / 1024
-}
-
-// kbSuffix returns a string representation of the given value
-// with the suffix "KiB" appended to it.
-//
-// Example: kbSuffix(1024) returns "1024KiB"
-func kbSuffix(value uint64) string {
-	return fmt.Sprintf("%dKB", value)
-}
-
 // PrintStats prints various memory statistics using the default logger.
 // It retrieves the memory statistics using the runtime.ReadMemStats function
 // and then logs the statistics using level.Info from the logging package.
@@ -84,10 +70,10 @@ func kbSuffix(value uint64) string {
 //   - total_alloc: The total number of kilobytes (KB) allocated.
 //   - num_gc: The number of garbage collections performed.
 //
-// It uses the kbSuffix function to convert the memory values in bytes to kilobytes (KB)
+// It uses the util.ByteSize function to convert the memory values in bytes to kilobytes (KB)
 // by dividing them by 1024.
 // The logging is performed using the DefaultLogger from the logging package.
-// Note: The declarations of logging.DefaultLogger, global.LogKeyStatsAlloc, kbSuffix,
+// Note: The declarations of logging.DefaultLogger, global.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
@@ -95,14 +81,14 @@ func PrintStats() {
 	runtime.ReadMemStats(&memStats)
 
 	level.Info(logging.DefaultLogger).Log(
-		global.LogKeyStatsAlloc, kbSuffix(bToKb(memStats.Alloc)),
-		global.LogKeyStatsHeapAlloc, kbSuffix(bToKb(memStats.HeapAlloc)),
-		global.LogKeyStatsHeapInUse, kbSuffix(bToKb(memStats.HeapInuse)),
-		global.LogKeyStatsHeapIdle, kbSuffix(bToKb(memStats.HeapIdle)),
-		global.LogKeyStatsStackInUse, kbSuffix(bToKb(memStats.StackInuse)),
-		global.LogKeyStatsStackSys, kbSuffix(bToKb(memStats.StackSys)),
-		global.LogKeyStatsSys, kbSuffix(bToKb(memStats.Sys)),
-		global.LogKeyStatsTotalAlloc, kbSuffix(bToKb(memStats.TotalAlloc)),
+		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
+		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
+		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
+		global.LogKeyStatsHeapIdle, util.ByteSize(memStats.HeapIdle),
+		global.LogKeyStatsStackInUse, util.ByteSize(memStats.StackInuse),
+		global.LogKeyStatsStackSys, util.ByteSize(memStats.StackSys),
+		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
+		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
 		global.LogKeyStatsNumGC, memStats.NumGC,
 	)
 }

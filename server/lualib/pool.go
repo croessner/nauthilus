@@ -1,13 +1,11 @@
 package lualib
 
 import (
-	"fmt"
 	"sync"
-	"unsafe"
 
+	"github.com/DmitriyVTitov/size"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
-	"github.com/go-kit/log/level"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/tengattack/gluacrypto"
 	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
@@ -134,17 +132,32 @@ func (pl *LuaStatePool) Shutdown() {
 	}
 }
 
-// LogStatistics logs the current statistics of the Lua state pool.
-// It uses the Debug level of the DefaultLogger to log the following information:
-// - "Number of Lua states in the pool" as the message of the log
-// - "pool" as the LDAP pool name
-// - The number of states in the pool
-// - The size of the saved slice in bytes
+// getLStateSizes calculates the total size of the array of Lua states and returns it as a formatted string.
+// If the total size is greater than 0, it converts the size to a human-readable format using the util.ByteSize function and returns the formatted string.
+// If the total size is 0 or less, it returns "unknown".
+func getLStateSizes(states []*lua.LState) string {
+	memoryTotal := size.Of(states)
+
+	if memoryTotal > 0 {
+		return util.ByteSize(uint64(memoryTotal))
+	}
+
+	return "unknown"
+}
+
+// LogStatistics logs the statistics of the Lua states in the pool.
+// It calls the DebugModule function from the util package to log the statistics.
+// The module parameter represents the name of the pool.
+// It retrieves the number of Lua states in the pool using the len function.
+// It retrieves the total size of the saved Lua states in the pool using the getLStateSizes function.
+// The DebugModule function logs the number of Lua states in the pool and the size of the saved Lua states.
+// The logging is conditional based on the verbosity level defined in config.EnvConfig.Verbosity.Level.
 func (pl *LuaStatePool) LogStatistics(pool string) {
-	level.Debug(logging.DefaultLogger).Log(
+	util.DebugModule(
+		global.DbgLua,
 		global.LogKeyMsg, "Number of Lua states in the pool",
 		global.LogKeyLDAPPoolName, pool,
 		"states", len(pl.saved),
-		"size_saved", fmt.Sprintf("%dB", unsafe.Sizeof(pl.saved)),
+		"size_saved", getLStateSizes(pl.saved),
 	)
 }

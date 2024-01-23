@@ -644,7 +644,6 @@ func startHTTPServer(ctx context.Context) {
 }
 
 func logLuaStatePoolDebug() {
-	filter.LuaPool.LogStatistics("filter")
 	feature.LuaPool.LogStatistics("feature")
 	backend.LuaPool.LogStatistics("backend")
 	filter.LuaPool.LogStatistics("filter")

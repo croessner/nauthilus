@@ -476,3 +476,23 @@ func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
 
 	return false, nil
 }
+
+// ByteSize formats a given number of bytes into a human-readable string representation.
+// If the number is less than 1024, it will be displayed in bytes (e.g., "256B").
+// Otherwise, the number will be converted into a larger unit (e.g., 1.5KB, 20MB, etc.).
+func ByteSize(bytes uint64) string {
+	const unit = 1024
+
+	if bytes < unit {
+		return fmt.Sprintf("%dB", bytes)
+	}
+
+	div, exp := uint64(unit), 0
+
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
