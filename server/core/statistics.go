@@ -98,7 +98,7 @@ func PrintStats() {
 		global.LogKeyStatsGCSys, util.ByteSize(memStats.GCSys),
 		global.LogKeyStatsNumGC, memStats.NumGC,
 
-		//General Stats
+		// General Stats
 		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
 		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
 		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
