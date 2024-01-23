@@ -81,15 +81,27 @@ func PrintStats() {
 	runtime.ReadMemStats(&memStats)
 
 	level.Info(logging.DefaultLogger).Log(
-		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
+		// Heap Stats
 		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
 		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
 		global.LogKeyStatsHeapIdle, util.ByteSize(memStats.HeapIdle),
+		global.LogKeyStatsHeapSys, util.ByteSize(memStats.HeapSys),
+		global.LogKeyStatsHeapReleased, util.ByteSize(memStats.HeapReleased),
+		global.LogKeyStatsMallocs, memStats.Mallocs,
+		global.LogKeyStatsFrees, memStats.Frees,
+
+		// Stack Stats
 		global.LogKeyStatsStackInUse, util.ByteSize(memStats.StackInuse),
 		global.LogKeyStatsStackSys, util.ByteSize(memStats.StackSys),
+
+		// GC Stats
+		global.LogKeyStatsGCSys, util.ByteSize(memStats.GCSys),
+		global.LogKeyStatsNumGC, memStats.NumGC,
+
+		//General Stats
+		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
 		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
 		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
-		global.LogKeyStatsNumGC, memStats.NumGC,
 	)
 }
 
