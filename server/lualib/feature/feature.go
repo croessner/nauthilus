@@ -237,9 +237,17 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
-	request := r.setRequestFields(L)
+	request := r.setRequest(L)
 
-	return r.executeScripts(ctx, L, request)
+	triggered, abortFeatures, err = r.executeScripts(ctx, L, request)
+
+	lualib.CleanupLTable(request)
+	lualib.CleanupLTable(globals)
+
+	request = nil
+	globals = nil
+
+	return
 }
 
 // setGlobals initializes and returns a new Lua table containing global variables for the Lua state L.
@@ -279,9 +287,20 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 	return globals
 }
 
-// setRequestFields sets the fields of a lua.LTable with the values of the Request struct passed in as a parameter.
-// The lua.LTable is then returned.
-func (r *Request) setRequestFields(L *lua.LState) *lua.LTable {
+// setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
+// Each property is set using the RawSet or RawSetString method of the request table. The property name is the first argument and the property value is the second argument.
+// The global constants defined in the global package are used as the property names.
+// The request table is then returned.
+// Usage example:
+//
+//	func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+//	    ...
+//	    request := r.setRequest(L)
+//	    ...
+//	}
+//	Where L is an instance of Lua state
+//	The values of the request properties like r.Debug, r.Session, etc. are fetched from the r instance of Request
+func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
 	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))

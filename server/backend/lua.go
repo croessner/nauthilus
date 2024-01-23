@@ -417,13 +417,18 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 	defer luaCancel()
 
 	registerLibraries(L)
-	registerGlobals(luaRequest, L, logs)
 
+	globals := setupGlobals(luaRequest, L, logs)
 	request := L.NewTable()
 
 	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
 
 	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+
+	lualib.CleanupLTable(globals)
+
+	request = nil
+	globals = nil
 
 	// Handle the specific return types
 	if err == nil {
@@ -437,14 +442,15 @@ func registerLibraries(L *lua.LState) {
 	L.PreloadModule(global.LuaModUtil, lualib.Loader)
 }
 
-// registerGlobals registers global variables and functions used in Lua scripts.
+// setupGlobals registers global variables and functions used in Lua scripts.
 // Registers the backend result types LuaBackendResultOk and LuaBackendResultFail with global variables 0 and 1 respectively.
 // Registers the lua function ctx.Set with name "context_set" which sets a value in the LuaRequest.Context.
 // Registers the lua function ctx.Get with name "context_get" which retrieves a value from the LuaRequest.Context.
 // Registers the lua function ctx.Delete with name "context_delete" which deletes a value from the LuaRequest.Context.
 // Registers the lua function AddCustomLog with name "custom_log_add" which adds a custom log entry to the LuaRequest.Logs.
 // The registered global table is assigned to the global variable LuaDefaultTable.
-func registerGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
+// The generated table is returned from the function.
+func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
@@ -456,6 +462,8 @@ func registerGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomL
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
+
+	return globals
 }
 
 // setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
@@ -545,6 +553,8 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 	}, request); err != nil {
 		processError(err, luaRequest, logs)
 	}
+
+	lualib.CleanupLTable(request)
 
 	return err
 }

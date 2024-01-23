@@ -262,22 +262,28 @@ func (aw *Worker) handleRequest() {
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	logs := new(lualib.CustomLogKeyValue)
-	aw.setupGlobalVariables(L, logs)
-	request := aw.createRequestTable(L)
+	globals := aw.setupGlobals(L, logs)
+	request := aw.setupRequest(L)
 
 	for index := range aw.actionScripts {
 		if aw.actionScripts[index].LuaAction == aw.luaActionRequest.LuaAction && !errors.Is((*aw.ctx).Err(), context.Canceled) {
 			aw.runScript(index, L, request, logs)
 		}
 	}
+
+	lualib.CleanupLTable(request)
+	lualib.CleanupLTable(globals)
+
+	request = nil
+	globals = nil
 }
 
-// setupGlobalVariables sets up global Lua variables for the Worker.
+// setupGlobals sets up global Lua variables for the Worker.
 // It creates a new Lua table to hold the global variables.
 // If the DevMode flag is true in the EnvConfig, it calls the DebugModule function to log debug information.
 // It sets the global variables LString(global.LuaActionResultOk) and LString(global.LuaActionResultFail) with the corresponding values.
 // It sets the global functions LString(global.LuaFnCtxSet), LString(global.LuaFnCtxGet), LString(global.LuaFnCtxDelete), and LString(global.LuaFnAddCustomLog) to their respective Lua functions
-func (aw *Worker) setupGlobalVariables(L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
+func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
 	globals := L.NewTable()
 
 	if config.EnvConfig.DevMode {
@@ -297,11 +303,11 @@ func (aw *Worker) setupGlobalVariables(L *lua.LState, logs *lualib.CustomLogKeyV
 	return globals
 }
 
-// createRequestTable creates a Lua table representing the request data.
+// setupRequest creates a Lua table representing the request data.
 // The table contains various fields from aw.luaActionRequest.
 // Each field is added to the Lua table using its respective Lua key and value type.
 // Returns the created request table.
-func (aw *Worker) createRequestTable(L *lua.LState) *lua.LTable {
+func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
 	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(aw.luaActionRequest.Debug))

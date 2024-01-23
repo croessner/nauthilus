@@ -215,9 +215,14 @@ type Request struct {
 //
 //	r *Request : The request context which includes logs and other context specific data
 //	L *lua.LState : The lua state onto which the globals are being set
-//	globals *lua.LTable : The lua table which is being used to set the globals
-func setGlobals(r *Request, L *lua.LState, globals *lua.LTable) {
+//
+// Returns:
+//
+//	A new request table
+func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
+
+	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(global.LuaFilterAccept), lua.LBool(false))
 	globals.RawSet(lua.LString(global.LuaFilterREJECT), lua.LBool(true))
@@ -230,12 +235,17 @@ func setGlobals(r *Request, L *lua.LState, globals *lua.LTable) {
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
+
+	return globals
 }
 
-// setRequest fills a provided *lua.LTable with corresponding values obtained from a supplied *Request object.
-// The function key in the lua.LTable is set to the field name in the Request object, and the value in lua.LTable is the corresponding value in Request object.
-// For instance, a key like global.LuaRequestDebug in lua.LTable corresponds to the Debug field in Request and its value is set to the Boost value in the Request object.
-func setRequest(r *Request, request *lua.LTable) {
+// setRequest constructs a new lua.LTable and assigns fields based on the supplied Request struct 'r'.
+// Upon completion, it returns the constructed lua.LTable.
+// Fields of lua.LTable correspond to different properties of Request like Debug, NoAuth, Authenticated, UserFound, Session,
+// ClientIP, ClientPort, ClientHost, ClientID, LocalIP, LocalPort, Username, Account, UniqueUserID, DisplayName, Password, and Protocol.
+func setRequest(r *Request, L *lua.LState) *lua.LTable {
+	request := L.NewTable()
+
 	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))
 	request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(r.NoAuth))
 	request.RawSet(lua.LString(global.LuaRequestAuthenticated), lua.LBool(r.Authenticated))
@@ -254,6 +264,8 @@ func setRequest(r *Request, request *lua.LTable) {
 	request.RawSetString(global.LuaRequestDisplayName, lua.LString(r.DisplayName))
 	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
 	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
+
+	return request
 }
 
 // executeScriptWithinContext executes a Lua script within a provided context.
@@ -345,11 +357,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := L.NewTable()
-	setGlobals(r, L, globals)
-
-	request := L.NewTable()
-	setRequest(r, request)
+	globals := setGlobals(r, L)
+	request := setRequest(r, L)
 
 	for _, script := range LuaFilters.LuaScripts {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -367,6 +376,12 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 			break
 		}
 	}
+
+	lualib.CleanupLTable(request)
+	lualib.CleanupLTable(globals)
+
+	request = nil
+	globals = nil
 
 	return
 }

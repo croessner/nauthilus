@@ -42,3 +42,9 @@ func DoCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
 
 	return L.PCall(0, lua.MultRet, nil)
 }
+
+func CleanupLTable(table *lua.LTable) {
+	table.ForEach(func(key lua.LValue, value lua.LValue) {
+		table.RawSet(key, lua.LNil)
+	})
+}
