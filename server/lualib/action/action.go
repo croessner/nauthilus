@@ -276,6 +276,8 @@ func (aw *Worker) handleRequest() {
 
 	request = nil
 	globals = nil
+
+	aw.luaActionRequest.FinishedChan <- Done{}
 }
 
 // setupGlobals sets up global Lua variables for the Worker.
