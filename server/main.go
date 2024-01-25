@@ -672,10 +672,10 @@ func logLuaStatePoolDebug() {
 //
 //	time.Sleep(30 * time.Second)
 //	statsEndChan <- true
-func startStatsLoop(statsTimer *time.Ticker, done chan bool) {
+func startStatsLoop(statsTicker *time.Ticker, done chan bool) {
 	for {
 		select {
-		case <-statsTimer.C:
+		case <-statsTicker.C:
 			core.PrintStats()
 			core.SaveStatsToRedis()
 
