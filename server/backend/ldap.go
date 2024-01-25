@@ -807,6 +807,42 @@ func (l *LDAPConnection) logURIInfo(guid *string, ldapConf *config.LDAPConf, lda
 	)
 }
 
+// handleLDAPConnectTimeout waits for a timeout event from connectTicker.C and sends a Done{} value to the timeout channel.
+// It also listens for a Done{} value from the done channel and returns if received.
+// This function is typically used as a goroutine to handle the LDAP connection timeout in the connect method of the LDAPConnection struct.
+//
+// Example usage:
+// connectTicker := time.NewTicker(global.LDAPConnectTimeout * time.Second)
+// ldapConnectTimeout := make(chan Done)
+// tickerEndChan := make(chan Done)
+//
+// go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
+//
+// Loop:
+//
+//	for {
+//	    select {
+//	    case <-ldapConnectTimeout:
+//	        timeout = true
+//
+//	    case <-done:
+//	        break Loop
+//	    }
+//	}
+//
+// connectTicker.Stop()
+// tickerEndChan <- Done{}
+func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan Done, done chan Done) {
+	for {
+		select {
+		case <-connectTicker.C:
+			timeout <- Done{}
+		case <-done:
+			return
+		}
+	}
+}
+
 // connect establishes a connection with an LDAP server specified by the given LDAPConf.
 //
 // The function attempts to connect to each LDAP server URI in the LDAPConf until a successful connection is established or the maximum number of retries is reached.
@@ -826,13 +862,12 @@ func (l *LDAPConnection) connect(guid *string, ldapConf *config.LDAPConf) error 
 		tlsConfig    *tls.Config
 	)
 
+	connectTicker := time.NewTicker(global.LDAPConnectTimeout * time.Second)
+
 	ldapConnectTimeout := make(chan Done)
+	tickerEndChan := make(chan Done)
 
-	go func() {
-		time.Sleep(30 * time.Second)
-
-		ldapConnectTimeout <- Done{}
-	}()
+	go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
 
 EndlessLoop:
 	for {
@@ -884,6 +919,10 @@ EndlessLoop:
 			break EndlessLoop
 		}
 	}
+
+	connectTicker.Stop()
+
+	tickerEndChan <- Done{}
 
 	return err
 }

@@ -227,10 +227,11 @@ func PreCompileFilters() error {
 // - `cancel context.CancelFunc`: a cancel function that can be called to cancel the context
 // - `store *contextStore`: a pointer to the context store that may need to be modified or queried upon receiving a signal
 // - `statsTimer *time.Ticker`: a pointer to a ticker that performs some action after a certain duration. Might be stopped on receiving a signal.
+// - `statsDone chan bool': a boolean channel that indicates the termination of the statistics ticker
 //
 // This function doesn't return any values.
-func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTimer *time.Ticker) {
-	go handleTerminateSignal(cancel, statsTimer)
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, statsDone chan bool) {
+	go handleTerminateSignal(cancel, statsTicker, statsDone)
 	go handleReloadSignal(ctx, store)
 }
 
@@ -263,6 +264,8 @@ func closeChannels() {
 //
 // statsTimer arg: reference to the statistics timer that keeps track of application statistics
 //
+// statsDone arg: a boolean channel that indicates the termination of the statistics ticker
+//
 // How to use:
 //
 //	func main() {
@@ -273,7 +276,7 @@ func closeChannels() {
 //	     go handleTerminateSignal(cancel, statsTimer)
 //	     // Rest of your application logic
 //	}
-func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
+func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, statsDone chan bool) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -298,10 +301,11 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTimer *time.Ticker) {
 
 	level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Shutdown complete")
 
-	statsTimer.Stop()
-
 	terminateLuaStatePools()
 	closeChannels()
+
+	statsTicker.Stop()
+	statsDone <- true
 
 	os.Exit(0)
 }
@@ -650,17 +654,27 @@ func logLuaStatePoolDebug() {
 	action.LuaPool.LogStatistics("action")
 }
 
-// startStatsLoop is a function that continuously loops over a time ticker.
-// On each tick, it prints the current statistics using the core.PrintStats() function
-// and persist them to Redis using core.SaveStatsToRedis().
+// startStatsLoop runs a continuous loop that periodically executes core.PrintStats(), core.SaveStatsToRedis(), and logLuaStatePoolDebug().
+// It uses a ticker to determine the interval between executions. The loop continues executing until the done channel receives a value.
 //
-// statsTimer: A time.Ticker object which controls the frequency of stats operations.
+// It does not return any value.
+//
+// Usage:
+//
+//	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
+//	statsEndChan := make(chan bool)
+//	startStatsLoop(statsTicker, statsEndChan)
 //
 // Example:
 //
-//	ticker := time.NewTicker(time.Second * 10)
-//	go startStatsLoop(ticker)
-func startStatsLoop(statsTimer *time.Ticker) {
+//	statsTicker := time.NewTicker(5 * time.Second)
+//	statsEndChan := make(chan bool)
+//
+//	go startStatsLoop(statsTicker, statsEndChan)
+//
+//	time.Sleep(30 * time.Second)
+//	statsEndChan <- true
+func startStatsLoop(statsTimer *time.Ticker, done chan bool) {
 	for {
 		select {
 		case <-statsTimer.C:
@@ -668,6 +682,8 @@ func startStatsLoop(statsTimer *time.Ticker) {
 			core.SaveStatsToRedis()
 
 			logLuaStatePoolDebug()
+		case <-done:
+			return
 		}
 	}
 }
@@ -693,15 +709,16 @@ func main() {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)
 	}
 
-	statsTimer := time.NewTicker(global.StatsDelay * time.Second)
+	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
+	statsEndChan := make(chan bool)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
 
 	setupWorkers(ctx, store)
-	handleSignals(ctx, cancel, store, statsTimer)
+	handleSignals(ctx, cancel, store, statsTicker, statsEndChan)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx)
-	startStatsLoop(statsTimer)
+	startStatsLoop(statsTicker, statsEndChan)
 }

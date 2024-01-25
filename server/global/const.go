@@ -109,9 +109,11 @@ const (
 	RedisPosCacheTTL = 3600
 	RedisNegCacheTTL = 3600
 
-	StatsDelay = 60
+	StatsDelay         = 60
+	LDAPConnectTimeout = 30
 
-	MaxChannelSize = 500
+	MaxChannelSize      = 500
+	MaxLuaStatePoolSize = 10000
 )
 
 // Log level.

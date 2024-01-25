@@ -36,9 +36,12 @@ type LuaBaseStatePool interface {
 // The saved field is a slice of *lua.LState, which holds the available Lua states in the pool.
 // The New field is an LStateProvider function, which is used to create new Lua states when the pool is empty.
 type LuaStatePool struct {
-	mu    sync.Mutex
-	saved []*lua.LState
-	New   LStateProvider
+	Mu        sync.Mutex
+	saved     []*lua.LState
+	New       LStateProvider
+	MaxStates int       // Maximum allowed states in the pool
+	isWaiting bool      // A marker to indicate that a goroutine is waiting for an available lua state
+	Cond      sync.Cond // A condition variable to signal availability of Lua states in the pool
 }
 
 // NewLuaStatePool initializes a new Lua state pool.
@@ -47,7 +50,12 @@ type LuaStatePool struct {
 // Usage:
 // luaPool := NewLuaStatePool()
 func NewLuaStatePool() LuaBaseStatePool {
-	lp := &LuaStatePool{New: NewLStateWithDefaultLibraries}
+	lp := &LuaStatePool{
+		New:       NewLStateWithDefaultLibraries,
+		MaxStates: global.MaxLuaStatePoolSize,
+	}
+
+	lp.Cond = sync.Cond{L: &lp.Mu}
 
 	return lp.InitializeStatePool()
 }
@@ -75,15 +83,21 @@ func NewLStateWithDefaultLibraries() *lua.LState {
 // Otherwise, it retrieves the last saved Lua state from the pool and removes it from the slice.
 // Finally, it returns the retrieved Lua state.
 func (pl *LuaStatePool) Get() *lua.LState {
-	pl.mu.Lock()
+	pl.Mu.Lock()
 
-	defer pl.mu.Unlock()
+	defer pl.Mu.Unlock()
 
-	n := len(pl.saved)
-	if n == 0 {
-		return pl.New()
+	for len(pl.saved) == 0 {
+		if len(pl.saved) < pl.MaxStates {
+			return pl.New()
+		} else {
+			println(len(pl.saved))
+			println(pl.MaxStates)
+			pl.Cond.Wait()
+		}
 	}
 
+	n := len(pl.saved)
 	x := pl.saved[n-1]
 	pl.saved = pl.saved[0 : n-1]
 
@@ -102,11 +116,19 @@ func (pl *LuaStatePool) Get() *lua.LState {
 //
 //	None
 func (pl *LuaStatePool) Put(L *lua.LState) {
-	pl.mu.Lock()
+	pl.Mu.Lock()
 
-	defer pl.mu.Unlock()
+	// Wait until there's space in the pool for a new state
+	for len(pl.saved) >= pl.MaxStates {
+		pl.Cond.Wait()
+	}
 
 	pl.saved = append(pl.saved, L)
+
+	pl.Mu.Unlock()
+
+	// If a goroutine is waiting, signal that a state has become available
+	pl.Cond.Signal()
 }
 
 // InitializeStatePool initializes the state pool.

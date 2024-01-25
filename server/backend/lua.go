@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -179,7 +180,10 @@ func NewLuaBackendResultStatePool() lualib.LuaBaseStatePool {
 
 			return L
 		},
+		MaxStates: global.MaxLuaStatePoolSize,
 	}
+
+	lp.Cond = sync.Cond{L: &lp.Mu}
 
 	return &LuaBackendResultStatePool{lp.InitializeStatePool()}
 }
