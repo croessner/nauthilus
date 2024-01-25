@@ -891,7 +891,7 @@ EndlessLoop:
 			if u.Scheme == "ldaps" || ldapConf.StartTLS {
 				tlsConfig, err = l.setTLSConfig(u, certificates, ldapConf)
 				if err != nil {
-					return err
+					break EndlessLoop
 				}
 			}
 
