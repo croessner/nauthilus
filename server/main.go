@@ -227,11 +227,10 @@ func PreCompileFilters() error {
 // - `cancel context.CancelFunc`: a cancel function that can be called to cancel the context
 // - `store *contextStore`: a pointer to the context store that may need to be modified or queried upon receiving a signal
 // - `statsTimer *time.Ticker`: a pointer to a ticker that performs some action after a certain duration. Might be stopped on receiving a signal.
-// - `statsDone chan bool': a boolean channel that indicates the termination of the statistics ticker
 //
 // This function doesn't return any values.
-func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, statsDone chan bool) {
-	go handleTerminateSignal(cancel, statsTicker, statsDone)
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker) {
+	go handleTerminateSignal(cancel, statsTicker)
 	go handleReloadSignal(ctx, store)
 }
 
@@ -264,8 +263,6 @@ func closeChannels() {
 //
 // statsTimer arg: reference to the statistics timer that keeps track of application statistics
 //
-// statsDone arg: a boolean channel that indicates the termination of the statistics ticker
-//
 // How to use:
 //
 //	func main() {
@@ -276,7 +273,7 @@ func closeChannels() {
 //	     go handleTerminateSignal(cancel, statsTimer)
 //	     // Rest of your application logic
 //	}
-func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, statsDone chan bool) {
+func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -305,7 +302,6 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 	closeChannels()
 
 	statsTicker.Stop()
-	statsDone <- true
 }
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
@@ -655,7 +651,7 @@ func logLuaStatePoolDebug() {
 // startStatsLoop runs a continuous loop that periodically executes core.PrintStats(), core.SaveStatsToRedis(), and logLuaStatePoolDebug().
 // It uses a ticker to determine the interval between executions. The loop continues executing until the done channel receives a value.
 //
-// It does not return any value.
+// It returns ctx.Err() upon a ctx.Done signal.
 //
 // Usage:
 //
@@ -671,8 +667,9 @@ func logLuaStatePoolDebug() {
 //	go startStatsLoop(statsTicker, statsEndChan)
 //
 //	time.Sleep(30 * time.Second)
-//	statsEndChan <- true
-func startStatsLoop(statsTicker *time.Ticker, done chan bool) {
+func startStatsLoop(ctx context.Context, statsTicker *time.Ticker) error {
+	go core.MeasureCPU(ctx)
+
 	for {
 		select {
 		case <-statsTicker.C:
@@ -680,8 +677,8 @@ func startStatsLoop(statsTicker *time.Ticker, done chan bool) {
 			core.SaveStatsToRedis()
 
 			logLuaStatePoolDebug()
-		case <-done:
-			return
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
@@ -708,18 +705,17 @@ func main() {
 	}
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
-	statsEndChan := make(chan bool)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
 
 	setupWorkers(ctx, store)
-	handleSignals(ctx, cancel, store, statsTicker, statsEndChan)
+	handleSignals(ctx, cancel, store, statsTicker)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx)
 
-	startStatsLoop(statsTicker, statsEndChan)
+	startStatsLoop(ctx, statsTicker)
 
 	os.Exit(0)
 }

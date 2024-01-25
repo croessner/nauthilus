@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -13,12 +15,13 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/shirou/gopsutil/cpu"
 )
 
 var (
-	//nolint:gochecknoglobals // Ignore
+
+	// HTTPRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	HTTPRequestsTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "nauthilus_http_requests_total",
@@ -26,21 +29,27 @@ var (
 		},
 		[]string{"path"})
 
-	//nolint:gochecknoglobals // Ignore
+	// LoginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
 	LoginsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "nauthilus_logins_total",
-			Help: "Number of failed and successful login attempts",
+			Help: "Number of failed and successful login attempts.",
 		},
 		[]string{"logins"})
 
-	//nolint:gochecknoglobals // Ignore
-	HTTPResponseTimeSecondsHist = promauto.NewHistogramVec(
+	// HTTPResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
+	HTTPResponseTimeSecondsHist = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "nauthilus_http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
 		},
 		[]string{"path"})
+
+	// CPUGauge variable declaration that creates a new Prometheus Gauge with the specified name and help message.
+	CPUGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nauthilus_cpu_usage",
+		Help: "Current usage of all CPUs.",
+	})
 )
 
 // Metric is a prometheus metric with a value and a label.
@@ -51,9 +60,54 @@ type Metric struct {
 
 //nolint:errcheck,gochecknoinits // Ignore
 func init() {
-	prometheus.Register(HTTPRequestsTotalCounter)
-	prometheus.Register(LoginsCounter)
-	prometheus.Register(HTTPResponseTimeSecondsHist)
+	prometheus.MustRegister(HTTPRequestsTotalCounter)
+	prometheus.MustRegister(LoginsCounter)
+	prometheus.MustRegister(HTTPResponseTimeSecondsHist)
+	prometheus.MustRegister(CPUGauge)
+}
+
+// MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
+//
+// This function runs indefinitely in a loop and keeps monitoring the CPU utilization and sets the calculated utilization in 'CPUGauge' variable,
+// until an event of cancellation comes from the passed context 'ctx'.
+//
+// The function uses 'cpu.PercentWithContext' function under the hood which returns the used CPU percentages.
+// It waits for one second 'time.Second', during each iteration and ignores (does not calculate) CPU percentages for idle or sleeping processes
+// (false value passed as last argument to 'cpu.PercentWithContext' function says to not calculate the idle time).
+//
+// 'ctx.Done()' is used as a form of cancellation signal, it unblocks when the 'ctx' is cancelled. Once such cancellation event happens, the function
+// ends (returns), effectively stopping the CPU measurement.
+//
+// If there is any error while measuring the CPU usage, it gets logged with level error using 'level.Error' method,
+// and the function stops thereafter.
+//
+// If 'cpu.PercentWithContext' reports CPU usage, only the first measure (percent[0]) is considered (if available).
+// If no measure is available, nothing is set in this iteration.
+//
+// The gauge 'CPUGauge', is used to store the computed CPU usage.
+//
+// Parameters:
+// - ctx (context.Context) : Context to handle cancellation.
+//
+// Note: This function doesn't return anything.
+func MeasureCPU(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			percent, err := cpu.PercentWithContext(ctx, time.Second, false)
+			if err != nil {
+				level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+
+				return
+			}
+
+			if len(percent) == 1 {
+				CPUGauge.Set(percent[0])
+			}
+		}
+	}
 }
 
 // PrintStats prints various memory statistics using the default logger.
