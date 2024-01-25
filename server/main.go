@@ -306,8 +306,6 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	statsTicker.Stop()
 	statsDone <- true
-
-	os.Exit(0)
 }
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
@@ -720,5 +718,8 @@ func main() {
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx)
+
 	startStatsLoop(statsTicker, statsEndChan)
+
+	os.Exit(0)
 }
