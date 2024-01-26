@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/spf13/viper"
 )
@@ -28,15 +28,15 @@ func (v *Verbosity) String() string {
 func (v *Verbosity) Set(value string) error {
 	switch value {
 	case "none":
-		v.verboseLevel = decl.LogLevelNone
-	case decl.LogKeyError:
-		v.verboseLevel = decl.LogLevelError
-	case decl.LogKeyWarning:
-		v.verboseLevel = decl.LogLevelWarn
+		v.verboseLevel = global.LogLevelNone
+	case global.LogKeyError:
+		v.verboseLevel = global.LogLevelError
+	case global.LogKeyWarning:
+		v.verboseLevel = global.LogLevelWarn
 	case "info":
-		v.verboseLevel = decl.LogLevelInfo
+		v.verboseLevel = global.LogLevelInfo
 	case "debug":
-		v.verboseLevel = decl.LogLevelDebug
+		v.verboseLevel = global.LogLevelDebug
 	default:
 		return errors.ErrWrongVerboseLevel
 	}
@@ -133,7 +133,7 @@ func NewProtocol(protocol string) *Protocol {
 
 // PassDB is a password Database container.
 type PassDB struct {
-	backend decl.Backend
+	backend global.Backend
 }
 
 func (p *PassDB) String() string {
@@ -143,14 +143,14 @@ func (p *PassDB) String() string {
 // Set sets the password Database to one of the supported database backends.
 func (p *PassDB) Set(value string) error {
 	switch value {
-	case decl.BackendCacheName:
-		p.backend = decl.BackendCache
-	case decl.BackendLDAPName:
-		p.backend = decl.BackendLDAP
-	case decl.BackendMySQLName, decl.BackendPostgresName, decl.BackendSQLName:
-		p.backend = decl.BackendSQL
-	case decl.BackendLuaName:
-		p.backend = decl.BackendLua
+	case global.BackendCacheName:
+		p.backend = global.BackendCache
+	case global.BackendLDAPName:
+		p.backend = global.BackendLDAP
+	case global.BackendMySQLName, global.BackendPostgresName, global.BackendSQLName:
+		p.backend = global.BackendSQL
+	case global.BackendLuaName:
+		p.backend = global.BackendLua
 	default:
 		return errors.ErrWrongPassDB
 	}
@@ -164,7 +164,7 @@ func (p *PassDB) Type() string {
 }
 
 // Get gets the name of a password Database.
-func (p *PassDB) Get() decl.Backend {
+func (p *PassDB) Get() global.Backend {
 	return p.backend
 }
 
@@ -180,7 +180,7 @@ func (f *Feature) String() string {
 // Set sets the features supported by Nauthilus.
 func (f *Feature) Set(value string) error {
 	switch value {
-	case decl.FeatureTLSEncryption, decl.FeatureRBL, decl.FeatureGeoIP, decl.FeatureRelayDomains, decl.FeatureLua:
+	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureGeoIP, global.FeatureRelayDomains, global.FeatureLua:
 		f.name = value
 	default:
 		return errors.ErrWrongFeature
@@ -201,7 +201,7 @@ func (f *Feature) Get() string {
 
 type DbgModule struct {
 	name   string
-	module decl.DbgModule
+	module global.DbgModule
 }
 
 func (d *DbgModule) String() string {
@@ -210,38 +210,38 @@ func (d *DbgModule) String() string {
 
 func (d *DbgModule) Set(value string) error {
 	switch value {
-	case decl.DbgNoneName:
-		d.module = decl.DbgNone
-	case decl.DbgAllName:
-		d.module = decl.DbgAll
-	case decl.DbgAuthName:
-		d.module = decl.DbgAuth
-	case decl.DbgHydraName:
-		d.module = decl.DbgHydra
-	case decl.DbgWebAuthnName:
-		d.module = decl.DbgWebAuthn
-	case decl.DbgStatsName:
-		d.module = decl.DbgStats
-	case decl.DbgWhitelistName:
-		d.module = decl.DbgWhitelist
-	case decl.DbgLDAPName:
-		d.module = decl.DbgLDAP
-	case decl.DbgLDAPPoolName:
-		d.module = decl.DbgLDAPPool
-	case decl.DbgSQLName:
-		d.module = decl.DbgSQL
-	case decl.DbgCacheName:
-		d.module = decl.DbgCache
-	case decl.DbgBfName:
-		d.module = decl.DbgBf
-	case decl.DbgRBLName:
-		d.module = decl.DbgRBL
-	case decl.DbgActionName:
-		d.module = decl.DbgAction
-	case decl.DbgFeatureName:
-		d.module = decl.DbgFeature
-	case decl.DbgLuaName:
-		d.module = decl.DbgLua
+	case global.DbgNoneName:
+		d.module = global.DbgNone
+	case global.DbgAllName:
+		d.module = global.DbgAll
+	case global.DbgAuthName:
+		d.module = global.DbgAuth
+	case global.DbgHydraName:
+		d.module = global.DbgHydra
+	case global.DbgWebAuthnName:
+		d.module = global.DbgWebAuthn
+	case global.DbgStatsName:
+		d.module = global.DbgStats
+	case global.DbgWhitelistName:
+		d.module = global.DbgWhitelist
+	case global.DbgLDAPName:
+		d.module = global.DbgLDAP
+	case global.DbgLDAPPoolName:
+		d.module = global.DbgLDAPPool
+	case global.DbgSQLName:
+		d.module = global.DbgSQL
+	case global.DbgCacheName:
+		d.module = global.DbgCache
+	case global.DbgBfName:
+		d.module = global.DbgBf
+	case global.DbgRBLName:
+		d.module = global.DbgRBL
+	case global.DbgActionName:
+		d.module = global.DbgAction
+	case global.DbgFeatureName:
+		d.module = global.DbgFeature
+	case global.DbgLuaName:
+		d.module = global.DbgLua
 	default:
 		return errors.ErrWrongDebugModule
 	}
@@ -259,7 +259,7 @@ func (d *DbgModule) Get() string {
 	return d.name
 }
 
-func (d *DbgModule) GetModule() decl.DbgModule {
+func (d *DbgModule) GetModule() global.DbgModule {
 	return d.module
 }
 
@@ -379,47 +379,47 @@ func NewConfig() (*Config, error) {
 	viper.SetEnvPrefix("nauthilus")
 
 	// Set defaults
-	viper.SetDefault("instance_name", decl.InstanceName)
+	viper.SetDefault("instance_name", global.InstanceName)
 	viper.SetDefault("log_format_json", false)
 	viper.SetDefault("log_debug_modules", []*DbgModule{
-		{decl.DbgAuthName, decl.DbgAuth},
-		{decl.DbgStatsName, decl.DbgStats},
+		{global.DbgAuthName, global.DbgAuth},
+		{global.DbgStatsName, global.DbgStats},
 	})
-	viper.SetDefault("http_address", decl.HTTPAddress)
-	viper.SetDefault("smtp_backend_address", decl.SMTPBackendAddress)
-	viper.SetDefault("smtp_backend_port", decl.SMTPBackendPort)
-	viper.SetDefault("imap_backend_address", decl.IMAPBackendAddress)
-	viper.SetDefault("imap_backend_port", decl.IMAPBackendPort)
-	viper.SetDefault("nginx_wait_delay", decl.WaitDelay)
-	viper.SetDefault("max_login_attempts", decl.MaxLoginAttempts)
-	viper.SetDefault("geoip_path", decl.GeoIPPath)
-	viper.SetDefault("redis_address", decl.RedisAddress)
-	viper.SetDefault("redis_port", decl.RedisPort)
+	viper.SetDefault("http_address", global.HTTPAddress)
+	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
+	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
+	viper.SetDefault("imap_backend_address", global.IMAPBackendAddress)
+	viper.SetDefault("imap_backend_port", global.IMAPBackendPort)
+	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
+	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
+	viper.SetDefault("geoip_path", global.GeoIPPath)
+	viper.SetDefault("redis_address", global.RedisAddress)
+	viper.SetDefault("redis_port", global.RedisPort)
 	viper.SetDefault("redis_database_number", 0)
-	viper.SetDefault("redis_replica_address", decl.RedisAddress)
-	viper.SetDefault("redis_replica_port", decl.RedisPort)
-	viper.SetDefault("redis_prefix", decl.RedisPrefix)
+	viper.SetDefault("redis_replica_address", global.RedisAddress)
+	viper.SetDefault("redis_replica_port", global.RedisPort)
+	viper.SetDefault("redis_prefix", global.RedisPrefix)
 	viper.SetDefault("redis_sentinels", []string{})
 	viper.SetDefault("redis_sentinel_master_name", "")
 	viper.SetDefault("redis_sentinel_username", "")
 	viper.SetDefault("redis_sentinel_password", "")
 	//nolint:gomnd // Ignore
 	viper.SetDefault("dns_timeout", uint(10))
-	viper.SetDefault("passdb_backends", []*PassDB{{decl.BackendCache}, {decl.BackendLDAP}})
-	viper.SetDefault("redis_positive_cache_ttl", decl.RedisPosCacheTTL)
-	viper.SetDefault("redis_negative_cache_ttl", decl.RedisNegCacheTTL)
+	viper.SetDefault("passdb_backends", []*PassDB{{global.BackendCache}, {global.BackendLDAP}})
+	viper.SetDefault("redis_positive_cache_ttl", global.RedisPosCacheTTL)
+	viper.SetDefault("redis_negative_cache_ttl", global.RedisNegCacheTTL)
 	viper.SetDefault("features", []*Feature{
-		{decl.FeatureTLSEncryption},
-		{decl.FeatureRBL},
-		{decl.FeatureGeoIP},
-		{decl.FeatureRelayDomains},
+		{global.FeatureTLSEncryption},
+		{global.FeatureRBL},
+		{global.FeatureGeoIP},
+		{global.FeatureRelayDomains},
 	})
 	viper.SetDefault("developer_mode", false)
-	viper.SetDefault("sql_max_connections", decl.SQLMaxConns)
-	viper.SetDefault("sql_max_idle_connections", decl.SQLMaxIdleConns)
-	viper.SetDefault("lua_script_timeout", decl.LuaMaxExecutionTime)
+	viper.SetDefault("sql_max_connections", global.SQLMaxConns)
+	viper.SetDefault("sql_max_idle_connections", global.SQLMaxIdleConns)
+	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
 	viper.SetDefault("brute_force_protection", []*Protocol{
-		{decl.ProtoHTTP},
+		{global.ProtoHTTP},
 	})
 	viper.SetDefault("trusted_proxies", []string{"127.0.0.1", "::1"})
 	viper.SetDefault("html_static_content_path", "/usr/app/static")
@@ -430,14 +430,14 @@ func NewConfig() (*Config, error) {
 	viper.SetDefault("language_resources", "/usr/app/resources")
 
 	viper.SetDefault("login_page", "/login")
-	viper.SetDefault("login_page_logo_image_alt", decl.ImageCopyright)
+	viper.SetDefault("login_page_logo_image_alt", global.ImageCopyright)
 	viper.SetDefault("login_remember_for", 10800)
 	viper.SetDefault("login_page_welcome", "")
 	// U2F/FIDO2
 	viper.SetDefault("device_page", "/device")
 
 	viper.SetDefault("consent_page", "/consent")
-	viper.SetDefault("consent_page_logo_image_alt", decl.ImageCopyright)
+	viper.SetDefault("consent_page_logo_image_alt", global.ImageCopyright)
 	viper.SetDefault("consent_remember_for", 3600)
 	viper.SetDefault("consent_page_welcome", "")
 
@@ -453,7 +453,7 @@ func NewConfig() (*Config, error) {
 	viper.SetDefault("totp_page", "/totp")
 	viper.SetDefault("totp_issuer", "nauthilus.me")
 	viper.SetDefault("totp_welcome", "")
-	viper.SetDefault("totp_page_logo_image_alt", decl.ImageCopyright)
+	viper.SetDefault("totp_page_logo_image_alt", global.ImageCopyright)
 
 	viper.SetDefault("webauthn_page", "/webauthn")
 	viper.SetDefault("webauthn_display_name", "Nauthilus")
@@ -462,7 +462,7 @@ func NewConfig() (*Config, error) {
 
 	viper.SetDefault("notify_page", "/notify")
 	viper.SetDefault("notify_page_welcome", "")
-	viper.SetDefault("notify_page_logo_image_alt", decl.ImageCopyright)
+	viper.SetDefault("notify_page_logo_image_alt", global.ImageCopyright)
 
 	viper.AllowEmptyEnv(true)
 	viper.AutomaticEnv()

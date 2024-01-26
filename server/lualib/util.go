@@ -5,6 +5,11 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
+// LuaTableToMap takes a lua.LTable as input and converts it into a map[any]any.
+// The function iterates over each key-value pair in the table and converts the keys and values
+// into their corresponding Go types. The converted key-value pairs are then added to a new map, which is
+// returned as the result.
+// If the input table is nil, the function returns nil.
 func LuaTableToMap(table *lua.LTable) map[any]any {
 	if table == nil {
 		return nil
@@ -44,6 +49,54 @@ func LuaTableToMap(table *lua.LTable) map[any]any {
 	})
 
 	return result
+}
+
+// MapToLuaTable takes an *lua.LState and a map[any]any as input and converts it into a *lua.LTable.
+// The function iterates over each key-value pair in the map and converts the keys and values
+// into their corresponding lua.LValue types. The converted key-value pairs are then added to a new *lua.LTable,
+// which is returned as the result.
+// If the input map is nil, the function returns nil.
+func MapToLuaTable(L *lua.LState, table map[any]any) *lua.LTable {
+	var (
+		key   lua.LValue
+		value lua.LValue
+	)
+
+	lTable := L.NewTable()
+
+	if table == nil {
+		return nil
+	}
+
+	for k, v := range table {
+		switch mapKey := k.(type) {
+		case bool:
+			key = lua.LBool(mapKey)
+		case float64:
+			key = lua.LNumber(mapKey)
+		case string:
+			key = lua.LString(mapKey)
+		default:
+			return nil
+		}
+
+		switch mapValue := v.(type) {
+		case bool:
+			value = lua.LBool(mapValue)
+		case float64:
+			value = lua.LNumber(mapValue)
+		case string:
+			value = lua.LString(mapValue)
+		case map[any]any:
+			value = MapToLuaTable(L, mapValue)
+		default:
+			return nil
+		}
+
+		L.RawSet(lTable, key, value)
+	}
+
+	return lTable
 }
 
 func Loader(L *lua.LState) int {

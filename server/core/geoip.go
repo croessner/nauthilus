@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
 	"github.com/oschwald/maxminddb-golang"
@@ -51,9 +51,9 @@ func (g *GeoIPCity) GetGeoIPCity(ipAddress net.IP, guid string) *GeoIPCity {
 
 	err = GeoIPReader.Reader.Lookup(ipAddress, g)
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, guid, decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 	} else {
-		level.Debug(logging.DefaultLogger).Log(decl.LogKeyGUID, guid, "ip", ipAddress, "geoip", fmt.Sprintf("%+v", *g))
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "ip", ipAddress, "geoip", fmt.Sprintf("%+v", *g))
 	}
 
 	return g

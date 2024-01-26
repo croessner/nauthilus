@@ -3,7 +3,7 @@ package core
 import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 )
 
 // LuaPassDB implements the Lua password database backend.
@@ -14,10 +14,12 @@ func LuaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
+	defer close(luaReplyChan)
+
 	luaRequest := &backend.LuaRequest{
-		Debug:               config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+		Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		NoAuth:              auth.NoAuth,
-		Function:            decl.LuaCommandPassDB,
+		Function:            global.LuaCommandPassDB,
 		Session:             auth.GUID,
 		Username:            auth.Username,
 		Password:            auth.Password,
@@ -88,7 +90,7 @@ func LuaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	}
 
 	if luaBackendResult.UserFound {
-		passDBResult.Backend = decl.BackendLua
+		passDBResult.Backend = global.BackendLua
 	}
 
 	if luaBackendResult.Attributes != nil {
@@ -110,8 +112,10 @@ func LuaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
+	defer close(luaReplyChan)
+
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		Session:      auth.GUID,
 		ClientIP:     auth.ClientIP,
 		ClientPort:   auth.XClientPort,
@@ -119,7 +123,7 @@ func LuaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		LocalPprt:    auth.XPort,
 		Protocol:     auth.Protocol,
 		LuaReplyChan: luaReplyChan,
-		Function:     decl.LuaCommandListAccounts,
+		Function:     global.LuaCommandListAccounts,
 	}
 
 	backend.LuaRequestChan <- luaRequest
@@ -152,8 +156,10 @@ func LuaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 
 	luaReplyChan := make(chan *backend.LuaBackendResult)
 
+	defer close(luaReplyChan)
+
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		Session:      auth.GUID,
 		Username:     auth.Username,
 		ClientIP:     auth.ClientIP,
@@ -163,7 +169,7 @@ func LuaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		Protocol:     auth.Protocol,
 		TOTPSecret:   totp.GetValue(),
 		LuaReplyChan: luaReplyChan,
-		Function:     decl.LuaCommandAddMFAValue,
+		Function:     global.LuaCommandAddMFAValue,
 	}
 
 	backend.LuaRequestChan <- luaRequest

@@ -1,24 +1,27 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/shirou/gopsutil/cpu"
 )
 
 var (
-	//nolint:gochecknoglobals // Ignore
+
+	// HTTPRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	HTTPRequestsTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "nauthilus_http_requests_total",
@@ -26,21 +29,27 @@ var (
 		},
 		[]string{"path"})
 
-	//nolint:gochecknoglobals // Ignore
+	// LoginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
 	LoginsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "nauthilus_logins_total",
-			Help: "Number of failed and successful login attempts",
+			Help: "Number of failed and successful login attempts.",
 		},
 		[]string{"logins"})
 
-	//nolint:gochecknoglobals // Ignore
-	HTTPResponseTimeSecondsHist = promauto.NewHistogramVec(
+	// HTTPResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
+	HTTPResponseTimeSecondsHist = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "nauthilus_http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
 		},
 		[]string{"path"})
+
+	// CPUGauge variable declaration that creates a new Prometheus Gauge with the specified name and help message.
+	CPUGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nauthilus_cpu_usage",
+		Help: "Current usage of all CPUs.",
+	})
 )
 
 // Metric is a prometheus metric with a value and a label.
@@ -51,32 +60,102 @@ type Metric struct {
 
 //nolint:errcheck,gochecknoinits // Ignore
 func init() {
-	prometheus.Register(HTTPRequestsTotalCounter)
-	prometheus.Register(LoginsCounter)
-	prometheus.Register(HTTPResponseTimeSecondsHist)
+	prometheus.MustRegister(HTTPRequestsTotalCounter)
+	prometheus.MustRegister(LoginsCounter)
+	prometheus.MustRegister(HTTPResponseTimeSecondsHist)
+	prometheus.MustRegister(CPUGauge)
 }
 
-//nolint:gomnd // Convert bits to bytes
-func bToMb(b uint64) uint64 {
-	return b / 1024 / 1024
+// MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
+//
+// This function runs indefinitely in a loop and keeps monitoring the CPU utilization and sets the calculated utilization in 'CPUGauge' variable,
+// until an event of cancellation comes from the passed context 'ctx'.
+//
+// The function uses 'cpu.PercentWithContext' function under the hood which returns the used CPU percentages.
+// It waits for one second 'time.Second', during each iteration and ignores (does not calculate) CPU percentages for idle or sleeping processes
+// (false value passed as last argument to 'cpu.PercentWithContext' function says to not calculate the idle time).
+//
+// 'ctx.Done()' is used as a form of cancellation signal, it unblocks when the 'ctx' is cancelled. Once such cancellation event happens, the function
+// ends (returns), effectively stopping the CPU measurement.
+//
+// If there is any error while measuring the CPU usage, it gets logged with level error using 'level.Error' method,
+// and the function stops thereafter.
+//
+// If 'cpu.PercentWithContext' reports CPU usage, only the first measure (percent[0]) is considered (if available).
+// If no measure is available, nothing is set in this iteration.
+//
+// The gauge 'CPUGauge', is used to store the computed CPU usage.
+//
+// Parameters:
+// - ctx (context.Context) : Context to handle cancellation.
+//
+// Note: This function doesn't return anything.
+func MeasureCPU(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			percent, err := cpu.PercentWithContext(ctx, time.Second, false)
+			if err != nil {
+				level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+
+				return
+			}
+
+			if len(percent) == 1 {
+				CPUGauge.Set(percent[0])
+			}
+		}
+	}
 }
 
-// PrintStats prints a log line with the current system load information.
+// PrintStats prints various memory statistics using the default logger.
+// It retrieves the memory statistics using the runtime.ReadMemStats function
+// and then logs the statistics using level.Info from the logging package.
+// The statistics logged include:
+//   - alloc: The number of kilobytes (KB) allocated.
+//   - heap_alloc: The number of kilobytes (KB) allocated on the heap.
+//   - heap_in_use: The number of kilobytes (KB) in use on the heap.
+//   - heap_idle: The number of kilobytes (KB) idle on the heap.
+//   - stack_in_use: The number of kilobytes (KB) in use on the stack.
+//   - stack_sys: The stack size of the program.
+//   - sys: The total memory allocated by the program.
+//   - total_alloc: The total number of kilobytes (KB) allocated.
+//   - num_gc: The number of garbage collections performed.
+//
+// It uses the util.ByteSize function to convert the memory values in bytes to kilobytes (KB)
+// by dividing them by 1024.
+// The logging is performed using the DefaultLogger from the logging package.
+// Note: The declarations of logging.DefaultLogger, global.LogKeyStatsAlloc, util.ByteSize,
+// and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
 	level.Info(logging.DefaultLogger).Log(
-		decl.LogKeyStatsAlloc, bToMb(memStats.Alloc),
-		decl.LogKeyStatsHeapAlloc, bToMb(memStats.HeapAlloc),
-		decl.LogKeyStatsHeapInUse, bToMb(memStats.HeapInuse),
-		decl.LogKeyStatsHeapIdle, bToMb(memStats.HeapIdle),
-		decl.LogKeyStatsStackInUse, bToMb(memStats.StackInuse),
-		decl.LogKeyStatsStackSys, bToMb(memStats.StackSys),
-		decl.LogKeyStatsSys, bToMb(memStats.Sys),
-		decl.LogKeyStatsTotalAlloc, bToMb(memStats.TotalAlloc),
-		decl.LogKeyStatsNumGC, memStats.NumGC,
+		// Heap Stats
+		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
+		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
+		global.LogKeyStatsHeapIdle, util.ByteSize(memStats.HeapIdle),
+		global.LogKeyStatsHeapSys, util.ByteSize(memStats.HeapSys),
+		global.LogKeyStatsHeapReleased, util.ByteSize(memStats.HeapReleased),
+		global.LogKeyStatsMallocs, memStats.Mallocs,
+		global.LogKeyStatsFrees, memStats.Frees,
+
+		// Stack Stats
+		global.LogKeyStatsStackInUse, util.ByteSize(memStats.StackInuse),
+		global.LogKeyStatsStackSys, util.ByteSize(memStats.StackSys),
+
+		// GC Stats
+		global.LogKeyStatsGCSys, util.ByteSize(memStats.GCSys),
+		global.LogKeyStatsNumGC, memStats.NumGC,
+
+		// General Stats
+		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
+		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
+		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
 	)
 }
 
@@ -85,7 +164,7 @@ func GetCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return 0
 	}
@@ -100,22 +179,22 @@ func LoadStatsFromRedis() {
 		err        error
 	)
 
-	util.DebugModule(decl.DbgStats, decl.LogKeyMsg, "Load counter statistics from redis")
+	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Load counter statistics from redis")
 
 	LoginsCounter.Reset()
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + decl.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
+	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
 
-	for _, counterType := range []string{decl.LabelSuccess, decl.LabelFailure} {
+	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
 		if redisValue, err = backend.RedisHandleReplica.HGet(backend.RedisHandleReplica.Context(), redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
-				level.Info(logging.DefaultLogger).Log(decl.LogKeyMsg, "No statistics on Redis server")
+				level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
 				return
 			}
 
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return
 		}
@@ -128,19 +207,19 @@ func LoadStatsFromRedis() {
 func SaveStatsToRedis() {
 	var err error
 
-	util.DebugModule(decl.DbgStats, decl.LogKeyMsg, "Save counter statistics to redis")
+	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
-		{Value: GetCounterValue(LoginsCounter, decl.LabelSuccess), Label: decl.LabelSuccess},
-		{Value: GetCounterValue(LoginsCounter, decl.LabelFailure), Label: decl.LabelFailure},
+		{Value: GetCounterValue(LoginsCounter, global.LabelSuccess), Label: global.LabelSuccess},
+		{Value: GetCounterValue(LoginsCounter, global.LabelFailure), Label: global.LabelFailure},
 	}
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + decl.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
+	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
 
 	for index := range metrics {
 		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyError, err)
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return
 		}

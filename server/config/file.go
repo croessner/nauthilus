@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -51,7 +51,7 @@ type File struct {
  */
 
 func (f *File) GetSQLConfigDSN() string {
-	getConfig := f.GetConfig(decl.BackendSQL)
+	getConfig := f.GetConfig(global.BackendSQL)
 	if getConfig == nil {
 		return ""
 	}
@@ -64,7 +64,7 @@ func (f *File) GetSQLConfigDSN() string {
 }
 
 func (f *File) GetSQLConfigCrypt() bool {
-	getConfig := f.GetConfig(decl.BackendSQL)
+	getConfig := f.GetConfig(global.BackendSQL)
 	if getConfig == nil {
 		return false
 	}
@@ -77,7 +77,7 @@ func (f *File) GetSQLConfigCrypt() bool {
 }
 
 func (f *File) GetSQLSearchProtocol(protocol string) (*SQLSearchProtocol, error) {
-	getSearch := f.GetProtocols(decl.BackendSQL)
+	getSearch := f.GetProtocols(global.BackendSQL)
 	if getSearch == nil {
 		return nil, errors.ErrSQLConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -90,11 +90,11 @@ func (f *File) GetSQLSearchProtocol(protocol string) (*SQLSearchProtocol, error)
 		}
 	}
 
-	if protocol == decl.ProtoDefault {
+	if protocol == global.ProtoDefault {
 		return nil, errors.ErrSQLConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	return f.GetSQLSearchProtocol(decl.ProtoDefault)
+	return f.GetSQLSearchProtocol(global.ProtoDefault)
 }
 
 /*
@@ -102,7 +102,7 @@ func (f *File) GetSQLSearchProtocol(protocol string) (*SQLSearchProtocol, error)
  */
 
 func (f *File) GetLDAPConfigStartTLS() bool {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -115,7 +115,7 @@ func (f *File) GetLDAPConfigStartTLS() bool {
 }
 
 func (f *File) GetLDAPConfigTLSSkipVerify() bool {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -128,7 +128,7 @@ func (f *File) GetLDAPConfigTLSSkipVerify() bool {
 }
 
 func (f *File) GetLDAPConfigSASLExternal() bool {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -141,59 +141,59 @@ func (f *File) GetLDAPConfigSASLExternal() bool {
 }
 
 func (f *File) GetLDAPConfigLookupIdlePoolSize() int {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
-		return decl.LDAPIdlePoolSize
+		return global.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.LookupIdlePoolSize
 	}
 
-	return decl.LDAPIdlePoolSize
+	return global.LDAPIdlePoolSize
 }
 
 func (f *File) GetLDAPConfigAuthIdlePoolSize() int {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
-		return decl.LDAPIdlePoolSize
+		return global.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.AuthIdlePoolSize
 	}
 
-	return decl.LDAPIdlePoolSize
+	return global.LDAPIdlePoolSize
 }
 
 func (f *File) GetLDAPConfigLookupPoolSize() int {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
-		return decl.LDAPIdlePoolSize
+		return global.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.LookupPoolSize
 	}
 
-	return decl.LDAPIdlePoolSize
+	return global.LDAPIdlePoolSize
 }
 
 func (f *File) GetLDAPConfigAuthPoolSize() int {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
-		return decl.LDAPIdlePoolSize
+		return global.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.AuthPoolSize
 	}
 
-	return decl.LDAPIdlePoolSize
+	return global.LDAPIdlePoolSize
 }
 
 func (f *File) GetLDAPConfigBindDN() string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -206,7 +206,7 @@ func (f *File) GetLDAPConfigBindDN() string {
 }
 
 func (f *File) GetLDAPConfigBindPW() string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -219,7 +219,7 @@ func (f *File) GetLDAPConfigBindPW() string {
 }
 
 func (f *File) GetLDAPConfigTLSCAFile() string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -232,7 +232,7 @@ func (f *File) GetLDAPConfigTLSCAFile() string {
 }
 
 func (f *File) GetLDAPConfigTLSClientCert() string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -245,7 +245,7 @@ func (f *File) GetLDAPConfigTLSClientCert() string {
 }
 
 func (f *File) GetLDAPConfigTLSClientKey() string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -258,7 +258,7 @@ func (f *File) GetLDAPConfigTLSClientKey() string {
 }
 
 func (f *File) GetLDAPConfigServerURIs() []string {
-	getConfig := f.GetConfig(decl.BackendLDAP)
+	getConfig := f.GetConfig(global.BackendLDAP)
 	if getConfig == nil {
 		return []string{"ldap://localhost"}
 	}
@@ -271,7 +271,7 @@ func (f *File) GetLDAPConfigServerURIs() []string {
 }
 
 func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error) {
-	getSearch := f.GetProtocols(decl.BackendLDAP)
+	getSearch := f.GetProtocols(global.BackendLDAP)
 	if getSearch == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -284,11 +284,11 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
 		}
 	}
 
-	if protocol == decl.ProtoDefault {
+	if protocol == global.ProtoDefault {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	return f.GetLDAPSearchProtocol(decl.ProtoDefault)
+	return f.GetLDAPSearchProtocol(global.ProtoDefault)
 }
 
 /*
@@ -296,7 +296,7 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
  */
 
 func (f *File) GetLuaScriptPath() string {
-	getConfig := f.GetConfig(decl.BackendLua)
+	getConfig := f.GetConfig(global.BackendLua)
 	if getConfig == nil {
 		return ""
 	}
@@ -309,7 +309,7 @@ func (f *File) GetLuaScriptPath() string {
 }
 
 func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error) {
-	getSearch := f.GetProtocols(decl.BackendLua)
+	getSearch := f.GetProtocols(global.BackendLua)
 	if getSearch == nil {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -322,11 +322,11 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 		}
 	}
 
-	if protocol == decl.ProtoDefault {
+	if protocol == global.ProtoDefault {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	return f.GetLuaSearchProtocol(decl.ProtoDefault)
+	return f.GetLuaSearchProtocol(global.ProtoDefault)
 }
 
 /*
@@ -339,19 +339,19 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 // If an SQLSection is found for the SQL backend, it adds it to the getterMap.
 // If a LuaSection is found for the Lua backend, it adds it to the getterMap.
 // Finally, it returns the getterMap.
-func (f *File) RetrieveGetterMap() map[decl.Backend]GetterHandler {
-	getterMap := make(map[decl.Backend]GetterHandler, 3)
+func (f *File) RetrieveGetterMap() map[global.Backend]GetterHandler {
+	getterMap := make(map[global.Backend]GetterHandler, 3)
 
-	if ldapSection, ok := f.GetSection(decl.BackendLDAP).(*LDAPSection); ok {
-		getterMap[decl.BackendLDAP] = ldapSection
+	if ldapSection, ok := f.GetSection(global.BackendLDAP).(*LDAPSection); ok {
+		getterMap[global.BackendLDAP] = ldapSection
 	}
 
-	if sqlSection, ok := f.GetSection(decl.BackendSQL).(*SQLSection); ok {
-		getterMap[decl.BackendSQL] = sqlSection
+	if sqlSection, ok := f.GetSection(global.BackendSQL).(*SQLSection); ok {
+		getterMap[global.BackendSQL] = sqlSection
 	}
 
-	if luaSection, ok := f.GetSection(decl.BackendLua).(*LuaSection); ok {
-		getterMap[decl.BackendLua] = luaSection
+	if luaSection, ok := f.GetSection(global.BackendLua).(*LuaSection); ok {
+		getterMap[global.BackendLua] = luaSection
 	}
 
 	return getterMap
@@ -362,7 +362,7 @@ func (f *File) RetrieveGetterMap() map[decl.Backend]GetterHandler {
 // If the backend is found, it retrieves the configuration handler associated with it
 // and returns the result of calling the GetterHandler() method on the configuration handler.
 // If the configuration handler is not found, it returns nil.
-func (f *File) GetConfig(backend decl.Backend) any {
+func (f *File) GetConfig(backend global.Backend) any {
 	getterMap := f.RetrieveGetterMap()
 
 	if config, found := getterMap[backend]; found {
@@ -381,7 +381,7 @@ func (f *File) GetConfig(backend decl.Backend) any {
 // If the backend is found, it retrieves the protocol handler associated with it
 // and returns the result of calling the ProtoHandler() method on the protocol handler.
 // If the protocol handler is not found, it returns nil.
-func (f *File) GetProtocols(backend decl.Backend) any {
+func (f *File) GetProtocols(backend global.Backend) any {
 	getterMap := f.RetrieveGetterMap()
 
 	if proto, found := getterMap[backend]; found {
@@ -395,13 +395,13 @@ func (f *File) GetProtocols(backend decl.Backend) any {
 	return nil
 }
 
-func (f *File) GetSection(backend decl.Backend) any {
+func (f *File) GetSection(backend global.Backend) any {
 	switch backend {
-	case decl.BackendLDAP:
+	case global.BackendLDAP:
 		return f.LDAP
-	case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
+	case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 		return f.SQL
-	case decl.BackendLua:
+	case global.BackendLua:
 		return f.Lua
 	default:
 		return nil
@@ -422,7 +422,7 @@ func (*File) GetBruteForceRules() (rules []BruteForceRule) {
 func (f *File) GetAllProtocols() []string {
 	protocols := NewStringSet()
 
-	if ldapProtocols := f.GetProtocols(decl.BackendLDAP); ldapProtocols != nil {
+	if ldapProtocols := f.GetProtocols(global.BackendLDAP); ldapProtocols != nil {
 		for index := range ldapProtocols.([]LDAPSearchProtocol) {
 			for protoIndex := range LoadableConfig.LDAP.Search[index].Protocols {
 				protocols.Set(LoadableConfig.LDAP.Search[index].Protocols[protoIndex])
@@ -430,7 +430,7 @@ func (f *File) GetAllProtocols() []string {
 		}
 	}
 
-	if sqlProtocols := f.GetProtocols(decl.BackendSQL); sqlProtocols != nil {
+	if sqlProtocols := f.GetProtocols(global.BackendSQL); sqlProtocols != nil {
 		for index := range sqlProtocols.([]SQLSearchProtocol) {
 			for protoIndex := range LoadableConfig.SQL.Search[index].Protocols {
 				protocols.Set(LoadableConfig.SQL.Search[index].Protocols[protoIndex])
@@ -438,7 +438,7 @@ func (f *File) GetAllProtocols() []string {
 		}
 	}
 
-	if luaProtocols := f.GetProtocols(decl.BackendLua); luaProtocols != nil {
+	if luaProtocols := f.GetProtocols(global.BackendLua); luaProtocols != nil {
 		for index := range luaProtocols.([]LuaSearchProtocol) {
 			for protoIndex := range LoadableConfig.Lua.Search[index].Protocols {
 				protocols.Set(LoadableConfig.Lua.Search[index].Protocols[protoIndex])
@@ -498,25 +498,25 @@ func (f *File) MapToStruct() (err error) {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
 			level.Warn(logging.DefaultLogger).Log(
-				decl.LogKeyWarning, "Please use a smaller RBL threshold!",
+				global.LogKeyWarning, "Please use a smaller RBL threshold!",
 				"rbl_threshold", f.RBLs.Threshold)
 		}
 
 		for _, rbl := range f.RBLs.Lists {
 			if rbl.Weight > math.MaxUint8 {
 				level.Warn(logging.DefaultLogger).Log(
-					decl.LogKeyWarning, "Please use a lower RBL weight!",
+					global.LogKeyWarning, "Please use a lower RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			} else if rbl.Weight < -math.MaxUint8 {
 				level.Warn(logging.DefaultLogger).Log(
-					decl.LogKeyWarning, "Please use a higher RBL weight!",
+					global.LogKeyWarning, "Please use a higher RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			}
 		}
 
-		level.Debug(logging.DefaultLogger).Log(decl.FeatureRBL, fmt.Sprintf("%+v", f.RBLs))
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", f.RBLs))
 	}
 
 	if f.BruteForce != nil {
@@ -553,7 +553,7 @@ func (f *File) MapToStruct() (err error) {
 			return errors.ErrBruteForceTooManyRules
 		}
 
-		level.Debug(logging.DefaultLogger).Log(decl.LogKeyBruteForce, fmt.Sprintf("%+v", f.BruteForce))
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", f.BruteForce))
 	}
 
 	if len(f.CSRFSecret) != 32 {
@@ -574,7 +574,7 @@ func (f *File) MapToStruct() (err error) {
 
 	for _, passDB := range EnvConfig.PassDBs {
 		switch passDB.Get() {
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			if f.LDAP == nil {
 				return errors.ErrNoLDAPSection
 			}
@@ -600,7 +600,7 @@ func (f *File) MapToStruct() (err error) {
 			}
 
 			if f.GetLDAPConfigLookupIdlePoolSize() < 1 {
-				f.LDAP.Config.LookupIdlePoolSize = decl.LDAPIdlePoolSize
+				f.LDAP.Config.LookupIdlePoolSize = global.LDAPIdlePoolSize
 			}
 
 			if f.GetLDAPConfigLookupPoolSize() < f.GetLDAPConfigLookupIdlePoolSize() {
@@ -612,7 +612,7 @@ func (f *File) MapToStruct() (err error) {
 			}
 
 			if f.GetLDAPConfigAuthIdlePoolSize() < 1 {
-				f.LDAP.Config.AuthIdlePoolSize = decl.LDAPIdlePoolSize
+				f.LDAP.Config.AuthIdlePoolSize = global.LDAPIdlePoolSize
 			}
 
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
@@ -620,13 +620,13 @@ func (f *File) MapToStruct() (err error) {
 			}
 
 			level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", f.LDAP.Config))
-		case decl.BackendMySQL, decl.BackendPostgres:
+		case global.BackendMySQL, global.BackendPostgres:
 			if f.SQL == nil {
 				return errors.ErrNoSQLSection
 			}
 
 			level.Debug(logging.DefaultLogger).Log("sql", fmt.Sprintf("%+v", f.SQL.Config))
-		case decl.BackendLua:
+		case global.BackendLua:
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
 			}
@@ -636,7 +636,7 @@ func (f *File) MapToStruct() (err error) {
 	level.Debug(logging.DefaultLogger).Log("cleartext_networks", fmt.Sprintf("%+v", f.ClearTextList))
 
 	if f.RelayDomains != nil {
-		level.Debug(logging.DefaultLogger).Log(decl.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
 	}
 
 	if f.Oauth2 != nil {
@@ -707,7 +707,7 @@ func ReloadConfigFile() (err error) {
 	// Replace existing configuration
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&LoadableConfig)), unsafe.Pointer(newCfgReload))
 
-	level.Info(logging.DefaultLogger).Log(decl.LogKeyMsg, "Reloading configuration file finished")
+	level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Reloading configuration file finished")
 
 	return
 }

@@ -15,8 +15,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -172,10 +172,10 @@ type Authentication struct {
 
 	// SourcePassDBBackend is a marker for the Database that is responsible for a specific user. It is set by the
 	// password Database and stored in Redis to track the authentication flow accross databases (including proxy).
-	SourcePassDBBackend decl.Backend
+	SourcePassDBBackend global.Backend
 
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
-	UsedPassDBBackend decl.Backend
+	UsedPassDBBackend global.Backend
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
 	// attribute name as key and the corresponding result as value.
@@ -216,7 +216,7 @@ type PassDBResult struct {
 	DisplayNameField *string
 
 	// Backend is set by the Database backend which has found the user.
-	Backend decl.Backend
+	Backend global.Backend
 
 	// Attributes is the result catalog returned by the underlying password Database.
 	Attributes backend.DatabaseResult
@@ -229,12 +229,12 @@ type (
 
 	// PassDBMap is a struct type that represents a mapping between a backend type and a PassDBOption function.
 	// It is used in the VerifyPassword method of the Authentication struct to perform password verification against multiple databases.
-	// The backend field represents the type of database backend (decl.Backend) and the fn field represents the PassDBOption function.
+	// The backend field represents the type of database backend (global.Backend) and the fn field represents the PassDBOption function.
 	// The PassDBOption function takes an Authentication pointer as input and returns a PassDBResult pointer and an error.
 	// The PassDBResult pointer contains the result of the password verification process.
 	// This struct is used to store the database mappings in an array and loop through them in the VerifyPassword method.
 	PassDBMap struct {
-		backend decl.Backend
+		backend global.Backend
 		fn      PassDBOption
 	}
 )
@@ -248,7 +248,7 @@ type (
 
 	// AccountListMap is a struct type that represents a mapping between a backend and an account list option function for authentication.
 	AccountListMap struct {
-		backend decl.Backend
+		backend global.Backend
 		fn      AccountListOption
 	}
 )
@@ -298,37 +298,37 @@ func (a *Authentication) logLineGeoIP() []any {
 		if val != "" {
 			geoIPCityCityName = val
 		} else {
-			geoIPCityCityName = decl.NotAvailable
+			geoIPCityCityName = global.NotAvailable
 		}
 	} else {
-		geoIPCityCityName = decl.NotAvailable
+		geoIPCityCityName = global.NotAvailable
 	}
 
 	if val, okay := a.GeoIPCity.Country.Names["en"]; okay {
 		if val != "" {
 			geoIPCityCountryName = val
 		} else {
-			geoIPCityCountryName = decl.NotAvailable
+			geoIPCityCountryName = global.NotAvailable
 		}
 	} else {
-		geoIPCityCountryName = decl.NotAvailable
+		geoIPCityCountryName = global.NotAvailable
 	}
 
 	if a.GeoIPCity.Location.TimeZone == "" {
-		a.GeoIPCity.Location.TimeZone = decl.NotAvailable
+		a.GeoIPCity.Location.TimeZone = global.NotAvailable
 	}
 
 	return []any{
-		decl.LogKeyGUID, util.WithNotAvailable(*a.GUID),
-		decl.LogKeyGeoIPISOCode, util.WithNotAvailable(a.GeoIPCity.Country.IsoCode),
-		decl.LogKeyGeoIPCountryName, geoIPCityCountryName,
-		decl.LogKeyGeoIPCityName, geoIPCityCityName,
-		decl.LogKeyGeoIPIsInEuropeanUnion, fmt.Sprintf("%v", a.GeoIPCity.Country.IsInEuropeanUnion),
-		decl.LogKeyGeoIPAccuracyRadius, fmt.Sprintf("%d", a.GeoIPCity.Location.AccuracyRadius),
-		decl.LogKeyGeoIPLatitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Latitude),
-		decl.LogKeyGeoIPLongitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Longitude),
-		decl.LogKeyGeoIPMetroCode, fmt.Sprintf("%d", a.GeoIPCity.Location.MetroCode),
-		decl.LogKeyGeoIPTimeZone, a.GeoIPCity.Location.TimeZone,
+		global.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		global.LogKeyGeoIPISOCode, util.WithNotAvailable(a.GeoIPCity.Country.IsoCode),
+		global.LogKeyGeoIPCountryName, geoIPCityCountryName,
+		global.LogKeyGeoIPCityName, geoIPCityCityName,
+		global.LogKeyGeoIPIsInEuropeanUnion, fmt.Sprintf("%v", a.GeoIPCity.Country.IsInEuropeanUnion),
+		global.LogKeyGeoIPAccuracyRadius, fmt.Sprintf("%d", a.GeoIPCity.Location.AccuracyRadius),
+		global.LogKeyGeoIPLatitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Latitude),
+		global.LogKeyGeoIPLongitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Longitude),
+		global.LogKeyGeoIPMetroCode, fmt.Sprintf("%d", a.GeoIPCity.Location.MetroCode),
+		global.LogKeyGeoIPTimeZone, a.GeoIPCity.Location.TimeZone,
 	}
 }
 
@@ -361,29 +361,29 @@ func (a *Authentication) LogLineMail(status string, endpoint string) []any {
 	var keyvals []any
 
 	keyvals = []any{
-		decl.LogKeyGUID, util.WithNotAvailable(*a.GUID),
-		decl.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
-		decl.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
-		decl.LogKeyPort, util.WithNotAvailable(a.XPort),
-		decl.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
-		decl.LogKeyClientPort, util.WithNotAvailable(a.XClientPort),
-		decl.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
-		decl.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
-		decl.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		decl.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
-		decl.LogKeyUsername, util.WithNotAvailable(a.Username),
-		decl.LogKeyOrigUsername, util.WithNotAvailable(a.UsernameOrig),
-		decl.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
-		decl.LogKeyLoginAttempts, a.LoginAttempts,
-		decl.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
-		decl.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
-		decl.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
-		decl.LogKeyClientID, util.WithNotAvailable(a.XClientID),
-		decl.LogKeyBruteForceName, util.WithNotAvailable(a.BruteForceName),
-		decl.LogKeyFeatureName, util.WithNotAvailable(a.FeatureName),
-		decl.LogKeyStatusMessage, util.WithNotAvailable(a.StatusMessage),
-		decl.LogKeyUriPath, endpoint,
-		decl.LogKeyStatus, util.WithNotAvailable(status),
+		global.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		global.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
+		global.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
+		global.LogKeyPort, util.WithNotAvailable(a.XPort),
+		global.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
+		global.LogKeyClientPort, util.WithNotAvailable(a.XClientPort),
+		global.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
+		global.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
+		global.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
+		global.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
+		global.LogKeyUsername, util.WithNotAvailable(a.Username),
+		global.LogKeyOrigUsername, util.WithNotAvailable(a.UsernameOrig),
+		global.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
+		global.LogKeyLoginAttempts, a.LoginAttempts,
+		global.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
+		global.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
+		global.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
+		global.LogKeyClientID, util.WithNotAvailable(a.XClientID),
+		global.LogKeyBruteForceName, util.WithNotAvailable(a.BruteForceName),
+		global.LogKeyFeatureName, util.WithNotAvailable(a.FeatureName),
+		global.LogKeyStatusMessage, util.WithNotAvailable(a.StatusMessage),
+		global.LogKeyUriPath, endpoint,
+		global.LogKeyStatus, util.WithNotAvailable(status),
 	}
 
 	if len(a.AdditionalLogs) > 0 {
@@ -405,7 +405,7 @@ func (a *Authentication) GetAccount() string {
 	}
 
 	if account, okay := a.Attributes[*a.AccountField]; okay {
-		if value, assertOk := account[decl.LDAPSingleValue].(string); assertOk {
+		if value, assertOk := account[global.LDAPSingleValue].(string); assertOk {
 			return value
 		}
 	}
@@ -428,7 +428,7 @@ func (a *Authentication) GetTOTPSecret() string {
 	}
 
 	if totpSecret, okay := a.Attributes[*a.TOTPSecretField]; okay {
-		if value, assertOk := totpSecret[decl.LDAPSingleValue].(string); assertOk {
+		if value, assertOk := totpSecret[global.LDAPSingleValue].(string); assertOk {
 			return value
 		}
 	}
@@ -451,7 +451,7 @@ func (a *Authentication) GetUniqueUserID() string {
 	}
 
 	if webAuthnUserID, okay := a.Attributes[*a.UniqueUserIDField]; okay {
-		if value, assertOk := webAuthnUserID[decl.LDAPSingleValue].(string); assertOk {
+		if value, assertOk := webAuthnUserID[global.LDAPSingleValue].(string); assertOk {
 			return value
 		}
 	}
@@ -474,7 +474,7 @@ func (a *Authentication) GetDisplayName() string {
 	}
 
 	if account, okay := a.Attributes[*a.DisplayNameField]; okay {
-		if value, assertOk := account[decl.SliceWithOneElement].(string); assertOk {
+		if value, assertOk := account[global.SliceWithOneElement].(string); assertOk {
 			return value
 		}
 	}
@@ -494,24 +494,24 @@ func (a *Authentication) GetDisplayNameOk() (string, bool) {
 func (a *Authentication) AuthOK(ctx *gin.Context) {
 	setCommonHeaders(ctx, a)
 	switch a.Service {
-	case decl.ServNginx:
+	case global.ServNginx:
 		setNginxHeaders(ctx, a)
-	case decl.ServDovecot:
+	case global.ServDovecot:
 		setDovecotHeaders(ctx, a)
-	case decl.ServUserInfo:
+	case global.ServUserInfo:
 		setUserInfoHeaders(ctx, a)
 	}
 
 	handleLogging(ctx, a)
 
-	LoginsCounter.WithLabelValues(decl.LabelSuccess).Inc()
+	LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
 func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Authserv-Session", *a.GUID)
 
-	if a.Service != decl.ServBasicAuth && a.UsernameReplace {
+	if a.Service != global.ServBasicAuth && a.UsernameReplace {
 		if account, found := a.GetAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
@@ -520,7 +520,7 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	switch a.Protocol.Get() {
-	case decl.ProtoSMTP:
+	case global.ProtoSMTP:
 		ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
 		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
 	default:
@@ -543,11 +543,11 @@ func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 	if valueLen := len(value); valueLen > 0 {
 		switch {
 		case valueLen == 1:
-			headerValue = fmt.Sprintf("%v", value[decl.LDAPSingleValue])
+			headerValue = fmt.Sprintf("%v", value[global.LDAPSingleValue])
 		case valueLen > 1:
 			stringValues := formatValues(value)
 			separator := ","
-			if name == decl.DistinguishedName {
+			if name == global.DistinguishedName {
 				separator = ";"
 			}
 			headerValue = strings.Join(stringValues, separator)
@@ -595,7 +595,7 @@ func setUserInfoHeaders(ctx *gin.Context, a *Authentication) {
 // The logged information includes the result of the a.LogLineMail() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, a *Authentication) {
-	if config.EnvConfig.Verbosity.Level() > decl.LogLevelWarn {
+	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
 		level.Info(logging.DefaultLogger).Log(a.LogLineMail(func() string {
 			if !a.NoAuth {
 				return "ok"
@@ -616,7 +616,7 @@ func (a *Authentication) IncreaseLoginAttempts() {
 		a.LoginAttempts = math.MaxUint8
 	}
 
-	if a.Service == decl.ServNginx {
+	if a.Service == global.ServNginx {
 		if a.LoginAttempts < uint(config.EnvConfig.MaxLoginAttempts) {
 			a.LoginAttempts++
 		}
@@ -624,24 +624,24 @@ func (a *Authentication) IncreaseLoginAttempts() {
 }
 
 // SetFailureHeaders sets the failure headers for the given authentication context.
-// It sets the "Auth-Status" header to the value of decl.PasswordFail constant.
+// It sets the "Auth-Status" header to the value of global.PasswordFail constant.
 // It sets the "X-Authserv-Session" header to the value of the authentication's GUID field.
-// It updates the StatusMessage of the authentication to decl.PasswordFail.
+// It updates the StatusMessage of the authentication to global.PasswordFail.
 //
-// If the Service field of the authentication is equal to decl.ServUserInfo, it also sets the following headers:
+// If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
 //   - "Content-Type" header to "application/json; charset=UTF-8"
 //   - "X-User-Found" header to the string representation of the UserFound field of the authentication
 //   - If the PasswordHistory field is not nil, it responds with a JSON representation of the PasswordHistory.
 //     If the PasswordHistory field is nil, it responds with an empty JSON object.
 //
-// If the Service field is not equal to decl.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
+// If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *Authentication) SetFailureHeaders(ctx *gin.Context) {
-	ctx.Header("Auth-Status", decl.PasswordFail)
+	ctx.Header("Auth-Status", global.PasswordFail)
 	ctx.Header("X-Authserv-Session", *a.GUID)
 
-	a.StatusMessage = decl.PasswordFail
+	a.StatusMessage = global.PasswordFail
 
-	if a.Service == decl.ServUserInfo {
+	if a.Service == global.ServUserInfo {
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
 		ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 
@@ -665,11 +665,11 @@ func (a *Authentication) SetFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.LoginAttemptProcessing(ctx)
 func (a *Authentication) LoginAttemptProcessing(ctx *gin.Context) {
-	if config.EnvConfig.Verbosity.Level() > decl.LogLevelWarn {
+	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
 		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 	}
 
-	LoginsCounter.WithLabelValues(decl.LabelFailure).Inc()
+	LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 
 // AuthFail handles the failure of authentication.
@@ -687,8 +687,8 @@ func (a *Authentication) AuthFail(ctx *gin.Context) {
 //
 //	a.setSMPTHeaders(ctx)
 func (a *Authentication) setSMPTHeaders(ctx *gin.Context) {
-	if a.Service == decl.ServNginx && a.Protocol.Get() == decl.ProtoSMTP {
-		ctx.Header("Auth-Error-Code", decl.TempFailCode)
+	if a.Service == global.ServNginx && a.Protocol.Get() == global.ProtoSMTP {
+		ctx.Header("Auth-Error-Code", global.TempFailCode)
 	}
 }
 
@@ -697,7 +697,7 @@ func (a *Authentication) setSMPTHeaders(ctx *gin.Context) {
 //
 //	func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
 //	    ...
-//	    if a.Service == decl.ServUserInfo {
+//	    if a.Service == global.ServUserInfo {
 //	        a.setUserInfoHeaders(ctx, reason)
 //	        return
 //	    }
@@ -732,12 +732,12 @@ func (a *Authentication) setUserInfoHeaders(ctx *gin.Context, reason string) {
 //
 //	  func (a *Authentication) Generic(ctx *gin.Context) {
 //	    ...
-//	    a.AuthTempFail(ctx, decl.TempFailDefault)
+//	    a.AuthTempFail(ctx, global.TempFailDefault)
 //	    ...
 //	  }
 //	  func (a *Authentication) SASLauthd(ctx *gin.Context) {
 //		   ...
-//	    a.AuthTempFail(ctx, decl.TempFailDefault)
+//	    a.AuthTempFail(ctx, global.TempFailDefault)
 //	    ...
 //	  }
 //
@@ -753,7 +753,7 @@ func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
 
 	a.StatusMessage = reason
 
-	if a.Service == decl.ServUserInfo {
+	if a.Service == global.ServUserInfo {
 		a.setUserInfoHeaders(ctx, reason)
 		return
 	}
@@ -796,18 +796,18 @@ func (a *Authentication) IsInNetwork(networkList []string) (matchIP bool) {
 }
 
 func (a *Authentication) logNetworkError(ipOrNet string, err error) {
-	level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, "%s is not a network", ipOrNet, decl.LogKeyError, err)
+	level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
 }
 
 func (a *Authentication) checkAndLogNetwork(network *net.IPNet) {
 	util.DebugModule(
-		decl.DbgWhitelist,
-		decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, network.String()),
+		global.DbgWhitelist,
+		global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, network.String()),
 	)
 }
 
 func (a *Authentication) checkAndLogIP(ipOrNet string) {
-	util.DebugModule(decl.DbgWhitelist, decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, ipOrNet))
+	util.DebugModule(global.DbgWhitelist, global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, ipOrNet))
 }
 
 // VerifyPassword takes in an array of PassDBMap and performs the following steps:
@@ -834,7 +834,7 @@ func (a *Authentication) VerifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 		return passDBResult, errors2.ErrNoPassDBs
 	}
 
-	configErrors := make(map[decl.Backend]error, len(passDBs))
+	configErrors := make(map[global.Backend]error, len(passDBs))
 	for passDBIndex, passDB := range passDBs {
 		passDBResult, err = passDB.fn(a)
 		logDebugModule(a, passDB, passDBResult)
@@ -892,7 +892,7 @@ func isThereAnyDatabase(passDBs []*PassDBMap) bool {
 //   - passDBResult: The PassDBResult object containing the result of the authentication process.
 //
 // The logDebugModule function calls the util.DebugModule function to log the debug information.
-// It passes the module declaration (decl.DbgAuth) as the first parameter, followed by key-value pairs of additional information.
+// It passes the module declaration (global.DbgAuth) as the first parameter, followed by key-value pairs of additional information.
 // The key-value pairs include "session" as the key and a.GUID as the value, "passdb" as the key and passDB.backend.String() as the value,
 // and "result" as the key and fmt.Sprintf("%v", passDBResult) as the value.
 //
@@ -903,8 +903,8 @@ func isThereAnyDatabase(passDBs []*PassDBMap) bool {
 // This function uses the util.DebugModule function from the package to log the debug information.
 func logDebugModule(a *Authentication, passDB *PassDBMap, passDBResult *PassDBResult) {
 	util.DebugModule(
-		decl.DbgAuth,
-		decl.LogKeyGUID, a.GUID,
+		global.DbgAuth,
+		global.LogKeyGUID, a.GUID,
 		"passdb", passDB.backend.String(),
 		"result", fmt.Sprintf("%v", passDBResult))
 }
@@ -914,7 +914,7 @@ func logDebugModule(a *Authentication, passDB *PassDBMap, passDBResult *PassDBRe
 // If all password databases have been processed and there are configuration errors, it calls the checkAllBackends function.
 // If the error is not a configuration error, it logs the error using the DefaultErrLogger.
 // It returns the error unchanged.
-func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *Authentication, configErrors map[decl.Backend]error) error {
+func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *Authentication, configErrors map[global.Backend]error) error {
 	if errors.Is(err, errors2.ErrSQLConfig) || errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
@@ -923,14 +923,14 @@ func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 			err = checkAllBackends(configErrors, a)
 		}
 	} else {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), global.LogKeyError, err)
 	}
 
 	return err
 }
 
 // After all password databases were running, check if SQL, LDAP and Lua backends have configuration errors.
-func checkAllBackends(configErrors map[decl.Backend]error, a *Authentication) (err error) {
+func checkAllBackends(configErrors map[global.Backend]error, a *Authentication) (err error) {
 	var allConfigErrors = true
 
 	for _, err = range configErrors {
@@ -944,7 +944,7 @@ func checkAllBackends(configErrors map[decl.Backend]error, a *Authentication) (e
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
 		err = errors2.ErrAllBackendConfigError
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, "passdb", "all", decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyError, err)
 	}
 
 	return err
@@ -963,11 +963,11 @@ func authenticateUser(passDBResult *PassDBResult, a *Authentication, passDB *Pas
 	}
 
 	util.DebugModule(
-		decl.DbgAuth,
-		decl.LogKeyGUID, a.GUID,
+		global.DbgAuth,
+		global.LogKeyGUID, a.GUID,
 		"passdb", passDB.backend.String(),
-		decl.LogKeyUsername, a.Username,
-		decl.LogKeyOrigUsername, a.UsernameOrig,
+		global.LogKeyUsername, a.Username,
+		global.LogKeyOrigUsername, a.UsernameOrig,
 		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
 	)
 
@@ -1014,11 +1014,11 @@ func updateAuthentication(a *Authentication, passDBResult *PassDBResult, passDB 
 // SetStatusCode sets different status codes for various services.
 func (a *Authentication) SetStatusCode(service string) error {
 	switch service {
-	case decl.ServNginx, decl.ServDovecot:
+	case global.ServNginx, global.ServDovecot:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case decl.ServSaslauthd, decl.ServBasicAuth, decl.ServOryHydra, decl.ServUserInfo:
+	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -1030,15 +1030,15 @@ func (a *Authentication) SetStatusCode(service string) error {
 }
 
 // HandleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
-func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult decl.AuthResult) {
+func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
-	doAction := func(luaAction decl.LuaAction) {
+	doAction := func(luaAction global.LuaAction) {
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    luaAction,
-			Debug:        config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+			Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 			Repeating:    false,
 			Session:      *a.GUID,
 			ClientIP:     a.ClientIP,
@@ -1062,7 +1062,7 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult decl.AuthR
 	 * Neutral features
 	 */
 
-	if config.EnvConfig.HasFeature(decl.FeatureGeoIP) {
+	if config.EnvConfig.HasFeature(global.FeatureGeoIP) {
 		a.FeatureGeoIP()
 	}
 
@@ -1070,18 +1070,18 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult decl.AuthR
 	 * Black or whitelist features
 	 */
 
-	if config.EnvConfig.HasFeature(decl.FeatureLua) {
+	if config.EnvConfig.HasFeature(global.FeatureLua) {
 		if triggered, abortFeatures, err := a.FeatureLua(ctx); err != nil {
-			return decl.AuthResultTempFail
+			return global.AuthResultTempFail
 		} else if triggered {
-			a.FeatureName = decl.FeatureLua
+			a.FeatureName = global.FeatureLua
 
 			a.UpdateBruteForceBucketsCounter()
-			doAction(decl.LuaActionLua)
+			doAction(global.LuaActionLua)
 
-			return decl.AuthResultFeatureLua
+			return global.AuthResultFeatureLua
 		} else if abortFeatures {
-			return decl.AuthResultOK
+			return global.AuthResultOK
 		}
 	}
 
@@ -1089,41 +1089,41 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult decl.AuthR
 	 * Blacklist features
 	 */
 
-	if config.EnvConfig.HasFeature(decl.FeatureTLSEncryption) {
+	if config.EnvConfig.HasFeature(global.FeatureTLSEncryption) {
 		if a.FeatureTLSEncryption() {
-			a.FeatureName = decl.FeatureTLSEncryption
+			a.FeatureName = global.FeatureTLSEncryption
 
-			doAction(decl.LuaActionTLS)
+			doAction(global.LuaActionTLS)
 
-			return decl.AuthResultFeatureTLS
+			return global.AuthResultFeatureTLS
 		}
 	}
 
-	if config.EnvConfig.HasFeature(decl.FeatureRelayDomains) {
+	if config.EnvConfig.HasFeature(global.FeatureRelayDomains) {
 		if a.FeatureRelayDomains() {
-			a.FeatureName = decl.FeatureRelayDomains
+			a.FeatureName = global.FeatureRelayDomains
 
 			a.UpdateBruteForceBucketsCounter()
-			doAction(decl.LuaActionRelayDomains)
+			doAction(global.LuaActionRelayDomains)
 
-			return decl.AuthResultFeatureRelayDomain
+			return global.AuthResultFeatureRelayDomain
 		}
 	}
 
-	if config.EnvConfig.HasFeature(decl.FeatureRBL) {
+	if config.EnvConfig.HasFeature(global.FeatureRBL) {
 		if triggered, err := a.FeatureRBLs(ctx); err != nil {
-			return decl.AuthResultTempFail
+			return global.AuthResultTempFail
 		} else if triggered {
-			a.FeatureName = decl.FeatureRBL
+			a.FeatureName = global.FeatureRBL
 
 			a.UpdateBruteForceBucketsCounter()
-			doAction(decl.LuaActionRBL)
+			doAction(global.LuaActionRBL)
 
-			return decl.AuthResultFeatureRBL
+			return global.AuthResultFeatureRBL
 		}
 	}
 
-	return decl.AuthResultOK
+	return global.AuthResultOK
 }
 
 // PostLuaAction sends a Lua action to be executed asynchronously.
@@ -1132,8 +1132,8 @@ func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:         decl.LuaActionPost,
-			Debug:             config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+			LuaAction:         global.LuaActionPost,
+			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 			Repeating:         false,
 			UserFound:         passDBResult.UserFound,
 			Authenticated:     passDBResult.Authenticated,
@@ -1172,17 +1172,17 @@ func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
 // the verification process ended, it updates user information on the Redis server, if the cache backend is enabled.
 //
 //nolint:gocognit // Ignore
-func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthResult) {
+func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.AuthResult) {
 	if a.Username == "" {
-		util.DebugModule(decl.DbgAuth, decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, "Empty username")
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Empty username")
 
-		return decl.AuthResultEmptyUsername
+		return global.AuthResultEmptyUsername
 	}
 
 	if !a.NoAuth && a.Password == "" {
-		util.DebugModule(decl.DbgAuth, decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, "Empty password")
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Empty password")
 
-		return decl.AuthResultEmptyPassword
+		return global.AuthResultEmptyPassword
 	}
 
 	/*
@@ -1192,33 +1192,34 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 	var passDBs []*PassDBMap
 
 	useCache := false
-	backendPos := make(map[decl.Backend]int)
+	backendPos := make(map[global.Backend]int)
 
 	for index, passDB := range config.EnvConfig.PassDBs {
 		db := passDB.Get()
 
 		switch db {
-		case decl.BackendCache:
+		case global.BackendCache:
 			passDBs = append(passDBs, &PassDBMap{
-				decl.BackendCache,
+				global.BackendCache,
 				CachePassDB,
 			})
 			useCache = true
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			passDBs = append(passDBs, &PassDBMap{
-				decl.BackendLDAP,
+				global.BackendLDAP,
 				LDAPPassDB,
 			})
-		case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
+		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 			passDBs = append(passDBs, &PassDBMap{
-				decl.BackendSQL,
+				global.BackendSQL,
 				SQLPassDB,
 			})
-		case decl.BackendLua:
+		case global.BackendLua:
 			passDBs = append(passDBs, &PassDBMap{
-				decl.BackendLua,
+				global.BackendLua,
 				LuaPassDB,
 			})
+		case global.BackendUnknown:
 		}
 
 		backendPos[db] = index
@@ -1231,29 +1232,31 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 
 		if errors.As(err, &detailedError) {
 			level.Error(logging.DefaultErrLogger).Log(
-				decl.LogKeyGUID, a.GUID,
-				decl.LogKeyError, detailedError.Error(),
-				decl.LogKeyErrorDetails, detailedError.GetDetails())
+				global.LogKeyGUID, a.GUID,
+				global.LogKeyError, detailedError.Error(),
+				global.LogKeyErrorDetails, detailedError.GetDetails())
 		} else {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err.Error())
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		return decl.AuthResultTempFail
+		return global.AuthResultTempFail
 	}
 
 	if useCache && !a.NoAuth {
 		// Make sure the cache backend is in front of the used backend.
 		if passDBResult.Authenticated {
-			if backendPos[decl.BackendCache] < backendPos[a.UsedPassDBBackend] {
-				var usedBackend backend.CacheNameBackend
+			if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
+				var usedBackend global.CacheNameBackend
 
 				switch a.UsedPassDBBackend {
-				case decl.BackendLDAP:
-					usedBackend = backend.CacheLDAP
-				case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
-					usedBackend = backend.CacheSQL
-				case decl.BackendLua:
-					usedBackend = backend.CacheLua
+				case global.BackendLDAP:
+					usedBackend = global.CacheLDAP
+				case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
+					usedBackend = global.CacheSQL
+				case global.BackendLua:
+					usedBackend = global.CacheLua
+				case global.BackendUnknown:
+				case global.BackendCache:
 				}
 
 				cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
@@ -1263,9 +1266,9 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 
 					accountName, err = a.GetUserAccountFromRedis()
 					if err != nil {
-						level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err.Error())
+						level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
-						return decl.AuthResultTempFail
+						return global.AuthResultTempFail
 					}
 
 					if accountName != "" {
@@ -1292,10 +1295,10 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 			}
 		} else {
 			util.DebugModule(
-				decl.DbgAuth,
-				decl.LogKeyGUID, a.GUID,
+				global.DbgAuth,
+				global.LogKeyGUID, a.GUID,
 				"authenticated", false,
-				decl.LogKeyMsg, "Calling saveBruteForcePasswordToRedis()",
+				global.LogKeyMsg, "Calling saveBruteForcePasswordToRedis()",
 			)
 
 			// Increase counters
@@ -1309,7 +1312,7 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 		a.UpdateBruteForceBucketsCounter()
 		a.PostLuaAction(passDBResult)
 
-		return decl.AuthResultFail
+		return global.AuthResultFail
 	}
 
 	// Set new username
@@ -1328,9 +1331,9 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult decl.AuthR
 }
 
 // FilterLua calls Lua filters which can change the backend result.
-func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) decl.AuthResult {
+func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
 	filterRequest := &filter.Request{
-		Debug:         config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+		Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		UserFound:     passDBResult.UserFound,
 		Authenticated: passDBResult.Authenticated,
 		NoAuth:        a.NoAuth,
@@ -1359,9 +1362,9 @@ func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context)
 	filterResult, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
-			level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err.Error())
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
-			return decl.AuthResultTempFail
+			return global.AuthResultTempFail
 		}
 	} else {
 		for index := range *filterRequest.Logs {
@@ -1369,15 +1372,15 @@ func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		}
 
 		if filterResult {
-			return decl.AuthResultFail
+			return global.AuthResultFail
 		}
 	}
 
 	if passDBResult.Authenticated {
-		return decl.AuthResultOK
+		return global.AuthResultOK
 	}
 
-	return decl.AuthResultFail
+	return global.AuthResultFail
 }
 
 // ListUserAccounts returns the list of all known users from the account databases.
@@ -1386,28 +1389,30 @@ func (a *Authentication) ListUserAccounts() (accountList AccountList) {
 
 	for _, accountDB := range config.EnvConfig.PassDBs {
 		switch accountDB.Get() {
-		case decl.BackendLDAP:
+		case global.BackendLDAP:
 			accounts = append(accounts, &AccountListMap{
-				decl.BackendLDAP,
+				global.BackendLDAP,
 				LDAPAccountDB,
 			})
-		case decl.BackendMySQL, decl.BackendPostgres, decl.BackendSQL:
+		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 			accounts = append(accounts, &AccountListMap{
-				decl.BackendSQL,
+				global.BackendSQL,
 				SQLAccountDB,
 			})
-		case decl.BackendLua:
+		case global.BackendLua:
 			accounts = append(accounts, &AccountListMap{
-				decl.BackendLua,
+				global.BackendLua,
 				LuaAccountDB,
 			})
+		case global.BackendUnknown:
+		case global.BackendCache:
 		}
 	}
 
 	for _, accountDB := range accounts {
 		result, err := accountDB.fn(a)
 
-		util.DebugModule(decl.DbgAuth, decl.LogKeyGUID, a.GUID, "accountDB", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, "accountDB", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
 			accountList = append(accountList, result...)
@@ -1415,11 +1420,11 @@ func (a *Authentication) ListUserAccounts() (accountList AccountList) {
 			var detailedError *errors2.DetailedError
 			if errors.As(err, &detailedError) {
 				level.Error(logging.DefaultErrLogger).Log(
-					decl.LogKeyGUID, a.GUID,
-					decl.LogKeyError, detailedError.Error(),
-					decl.LogKeyErrorDetails, detailedError.GetDetails())
+					global.LogKeyGUID, a.GUID,
+					global.LogKeyError, detailedError.Error(),
+					global.LogKeyErrorDetails, detailedError.GetDetails())
 			} else {
-				level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, err)
+				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 			}
 		}
 	}
@@ -1450,7 +1455,7 @@ func (a *Authentication) GetUserAccountFromRedis() (accountName string, err erro
 		values   []any
 	)
 
-	key := config.EnvConfig.RedisPrefix + decl.RedisUserHashKey
+	key := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
 
 	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
@@ -1485,10 +1490,10 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 		HTTPClientContext: ctx,
 	}
 
-	guidStr := ctx.Value(decl.GUIDKey).(string)
+	guidStr := ctx.Value(global.GUIDKey).(string)
 
 	if err := auth.SetStatusCode(ctx.Param("service")); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, guidStr, decl.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guidStr, global.LogKeyError, err)
 
 		return nil
 	}
@@ -1496,7 +1501,7 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 	auth.Protocol = &config.Protocol{}
 
 	switch ctx.Param("service") {
-	case decl.ServNginx, decl.ServDovecot, decl.ServUserInfo:
+	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
 		// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 		auth.Username = ctx.Request.Header.Get("Auth-User")
 		auth.UsernameOrig = auth.Username
@@ -1523,11 +1528,11 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 
 		switch ctx.Query("mode") {
 		case "no-auth":
-			util.DebugModule(decl.DbgAuth, decl.LogKeyGUID, guidStr, decl.LogKeyMsg, "mode=no-auth")
+			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=no-auth")
 
 			auth.NoAuth = true
 		case "list-accounts":
-			util.DebugModule(decl.DbgAuth, decl.LogKeyGUID, guidStr, decl.LogKeyMsg, "mode=list-accounts")
+			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=list-accounts")
 
 			auth.ListAccounts = true
 		}
@@ -1537,7 +1542,7 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 		auth.WithUserAgent(ctx)
 		auth.WithXSSL(ctx)
 
-	case decl.ServSaslauthd:
+	case global.ServSaslauthd:
 		method := ctx.PostForm("method")
 		realm := ctx.PostForm("realm")
 		userAgent := ctx.PostForm("user_agent")
@@ -1553,12 +1558,12 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 		auth.Password = ctx.PostForm("password")
 		auth.Protocol = &config.Protocol{}
 		auth.Protocol.Set(ctx.PostForm("protocol"))
-		auth.XLocalIP = decl.Localhost4
+		auth.XLocalIP = global.Localhost4
 		auth.XPort = ctx.PostForm("port")
 		auth.XSSL = ctx.PostForm("tls")
 		auth.XSSLProtocol = ctx.PostForm("security")
 
-	case decl.ServBasicAuth:
+	case global.ServBasicAuth:
 		// NOTE: We must get username and password later!
 		auth.WithClientInfo(ctx)
 		auth.WithLocalInfo(ctx)
@@ -1577,17 +1582,17 @@ func (a *Authentication) WithDefaults(ctx *gin.Context) *Authentication {
 		return nil
 	}
 
-	guidStr := ctx.Value(decl.GUIDKey).(string)
+	guidStr := ctx.Value(global.GUIDKey).(string)
 
 	a.GUID = &guidStr
 	a.GeoIPCity = &GeoIPCity{}
-	a.UsedPassDBBackend = decl.BackendUnknown
+	a.UsedPassDBBackend = global.BackendUnknown
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.Param("service")
-	a.Context = ctx.Value(decl.DataExchangeKey).(*lualib.Context)
+	a.Context = ctx.Value(global.DataExchangeKey).(*lualib.Context)
 
 	if a.Protocol.Get() == "" {
-		a.Protocol.Set(decl.ProtoDefault)
+		a.Protocol.Set(global.ProtoDefault)
 	}
 
 	return a
@@ -1685,7 +1690,7 @@ func (a *Authentication) WithXSSL(ctx *gin.Context) *Authentication {
 func (a *Authentication) processClaim(claimName string, claimValue string, claims map[string]any) {
 	if claimValue != "" {
 		if value, found := a.Attributes[claimValue]; found {
-			if arg, assertOk := value[decl.SliceWithOneElement].(string); assertOk {
+			if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 				claims[claimName] = arg
 
 				return
@@ -1693,8 +1698,8 @@ func (a *Authentication) processClaim(claimName string, claimValue string, claim
 		}
 
 		level.Warn(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, a.GUID,
-			decl.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
+			global.LogKeyGUID, a.GUID,
+			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
 		)
 	}
 }
@@ -1716,8 +1721,8 @@ func applyClaim(claimKey string, attributeKey string, a *Authentication, claims 
 
 	if !success {
 		level.Warn(logging.DefaultLogger).Log(
-			decl.LogKeyGUID, a.GUID,
-			decl.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
+			global.LogKeyGUID, a.GUID,
+			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
 		)
 	}
 }
@@ -1742,21 +1747,21 @@ func applyClaim(claimKey string, attributeKey string, a *Authentication, claims 
 func (a *Authentication) processClientClaims(client *config.Oauth2Client, claims map[string]any) map[string]any {
 	// Claim names to process
 	claimChecks := map[string]string{
-		decl.ClaimName:              client.Claims.Name,
-		decl.ClaimGivenName:         client.Claims.GivenName,
-		decl.ClaimFamilyName:        client.Claims.FamilyName,
-		decl.ClaimMiddleName:        client.Claims.MiddleName,
-		decl.ClaimNickName:          client.Claims.NickName,
-		decl.ClaimPreferredUserName: client.Claims.PreferredUserName,
-		decl.ClaimProfile:           client.Claims.Profile,
-		decl.ClaimWebsite:           client.Claims.Website,
-		decl.ClaimPicture:           client.Claims.Picture,
-		decl.ClaimEmail:             client.Claims.Email,
-		decl.ClaimGender:            client.Claims.Gender,
-		decl.ClaimBirtDate:          client.Claims.Birthdate,
-		decl.ClaimZoneInfo:          client.Claims.ZoneInfo,
-		decl.ClaimLocale:            client.Claims.Locale,
-		decl.ClaimPhoneNumber:       client.Claims.PhoneNumber,
+		global.ClaimName:              client.Claims.Name,
+		global.ClaimGivenName:         client.Claims.GivenName,
+		global.ClaimFamilyName:        client.Claims.FamilyName,
+		global.ClaimMiddleName:        client.Claims.MiddleName,
+		global.ClaimNickName:          client.Claims.NickName,
+		global.ClaimPreferredUserName: client.Claims.PreferredUserName,
+		global.ClaimProfile:           client.Claims.Profile,
+		global.ClaimWebsite:           client.Claims.Website,
+		global.ClaimPicture:           client.Claims.Picture,
+		global.ClaimEmail:             client.Claims.Email,
+		global.ClaimGender:            client.Claims.Gender,
+		global.ClaimBirtDate:          client.Claims.Birthdate,
+		global.ClaimZoneInfo:          client.Claims.ZoneInfo,
+		global.ClaimLocale:            client.Claims.Locale,
+		global.ClaimPhoneNumber:       client.Claims.PhoneNumber,
 	}
 
 	for claimName, claimVal := range claimChecks {
@@ -1773,13 +1778,13 @@ func (a *Authentication) applyClientClaimHandlers(client *config.Oauth2Client, c
 			Type: reflect.String,
 			ApplyFunc: func(value any, claims map[string]any, claimKey string) bool {
 				if strValue, ok := value.(string); ok {
-					if claimKey == decl.ClaimEmailVerified || claimKey == decl.ClaimPhoneNumberVerified {
+					if claimKey == global.ClaimEmailVerified || claimKey == global.ClaimPhoneNumberVerified {
 						if boolean, err := strconv.ParseBool(strValue); err == nil {
 							claims[claimKey] = boolean
 
 							return true
 						}
-					} else if claimKey == decl.ClaimAddress {
+					} else if claimKey == global.ClaimAddress {
 						claims[claimKey] = struct {
 							Formatted string `json:"formatted"`
 						}{Formatted: strValue}
@@ -1818,10 +1823,10 @@ func (a *Authentication) applyClientClaimHandlers(client *config.Oauth2Client, c
 	}
 
 	claimKeys := map[string]string{
-		decl.ClaimEmailVerified:       client.Claims.EmailVerified,
-		decl.ClaimPhoneNumberVerified: client.Claims.PhoneNumberVerified,
-		decl.ClaimAddress:             client.Claims.Address,
-		decl.ClaimUpdatedAt:           client.Claims.UpdatedAt,
+		global.ClaimEmailVerified:       client.Claims.EmailVerified,
+		global.ClaimPhoneNumberVerified: client.Claims.PhoneNumberVerified,
+		global.ClaimAddress:             client.Claims.Address,
+		global.ClaimUpdatedAt:           client.Claims.UpdatedAt,
 	}
 
 	for claimKey, attrKey := range claimKeys {
@@ -1855,7 +1860,7 @@ func (a *Authentication) applyClientClaimHandlers(client *config.Oauth2Client, c
 // - `config.LoadableConfig.Oauth2.Clients`: The OAuth2 clients configuration.
 // - `a.Attributes`: The Authentication object's Attributes map.
 // - `util.DebugModule`: A function for logging debug messages.
-// - `decl.DbgModule`, `decl.LogKeyGUID`, `decl.ClaimGroups`, `logging.DefaultLogger`, `decl.LogKeyWarning`: Various declarations used internally in the method.
+// - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `logging.DefaultLogger`, `global.LogKeyWarning`: Various declarations used internally in the method.
 func (a *Authentication) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
@@ -1864,8 +1869,8 @@ func (a *Authentication) processGroupsClaim(index int, claims map[string]any) {
 			var stringSlice []string
 
 			util.DebugModule(
-				decl.DbgAuth,
-				decl.LogKeyGUID, a.GUID,
+				global.DbgAuth,
+				global.LogKeyGUID, a.GUID,
 				"groups", fmt.Sprintf("%#v", value),
 			)
 
@@ -1875,15 +1880,15 @@ func (a *Authentication) processGroupsClaim(index int, claims map[string]any) {
 				}
 			}
 
-			claims[decl.ClaimGroups] = stringSlice
+			claims[global.ClaimGroups] = stringSlice
 			valueApplied = true
 		}
 
 		if !valueApplied {
 			if !valueApplied {
 				level.Warn(logging.DefaultLogger).Log(
-					decl.LogKeyGUID, a.GUID,
-					decl.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", decl.ClaimGroups),
+					global.LogKeyGUID, a.GUID,
+					global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
 				)
 			}
 		}
@@ -1928,43 +1933,43 @@ func (a *Authentication) processCustomClaims(scopeIndex int, oauth2Client openap
 			if claimValue, assertOk := claim.(string); assertOk {
 				if value, found := a.Attributes[claimValue]; found {
 					util.DebugModule(
-						decl.DbgAuth,
-						decl.LogKeyGUID, a.GUID,
+						global.DbgAuth,
+						global.LogKeyGUID, a.GUID,
 						"custom_claim_name", customClaimName,
 						"custom_claim_type", customClaimType,
 						"value", fmt.Sprintf("%#v", value),
 					)
 
-					if customClaimType == decl.ClaimTypeString {
-						if arg, assertOk := value[decl.SliceWithOneElement].(string); assertOk {
+					if customClaimType == global.ClaimTypeString {
+						if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							claims[customClaimName] = arg
 							valueTypeMatch = true
 						}
-					} else if customClaimType == decl.ClaimTypeFloat {
-						if arg, assertOk := value[decl.SliceWithOneElement].(float64); assertOk {
+					} else if customClaimType == global.ClaimTypeFloat {
+						if arg, assertOk := value[global.SliceWithOneElement].(float64); assertOk {
 							claims[customClaimName] = arg
 							valueTypeMatch = true
-						} else if arg, assertOk := value[decl.SliceWithOneElement].(string); assertOk {
+						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if number, err := strconv.ParseFloat(arg, 64); err == nil {
 								claims[customClaimName] = number
 								valueTypeMatch = true
 							}
 						}
-					} else if customClaimType == decl.ClaimTypeInteger {
-						if arg, assertOk := value[decl.SliceWithOneElement].(int64); assertOk {
+					} else if customClaimType == global.ClaimTypeInteger {
+						if arg, assertOk := value[global.SliceWithOneElement].(int64); assertOk {
 							claims[customClaimName] = arg
 							valueTypeMatch = true
-						} else if arg, assertOk := value[decl.SliceWithOneElement].(string); assertOk {
+						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if number, err := strconv.ParseInt(arg, 0, 64); err == nil {
 								claims[customClaimName] = number
 								valueTypeMatch = true
 							}
 						}
-					} else if customClaimType == decl.ClaimTypeBoolean {
-						if arg, assertOk := value[decl.SliceWithOneElement].(bool); assertOk {
+					} else if customClaimType == global.ClaimTypeBoolean {
+						if arg, assertOk := value[global.SliceWithOneElement].(bool); assertOk {
 							claims[customClaimName] = arg
 							valueTypeMatch = true
-						} else if arg, assertOk := value[decl.SliceWithOneElement].(string); assertOk {
+						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if boolean, err := strconv.ParseBool(arg); err == nil {
 								claims[customClaimName] = boolean
 								valueTypeMatch = true
@@ -1976,9 +1981,9 @@ func (a *Authentication) processCustomClaims(scopeIndex int, oauth2Client openap
 
 			if !valueTypeMatch {
 				level.Error(logging.DefaultErrLogger).Log(
-					decl.LogKeyGUID, a.GUID,
+					global.LogKeyGUID, a.GUID,
 					"custom_claim_name", customClaimName,
-					decl.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
+					global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 				)
 
 			}
@@ -2009,9 +2014,9 @@ func (a *Authentication) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 				clientIDFound = true
 
 				util.DebugModule(
-					decl.DbgAuth,
-					decl.LogKeyGUID, a.GUID,
-					decl.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
+					global.DbgAuth,
+					global.LogKeyGUID, a.GUID,
+					global.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
 				)
 
 				claims = a.processClientClaims(&client, claims)
@@ -2031,8 +2036,8 @@ func (a *Authentication) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 
 			if value, okay = a.Attributes[client.Subject]; !okay {
 				level.Info(logging.DefaultLogger).Log(
-					decl.LogKeyGUID, a.GUID,
-					decl.LogKeyMsg, fmt.Sprintf(
+					global.LogKeyGUID, a.GUID,
+					global.LogKeyMsg, fmt.Sprintf(
 						"Attributes did not contain requested field '%s'",
 						client.Subject,
 					),
@@ -2046,13 +2051,13 @@ func (a *Authentication) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 						return strings.Join(attributes, ", ")
 					}(),
 				)
-			} else if _, okay = value[decl.SliceWithOneElement].(string); okay {
-				subject = value[decl.SliceWithOneElement].(string)
+			} else if _, okay = value[global.SliceWithOneElement].(string); okay {
+				subject = value[global.SliceWithOneElement].(string)
 			}
 		}
 
 		if !clientIDFound {
-			level.Warn(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, "No client_id section found")
+			level.Warn(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "No client_id section found")
 		}
 	} else {
 		// Default result, if no oauth2/clients definition is found

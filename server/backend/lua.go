@@ -3,88 +3,195 @@ package backend
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/tengattack/gluacrypto"
-	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
-var (
-	LuaRequestChan       chan *LuaRequest
-	LuaMainWorkerEndChan chan Done
-)
+// LuaRequestChan is a channel that carries LuaRequest pointers from various sources.
+var LuaRequestChan chan *LuaRequest
+
+// LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
+var LuaMainWorkerEndChan chan Done
+
+// LuaPool is a pool of Lua state instances.
+var LuaPool = NewLuaBackendResultStatePool()
 
 // LuaRequest is a subset from the Authentication struct.
+// LuaRequest is a struct that includes various information for a request to Lua.
 type LuaRequest struct {
-	Debug  bool
+	// Debug is a flag that is set, if the server is running in debug mode.
+	Debug bool
+
+	// NoAuth is a flag that when set as true, implies that the request does not require authentication.
 	NoAuth bool
 
-	Function decl.LuaCommand
+	// Function is the Lua command that will be executed.
+	Function global.LuaCommand
 
-	Session             *string // GUID
-	Username            string
-	Password            string
-	ClientIP            string
-	ClientPort          string
-	ClientHost          string
-	LocalIP             string
-	LocalPprt           string
-	ClientID            string
-	TOTPSecret          string
-	XSSL                string
-	XSSLSessionID       string
-	XSSLClientVerify    string
-	XSSLClientDN        string
-	XSSLClientCN        string
-	XSSLIssuer          string
+	// Session is a pointer to a unique session ID for the current request.
+	Session *string
+
+	// Username is the username used for authentication.
+	Username string
+
+	// Password is the respective password for the user.
+	Password string
+
+	// ClientIP is the IP address of the client making the request.
+	ClientIP string
+
+	// ClientPort is the network port of the client making the request.
+	ClientPort string
+
+	// ClientHost is the hostname of the client making the request.
+	ClientHost string
+
+	// LocalIP is the IP address of the server handling the request.
+	LocalIP string
+
+	// LocalPprt is the network port of the server receiving the request.
+	LocalPprt string
+
+	// ClientID is the unique identifier for the client making the request.
+	ClientID string
+
+	// TOTPSecret is the secret value used in time-based one-time password (TOTP) authentication.
+	TOTPSecret string
+
+	// XSSL holds the SSL certificate of the XSSL server.
+	XSSL string
+
+	// XSSLSessionID is the unique identifier for the XSSL session.
+	XSSLSessionID string
+
+	// XSSLClientVerify verifies the client under XSSL session.
+	XSSLClientVerify string
+
+	// XSSLClientDN is the client's DN under XSSL.
+	XSSLClientDN string
+
+	// XSSLClientCN is the Client CN under XSSL.
+	XSSLClientCN string
+
+	// XSSLIssuer is the issuer of XSSL.
+	XSSLIssuer string
+
+	// XSSLClientNotBefore is the starting time before which the certificate is not valid.
 	XSSLClientNotBefore string
-	XSSLClientNotAfter  string
-	XSSLSubjectDN       string
-	XSSLIssuerDN        string
-	XSSLClientSubjectDN string
-	XSSLClientIssuerDN  string
-	XSSLProtocol        string
-	XSSLCipher          string
-	UserAgent           string
-	Service             string
-	Protocol            *config.Protocol
 
+	// XSSLClientNotAfter is the time after which the certificate is not valid.
+	XSSLClientNotAfter string
+
+	// XSSLSubjectDN denotes XSSL subject's distinguished name.
+	XSSLSubjectDN string
+
+	// XSSLIssuerDN denotes XSSL issuer's distinguished name.
+	XSSLIssuerDN string
+
+	// XSSLClientSubjectDN is the Client Subject DN under XSSL.
+	XSSLClientSubjectDN string
+
+	// XSSLClientIssuerDN is the Client Issuer DN under XSSL.
+	XSSLClientIssuerDN string
+
+	// XSSLProtocol is the protocol used under XSSL.
+	XSSLProtocol string
+
+	// XSSLCipher is the cipher used under XSSL.
+	XSSLCipher string
+
+	// UserAgent is a string representing the user agent making the request.
+	UserAgent string
+
+	// Service is the specific service requested by the client.
+	Service string
+
+	// Protocol points to the protocol that was used by a client to make the request.
+	Protocol *config.Protocol
+
+	// Logs points to custom log key-value pairs to help track the request.
 	Logs *lualib.CustomLogKeyValue
 
+	// Context provides context for the Lua command request.
 	*lualib.Context
 
+	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *LuaBackendResult
 }
 
-// LuaBackendResult is a structure to store Lua backend results. The fields are mostly identical to core.PassDBResult.
+// LuaBackendResult holds the response returned by the Lua backend. Information about user authentication, user account,
+// and error details are encapsulated in this data structure.
 type LuaBackendResult struct {
-	Authenticated     bool
-	UserFound         bool
-	AccountField      string
-	TOTPSecretField   string
-	TOTPRecoveryField string
-	UniqueUserIDField string
-	DisplayNameField  string
-	Err               error
-	Attributes        map[any]any
+	// Authenticated represents whether the user is authenticated or not
+	Authenticated bool
 
+	// UserFound indicates whether the user was found in the system or not
+	UserFound bool
+
+	// AccountField is the field associated with the user's account
+	AccountField string
+
+	// TOTPSecretField is the field that holds the user's TOTP Secret
+	TOTPSecretField string
+
+	// TOTPRecoveryField is the field for the user's TOTP recovery code
+	TOTPRecoveryField string
+
+	// UniqueUserIDField is the unique user id field
+	UniqueUserIDField string
+
+	// DisplayNameField is the display name associated with the user's account
+	DisplayNameField string
+
+	// Err captures any error that occurred during the backend process
+	Err error
+
+	// Attributes holds any other attributes related to the user's account
+	Attributes map[any]any
+
+	// Logs is a pointer to a custom log key-value pair associated with the Lua script.
 	Logs *lualib.CustomLogKeyValue
 }
 
-const luaBackendResultTypeName = "backend_result"
+// LuaBackendResultStatePool embeds the LuaStatePool type.
+// It provides methods for retrieving, returning, and shutting down Lua states.
+type LuaBackendResultStatePool struct {
+	*lualib.LuaStatePool
+}
 
-// Registers the backend result type to given L.
+// NewLuaBackendResultStatePool creates a new instance of LuaBackendResultStatePool that implements the LuaBaseStatePool
+// interface. It initializes a LuaStatePool with a New function
+func NewLuaBackendResultStatePool() lualib.LuaBaseStatePool {
+	lp := &lualib.LuaStatePool{
+		New: func() *lua.LState {
+			L := lualib.NewLStateWithDefaultLibraries()
+
+			registerBackendResultType(L)
+
+			return L
+		},
+		MaxStates: global.MaxLuaStatePoolSize,
+	}
+
+	lp.Cond = sync.Cond{L: &lp.Mu}
+
+	return &LuaBackendResultStatePool{lp.InitializeStatePool()}
+}
+
+// registerBackendResultType registers the Lua type "backend_result" in the given Lua state.
+// It sets the type metatable with the given name and creates the necessary static attributes and methods.
 func registerBackendResultType(L *lua.LState) {
-	mt := L.NewTypeMetatable(luaBackendResultTypeName)
+	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
 
 	L.SetGlobal("backend_result", mt)
 
@@ -95,19 +202,26 @@ func registerBackendResultType(L *lua.LState) {
 	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), backendResultMethods))
 }
 
+// newBackendResult is a function for creating a new instance of LuaBackendResult
+// and returning it as a userdata type in Lua. This function is designed to be
+// callable from a Lua context, hence the L *lua.LState input parameter, which
+// provides the necessary Lua environment for the function execution.
+// The int return value is standard for functions to be called from Lua,
+// indicating the number of results that the function is returning to the Lua stack.
 func newBackendResult(L *lua.LState) int {
 	backendResult := &LuaBackendResult{}
 	userData := L.NewUserData()
 
 	userData.Value = backendResult
 
-	L.SetMetatable(userData, L.GetTypeMetatable(luaBackendResultTypeName))
+	L.SetMetatable(userData, L.GetTypeMetatable(global.LuaBackendResultTypeName))
 	L.Push(userData)
 
 	return 1
 }
 
-// Checks whether the first lua argument is a *LUserData with *LuaBackendResult and returns this *LuaBackendResult.
+// checkBackendResult checks if the argument at index 1 in the Lua state is of a type *LuaBackendResult,
+// if it is, returns its value; otherwise, it raises an error indicating that "backend_result" was expected, and returns nil.
 func checkBackendResult(L *lua.LState) *LuaBackendResult {
 	userData := L.CheckUserData(1)
 
@@ -120,6 +234,7 @@ func checkBackendResult(L *lua.LState) *LuaBackendResult {
 	return nil
 }
 
+// backendResultMethods is a map that holds the names of backend result methods and their corresponding functions.
 var backendResultMethods = map[string]lua.LGFunction{
 	"authenticated":        backendResultGetSetAuthenticated,
 	"user_found":           backendResultGetSetUserFound,
@@ -252,13 +367,15 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 	return 1
 }
 
-// LuaMainWorker is the central backend worker for clients that are processed over the Lua backend driver.
+// LuaMainWorker is responsible for executing Lua scripts using the provided context.
+// It compiles a Lua script from the specified path and waits for incoming requests.
+// When a request is received, it spawns a goroutine to handle the request asynchronously,
+// passing the compiled script, the request, and the context.
+// If the context is canceled, LuaMainWorker will send a Done signal to notify the caller.
 func LuaMainWorker(ctx context.Context) {
-	var luaRequest *LuaRequest
-
 	scriptPath := config.LoadableConfig.GetLuaScriptPath()
-	compiledScript, err := lualib.CompileLua(scriptPath)
 
+	compiledScript, err := lualib.CompileLua(scriptPath)
 	if err != nil {
 		panic(err)
 	}
@@ -269,170 +386,262 @@ func LuaMainWorker(ctx context.Context) {
 			LuaMainWorkerEndChan <- Done{}
 
 			return
-		case luaRequest = <-LuaRequestChan:
-			go func(luaRequest *LuaRequest) {
-				var (
-					nret         int
-					luaCommand   string
-					userData     *lua.LUserData
-					accountTable *lua.LTable
-				)
 
-				luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
-
-				L := lua.NewState()
-
-				L.SetContext(luaCtx)
-
-				defer luaCancel()
-				defer L.Close()
-
-				// Useful libraries
-				libs.Preload(L)
-				gluacrypto.Preload(L)
-
-				logs := new(lualib.CustomLogKeyValue)
-
-				registerBackendResultType(L)
-
-				L.PreloadModule(decl.LuaModUtil, lualib.Loader)
-
-				globals := L.NewTable()
-
-				globals.RawSet(lua.LString(decl.LuaBackendResultOk), lua.LNumber(0))
-				globals.RawSet(lua.LString(decl.LuaBackendResultFail), lua.LNumber(1))
-
-				globals.RawSetString(decl.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(luaRequest.Context)))
-				globals.RawSetString(decl.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
-				globals.RawSetString(decl.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
-
-				request := L.NewTable()
-
-				switch luaRequest.Function {
-				case decl.LuaCommandPassDB:
-					luaCommand = decl.LuaFnBackendVerifyPassword
-					nret = 2
-
-					request.RawSet(lua.LString(decl.LuaRequestNoAuth), lua.LBool(luaRequest.NoAuth))
-					request.RawSetString(decl.LuaRequestUsername, lua.LString(luaRequest.Username))
-					request.RawSetString(decl.LuaRequestPassword, lua.LString(luaRequest.Password))
-					request.RawSetString(decl.LuaRequestClientIP, lua.LString(luaRequest.ClientIP))
-					request.RawSetString(decl.LuaRequestClientPort, lua.LString(luaRequest.ClientPort))
-					request.RawSetString(decl.LuaRequestClientHost, lua.LString(luaRequest.ClientHost))
-					request.RawSetString(decl.LuaRequestClientID, lua.LString(luaRequest.ClientID))
-					request.RawSetString(decl.LuaRequestLocalIP, lua.LString(luaRequest.LocalIP))
-					request.RawSetString(decl.LuaRequestLocalPort, lua.LString(luaRequest.LocalPprt))
-					request.RawSetString(decl.LuaRequestUserAgent, lua.LString(luaRequest.UserAgent))
-					request.RawSetString(decl.LuaRequestService, lua.LString(luaRequest.Service))
-					request.RawSetString(decl.LuaRequestProtocol, lua.LString(luaRequest.Protocol.String()))
-					request.RawSetString(decl.LuaRequestXSSL, lua.LString(luaRequest.XSSL))
-					request.RawSetString(decl.LuaRequestXSSSLSessionID, lua.LString(luaRequest.XSSLSessionID))
-					request.RawSetString(decl.LuaRequestXSSLClientVerify, lua.LString(luaRequest.XSSLClientVerify))
-					request.RawSetString(decl.LuaRequestXSSLClientDN, lua.LString(luaRequest.XSSLClientDN))
-					request.RawSetString(decl.LuaRequestXSSLClientCN, lua.LString(luaRequest.XSSLClientCN))
-					request.RawSetString(decl.LuaRequestXSSLIssuer, lua.LString(luaRequest.XSSLIssuer))
-					request.RawSetString(decl.LuaRequestXSSLClientNotBefore, lua.LString(luaRequest.XSSLClientNotBefore))
-					request.RawSetString(decl.LuaRequestXSSLClientNotAfter, lua.LString(luaRequest.XSSLClientNotAfter))
-					request.RawSetString(decl.LuaRequestXSSLSubjectDN, lua.LString(luaRequest.XSSLSubjectDN))
-					request.RawSetString(decl.LuaRequestXSSLIssuerDN, lua.LString(luaRequest.XSSLIssuerDN))
-					request.RawSetString(decl.LuaRequestXSSLClientSubjectDN, lua.LString(luaRequest.XSSLClientSubjectDN))
-					request.RawSetString(decl.LuaRequestXSSLClientIssuerDN, lua.LString(luaRequest.XSSLClientIssuerDN))
-					request.RawSetString(decl.LuaRequestXSSLProtocol, lua.LString(luaRequest.XSSLProtocol))
-					request.RawSetString(decl.LuaRequestXSSLCipher, lua.LString(luaRequest.XSSLCipher))
-
-					globals.RawSetString(decl.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
-				case decl.LuaCommandListAccounts:
-					luaCommand = decl.LuaFnBackendListAccounts
-					nret = 2
-				case decl.LuaCommandAddMFAValue:
-					luaCommand = decl.LuaFnBackendAddTOTPSecret
-					nret = 1
-
-					request.RawSetString(decl.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
-				}
-
-				request.RawSet(lua.LString(decl.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-				request.RawSetString(decl.LuaRequestSession, lua.LString(*luaRequest.Session))
-
-				L.SetGlobal(decl.LuaDefaultTable, globals)
-
-				if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
-					level.Error(logging.DefaultErrLogger).Log(
-						decl.LogKeyGUID, luaRequest.Session,
-						"script", config.LoadableConfig.GetLuaScriptPath(),
-						decl.LogKeyError, err,
-					)
-
-					luaRequest.LuaReplyChan <- &LuaBackendResult{
-						Err:  err,
-						Logs: logs,
-					}
-
-					return
-				}
-
-				if err = L.CallByParam(lua.P{
-					Fn:      L.GetGlobal(luaCommand),
-					NRet:    nret,
-					Protect: true,
-				}, request); err != nil {
-					level.Error(logging.DefaultErrLogger).Log(
-						decl.LogKeyGUID, luaRequest.Session,
-						"script", config.LoadableConfig.GetLuaScriptPath(),
-						decl.LogKeyError, err,
-					)
-
-					luaRequest.LuaReplyChan <- &LuaBackendResult{
-						Err:  err,
-						Logs: logs,
-					}
-
-					return
-				}
-
-				ret := L.ToInt(-nret)
-
-				if ret != 0 {
-					luaRequest.LuaReplyChan <- &LuaBackendResult{
-						Err:  errors.ErrBackendLua.WithDetail("Lua script finished with an error"),
-						Logs: logs,
-					}
-
-					return
-				}
-
-				switch luaRequest.Function {
-				case decl.LuaCommandPassDB:
-					userData = L.ToUserData(-1)
-
-					if luaBackendResult, ok := userData.Value.(*LuaBackendResult); ok {
-						luaBackendResult.Logs = logs
-
-						util.DebugModule(
-							decl.DbgLua,
-							decl.LogKeyGUID, luaRequest.Session,
-							"result", fmt.Sprintf("%+v", luaBackendResult),
-						)
-
-						luaRequest.LuaReplyChan <- luaBackendResult
-					} else {
-						luaRequest.LuaReplyChan <- &LuaBackendResult{
-							Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned a wrong user data object"),
-							Logs: logs,
-						}
-					}
-				case decl.LuaCommandListAccounts:
-					accountTable = L.ToTable(-1)
-
-					luaRequest.LuaReplyChan <- &LuaBackendResult{
-						Attributes: lualib.LuaTableToMap(accountTable),
-					}
-				case decl.LuaCommandAddMFAValue:
-					fallthrough
-				default:
-					luaRequest.LuaReplyChan <- &LuaBackendResult{}
-				}
-			}(luaRequest)
+		case luaRequest := <-LuaRequestChan:
+			go handleLuaRequest(luaRequest, ctx, compiledScript)
 		}
+	}
+}
+
+// handleLuaRequest handles a Lua request by executing the compiled script and handling any errors.
+// It registers libraries and globals, sets Lua request parameters, and calls the Lua command function.
+// It then handles the specific return types based on the Lua request function.
+//
+// Parameters:
+// - luaRequest: The LuaRequest object containing the request parameters.
+// - ctx: The Context object.
+// - compiledScript: The compiled Lua script function.
+//
+// Returns: None.
+func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScript *lua.FunctionProto) {
+	var (
+		nret       int
+		luaCommand string
+	)
+
+	logs := new(lualib.CustomLogKeyValue)
+	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+
+	L := LuaPool.Get()
+
+	defer LuaPool.Put(L)
+
+	L.SetContext(luaCtx)
+
+	defer luaCancel()
+
+	registerLibraries(L)
+
+	globals := setupGlobals(luaRequest, L, logs)
+	request := L.NewTable()
+
+	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
+
+	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+
+	lualib.CleanupLTable(globals)
+
+	request = nil
+	globals = nil
+
+	// Handle the specific return types
+	if err == nil {
+		handleReturnTypes(L, nret, luaRequest, logs)
+	}
+}
+
+// registerLibraries registers various libraries to the given LState.
+// It preloads libraries, registers the backend result type, and preloads a module.
+func registerLibraries(L *lua.LState) {
+	L.PreloadModule(global.LuaModUtil, lualib.Loader)
+}
+
+// setupGlobals registers global variables and functions used in Lua scripts.
+// Registers the backend result types LuaBackendResultOk and LuaBackendResultFail with global variables 0 and 1 respectively.
+// Registers the lua function ctx.Set with name "context_set" which sets a value in the LuaRequest.Context.
+// Registers the lua function ctx.Get with name "context_get" which retrieves a value from the LuaRequest.Context.
+// Registers the lua function ctx.Delete with name "context_delete" which deletes a value from the LuaRequest.Context.
+// Registers the lua function AddCustomLog with name "custom_log_add" which adds a custom log entry to the LuaRequest.Logs.
+// The registered global table is assigned to the global variable LuaDefaultTable.
+// The generated table is returned from the function.
+func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
+	globals := L.NewTable()
+
+	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(global.LuaBackendResultFail), lua.LNumber(1))
+
+	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
+	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+
+	L.SetGlobal(global.LuaDefaultTable, globals)
+
+	return globals
+}
+
+// setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
+// It also returns the Lua command string and the number of return values.
+//
+// Parameters:
+// - luaRequest: The LuaRequest object.
+// - request: The Lua table to set the parameters on.
+//
+// Returns:
+// - luaCommand: The Lua command string.
+// - nret: The number of return values.
+func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
+	switch luaRequest.Function {
+	case global.LuaCommandPassDB:
+		luaCommand = global.LuaFnBackendVerifyPassword
+		nret = 2
+
+		request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(luaRequest.NoAuth))
+
+		request.RawSetString(global.LuaRequestUsername, lua.LString(luaRequest.Username))
+		request.RawSetString(global.LuaRequestPassword, lua.LString(luaRequest.Password))
+		request.RawSetString(global.LuaRequestClientIP, lua.LString(luaRequest.ClientIP))
+		request.RawSetString(global.LuaRequestClientPort, lua.LString(luaRequest.ClientPort))
+		request.RawSetString(global.LuaRequestClientHost, lua.LString(luaRequest.ClientHost))
+		request.RawSetString(global.LuaRequestClientID, lua.LString(luaRequest.ClientID))
+		request.RawSetString(global.LuaRequestLocalIP, lua.LString(luaRequest.LocalIP))
+		request.RawSetString(global.LuaRequestLocalPort, lua.LString(luaRequest.LocalPprt))
+		request.RawSetString(global.LuaRequestUserAgent, lua.LString(luaRequest.UserAgent))
+		request.RawSetString(global.LuaRequestService, lua.LString(luaRequest.Service))
+		request.RawSetString(global.LuaRequestProtocol, lua.LString(luaRequest.Protocol.String()))
+		request.RawSetString(global.LuaRequestXSSL, lua.LString(luaRequest.XSSL))
+		request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(luaRequest.XSSLSessionID))
+		request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(luaRequest.XSSLClientVerify))
+		request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(luaRequest.XSSLClientDN))
+		request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(luaRequest.XSSLClientCN))
+		request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(luaRequest.XSSLIssuer))
+		request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(luaRequest.XSSLClientNotBefore))
+		request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(luaRequest.XSSLClientNotAfter))
+		request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(luaRequest.XSSLSubjectDN))
+		request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(luaRequest.XSSLIssuerDN))
+		request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(luaRequest.XSSLClientSubjectDN))
+		request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(luaRequest.XSSLClientIssuerDN))
+		request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(luaRequest.XSSLProtocol))
+		request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(luaRequest.XSSLCipher))
+
+	case global.LuaCommandListAccounts:
+		luaCommand = global.LuaFnBackendListAccounts
+		nret = 2
+
+	case global.LuaCommandAddMFAValue:
+		luaCommand = global.LuaFnBackendAddTOTPSecret
+		nret = 1
+
+		request.RawSetString(global.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
+	}
+
+	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+	request.RawSetString(global.LuaRequestSession, lua.LString(*luaRequest.Session))
+
+	return luaCommand, nret
+}
+
+// executeAndHandleError executes the compiled Lua script and handles any errors that occur during execution.
+// If an error occurs during the execution of the compiled script or when calling a Lua command, it will be processed using the processError function.
+// The compiledScript parameter is a pointer to the compiled Lua script.
+// The luaCommand parameter is the name of the Lua command to call.
+// The luaRequest parameter represents the LuaRequest object containing the request data.
+// The L parameter is the Lua state.
+// The request parameter is a Lua table representing the request data.
+// The nret parameter specifies the number of return values expected from the Lua command.
+// The logs parameter is a pointer to a CustomLogKeyValue object for logging purposes.
+// The function returns an error object in case of any errors that occurred during execution.
+//
+// Example usage:
+//
+//	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
+		processError(err, luaRequest, logs)
+	}
+
+	if err = L.CallByParam(lua.P{
+		Fn:      L.GetGlobal(luaCommand),
+		NRet:    nret,
+		Protect: true,
+	}, request); err != nil {
+		processError(err, luaRequest, logs)
+	}
+
+	lualib.CleanupLTable(request)
+
+	return err
+}
+
+// handleReturnTypes handles the different return types from Lua scripts.
+// The function takes the Lua state, the number of return values, the Lua request,
+// and the custom logs as arguments.
+//
+// If the return value is non-zero, it indicates an error in the Lua script. In this case,
+// the function sends an error message with the custom logs to the LuaReplyChan channel
+// and returns.
+//
+// If the Lua request function is LuaCommandPassDB, the function expects the return value
+// to be a user data object of type *LuaBackendResult. If it matches the expected type,
+// the logs are appended to the LuaBackendResult, and it is sent to the LuaReplyChan channel.
+// If the user data object does not match the expected type, an error message is sent
+// with the custom logs to the LuaReplyChan channel.
+//
+// If the Lua request function is LuaCommandListAccounts, the function expects the return value
+// to be a Lua table. The function converts the table to a map using the LuaTableToMap function,
+// assigns it to the Attributes field of a new LuaBackendResult, and sends it to the LuaReplyChan channel.
+//
+// For all other Lua request functions, the function sends an empty LuaBackendResult with the custom logs
+// to the LuaReplyChan channel.
+func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
+	ret := L.ToInt(-nret)
+	if ret != 0 {
+		luaRequest.LuaReplyChan <- &LuaBackendResult{
+			Err:  errors.ErrBackendLua.WithDetail("Lua script finished with an error"),
+			Logs: logs,
+		}
+
+		return
+	}
+
+	switch luaRequest.Function {
+	case global.LuaCommandPassDB:
+		userData := L.ToUserData(-1)
+
+		if luaBackendResult, assertOk := userData.Value.(*LuaBackendResult); assertOk {
+			luaBackendResult.Logs = logs
+
+			util.DebugModule(
+				global.DbgLua,
+				global.LogKeyGUID, luaRequest.Session,
+				"result", fmt.Sprintf("%+v", luaBackendResult),
+			)
+
+			luaRequest.LuaReplyChan <- luaBackendResult
+		} else {
+			luaRequest.LuaReplyChan <- &LuaBackendResult{
+				Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned a wrong user data object"),
+				Logs: logs,
+			}
+		}
+
+	case global.LuaCommandListAccounts:
+		luaRequest.LuaReplyChan <- &LuaBackendResult{
+			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
+			Logs:       logs,
+		}
+
+	default:
+		luaRequest.LuaReplyChan <- &LuaBackendResult{
+			Logs: logs,
+		}
+	}
+}
+
+// processError logs the error and sends a LuaBackendResult with the error and the logs to the LuaRequest's LuaReplyChan.
+// It takes an error, a LuaRequest, and a logs slice of CustomLogKeyValue as parameters.
+// The error is logged at the Error level using the DefaultErrLogger.
+// The logs contain the session GUID and the path to the Lua script.
+// Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
+func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
+	level.Error(logging.DefaultErrLogger).Log(
+		global.LogKeyGUID, luaRequest.Session,
+		"script", config.LoadableConfig.GetLuaScriptPath(),
+		global.LogKeyError, err,
+	)
+
+	luaRequest.LuaReplyChan <- &LuaBackendResult{
+		Err:  err,
+		Logs: logs,
 	}
 }

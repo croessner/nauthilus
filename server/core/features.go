@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/util"
@@ -19,10 +19,10 @@ import (
 
 // FeatureGeoIP logs some geographical information.
 func (a *Authentication) FeatureGeoIP() {
-	if !(a.ClientIP == decl.Localhost4 || a.ClientIP == decl.Localhost6 || a.ClientIP == "") {
+	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		a.GeoIPCity.GetGeoIPCity(net.ParseIP(a.ClientIP), *a.GUID)
 	} else {
-		level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureGeoIP, "localhost")
+		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureGeoIP, "localhost")
 		a.GeoIPCity.Country.Names = make(map[string]string)
 		a.GeoIPCity.City.Names = make(map[string]string)
 	}
@@ -32,9 +32,9 @@ func (a *Authentication) FeatureGeoIP() {
 
 // FeatureLua runs Lua scripts and returns a trigger result.
 func (a *Authentication) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
-	if !(a.ClientIP == decl.Localhost4 || a.ClientIP == decl.Localhost6 || a.ClientIP == "") {
+	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		l := feature.Request{
-			Debug:               config.EnvConfig.Verbosity.Level() == decl.LogLevelDebug,
+			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 			Session:             *a.GUID,
 			ClientIP:            a.ClientIP,
 			ClientPort:          a.XClientPort,
@@ -70,7 +70,7 @@ func (a *Authentication) FeatureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 		return
 	} else {
-		level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureLua, "localhost")
+		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureLua, "localhost")
 	}
 
 	return
@@ -78,14 +78,14 @@ func (a *Authentication) FeatureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
 func (a *Authentication) FeatureTLSEncryption() (triggered bool) {
-	if !(a.ClientIP == decl.Localhost4 || a.ClientIP == decl.Localhost6 || a.ClientIP == "") {
-		if a.XSSL == decl.NotAvailable {
+	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
+		if a.XSSL == global.NotAvailable {
 			matchIP := a.IsInNetwork(config.LoadableConfig.ClearTextList)
 			if !matchIP {
 				level.Info(logging.DefaultLogger).Log(
-					decl.LogKeyGUID, a.GUID,
-					decl.FeatureTLSEncryption, "Client has no transport security",
-					decl.LogKeyClientIP, a.ClientIP,
+					global.LogKeyGUID, a.GUID,
+					global.FeatureTLSEncryption, "Client has no transport security",
+					global.LogKeyClientIP, a.ClientIP,
 				)
 
 				triggered = true
@@ -94,12 +94,12 @@ func (a *Authentication) FeatureTLSEncryption() (triggered bool) {
 			}
 
 			level.Info(logging.DefaultLogger).Log(
-				decl.LogKeyGUID, a.GUID,
-				decl.FeatureTLSEncryption, "Client is whitelisted",
-				decl.LogKeyClientIP, a.ClientIP)
+				global.LogKeyGUID, a.GUID,
+				global.FeatureTLSEncryption, "Client is whitelisted",
+				global.LogKeyClientIP, a.ClientIP)
 		}
 	} else {
-		level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureTLSEncryption, "localhost")
+		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureTLSEncryption, "localhost")
 	}
 
 	return
@@ -112,7 +112,7 @@ func (a *Authentication) FeatureRelayDomains() (triggered bool) {
 		return
 	}
 
-	if !(a.ClientIP == decl.Localhost4 || a.ClientIP == decl.Localhost6 || a.ClientIP == "") {
+	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		if len(config.LoadableConfig.RelayDomains.StaticDomains) > 0 {
 			if strings.Contains(a.Username, "@") {
 				split := strings.Split(a.Username, "@")
@@ -127,13 +127,13 @@ func (a *Authentication) FeatureRelayDomains() (triggered bool) {
 					}
 				}
 
-				level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureRelayDomains, fmt.Sprintf("%s not our domain", split[1]))
+				level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureRelayDomains, fmt.Sprintf("%s not our domain", split[1]))
 
 				triggered = true
 			}
 		}
 	} else {
-		level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureRelayDomains, "localhost")
+		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureRelayDomains, "localhost")
 	}
 
 	return
@@ -152,7 +152,7 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 		return
 	}
 
-	if !(a.ClientIP == decl.Localhost4 || a.ClientIP == decl.Localhost6 || a.ClientIP == "") {
+	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		matchIP := a.IsInNetwork(config.LoadableConfig.RBLs.IPWhiteList)
 		if !matchIP {
 			var (
@@ -176,13 +176,13 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 					if errRBL != nil {
 						if strings.HasSuffix(errRBL.Error(), "no such host") {
 							util.DebugModule(
-								decl.DbgRBL, decl.LogKeyGUID, a.GUID, decl.LogKeyMsg, errRBL)
+								global.DbgRBL, global.LogKeyGUID, a.GUID, global.LogKeyMsg, errRBL)
 						} else {
 							if !rbl.AllowFailure {
 								dnsResolverErr.Store(true)
 							}
 
-							level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, a.GUID, decl.LogKeyError, errRBL)
+							level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, errRBL)
 						}
 
 						rblChan <- 0
@@ -192,9 +192,9 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 
 					if isListed {
 						level.Info(logging.DefaultLogger).Log(
-							decl.LogKeyGUID, a.GUID,
-							decl.FeatureRBL, "RBL matched",
-							decl.LogKeyClientIP, a.ClientIP,
+							global.LogKeyGUID, a.GUID,
+							global.FeatureRBL, "RBL matched",
+							global.LogKeyClientIP, a.ClientIP,
 							"rbl_name", rblName,
 							"weight", rbl.Weight,
 						)
@@ -229,11 +229,11 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 			}
 		} else {
 			level.Info(logging.DefaultLogger).Log(
-				decl.LogKeyGUID, a.GUID, decl.FeatureRBL, "Client is whitelisted", decl.LogKeyClientIP, a.ClientIP,
+				global.LogKeyGUID, a.GUID, global.FeatureRBL, "Client is whitelisted", global.LogKeyClientIP, a.ClientIP,
 			)
 		}
 	} else {
-		level.Info(logging.DefaultLogger).Log(decl.LogKeyGUID, a.GUID, decl.FeatureRBL, "localhost")
+		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureRBL, "localhost")
 	}
 
 	if totalRBLScore >= config.LoadableConfig.RBLs.Threshold {

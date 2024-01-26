@@ -8,8 +8,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/decl"
 	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -79,7 +79,7 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		passDBResult.TOTPSecretField = &protocol.TOTPSecretField
 	}
 
-	util.DebugModule(decl.DbgSQL, decl.LogKeyGUID, auth.GUID, decl.LogKeyMsg, query)
+	util.DebugModule(global.DbgSQL, global.LogKeyGUID, auth.GUID, global.LogKeyMsg, query)
 
 	row := conn.QueryRowx(query)
 	if err = row.MapScan(result); err != nil {
@@ -98,7 +98,7 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			password, assertOk = value.(string)
 			if !assertOk {
 				level.Error(logging.DefaultErrLogger).Log(
-					decl.LogKeyGUID, auth.GUID, decl.LogKeyError, "'password' result not present or type is not string")
+					global.LogKeyGUID, auth.GUID, global.LogKeyError, "'password' result not present or type is not string")
 
 				return
 			}
@@ -110,7 +110,7 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			account, assertOk = value.(string)
 			if !assertOk {
 				level.Warn(logging.DefaultLogger).Log(
-					decl.LogKeyGUID, auth.GUID, "warning", "'account' result not present or type is not string")
+					global.LogKeyGUID, auth.GUID, "warning", "'account' result not present or type is not string")
 			}
 		}
 	}
@@ -120,8 +120,8 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		logPassword = password
 	}
 
-	util.DebugModule(decl.DbgSQL,
-		decl.LogKeyGUID, auth.GUID, "account", account, "password", logPassword, "extra", fmt.Sprintf("%+v", result),
+	util.DebugModule(global.DbgSQL,
+		global.LogKeyGUID, auth.GUID, "account", account, "password", logPassword, "extra", fmt.Sprintf("%+v", result),
 	)
 
 	if len(result) > 0 {
@@ -143,7 +143,7 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			if config.LoadableConfig.GetSQLConfigCrypt() {
 				passwordMatch, err = util.ComparePasswords(password, auth.Password)
 				if err != nil {
-					level.Error(logging.DefaultErrLogger).Log(decl.LogKeyGUID, auth.GUID, decl.LogKeyError, err)
+					level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
 
 					return
 				}
@@ -157,7 +157,7 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 		if auth.NoAuth || passwordMatch {
 			passDBResult.Authenticated = true
-			passDBResult.Backend = decl.BackendSQL
+			passDBResult.Backend = global.BackendSQL
 
 			return
 		}
@@ -238,7 +238,7 @@ func SQLAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 
 	query = macroSource.ReplaceMacros(query)
 
-	util.DebugModule(decl.DbgSQL, decl.LogKeyGUID, auth.GUID, decl.LogKeyMsg, query)
+	util.DebugModule(global.DbgSQL, global.LogKeyGUID, auth.GUID, global.LogKeyMsg, query)
 
 	result, err = conn.Exec(query)
 	if numberRows, _ := result.RowsAffected(); numberRows == 0 {
