@@ -1484,94 +1484,148 @@ func (a *Authentication) GetUserAccountFromRedis() (accountName string, err erro
 	return
 }
 
-// NewAuthentication is a constructor for services found in the request URI.
+// setupHeaderBasedAuth sets up the authentication based on the headers in the request.
+// It takes the context and the authentication object as parameters.
+// It retrieves the GUID value from the context using global.GUIDKey and casts it to a string.
+// It retrieves the "Auth-User" and "Auth-Pass" headers from the request and assigns them to the username and password fields of the authentication object.
+// It sets the protocol field of the authentication object by calling the Set method on auth.Protocol with the value of the "Auth-Protocol" header.
+// It parses the "Auth-Login-Attempt" header as an integer and assigns it to the loginAttempts variable.
+// If there is an error parsing the header or the loginAttempts is negative, it sets loginAttempts to 0.
+// It assigns the loginAttempts value to the LoginAttempts field of the authentication object using an immediately invoked function expression (IIFE).
+// It retrieves the "Auth-Method" header from the request and assigns it to the method variable.
+// It checks the "mode" query parameter in the context.
+// If it is set to "no-auth", it sets the NoAuth field of the authentication object to true.
+// If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
+// It calls the WithClientInfo, WithLocalInfo, WithUserAgent, and WithXSSL methods on the authentication object to set additional fields based on the context.
+func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
+	guid := ctx.Value(global.GUIDKey).(string)
+
+	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
+	auth.Username = ctx.Request.Header.Get("Auth-User")
+	auth.UsernameOrig = auth.Username
+	auth.Password = ctx.Request.Header.Get("Auth-Pass")
+
+	auth.Protocol.Set(ctx.Request.Header.Get("Auth-Protocol"))
+
+	auth.LoginAttempts = func() uint {
+		loginAttempts, err := strconv.Atoi(ctx.Request.Header.Get("Auth-Login-Attempt"))
+		if err != nil {
+			return 0
+		}
+
+		if loginAttempts < 0 {
+			loginAttempts = 0
+		}
+
+		return uint(loginAttempts)
+	}()
+
+	method := ctx.Request.Header.Get("Auth-Method")
+
+	auth.Method = &method
+
+	switch ctx.Query("mode") {
+	case "no-auth":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
+
+		auth.NoAuth = true
+	case "list-accounts":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
+
+		auth.ListAccounts = true
+	}
+
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
+}
+
+// setupBodyBasedAuth takes in a gin context and an Authentication object.
+// It extracts the method, realm, user agent, username, password, protocol, port, tls, and security information from the request and sets it on the Authentication object.
+// If the realm is not empty, it appends the realm to the username.
+func setupBodyBasedAuth(ctx *gin.Context, auth *Authentication) {
+	method := ctx.PostForm("method")
+	realm := ctx.PostForm("realm")
+	userAgent := ctx.PostForm("user_agent")
+
+	if len(realm) > 0 {
+		auth.Username += "@" + realm
+	}
+
+	auth.Method = &method
+	auth.UserAgent = &userAgent
+	auth.Username = ctx.PostForm("username")
+	auth.UsernameOrig = auth.Username
+	auth.Password = ctx.PostForm("password")
+	auth.Protocol = &config.Protocol{}
+	auth.Protocol.Set(ctx.PostForm("protocol"))
+	auth.XLocalIP = global.Localhost4
+	auth.XPort = ctx.PostForm("port")
+	auth.XSSL = ctx.PostForm("tls")
+	auth.XSSLProtocol = ctx.PostForm("security")
+}
+
+// setupHTTPBasiAuth sets up basic authentication for HTTP requests.
+// It takes in a gin.Context object and a pointer to an Authentication object.
+// It calls the WithClientInfo, WithLocalInfo, WithUserAgent, and WithXSSL methods of the Authentication object to set client, local, user-agent, and X-SSL information, respectively
+func setupHTTPBasiAuth(ctx *gin.Context, auth *Authentication) {
+	// NOTE: We must get username and password later!
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
+}
+
+// setupAuth sets up the authentication based on the service parameter in the gin context.
+// It takes the gin context and an Authentication struct as input.
+//
+// If the service parameter is "nginx", "dovecot", or "user", it calls the setupHeaderBasedAuth function.
+// If the service parameter is "saslauthd", it calls the setupBodyBasedAuth function.
+// If the service parameter is "basicauth", it calls the setupHTTPBasiAuth function.
+//
+// After setting up the authentication, it calls the WithDefaults method on the Authentication struct.
+//
+// Example usage:
+//
+//	auth := &Authentication{}
+//	ctx := gin.Context{}
+//	ctx.SetParam("service", "nginx")
+//	setupAuth(&ctx, auth)
+func setupAuth(ctx *gin.Context, auth *Authentication) {
+	auth.Protocol = &config.Protocol{}
+
+	switch ctx.Param("service") {
+	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
+		setupHeaderBasedAuth(ctx, auth)
+	case global.ServSaslauthd:
+		setupBodyBasedAuth(ctx, auth)
+	case global.ServBasicAuth:
+		setupHTTPBasiAuth(ctx, auth)
+	}
+
+	auth.WithDefaults(ctx)
+}
+
+// NewAuthentication creates a new instance of the Authentication struct.
+// It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the Authentication struct.
+// If an error occurs while setting the StatusCode field using the SetStatusCode function, it logs the error and returns nil.
+// Otherwise, it calls the setupAuth function to setup the Authentication struct based on the service parameter from the gin.Context object.
+// Finally, it returns the created Authentication struct.
 func NewAuthentication(ctx *gin.Context) *Authentication {
 	auth := &Authentication{
 		HTTPClientContext: ctx,
 	}
 
-	guidStr := ctx.Value(global.GUIDKey).(string)
-
 	if err := auth.SetStatusCode(ctx.Param("service")); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guidStr, global.LogKeyError, err)
+		guid := ctx.Value(global.GUIDKey).(string)
+
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 		return nil
 	}
 
-	auth.Protocol = &config.Protocol{}
-
-	switch ctx.Param("service") {
-	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
-		// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-		auth.Username = ctx.Request.Header.Get("Auth-User")
-		auth.UsernameOrig = auth.Username
-		auth.Password = ctx.Request.Header.Get("Auth-Pass")
-
-		auth.Protocol.Set(ctx.Request.Header.Get("Auth-Protocol"))
-
-		auth.LoginAttempts = func() uint {
-			loginAttempts, err := strconv.Atoi(ctx.Request.Header.Get("Auth-Login-Attempt"))
-			if err != nil {
-				return 0
-			}
-
-			if loginAttempts < 0 {
-				loginAttempts = 0
-			}
-
-			return uint(loginAttempts)
-		}()
-
-		method := ctx.Request.Header.Get("Auth-Method")
-
-		auth.Method = &method
-
-		switch ctx.Query("mode") {
-		case "no-auth":
-			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=no-auth")
-
-			auth.NoAuth = true
-		case "list-accounts":
-			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=list-accounts")
-
-			auth.ListAccounts = true
-		}
-
-		auth.WithClientInfo(ctx)
-		auth.WithLocalInfo(ctx)
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
-
-	case global.ServSaslauthd:
-		method := ctx.PostForm("method")
-		realm := ctx.PostForm("realm")
-		userAgent := ctx.PostForm("user_agent")
-
-		if len(realm) > 0 {
-			auth.Username += "@" + realm
-		}
-
-		auth.Method = &method
-		auth.UserAgent = &userAgent
-		auth.Username = ctx.PostForm("username")
-		auth.UsernameOrig = auth.Username
-		auth.Password = ctx.PostForm("password")
-		auth.Protocol = &config.Protocol{}
-		auth.Protocol.Set(ctx.PostForm("protocol"))
-		auth.XLocalIP = global.Localhost4
-		auth.XPort = ctx.PostForm("port")
-		auth.XSSL = ctx.PostForm("tls")
-		auth.XSSLProtocol = ctx.PostForm("security")
-
-	case global.ServBasicAuth:
-		// NOTE: We must get username and password later!
-		auth.WithClientInfo(ctx)
-		auth.WithLocalInfo(ctx)
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
-	}
-
-	auth.WithDefaults(ctx)
+	setupAuth(ctx, auth)
 
 	return auth
 }
