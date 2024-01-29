@@ -69,7 +69,7 @@ func httpQueryHandler(ctx *gin.Context) {
 			}
 
 			switch ctx.Param("service") {
-			case global.ServNginx, global.ServDovecot, global.ServUserInfo:
+			case global.ServNginx, global.ServDovecot, global.ServUserInfo, global.ServJSON:
 				auth.Generic(ctx)
 			case global.ServSaslauthd:
 				auth.SASLauthd(ctx)

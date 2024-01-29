@@ -219,6 +219,7 @@ const (
 	ServBasicAuth = "basicauth"
 	ServOryHydra  = "ory_hydra"
 	ServUserInfo  = "user"
+	ServJSON      = "json"
 	ServFlush     = "flush"
 	ServList      = "list"
 )

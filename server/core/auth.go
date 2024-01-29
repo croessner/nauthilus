@@ -34,6 +34,20 @@ type ClaimHandler struct {
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
 }
 
+type JSONRequest struct {
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	ClientIP         string `json:"client_ip"`
+	ClientPort       string `json:"client_port"`
+	ClientHostname   string `json:"client_hostname"`
+	ClientID         string `json:"client_id"`
+	LocalIP          string `json:"local_ip"`
+	LocalPort        string `json:"local_port"`
+	Service          string `json:"service"`
+	Method           string `json:"method"`
+	AuthLoginAttempt uint   `json:"auth_login_attempt"`
+}
+
 // Authentication is the central object that is filled by a remote application request and is modified from each
 // Database that is involved in authentication.
 //
@@ -498,7 +512,7 @@ func (a *Authentication) AuthOK(ctx *gin.Context) {
 		setNginxHeaders(ctx, a)
 	case global.ServDovecot:
 		setDovecotHeaders(ctx, a)
-	case global.ServUserInfo:
+	case global.ServUserInfo, global.ServJSON:
 		setUserInfoHeaders(ctx, a)
 	}
 
@@ -1018,7 +1032,7 @@ func (a *Authentication) SetStatusCode(service string) error {
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo:
+	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -1541,10 +1555,11 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 	auth.WithXSSL(ctx)
 }
 
-// setupBodyBasedAuth takes in a gin context and an Authentication object.
-// It extracts the method, realm, user agent, username, password, protocol, port, tls, and security information from the request and sets it on the Authentication object.
-// If the realm is not empty, it appends the realm to the username.
-func setupBodyBasedAuth(ctx *gin.Context, auth *Authentication) {
+// processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the Authentication object.
+// It extracts the values for the fields method, realm, user_agent, username, password, protocol, port, tls, and security from the request form.
+// If the realm field is not empty, it appends "@" + realm to the username field in the Authentication object.
+// It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the Authentication object.
+func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *Authentication) {
 	method := ctx.PostForm("method")
 	realm := ctx.PostForm("realm")
 	userAgent := ctx.PostForm("user_agent")
@@ -1564,6 +1579,87 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *Authentication) {
 	auth.XPort = ctx.PostForm("port")
 	auth.XSSL = ctx.PostForm("tls")
 	auth.XSSLProtocol = ctx.PostForm("security")
+
+}
+
+// processApplicationJSON takes a gin Context and an Authentication object.
+// It attempts to bind the JSON payload from the Context to a JSONRequest object.
+// If there is an error in the binding process, it sets the error type to "gin.ErrorTypeBind" and returns.
+// Otherwise, it calls the setAuthenticationFields function with the Authentication object and the JSONRequest object,
+// and sets additional fields in the Authentication object using the XSSL method.
+func processApplicationJSON(ctx *gin.Context, auth *Authentication) {
+	var jsonRequest *JSONRequest
+
+	err := ctx.ShouldBindJSON(&jsonRequest)
+	if err != nil {
+		ctx.Error(errors2.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+
+		return
+	}
+
+	setAuthenticationFields(auth, jsonRequest).WithXSSL(ctx)
+}
+
+// setAuthenticationFields populates the fields of the Authentication struct with values from the JSONRequest.
+// It takes a pointer to the Authentication struct and a pointer to the JSONRequest struct as input.
+// It sets the values of the Method, UserAgent, Username, UsernameOrig, Password, ClientIP, XClientPort,
+// ClientHost, XLocalIP, XPort, and Service fields of the Authentication struct with the corresponding values
+// from the JSONRequest struct.
+// It then returns the pointer to the modified Authentication struct.
+//
+// Example usage:
+// auth := &Authentication{}
+//
+//	request := &JSONRequest{
+//	    Method:          "POST",
+//	    ClientID:        "client123",
+//	    Username:        "john",
+//	    Password:        "password",
+//	    ClientIP:        "192.168.1.100",
+//	    ClientPort:      "8080",
+//	    ClientHostname:  "example.com",
+//	    LocalIP:         "127.0.0.1",
+//	    LocalPort:       "3000",
+//	    Service:         "auth",
+//	    AuthLoginAttempt: 1,
+//	}
+//
+// setAuthenticationFields(auth, request)
+// // After the function call, the fields of auth would be populated with the values from request
+func setAuthenticationFields(auth *Authentication, request *JSONRequest) *Authentication {
+	auth.Method = &request.Method
+	auth.UserAgent = &request.ClientID
+	auth.Username = request.Username
+	auth.UsernameOrig = request.Username
+	auth.Password = request.Password
+	auth.ClientIP = request.ClientIP
+	auth.XClientPort = request.ClientPort
+	auth.ClientHost = request.ClientHostname
+	auth.XLocalIP = request.LocalIP
+	auth.XPort = request.LocalPort
+	auth.Service = request.Service
+
+	return auth
+}
+
+// setupBodyBasedAuth takes a Context and an Authentication object as input.
+// It retrieves the "Content-Type" header from the Context.
+// If the "Content-Type" starts with "application/x-www-form-urlencoded",
+// it calls the processApplicationXWWWFormUrlencoded function passing the Context and Authentication object.
+// If the "Content-Type" is "application/json",
+// it calls the processApplicationJSON function passing the Context and Authentication object.
+// If neither of the above conditions match, it sets the error associated with unsupported media type
+// and sets the error type to gin.ErrorTypeBind on the Context.
+func setupBodyBasedAuth(ctx *gin.Context, auth *Authentication) {
+	contentType := ctx.GetHeader("Content-Type")
+
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		processApplicationXWWWFormUrlencoded(ctx, auth)
+	} else if contentType == "application/json" {
+		processApplicationJSON(ctx, auth)
+	} else {
+		ctx.Error(errors2.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+	}
 }
 
 // setupHTTPBasiAuth sets up basic authentication for HTTP requests.
@@ -1598,7 +1694,7 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 	switch ctx.Param("service") {
 	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
 		setupHeaderBasedAuth(ctx, auth)
-	case global.ServSaslauthd:
+	case global.ServSaslauthd, global.ServJSON:
 		setupBodyBasedAuth(ctx, auth)
 	case global.ServBasicAuth:
 		setupHTTPBasiAuth(ctx, auth)
@@ -1626,6 +1722,10 @@ func NewAuthentication(ctx *gin.Context) *Authentication {
 	}
 
 	setupAuth(ctx, auth)
+
+	if ctx.Errors.Last() != nil {
+		return nil
+	}
 
 	return auth
 }
