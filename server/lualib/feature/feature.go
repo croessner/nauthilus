@@ -224,6 +224,10 @@ type Request struct {
 // It executes the Lua scripts for the request.
 // It returns the triggered flag, abortFeatures flag, and related error if any.
 func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
+		return
+	}
+
 	LuaFeatures.Mu.RLock()
 
 	defer LuaFeatures.Mu.RUnlock()

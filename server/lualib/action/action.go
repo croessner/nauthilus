@@ -256,6 +256,12 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 // If an error occurs while executing the script, it logs the failure.
 // After executing the script, it logs the result and cancels the Lua context.
 func (aw *Worker) handleRequest() {
+	if len(aw.actionScripts) == 0 {
+		aw.luaActionRequest.FinishedChan <- Done{}
+
+		return
+	}
+
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)
