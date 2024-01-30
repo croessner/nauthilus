@@ -29,23 +29,52 @@ import (
 	"gotest.tools/v3/assert"
 )
 
+// ClaimHandler represents a claim handler struct.
+// A claim handler in this context is something to work with JSON Web Tokens (JWT), often used for APIs.
 type ClaimHandler struct {
-	Type      reflect.Kind
+	// Type is the reflected Kind of the claim value.
+	Type reflect.Kind
+
+	// ApplyFunc is a function that takes in three parameters: the claim value, the map of claims and the claim key.
+	// The function is intended to apply some process on the claim using the provided parameters,
+	// and return a boolean result.
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
 }
 
+// JSONRequest is a data structure containing the details of a client's request in JSON format.
 type JSONRequest struct {
-	Username         string `json:"username"`
-	Password         string `json:"password"`
-	ClientIP         string `json:"client_ip"`
-	ClientPort       string `json:"client_port"`
-	ClientHostname   string `json:"client_hostname"`
-	ClientID         string `json:"client_id"`
-	LocalIP          string `json:"local_ip"`
-	LocalPort        string `json:"local_port"`
-	Service          string `json:"service"`
-	Method           string `json:"method"`
-	AuthLoginAttempt uint   `json:"auth_login_attempt"`
+	// Username is the identifier of the client/user sending the request.
+	Username string `json:"username"`
+
+	// Password is the authentication credential of the client/user sending the request.
+	Password string `json:"password"`
+
+	// ClientIP is the IP address of the client/user making the request.
+	ClientIP string `json:"client_ip"`
+
+	// ClientPort is the port number from which the client/user is sending the request.
+	ClientPort string `json:"client_port"`
+
+	// ClientHostname is the hostname of the client which is sending the request.
+	ClientHostname string `json:"client_hostname"`
+
+	// ClientID is the unique identifier of the client/user, usually assigned by the application.
+	ClientID string `json:"client_id"`
+
+	// LocalIP is the IP address of the server or endpoint receiving the request.
+	LocalIP string `json:"local_ip"`
+
+	// LocalPort is the port number of the server or endpoint receiving the request.
+	LocalPort string `json:"local_port"`
+
+	// Service is the specific service that the client/user is trying to access with the request.
+	Service string `json:"service"`
+
+	// Method is the HTTP method used in the request (i.e., PLAIN, LOGIN, etc.)
+	Method string `json:"method"`
+
+	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
+	AuthLoginAttempt uint `json:"auth_login_attempt"`
 }
 
 // Authentication is the central object that is filled by a remote application request and is modified from each
@@ -521,6 +550,9 @@ func (a *Authentication) AuthOK(ctx *gin.Context) {
 	LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
+// setCommonHeaders sets common headers for the given gin.Context and Authentication.
+// It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the Authentication.
+// If the Authentication's Service is not global.ServBasicAuth and the UsernameReplace flag is true, it retrieves the account from the Authentication and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
@@ -532,6 +564,9 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	}
 }
 
+// setNginxHeaders sets the appropriate headers for the given gin.Context and Authentication based on the protocol value in Authentication.
+// If the protocol is global.ProtoSMTP, it sets the "Auth-Server" header to the SMTP backend address from the configuration and the "Auth-Port" header to the SMTP backend port.
+// If the protocol is not global.ProtoSMTP, it sets the "Auth-Server" header to the IMAP backend address from the configuration and the "Auth-Port" header to the IMAP backend port.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	switch a.Protocol.Get() {
 	case global.ProtoSMTP:
@@ -543,6 +578,26 @@ func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	}
 }
 
+// setDovecotHeaders sets the specified headers in the given gin.Context based on the attributes in the Authentication object.
+// It iterates through the attributes and calls the handleAttributeValue function for each attribute.
+//
+// Parameters:
+// - ctx: The gin.Context object to set the headers on.
+// - a: The Authentication object containing the attributes.
+//
+// Example:
+//
+//	a := &Authentication{
+//	    Attributes: map[string][]any{
+//	        "Attribute1": []any{"Value1"},
+//	        "Attribute2": []any{"Value2_1", "Value2_2"},
+//	    },
+//	}
+//	setDovecotHeaders(ctx, a)
+//
+// Resulting headers in ctx:
+// - X-Nauthilus-Attribute1: "Value1"
+// - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
 func setDovecotHeaders(ctx *gin.Context, a *Authentication) {
 	if a.Attributes != nil && len(a.Attributes) > 0 {
 		for name, value := range a.Attributes {
@@ -551,6 +606,15 @@ func setDovecotHeaders(ctx *gin.Context, a *Authentication) {
 	}
 }
 
+// handleAttributeValue sets the value of a header in the given gin.Context based on the name and value provided.
+// If the value length is 1, it formats the value as a string and assigns it to the headerValue variable.
+// If the value length is greater than 1, it formats each value and joins them with a comma separator, unless the name is "dn",
+// in which case it joins them with a semicolon separator.
+// Finally, it adds the header "X-Nauthilus-" + name with the value of headerValue to the gin.Context.
+// Parameters:
+// - ctx: the gin.Context to set the header in
+// - name: the name of the header
+// - value: the value of the header
 func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 	var headerValue string
 
@@ -809,10 +873,19 @@ func (a *Authentication) IsInNetwork(networkList []string) (matchIP bool) {
 	return
 }
 
+// logNetworkError logs a network error message.
+//
+// Parameters:
+// - ipOrNet (string): The IP or network causing the error.
+// - err (error): The error information.
+//
+// Usage example:
+// a.logNetworkError(ipOrNet, err)
 func (a *Authentication) logNetworkError(ipOrNet string, err error) {
 	level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
 }
 
+// checkAndLogNetwork logs the information about checking a network for the given authentication object.
 func (a *Authentication) checkAndLogNetwork(network *net.IPNet) {
 	util.DebugModule(
 		global.DbgWhitelist,
@@ -820,6 +893,7 @@ func (a *Authentication) checkAndLogNetwork(network *net.IPNet) {
 	)
 }
 
+// checkAndLogIP logs the IP address of the client along with the IP address or network being checked.
 func (a *Authentication) checkAndLogIP(ipOrNet string) {
 	util.DebugModule(global.DbgWhitelist, global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, ipOrNet))
 }
