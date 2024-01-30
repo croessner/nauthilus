@@ -433,7 +433,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 //
 // Returns: none
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
-	level.Info(logging.DefaultErrLogger).Log(
+	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyMsg, "Lua feature finished",
