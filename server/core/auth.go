@@ -523,7 +523,7 @@ func (a *Authentication) AuthOK(ctx *gin.Context) {
 
 func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	ctx.Header("Auth-Status", "OK")
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	if a.Service != global.ServBasicAuth && a.UsernameReplace {
 		if account, found := a.GetAccountOk(); found {
@@ -639,7 +639,7 @@ func (a *Authentication) IncreaseLoginAttempts() {
 
 // SetFailureHeaders sets the failure headers for the given authentication context.
 // It sets the "Auth-Status" header to the value of global.PasswordFail constant.
-// It sets the "X-Authserv-Session" header to the value of the authentication's GUID field.
+// It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
 // It updates the StatusMessage of the authentication to global.PasswordFail.
 //
 // If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
@@ -651,7 +651,7 @@ func (a *Authentication) IncreaseLoginAttempts() {
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *Authentication) SetFailureHeaders(ctx *gin.Context) {
 	ctx.Header("Auth-Status", global.PasswordFail)
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	a.StatusMessage = global.PasswordFail
 
@@ -762,7 +762,7 @@ func (a *Authentication) setUserInfoHeaders(ctx *gin.Context, reason string) {
 //	}
 func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
 	ctx.Header("Auth-Status", reason)
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 	a.setSMPTHeaders(ctx)
 
 	a.StatusMessage = reason
