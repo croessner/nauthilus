@@ -1216,6 +1216,8 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 
 // PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
+	a.HTTPClientContext = nil
+
 	go func() {
 		finished := make(chan action.Done)
 
