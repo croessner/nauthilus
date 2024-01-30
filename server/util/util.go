@@ -335,7 +335,7 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 	case global.DbgFilter:
 		moduleName = global.DbgFilterName
 	default:
-		moduleName = global.DbgNoneName
+		return
 	}
 
 	for index := range config.EnvConfig.DbgModule {

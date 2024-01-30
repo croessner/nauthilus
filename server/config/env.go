@@ -210,7 +210,7 @@ func (d *DbgModule) String() string {
 
 func (d *DbgModule) Set(value string) error {
 	switch value {
-	case global.DbgNoneName:
+	case global.DbgNoneName, "":
 		d.module = global.DbgNone
 	case global.DbgAllName:
 		d.module = global.DbgAll
