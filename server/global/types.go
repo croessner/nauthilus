@@ -37,10 +37,14 @@ func (b Backend) String() string {
 	}
 }
 
+// DbgModule represents a debug module identifier.
 type DbgModule uint8
 
+// LuaAction represents a numeric identifier for a Lua action.
 type LuaAction uint8
 
+// LuaCommand is a numeric identifier for a Lua command.
 type LuaCommand uint8
 
+// CacheNameBackend is a numeric identifier for a cache name backend.
 type CacheNameBackend uint8
