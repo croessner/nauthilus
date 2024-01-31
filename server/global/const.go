@@ -115,7 +115,7 @@ const (
 	MaxChannelSize      = 500
 	MaxLuaStatePoolSize = 10000
 
-	MaxActionWorkers = uint(10)
+	MaxActionWorkers = 10
 )
 
 // Log level.
