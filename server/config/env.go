@@ -36,7 +36,7 @@ func (v *Verbosity) String() string {
 // An error of type ErrWrongVerboseLevel is returned if the value is not valid.
 func (v *Verbosity) Set(value string) error {
 	switch value {
-	case "none":
+	case "none", "":
 		v.verboseLevel = global.LogLevelNone
 	case global.LogKeyError:
 		v.verboseLevel = global.LogLevelError
@@ -202,6 +202,7 @@ func (f *Feature) String() string {
 // An error of type ErrWrongFeature is returned if the value is not valid.
 func (f *Feature) Set(value string) error {
 	switch value {
+	case "":
 	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureGeoIP, global.FeatureRelayDomains, global.FeatureLua:
 		f.name = value
 	default:
