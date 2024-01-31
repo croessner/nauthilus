@@ -15,7 +15,6 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
-	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
@@ -218,20 +217,19 @@ func PreCompileFilters() error {
 	return nil
 }
 
-// handleSignals is a function to manage OS signals within the Go application.
-// It initiates two goroutines to handle termination and reload signals respectively.
-// All signal-handling functions are called asynchronously.
+// handleSignals starts two goroutines to listen for termination and reload signals respectively.
+// On a termination signal, it will cancel the provided context, stop the statsTicker and stop all actionWorkers.
+// On a reload signal, it will reload the stored context and restart all actionWorkers.
 //
-// Parameters:
-// - `ctx context.Context`: a context that carries deadline, cancelation signals, and other request-scoped values
-// - `cancel context.CancelFunc`: a cancel function that can be called to cancel the context
-// - `store *contextStore`: a pointer to the context store that may need to be modified or queried upon receiving a signal
-// - `statsTimer *time.Ticker`: a pointer to a ticker that performs some action after a certain duration. Might be stopped on receiving a signal.
-//
-// This function doesn't return any values.
-func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker) {
-	go handleTerminateSignal(cancel, statsTicker)
-	go handleReloadSignal(ctx, store)
+// Arguments:
+// - ctx : The primary application context, cancellation of which leads to application shutdown.
+// - cancel : The function to call in order to cancel the provided context. Typically, it's the cancel function returned from context.WithCancel(ctx).
+// - store : contextStore instance where application contexts are managed.
+// - statsTicker : Time ticker for stats data. It's stopped on termination signal.
+// - actionWorkers : A slice of action.Worker pointers. All workers are stopped on termination signal and restarted on reload signal.
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, actionWorkers []*action.Worker) {
+	go handleTerminateSignal(cancel, statsTicker, actionWorkers)
+	go handleReloadSignal(ctx, store, actionWorkers)
 }
 
 // terminateLuaStatePools shuts down the Lua state pools used by various modules.
@@ -250,30 +248,27 @@ func terminateLuaStatePools() {
 // closeChannels closes the HTTPEndChan and WorkerEndChan channels.
 func closeChannels() {
 	close(core.HTTPEndChan)
-	close(action.WorkerEndChan)
 }
 
-// handleTerminateSignal is a function which listens for system level termination signals (SIGINT, SIGTERM).
-// Upon receiving such signal, it initiates an orderly shutdown of the application by
-// cancelling context and executing cleanup tasks such as handling backend connections,
-// syncing Prometheus metrics to Redis and stopping the stats timer before ultimately
-// exiting the application. It's specifically designed to gracefully shut down "Nauthilus" service.
-//
-// cancel arg: method to call to cancel the context
-//
-// statsTimer arg: reference to the statistics timer that keeps track of application statistics
-//
-// How to use:
-//
-//	func main() {
-//	     // Create context, and statsTimer
-//	     ctx, cancel := context.WithCancel(context.Background())
-//	     statsTimer := time.NewTicker(5 * time.Second)
-//	     // Then call this function to handle termination signals
-//	     go handleTerminateSignal(cancel, statsTimer)
-//	     // Rest of your application logic
-//	}
-func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) {
+// handleTerminateSignal handles the termination signal (SIGINT or SIGTERM) and performs cleanup tasks before shutting down the program.
+// The cancel function is used to cancel any ongoing context operations.
+// The statsTicker is a ticker used for periodically saving statistics to Redis.
+// The actionWorkers is a slice of action workers.
+// It sets up a channel to receive the termination signal.
+// It waits for a signal to be received.
+// It logs the shutdown message along with the received signal.
+// It cancels the context to stop ongoing operations.
+// It waits for the HTTP server to terminate.
+// It handles the backend for each passDB in the configuration.
+// It waits for all action workers to complete their work.
+// It syncs some Prometheus data to Redis.
+// It logs the shutdown complete message.
+// It terminates the Lua state pools.
+// It closes all channels.
+// It stops the statsTicker.
+// Signature:
+// func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, actionWorkers []*action.Worker) {
+func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, actionWorkers []*action.Worker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -291,7 +286,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) 
 		handleBackend(passDB)
 	}
 
-	<-action.WorkerEndChan
+	waitForActionWorkers(actionWorkers)
 
 	// Sync some Prometheus data to Redis
 	core.SaveStatsToRedis()
@@ -306,14 +301,15 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) 
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
 // When the signal is received, the function handles the reload process by calling the handleReload function.
-// It takes two arguments: a context defined by the caller (ctx) which dictates the lifetime of the process,
-// and a pointer to a contextStore (store) which presumably stores context data used by the handler.
+// It takes three arguments: a context defined by the caller (ctx) which dictates the lifetime of the process,
+// a pointer to a contextStore (store) which presumably stores context data used by the handler and a slice of pointers
+// to action.Worker.
 //
 // handleReloadSignal operates in an infinite loop, continuously listening for signals until the context is cancelled.
 // If the received signal is SIGHUP, the loop calls handleReload with the same context and store, plus the received signal.
 //
 // The function does not return anything, and it continues to run until the provided context is cancelled, at which point it exits the loop and the function.
-func handleReloadSignal(ctx context.Context, store *contextStore) {
+func handleReloadSignal(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	sigsReload := make(chan os.Signal, 1)
 
 	signal.Notify(sigsReload, syscall.SIGHUP)
@@ -323,7 +319,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore) {
 		case <-ctx.Done():
 			return
 		case sig := <-sigsReload:
-			handleReload(ctx, store, sig)
+			handleReload(ctx, store, sig, actionWorkers)
 		}
 	}
 }
@@ -414,19 +410,33 @@ func handleLuaBackend(lua *contextTuple, ctx context.Context) *contextTuple {
 	return lua
 }
 
-// stopAndRestartActionWorker is a helper function that first stops a running action worker
-// associated with the context tuple provided (act), then restarts it with a fresh context.
-// The function achieves this by utilizing the context's cancel function to stop the ongoing work,
-// waiting for the action worker to completely shut down, and then starting a new action worker
-// with a fresh context derived from the original context (ctx).
-func stopAndRestartActionWorker(act *contextTuple, ctx context.Context) {
+// stopAndRestartActionWorker is a function that stops the currently running action workers and restarts them.
+// It takes three parameters: a slice of pointers to action workers, a context tuple, and a context variable.
+// The function first calls the stopContext function that stops the context.
+// It then enters a loop that iterates through the slice of action workers and waits for them to finish their tasks.
+// After all action workers have finished their tasks, a new context with cancellation is created for the context tuple.
+// Finally, the function calls startActionWorker to start the action workers with the new context.
+//
+// Parameters:
+//   - actionWorkers: A slice of pointers to action workers that are being stopped and restarted.
+//   - act: A context tuple that gets stopped and a new context with cancellation is created for it.
+//   - ctx: A context variable from which a new context with cancellation is derived.
+func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTuple, ctx context.Context) {
 	stopContext(act)
 
-	<-action.WorkerEndChan
+	waitForActionWorkers(actionWorkers)
 
 	act.ctx, act.cancel = context.WithCancel(ctx)
 
-	startActionWorker(act)
+	startActionWorker(actionWorkers, act)
+}
+
+// waitForActionWorkers waits for the completion of all action workers.
+// It takes in an array of action workers and waits for each worker's DoneChan to receive a value.
+func waitForActionWorkers(actionWorkers []*action.Worker) {
+	for i := 0; i < len(actionWorkers); i++ {
+		<-actionWorkers[i].DoneChan
+	}
 }
 
 // stopContext cancels the context associated with the given contextTuple.
@@ -434,10 +444,11 @@ func stopContext(tuple *contextTuple) {
 	tuple.cancel()
 }
 
-// startActionWorker starts a new worker to perform an action.
-// It creates a new instance of the Worker struct and calls the Work method with the given contextTuple.
-func startActionWorker(act *contextTuple) {
-	go action.NewWorker().Work(act.ctx)
+// startActionWorker starts the action workers concurrently to perform the specified actions using the provided context.
+func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
+	for i := 0; i < len(actionWorkers); i++ {
+		go actionWorkers[i].Work(act.ctx)
+	}
 }
 
 // It takes two parameters, "lookup" of type *contextTuple and "auth" of type *contextTuple.
@@ -460,18 +471,31 @@ func startLuaWorker(lua *contextTuple) {
 	go backend.LuaMainWorker(lua.ctx)
 }
 
-// handleReload takes in a context, a contextStore and an operating signal as input.
-// Based on the type of backend used (LDAP, MySQL, Postgres, Lua, or Cache), it reloads the
-// corresponding services, and restarts the necessary workers by calling the relevant functions.
-// Specific logging messages and error handlers are called at various stages during the process.
-// This function is generally invoked when a reload signal is received by Nauthilus, requiring it to
-// refresh its configuration and restart the services according to the updated configuration.
+// handleReload is a function that handles the reloading of Nauthilus based on a received operating signal.
+// The function works with various backends (LDAP, MySQL, Postgres, Lua, or Cache), and based on the specific
+// backend, it will reload the related services. The function manages the necessary workers, stopping
+// and restarting them as appropriate.
+//
+// Throughout the process, the function logs key events and handles errors. Specifically, the function logs
+// a reload, configuration file reload success or failure, setup features success or failure and the conclusion
+// of the reloading procedure.
+//
+// This function is generally invoked when a reload signal is received by Nauthilus. This signal triggers
+// Nauthilus to refresh its configuration and restart services based on the updated configuration.
+//
 // Parameters:
 //
-//	ctx:     The context on which this function will operate
-//	store:   The contextStore containing the current state of the backend services
-//	sig:     The signal that triggers the reloading of Nauthilus
-func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
+//		ctx:   A context on which this function will operate. It represents the state that potentially includes
+//	          deadlines, cancel signals, and other request-scoped values across API boundaries and between processes.
+//
+//		store: A contextStore containing the current state of the backend services. It holds the context
+//	          for each backend state which is manipulated based on the backend during the process.
+//
+//		sig:   A signal that triggers the reloading of Nauthilus. sig represents the operating system
+//	          signal information sent to Nauthilus.
+//
+//	 actionWorkers: A slice of action workers that are stopped and restarted during the process.
+func handleReload(ctx context.Context, store *contextStore, sig os.Signal, actionWorkers []*action.Worker) {
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
@@ -490,7 +514,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 		}
 	}
 
-	stopAndRestartActionWorker(store.action, ctx)
+	stopAndRestartActionWorker(actionWorkers, store.action, ctx)
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
@@ -524,19 +548,29 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 	)
 }
 
-// setupWorkers initializes workers for different backend types based on the
-// environment configuration. Each type of worker (e.g., LDAP, SQL, Lua) is setup
-// according to the backend type provided in the PassDBs variable from the environment
-// configuration. An action worker is started first, and worker channels are created to
-// communicate between different workers. If an unknown backend is encountered, a
-// warning is logged.
-// Parameters:
-// ctx – context for managing the life cycle of the workers
-// store – contains various components required for backend processing
-func setupWorkers(ctx context.Context, store *contextStore) {
-	action.WorkerEndChan = make(chan lualib.Done)
+// initializeActionWorkers creates and initializes a slice of action workers.
+// It creates `global.MaxActionWorkers` number of workers, each worker is created using `action.NewWorker()`.
+// The workers are then appended to the `workers` slice.
+// Finally, the `workers` slice is returned.
+func initializeActionWorkers() []*action.Worker {
+	var workers []*action.Worker
 
-	startActionWorker(store.action)
+	for i := 0; i < global.MaxActionWorkers; i++ {
+		workers = append(workers, action.NewWorker())
+	}
+
+	return workers
+}
+
+// setupWorkers sets up the action workers based on the configuration and starts them in separate goroutines.
+// It takes a context, a store, and a slice of action workers as parameters.
+// It starts the action workers by calling the `startActionWorker` function with the appropriate parameters.
+// Then, for each passDB in the `config.EnvConfig.PassDBs` slice, it performs the necessary setup based on the passDB type.
+// The setup depends on the passDB's backend type and calls corresponding setup functions, such as `setupLDAPWorker`, `setupSQLWorker`, or `setupLuaWorker`.
+// If the passDB's backend is `global.BackendCache`, no setup is performed.
+// If the passDB's backend is unknown, a warning log is generated for an unknown backend.
+func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
+	startActionWorker(actionWorkers, store.action)
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
@@ -709,8 +743,10 @@ func main() {
 
 	store.action = newContextTuple(ctx)
 
-	setupWorkers(ctx, store)
-	handleSignals(ctx, cancel, store, statsTicker)
+	actionWorkers := initializeActionWorkers()
+
+	setupWorkers(ctx, store, actionWorkers)
+	handleSignals(ctx, cancel, store, statsTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx)
