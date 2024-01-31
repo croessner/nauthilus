@@ -348,6 +348,8 @@ type Config struct {
 	DbgModule  []*DbgModule
 	DevMode    bool
 
+	MaxActionWorkers uint16
+
 	HTTPOptions
 }
 
@@ -415,6 +417,7 @@ func NewConfig() (*Config, error) {
 		{global.FeatureRelayDomains},
 	})
 	viper.SetDefault("developer_mode", false)
+	viper.SetDefault("max_action_workers", global.MaxActionWorkers)
 	viper.SetDefault("sql_max_connections", global.SQLMaxConns)
 	viper.SetDefault("sql_max_idle_connections", global.SQLMaxIdleConns)
 	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
@@ -545,6 +548,16 @@ func NewConfig() (*Config, error) {
 			newCfg.DNSTimeout = val
 		} else {
 			newCfg.DNSTimeout = math.MaxUint8
+		}
+	}
+
+	if val := viper.GetUint("max_action_workers"); val < 1 {
+		newCfg.MaxActionWorkers = uint16(1)
+	} else {
+		if val < math.MaxUint16 {
+			newCfg.MaxActionWorkers = uint16(val)
+		} else {
+			newCfg.MaxActionWorkers = math.MaxUint16
 		}
 	}
 

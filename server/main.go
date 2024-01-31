@@ -555,7 +555,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, actio
 func initializeActionWorkers() []*action.Worker {
 	var workers []*action.Worker
 
-	for i := 0; i < global.MaxActionWorkers; i++ {
+	for i := 0; i < int(config.EnvConfig.MaxActionWorkers); i++ {
 		workers = append(workers, action.NewWorker())
 	}
 
