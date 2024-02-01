@@ -19,10 +19,10 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// SQLPassDB implements the SQL password database backend.
+// sqlPassDB implements the SQL password database backend.
 //
 //nolint:gocognit,gocyclo,maintidx // Ignore
-func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+func sqlPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var (
 		assertOk      bool
 		query         string
@@ -166,8 +166,8 @@ func SQLPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	return
 }
 
-// SQLAccountDB implements the list-account mode and returns all known users from an SQL server.
-func SQLAccountDB(auth *Authentication) (accounts AccountList, err error) {
+// sqlAccountDB implements the list-account mode and returns all known users from an SQL server.
+func sqlAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	var (
 		query    string
 		protocol *config.SQLSearchProtocol
@@ -191,8 +191,8 @@ func SQLAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	return
 }
 
-// SQLAddTOTPSecret adds a newly generated TOTP secret to an SQL server.
-func SQLAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
+// sqlAddTOTPSecret adds a newly generated TOTP secret to an SQL server.
+func sqlAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	var (
 		configField string
 		query       string
@@ -213,7 +213,7 @@ func SQLAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		return
 	}
 
-	configField = totp.GetSQLTOTPSecret(protocol)
+	configField = totp.getSQLTOTPSecret(protocol)
 	if configField == "" {
 		err = errors2.ErrSQLConfig.WithDetail(
 			fmt.Sprintf("Missing SQL totp secret field; protocol=%v", auth.Protocol.Get()))
@@ -221,7 +221,7 @@ func SQLAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		return
 	}
 
-	mfaValue := totp.GetValue()
+	mfaValue := totp.getValue()
 
 	auth.TOTPSecret = &mfaValue
 	auth.TOTPSecretField = &configField
@@ -248,7 +248,7 @@ func SQLAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	return
 }
 
-func SQLGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
+func sqlGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
 	_ = uniqueUserID
 
 	return []webauthn.Credential{}, nil

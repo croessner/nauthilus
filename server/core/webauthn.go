@@ -18,9 +18,9 @@ import (
 
 var webAuthn *webauthn.WebAuthn
 
-// GetUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
+// getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
 // can be gotten from the session cookie.
-func GetUser(ctx *gin.Context, userName string, uniqueUserID string, displayName string) (*backend.User, error) {
+func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName string) (*backend.User, error) {
 	var (
 		passDB        global.Backend
 		assertOk      bool
@@ -40,9 +40,9 @@ func GetUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 		if passDB, assertOk = cookieValue.(global.Backend); assertOk {
 			switch passDB {
 			case global.BackendLDAP:
-				credentialDBs = append(credentialDBs, LDAPGetWebAuthnCredentials)
+				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
 			case global.BackendPostgres, global.BackendMySQL:
-				credentialDBs = append(credentialDBs, SQLGetWebAuthnCredentials)
+				credentialDBs = append(credentialDBs, sqlGetWebAuthnCredentials)
 			default:
 				return nil, errors.ErrUnknownDatabaseBackend
 			}
@@ -56,9 +56,9 @@ func GetUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 			case global.BackendCache:
 				credentialDBs = append(credentialDBs, nil)
 			case global.BackendLDAP:
-				credentialDBs = append(credentialDBs, LDAPGetWebAuthnCredentials)
+				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
 			case global.BackendMySQL, global.BackendPostgres:
-				credentialDBs = append(credentialDBs, SQLGetWebAuthnCredentials)
+				credentialDBs = append(credentialDBs, sqlGetWebAuthnCredentials)
 			// TODO: Add more databases
 			default:
 				return nil, errors.ErrUnknownDatabaseBackend
@@ -96,13 +96,13 @@ func GetUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 	return user, nil
 }
 
-func PutUser(ctx *gin.Context, user *backend.User) {
+func putUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
 	backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL)
 }
 
-func UpdateUser(ctx *gin.Context, user *backend.User) {
+func updateUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
 	backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL)
@@ -121,7 +121,7 @@ func beginRegistration(ctx *gin.Context) {
 	cookieValue := session.Get(global.CookieAuthResult)
 	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
 		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -136,7 +136,7 @@ func beginRegistration(ctx *gin.Context) {
 
 	if userName == "" {
 		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -150,7 +150,7 @@ func beginRegistration(ctx *gin.Context) {
 
 	if uniqueUserID == "" {
 		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -164,18 +164,18 @@ func beginRegistration(ctx *gin.Context) {
 
 	if displayName == "" {
 		ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
 
 	// Get user from Database
-	user, err := GetUser(ctx, userName, uniqueUserID, displayName)
+	user, err := getUser(ctx, userName, uniqueUserID, displayName)
 	if err != nil {
 		// If it does not exist, create a new one
 		user = backend.NewUser(userName, displayName, uniqueUserID)
 
-		PutUser(ctx, user)
+		putUser(ctx, user)
 	}
 
 	authSelect := protocol.AuthenticatorSelection{
@@ -192,7 +192,7 @@ func beginRegistration(ctx *gin.Context) {
 	)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, err)
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -201,7 +201,7 @@ func beginRegistration(ctx *gin.Context) {
 	sessionDataJSON, err := json.Marshal(*sessionData)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, err)
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -217,7 +217,7 @@ func beginRegistration(ctx *gin.Context) {
 
 	if err = session.Save(); err != nil {
 		ctx.JSON(http.StatusInternalServerError, err)
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -237,7 +237,7 @@ func finishRegistration(ctx *gin.Context) {
 
 	session := sessions.Default(ctx)
 
-	defer SessionCleaner(ctx)
+	defer sessionCleaner(ctx)
 
 	cookieValue := session.Get(global.CookieAuthResult)
 	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
@@ -268,7 +268,7 @@ func finishRegistration(ctx *gin.Context) {
 
 	if uniqueUserID == "" {
 		ctx.JSON(http.StatusInternalServerError, errors.ErrNotLoggedIn.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -282,7 +282,7 @@ func finishRegistration(ctx *gin.Context) {
 
 	if displayName == "" {
 		ctx.JSON(http.StatusBadRequest, errors.ErrNoDisplayName.Error())
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 
 		return
 	}
@@ -293,7 +293,7 @@ func finishRegistration(ctx *gin.Context) {
 			sessionData = &webauthn.SessionData{}
 
 			if err := json.Unmarshal(value, sessionData); err != nil {
-				SessionCleaner(ctx)
+				sessionCleaner(ctx)
 				ctx.JSON(http.StatusInternalServerError, err)
 
 				return
@@ -302,7 +302,7 @@ func finishRegistration(ctx *gin.Context) {
 	}
 
 	if sessionData == nil {
-		SessionCleaner(ctx)
+		sessionCleaner(ctx)
 		ctx.JSON(http.StatusBadRequest, errors.ErrWebAuthnSessionData)
 
 		return
@@ -315,7 +315,7 @@ func finishRegistration(ctx *gin.Context) {
 		"content", fmt.Sprintf("%#v", sessionData),
 	)
 
-	user, err := GetUser(ctx, userName, uniqueUserID, displayName)
+	user, err := getUser(ctx, userName, uniqueUserID, displayName)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, err.Error())
 
@@ -337,7 +337,7 @@ func finishRegistration(ctx *gin.Context) {
 	}
 
 	user.AddCredential(*credential)
-	UpdateUser(ctx, user)
+	updateUser(ctx, user)
 
 	ctx.JSON(http.StatusOK, "Registration success")
 }

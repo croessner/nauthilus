@@ -16,7 +16,8 @@ import (
 
 // For a brief documentation of this file please have a look at the Markdown document REST-API.md.
 
-func (a *Authentication) Generic(ctx *gin.Context) {
+// generic handles the generic authentication logic based on the selected service type.
+func (a *Authentication) generic(ctx *gin.Context) {
 	var mode string
 
 	if a.Service == global.ServBasicAuth {
@@ -35,7 +36,7 @@ func (a *Authentication) Generic(ctx *gin.Context) {
 	}
 
 	if a.ListAccounts {
-		allAccountsList := a.ListUserAccounts()
+		allAccountsList := a.listUserAccounts()
 
 		for _, account := range allAccountsList {
 			ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
@@ -45,59 +46,80 @@ func (a *Authentication) Generic(ctx *gin.Context) {
 	} else {
 		if !a.NoAuth {
 			//nolint:exhaustive // Ignore some results
-			switch a.HandleFeatures(ctx) {
+			switch a.handleFeatures(ctx) {
 			case global.AuthResultFeatureTLS:
-				a.PostLuaAction(&PassDBResult{})
-				a.AuthTempFail(ctx, global.TempFailNoTLS)
+				a.postLuaAction(&PassDBResult{})
+				a.authTempFail(ctx, global.TempFailNoTLS)
 
 				return
 			case global.AuthResultFeatureRelayDomain, global.AuthResultFeatureRBL, global.AuthResultFeatureLua:
-				a.PostLuaAction(&PassDBResult{})
-				a.AuthFail(ctx)
+				a.postLuaAction(&PassDBResult{})
+				a.authFail(ctx)
 
 				return
+			case global.AuthResultUnset:
+			case global.AuthResultOK:
+			case global.AuthResultFail:
+			case global.AuthResultTempFail:
+			case global.AuthResultEmptyUsername:
+			case global.AuthResultEmptyPassword:
 			}
 		}
 
 		//nolint:exhaustive // Ignore some results
-		switch a.HandlePassword(ctx) {
+		switch a.handlePassword(ctx) {
 		case global.AuthResultOK:
-			a.AuthOK(ctx)
+			a.authOK(ctx)
 		case global.AuthResultFail:
-			a.AuthFail(ctx)
+			a.authFail(ctx)
 		case global.AuthResultTempFail:
-			a.AuthTempFail(ctx, global.TempFailDefault)
+			a.authTempFail(ctx, global.TempFailDefault)
 		case global.AuthResultEmptyUsername:
-			a.AuthTempFail(ctx, global.TempFailEmptyUser)
+			a.authTempFail(ctx, global.TempFailEmptyUser)
 		case global.AuthResultEmptyPassword:
-			a.AuthFail(ctx)
+			a.authFail(ctx)
+		case global.AuthResultUnset:
+		case global.AuthResultFeatureRBL:
+		case global.AuthResultFeatureTLS:
+		case global.AuthResultFeatureRelayDomain:
+		case global.AuthResultFeatureLua:
 		}
 	}
 }
 
-func (a *Authentication) SASLauthd(ctx *gin.Context) {
-	//nolint:exhaustive // Ignore some results
-	switch a.HandlePassword(ctx) {
+// saslAuthd handles the authentication logic for the saslAuthd service.
+func (a *Authentication) saslAuthd(ctx *gin.Context) {
+	switch a.handlePassword(ctx) {
 	case global.AuthResultOK:
-		a.AuthOK(ctx)
+		a.authOK(ctx)
 	case global.AuthResultFail:
-		a.AuthFail(ctx)
+		a.authFail(ctx)
 	case global.AuthResultTempFail:
-		a.AuthTempFail(ctx, global.TempFailDefault)
+		a.authTempFail(ctx, global.TempFailDefault)
 	case global.AuthResultEmptyUsername:
-		a.AuthTempFail(ctx, global.TempFailEmptyUser)
+		a.authTempFail(ctx, global.TempFailEmptyUser)
 	case global.AuthResultEmptyPassword:
-		a.AuthFail(ctx)
+		a.authFail(ctx)
+	case global.AuthResultUnset:
+	case global.AuthResultFeatureRBL:
+	case global.AuthResultFeatureTLS:
+	case global.AuthResultFeatureRelayDomain:
+	case global.AuthResultFeatureLua:
 	}
 }
 
-func HealthCheck(ctx *gin.Context) {
+// healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
+func healthCheck(ctx *gin.Context) {
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, ctx.Value(global.GUIDKey).(string), global.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
 }
 
-func ListBruteforce(ctx *gin.Context) {
+// listBruteforce handles the retrieval of brute force IP addresses and errors.
+// It fetches the previously stored IP addresses from a Redis hash, storing them in a List struct.
+// If there is an error during the retrieval, the error message is stored in the List struct as well.
+// The List struct is then returned as JSON in the response.
+func listBruteforce(ctx *gin.Context) {
 	//nolint:tagliatelle // We want lower camel case
 	type List struct {
 		IPAddresses map[string]string `json:"ip_addresses"`
@@ -135,7 +157,7 @@ func ListBruteforce(ctx *gin.Context) {
 }
 
 //nolint:gocognit // Ignore
-func FlushCache(ctx *gin.Context) {
+func flushCache(ctx *gin.Context) {
 	type FlushUserCmdStatus struct {
 		User   string `json:"user"`
 		Status string `json:"status"`
@@ -282,7 +304,7 @@ func FlushCache(ctx *gin.Context) {
 }
 
 //nolint:gocognit // Ignore
-func FlushBruteForceRule(ctx *gin.Context) {
+func flushBruteForceRule(ctx *gin.Context) {
 	//nolint:tagliatelle // We want lower camel case
 	type FlushRuleCmdStatus struct {
 		IPAddress string `json:"ip_address"`
@@ -324,7 +346,11 @@ func FlushBruteForceRule(ctx *gin.Context) {
 
 	for _, rule := range config.LoadableConfig.GetBruteForceRules() {
 		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			auth.DelIPBruteForceRedis(&rule, ipCmd.RuleName)
+			if err = auth.deleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
+				ruleFlushError = true
+
+				break
+			}
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
 				if err = backend.RedisHandle.Del(backend.RedisHandle.Context(), key).Err(); err != nil {

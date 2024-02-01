@@ -20,33 +20,32 @@ import (
 )
 
 var (
-
-	// HTTPRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
-	HTTPRequestsTotalCounter = prometheus.NewCounterVec(
+	// httpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
+	httpRequestsTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "nauthilus_http_requests_total",
 			Help: "Number of HTTP requests.",
 		},
 		[]string{"path"})
 
-	// LoginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
-	LoginsCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "nauthilus_logins_total",
-			Help: "Number of failed and successful login attempts.",
-		},
-		[]string{"logins"})
-
-	// HTTPResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
-	HTTPResponseTimeSecondsHist = prometheus.NewHistogramVec(
+	// httpResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
+	httpResponseTimeSecondsHist = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "nauthilus_http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
 		},
 		[]string{"path"})
 
-	// CPUGauge variable declaration that creates a new Prometheus Gauge with the specified name and help message.
-	CPUGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+	// loginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
+	loginsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "nauthilus_logins_total",
+			Help: "Number of failed and successful login attempts.",
+		},
+		[]string{"logins"})
+
+	// cpuGauge variable declaration that creates a new Prometheus Gauge with the specified name and help message.
+	cpuGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "nauthilus_cpu_usage",
 		Help: "Current usage of all CPUs.",
 	})
@@ -60,15 +59,15 @@ type Metric struct {
 
 //nolint:errcheck,gochecknoinits // Ignore
 func init() {
-	prometheus.MustRegister(HTTPRequestsTotalCounter)
-	prometheus.MustRegister(LoginsCounter)
-	prometheus.MustRegister(HTTPResponseTimeSecondsHist)
-	prometheus.MustRegister(CPUGauge)
+	prometheus.MustRegister(httpRequestsTotalCounter)
+	prometheus.MustRegister(loginsCounter)
+	prometheus.MustRegister(httpResponseTimeSecondsHist)
+	prometheus.MustRegister(cpuGauge)
 }
 
 // MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
 //
-// This function runs indefinitely in a loop and keeps monitoring the CPU utilization and sets the calculated utilization in 'CPUGauge' variable,
+// This function runs indefinitely in a loop and keeps monitoring the CPU utilization and sets the calculated utilization in 'cpuGauge' variable,
 // until an event of cancellation comes from the passed context 'ctx'.
 //
 // The function uses 'cpu.PercentWithContext' function under the hood which returns the used CPU percentages.
@@ -84,7 +83,7 @@ func init() {
 // If 'cpu.PercentWithContext' reports CPU usage, only the first measure (percent[0]) is considered (if available).
 // If no measure is available, nothing is set in this iteration.
 //
-// The gauge 'CPUGauge', is used to store the computed CPU usage.
+// The gauge 'cpuGauge', is used to store the computed CPU usage.
 //
 // Parameters:
 // - ctx (context.Context) : Context to handle cancellation.
@@ -104,7 +103,7 @@ func MeasureCPU(ctx context.Context) {
 			}
 
 			if len(percent) == 1 {
-				CPUGauge.Set(percent[0])
+				cpuGauge.Set(percent[0])
 			}
 		}
 	}
@@ -159,8 +158,8 @@ func PrintStats() {
 	)
 }
 
-// GetCounterValue returns the value for a prometheus counter.
-func GetCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
+// getCounterValue returns the value for a prometheus counter.
+func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
@@ -181,7 +180,7 @@ func LoadStatsFromRedis() {
 
 	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Load counter statistics from redis")
 
-	LoginsCounter.Reset()
+	loginsCounter.Reset()
 
 	// Prometheus redis variables
 	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.EnvConfig.InstanceName)
@@ -199,7 +198,7 @@ func LoadStatsFromRedis() {
 			return
 		}
 
-		LoginsCounter.WithLabelValues(counterType).Add(redisValue)
+		loginsCounter.WithLabelValues(counterType).Add(redisValue)
 	}
 }
 
@@ -210,8 +209,8 @@ func SaveStatsToRedis() {
 	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
-		{Value: GetCounterValue(LoginsCounter, global.LabelSuccess), Label: global.LabelSuccess},
-		{Value: GetCounterValue(LoginsCounter, global.LabelFailure), Label: global.LabelFailure},
+		{Value: getCounterValue(loginsCounter, global.LabelSuccess), Label: global.LabelSuccess},
+		{Value: getCounterValue(loginsCounter, global.LabelFailure), Label: global.LabelFailure},
 	}
 
 	// Prometheus redis variables

@@ -5,35 +5,35 @@ import "github.com/croessner/nauthilus/server/config"
 // MFA is an interface that stores some information for multi factor authentication.
 type MFA interface {
 	// GetValue returns the MFA value as a string.
-	GetValue() string
+	getValue() string
 
 	// SetValue sets an MFA value.
-	SetValue(string)
+	setValue(string)
 }
 
 type TOTPSecret struct {
 	value string
 }
 
-func (t *TOTPSecret) GetValue() string {
+func (t *TOTPSecret) getValue() string {
 	return t.value
 }
 
-func (t *TOTPSecret) SetValue(value string) {
+func (t *TOTPSecret) setValue(value string) {
 	t.value = value
 }
 
-func (t *TOTPSecret) GetLDAPTOTPSecret(protocol *config.LDAPSearchProtocol) string {
+func (t *TOTPSecret) getLDAPTOTPSecret(protocol *config.LDAPSearchProtocol) string {
 	return protocol.TOTPSecretField
 }
 
-func (t *TOTPSecret) GetSQLTOTPSecret(protocol *config.SQLSearchProtocol) string {
+func (t *TOTPSecret) getSQLTOTPSecret(protocol *config.SQLSearchProtocol) string {
 	return protocol.TOTPSecret
 }
 
 func NewTOTPSecret(value string) *TOTPSecret {
 	totpObj := &TOTPSecret{}
-	totpObj.SetValue(value)
+	totpObj.setValue(value)
 
 	return totpObj
 }
@@ -42,25 +42,25 @@ type WebAuthn struct {
 	Value string
 }
 
-func (w *WebAuthn) GetValue() string {
+func (w *WebAuthn) getValue() string {
 	return w.Value
 }
 
-func (w *WebAuthn) SetValue(value string) {
+func (w *WebAuthn) setValue(value string) {
 	w.Value = value
 }
 
-func (w *WebAuthn) GetLDAPUniqueUserID(protocol *config.LDAPSearchProtocol) string {
+func (w *WebAuthn) getLDAPUniqueUserID(protocol *config.LDAPSearchProtocol) string {
 	return protocol.UniqueUserIDField
 }
 
-func (w *WebAuthn) GetSQLUniqueUserID(protocol *config.SQLSearchProtocol) string {
+func (w *WebAuthn) getSQLUniqueUserID(protocol *config.SQLSearchProtocol) string {
 	return protocol.UniqueUserIDField
 }
 
 func NewWebAuthn(value string) *WebAuthn {
 	webAuthNObj := &WebAuthn{}
-	webAuthNObj.SetValue(value)
+	webAuthNObj.setValue(value)
 
 	return webAuthNObj
 }

@@ -15,10 +15,10 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-// LDAPPassDB implements the LDAP password database backend.
+// ldapPassDB implements the LDAP password database backend.
 //
 //nolint:gocognit // Backends are complex
-func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var (
 		assertOk           bool
 		accountField       string
@@ -164,8 +164,8 @@ func LDAPPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	return
 }
 
-// LDAPAccountDB implements the list-account mode and returns all known users from an LDAP server.
-func LDAPAccountDB(auth *Authentication) (accounts AccountList, err error) {
+// ldapAccountDB implements the list-account mode and returns all known users from an LDAP server.
+func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	var (
 		accountField string
 		filter       string
@@ -250,8 +250,8 @@ func LDAPAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	return
 }
 
-// LDAPAddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
-func LDAPAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
+// ldapAddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
+func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	var (
 		filter      string
 		baseDN      string
@@ -282,7 +282,7 @@ func LDAPAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		return
 	}
 
-	configField = totp.GetLDAPTOTPSecret(protocol)
+	configField = totp.getLDAPTOTPSecret(protocol)
 	if configField == "" {
 		err = errors2.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
@@ -310,7 +310,7 @@ func LDAPAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	}
 
 	ldapRequest.ModifyAttributes = make(backend.LDAPModifyAttributes, 2)
-	ldapRequest.ModifyAttributes[configField] = []string{totp.GetValue()}
+	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
 	backend.LDAPRequestChan <- ldapRequest
 
@@ -323,7 +323,7 @@ func LDAPAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	return ldapReply.Err
 }
 
-func LDAPGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
+func ldapGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
 	_ = uniqueUserID
 
 	// TODO: Use WebAuthn constructor!

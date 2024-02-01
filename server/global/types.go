@@ -3,7 +3,7 @@ package global
 // Backend is a numeric identifier for a database backend.
 type Backend uint8
 
-// AuthResult is the numeric result of a password check done by HandlePassword()
+// AuthResult is the numeric result of a password check done by handlePassword()
 type AuthResult uint8
 
 // LDAPCommand represents the LDAP operation like search, add or modify.

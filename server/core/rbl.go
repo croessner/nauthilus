@@ -14,8 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// IsListed triggers a result of true, if an IP address was found on a RBL list. It also returns a human readable name.
-func (a *Authentication) IsListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus bool, rblName string, err error) {
+// isListed triggers a result of true, if an IP address was found on a RBL list. It also returns a human readable name.
+func (a *Authentication) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus bool, rblName string, err error) {
 	var (
 		results       []net.IP
 		reverseIPAddr string

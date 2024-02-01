@@ -17,10 +17,10 @@ import (
 	"github.com/go-kit/log/level"
 )
 
-// FeatureGeoIP logs some geographical information.
-func (a *Authentication) FeatureGeoIP() {
+// featureGeoIP logs some geographical information.
+func (a *Authentication) featureGeoIP() {
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
-		a.GeoIPCity.GetGeoIPCity(net.ParseIP(a.ClientIP), *a.GUID)
+		a.GeoIPCity.getGeoIPCity(net.ParseIP(a.ClientIP), *a.GUID)
 	} else {
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureGeoIP, "localhost")
 		a.GeoIPCity.Country.Names = make(map[string]string)
@@ -30,8 +30,8 @@ func (a *Authentication) FeatureGeoIP() {
 	level.Info(logging.DefaultLogger).Log(a.logLineGeoIP()...)
 }
 
-// FeatureLua runs Lua scripts and returns a trigger result.
-func (a *Authentication) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+// featureLua runs Lua scripts and returns a trigger result.
+func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		l := feature.Request{
 			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
@@ -76,11 +76,11 @@ func (a *Authentication) FeatureLua(ctx *gin.Context) (triggered bool, abortFeat
 	return
 }
 
-// FeatureTLSEncryption checks, if the remote client connection was secured.
-func (a *Authentication) FeatureTLSEncryption() (triggered bool) {
+// featureTLSEncryption checks, if the remote client connection was secured.
+func (a *Authentication) featureTLSEncryption() (triggered bool) {
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		if a.XSSL == global.NotAvailable {
-			matchIP := a.IsInNetwork(config.LoadableConfig.ClearTextList)
+			matchIP := a.isInNetwork(config.LoadableConfig.ClearTextList)
 			if !matchIP {
 				level.Info(logging.DefaultLogger).Log(
 					global.LogKeyGUID, a.GUID,
@@ -105,9 +105,9 @@ func (a *Authentication) FeatureTLSEncryption() (triggered bool) {
 	return
 }
 
-// FeatureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
+// featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
-func (a *Authentication) FeatureRelayDomains() (triggered bool) {
+func (a *Authentication) featureRelayDomains() (triggered bool) {
 	if config.LoadableConfig.RelayDomains == nil {
 		return
 	}
@@ -139,10 +139,10 @@ func (a *Authentication) FeatureRelayDomains() (triggered bool) {
 	return
 }
 
-// FeatureRBLs checks the remote client IP address against a list of realtime block lists.
+// featureRBLs checks the remote client IP address against a list of realtime block lists.
 //
 //nolint:gocognit // Ignore
-func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
+func (a *Authentication) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	var (
 		rblScore      int
 		totalRBLScore int
@@ -153,7 +153,7 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 	}
 
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
-		matchIP := a.IsInNetwork(config.LoadableConfig.RBLs.IPWhiteList)
+		matchIP := a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList)
 		if !matchIP {
 			var (
 				waitGroup      sync.WaitGroup
@@ -169,7 +169,7 @@ func (a *Authentication) FeatureRBLs(ctx *gin.Context) (triggered bool, err erro
 				waitGroup.Add(1)
 
 				go func(rbl config.RBL, rblChan chan int) {
-					isListed, rblName, errRBL := a.IsListed(ctx, &rbl)
+					isListed, rblName, errRBL := a.isListed(ctx, &rbl)
 
 					waitGroup.Done()
 
