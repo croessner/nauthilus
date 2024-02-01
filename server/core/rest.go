@@ -31,6 +31,30 @@ type FlushUserCmd struct {
 	User string `json:"user"`
 }
 
+// FlushRuleCmdStatus is a structure representing the status of a Flush Rule command
+type FlushRuleCmdStatus struct {
+	// IPAddress is the IP address that the rule was applied to
+	IPAddress string `json:"ip_address"`
+
+	// RuleName is the name of the rule that was flushed
+	RuleName string `json:"rule_name"`
+
+	// Status is the current status of the rule following the Flush Command
+	Status string `json:"status"`
+}
+
+// FlushRuleCmd represents a command to flush a specific rule.
+// It contains the necessary information needed to identify the rule to be flushed.
+type FlushRuleCmd struct {
+	// IPAddress is the IP address associated with the rule to be flushed.
+	// It must be in a format valid for an IP address.
+	IPAddress string `json:"ip_address"`
+
+	// RuleName is the name of the rule to be flushed.
+	// This value should reference an existing rule.
+	RuleName string `json:"rule_name"`
+}
+
 // generic handles the generic authentication logic based on the selected service type.
 func (a *Authentication) generic(ctx *gin.Context) {
 	var mode string
@@ -425,21 +449,13 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCa
 	}
 }
 
-//nolint:gocognit // Ignore
+// flushBruteForceRule handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
+// It logs information about the action, including the GUID, brute force category, and flush operation.
+// If the IP command fails to bind, an error is logged, and a bad request status is returned.
+// If there is an error processing the brute force rules, an error is logged, and an internal server error status is returned.
+// If the rule flush error flag is true, the status message is set to "not flushed".
+// The function then logs the status message and returns a JSON response containing the GUID, brute force category, flush operation, and the result of the command, including the IP address
 func flushBruteForceRule(ctx *gin.Context) {
-	//nolint:tagliatelle // We want lower camel case
-	type FlushRuleCmdStatus struct {
-		IPAddress string `json:"ip_address"`
-		RuleName  string `json:"rule_name"`
-		Status    string `json:"status"`
-	}
-
-	//nolint:tagliatelle // We want lower camel case
-	type FlushRuleCmd struct {
-		IPAddress string `json:"ip_address"`
-		RuleName  string `json:"rule_name"`
-	}
-
 	var (
 		ruleFlushError bool
 		err            error
@@ -451,6 +467,7 @@ func flushBruteForceRule(ctx *gin.Context) {
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.CatBruteForce, global.ServFlush)
 
 	ipCmd := &FlushRuleCmd{}
+
 	if err = ctx.BindJSON(ipCmd); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		ctx.AbortWithStatus(http.StatusBadRequest)
@@ -460,32 +477,12 @@ func flushBruteForceRule(ctx *gin.Context) {
 
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
 
-	auth := &Authentication{
-		HTTPClientContext: ctx,
-		Username:          "*",
-		ClientIP:          ipCmd.IPAddress,
-	}
+	ruleFlushError, err = processBruteForceRules(ctx, ipCmd, guid)
+	if err != nil {
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-	for _, rule := range config.LoadableConfig.GetBruteForceRules() {
-		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			if err = auth.deleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
-				ruleFlushError = true
-
-				break
-			}
-
-			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = backend.RedisHandle.Del(backend.RedisHandle.Context(), key).Err(); err != nil {
-					level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
-
-					ruleFlushError = true
-
-					break
-				}
-
-				level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
-			}
-		}
+		return
 	}
 
 	if ruleFlushError {
@@ -504,4 +501,50 @@ func flushBruteForceRule(ctx *gin.Context) {
 			Status:    statusMsg,
 		},
 	})
+}
+
+// processBruteForceRules handles the deletion of IP brute force rules and flushing of brute force buckets in Redis.
+// It takes the current Gin context, the command containing the IP address and rule name to be flushed, and a GUID as parameters.
+// It returns a boolean indicating if there was an error while flushing the rules or not, and an error object if any occurred.
+//
+// The function loops through all the brute force rules defined in the loaded configuration.
+// If the rule name matches the one provided in the command or the command specifies to flush all rules,
+// it proceeds with deleting the matching rule from Redis.
+// If the rule has a corresponding brute force bucket Redis key, it deletes that key as well.
+// If any errors occur during the deletion or Redis operations, it sets the ruleFlushError flag to true,
+// returns the error, and exits the loop.
+//
+// Finally, it returns the ruleFlushError flag indicating if there was any error during rule flushing,
+// and a nil error value if no error occurred.
+func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) (bool, error) {
+	var err error
+
+	ruleFlushError := false
+
+	auth := &Authentication{
+		HTTPClientContext: ctx,
+		Username:          "*",
+		ClientIP:          ipCmd.IPAddress,
+	}
+
+	for _, rule := range config.LoadableConfig.GetBruteForceRules() {
+		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
+			if err = auth.deleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
+				ruleFlushError = true
+
+				return ruleFlushError, err
+			}
+			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
+				if err = backend.RedisHandle.Del(backend.RedisHandle.Context(), key).Err(); err != nil {
+					ruleFlushError = true
+
+					return ruleFlushError, err
+				}
+
+				level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
+			}
+		}
+	}
+
+	return ruleFlushError, nil
 }
