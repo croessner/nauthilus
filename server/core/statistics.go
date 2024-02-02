@@ -50,11 +50,13 @@ var (
 		Help: "Current usage of all CPUs.",
 	})
 
+	// redisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
 	redisReadCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "nauthilus_redis_read_total",
 		Help: "Total number of Redis read operations",
 	})
 
+	// redisWriteCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis write operations.
 	redisWriteCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "nauthilus_redis_write_total",
 		Help: "Total number of Redis write operations",
