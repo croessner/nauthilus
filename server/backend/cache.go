@@ -61,19 +61,17 @@ func LookupUserAccountFromRedis(username string) (accountName string, err error)
 	return
 }
 
-// LoadCacheFromRedis is a generic routine to load a cache object from Redis. The type is a RedisCache, which is a
-// union.
-func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
+func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
 
 	if redisValue, err = RedisHandleReplica.Get(RedisHandleReplica.Context(), key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil
+			return true, nil
 		}
 
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
-		return
+		return true, err
 	}
 
 	*cache = new(T)
@@ -88,12 +86,12 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
 		global.DbgCache,
 		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", **cache))
 
-	return nil
+	return false, nil
 }
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache *T) {
+func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache *T) error {
 	var result string
 
 	util.DebugModule(
@@ -109,7 +107,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 			global.LogKeyError, err,
 		)
 
-		return
+		return err
 	}
 
 	//nolint:lll // Ignore
@@ -124,6 +122,8 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 		global.DbgCache,
 		global.LogKeyGUID, guid,
 		"redis", result)
+
+	return err
 }
 
 // GetCacheNames returns the set of cache names for the requested protocol and cache backends.

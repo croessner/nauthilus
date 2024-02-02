@@ -90,6 +90,8 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 	if user == nil {
 		if user, err = backend.GetWebAuthnFromRedis(uniqueUserID); err != nil {
 			return nil, err
+		} else {
+			redisReadCounter.Inc()
 		}
 	}
 
@@ -99,13 +101,17 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 func putUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
-	backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL)
+	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
+		redisWriteCounter.Inc()
+	}
 }
 
 func updateUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
-	backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL)
+	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
+		redisWriteCounter.Inc()
+	}
 }
 
 // Page: '/2fa/v1/webauthn/register/begin'

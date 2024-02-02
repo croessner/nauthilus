@@ -569,6 +569,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			handleErr(ctx, err)
 
 			return
+		} else {
+			redisReadCounter.Inc()
 		}
 
 		for index := range protocols {
@@ -583,6 +585,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
+					redisWriteCounter.Inc()
+
 					continue
 				}
 

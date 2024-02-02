@@ -1379,7 +1379,11 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 							Attributes: a.Attributes,
 						}
 
-						go backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc)
+						go func() {
+							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
+								redisWriteCounter.Inc()
+							}
+						}()
 					}
 				}
 			}
@@ -1550,6 +1554,8 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
 		return
+	} else {
+		redisReadCounter.Inc()
 	}
 
 	if accountName != "" {
@@ -1568,7 +1574,11 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 		sort.Sort(sort.StringSlice(accounts))
 
 		accountName = strings.Join(accounts, ":")
+
 		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
+		if err == nil {
+			redisWriteCounter.Inc()
+		}
 	}
 
 	return

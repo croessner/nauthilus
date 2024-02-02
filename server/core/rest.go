@@ -179,6 +179,8 @@ func listBruteforce(ctx *gin.Context) {
 			list.Error = err.Error()
 		} else {
 			list.Error = "none"
+
+			redisReadCounter.Inc()
 		}
 	} else {
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
@@ -321,8 +323,14 @@ func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
 
 	accountName, err := backend.LookupUserAccountFromRedis(userCmd.User)
 	if err != nil || accountName == "" {
+		if err == nil {
+			redisReadCounter.Inc()
+		}
+
 		return "", false, true
 	}
+
+	redisReadCounter.Inc()
 
 	return accountName, false, false
 }
@@ -377,12 +385,16 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 		return
 	}
 
+	redisWriteCounter.Inc()
+
 	for _, userKey := range userKeys.GetStringSlice() {
 		if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			return
 		}
+
+		redisWriteCounter.Inc()
 
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 	}
@@ -540,6 +552,8 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 					return ruleFlushError, err
 				}
+
+				redisWriteCounter.Inc()
 
 				level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
 			}

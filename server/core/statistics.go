@@ -49,6 +49,16 @@ var (
 		Name: "nauthilus_cpu_usage",
 		Help: "Current usage of all CPUs.",
 	})
+
+	redisReadCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "nauthilus_redis_read_total",
+		Help: "Total number of Redis read operations",
+	})
+
+	redisWriteCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "nauthilus_redis_write_total",
+		Help: "Total number of Redis write operations",
+	})
 )
 
 // Metric is a prometheus metric with a value and a label.
@@ -59,9 +69,9 @@ type Metric struct {
 
 //nolint:errcheck,gochecknoinits // Ignore
 func init() {
-	prometheus.MustRegister(httpRequestsTotalCounter)
+	prometheus.MustRegister(httpRequestsTotalCounter, httpResponseTimeSecondsHist)
+	prometheus.MustRegister(redisReadCounter, redisWriteCounter)
 	prometheus.MustRegister(loginsCounter)
-	prometheus.MustRegister(httpResponseTimeSecondsHist)
 	prometheus.MustRegister(cpuGauge)
 }
 
@@ -222,5 +232,7 @@ func SaveStatsToRedis() {
 
 			return
 		}
+
+		redisWriteCounter.Inc()
 	}
 }

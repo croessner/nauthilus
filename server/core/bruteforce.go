@@ -86,6 +86,8 @@ func (a *Authentication) userExists() (bool, error) {
 	accountName, err := backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
 		return false, err
+	} else {
+		redisReadCounter.Inc()
 	}
 
 	if accountName == "" {
@@ -307,6 +309,8 @@ func (a *Authentication) loadBruteForcePasswordHistoryFromRedis(key string) {
 	if passwordHistory, err := backend.RedisHandleReplica.HGetAll(backend.RedisHandle.Context(), key).Result(); err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisReadCounter.Inc()
 		}
 
 		return
@@ -396,6 +400,8 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 
 			return
+		} else {
+			redisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -407,6 +413,8 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), keys[index], time.Duration(viper.GetInt("redis_negative_cache_ttl"))*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -436,8 +444,12 @@ func (a *Authentication) loadBruteForceBucketCounterFromRedis(rule *config.Brute
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
 		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
 
-		if err := backend.LoadCacheFromRedis(key, &cache); err != nil {
+		if isRedisErr, err := backend.LoadCacheFromRedis(key, &cache); err != nil {
 			return
+		} else {
+			if !isRedisErr {
+				redisReadCounter.Inc()
+			}
 		}
 	}
 
@@ -462,12 +474,16 @@ func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteFo
 		if a.BruteForceName != rule.Name {
 			if err := backend.RedisHandle.Incr(backend.RedisHandle.Context(), key).Err(); err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+			} else {
+				redisWriteCounter.Inc()
 			}
 
 		}
 
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
 		}
 	}
 }
@@ -480,8 +496,12 @@ func (a *Authentication) setPreResultBruteForceRedis(rule *config.BruteForceRule
 	network, err := a.getNetwork(rule)
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-	} else if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, network.String(), a.BruteForceName).Err(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+	} else {
+		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, network.String(), a.BruteForceName).Err(); err != nil {
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
+		}
 	}
 }
 
@@ -502,6 +522,8 @@ func (a *Authentication) getPreResultBruteForceRedis(rule *config.BruteForceRule
 	} else if ruleName, err = backend.RedisHandle.HGet(backend.RedisHandle.Context(), key, network.String()).Result(); err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisReadCounter.Inc()
 		}
 	}
 
@@ -525,8 +547,12 @@ func (a *Authentication) deleteIPBruteForceRedis(rule *config.BruteForceRule, ru
 	if result == ruleName || ruleName == "*" {
 		if network, err := a.getNetwork(rule); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-		} else if err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), key, network.String()).Err(); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			if err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), key, network.String()).Err(); err != nil {
+				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+			} else {
+				redisWriteCounter.Inc()
+			}
 		}
 
 		return err
