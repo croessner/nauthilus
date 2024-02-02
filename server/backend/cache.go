@@ -61,6 +61,11 @@ func LookupUserAccountFromRedis(username string) (accountName string, err error)
 	return
 }
 
+// LoadCacheFromRedis loads the cache value from Redis and unmarshals it into the provided cache pointer.
+// If the key does not exist in Redis, it returns isRedisErr=true and err=nil.
+// If there is an error retrieving the value from Redis, it returns isRedisErr=true and err.
+// Otherwise, it unmarshals the value into the cache pointer and returns isRedisErr=false and err=nil.
+// It also logs any error messages using the DefaultErrLogger.
 func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
 
