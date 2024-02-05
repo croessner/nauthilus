@@ -988,6 +988,12 @@ const (
 
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
+
+	// LuaFnGetNgxBackendServers represents the Lua function name "nauthilus_get_nginx_backend_servers" that retrieves the nginx backend servers.
+	LuaFnGetNgxBackendServers = "get_nginx_backend_servers"
+
+	// LuaFnSelectNginxBackend represents the constant used as the key for the Lua function "nauthilus_select_nginx_backend".
+	LuaFnSelectNginxBackend = "select_nginx_backend_server"
 )
 
 const (

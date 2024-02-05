@@ -238,6 +238,10 @@ type Authentication struct {
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
 	UsedPassDBBackend global.Backend
 
+	UsedNginxBackendAddress string
+
+	UsedNginxBackendPort int
+
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
 	// attribute name as key and the corresponding result as value.
 	Attributes backend.DatabaseResult
@@ -584,20 +588,31 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	}
 }
 
-// setNginxHeaders sets the appropriate headers for the given gin.Context and Authentication based on the protocol value in Authentication.
-// If the protocol is global.ProtoSMTP, it sets the "Auth-Server" header to the SMTP backend address from the configuration and the "Auth-Port" header to the SMTP backend port.
-// If the protocol is not global.ProtoSMTP, it sets the "Auth-Server" header to the IMAP backend address from the configuration and the "Auth-Port" header to the IMAP backend port.
+// setNginxHeaders sets the appropriate headers for the given gin.Context and Authentication based on the configuration and feature flags.
+// If the global.FeatureNginxMonitoring feature is enabled, it checks if the Authentication's UsedNginxBackendAddress and UsedNginxBackendPort are set.
+// If they are, it sets the "Auth-Server" header to the UsedNginxBackendAddress and the "Auth-Port" header to the UsedNginxBackendPort.
+// If the global.FeatureNginxMonitoring feature is disabled, it checks the Authentication's Protocol.
+// If the Protocol is global.ProtoSMTP, it sets the "Auth-Server" header to the SMTPBackendAddress and the "Auth-Port" header to the SMTPBackendPort.
+// If the Protocol is global.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
+// If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
-	switch a.Protocol.Get() {
-	case global.ProtoSMTP:
-		ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
-		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
-	case global.ProtoIMAP:
-		ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
-		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
-	case global.ProtoPOP3:
-		ctx.Header("Auth-Server", config.EnvConfig.POP3BackendAddress)
-		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.POP3BackendPort))
+	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
+			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+		}
+	} else {
+		switch a.Protocol.Get() {
+		case global.ProtoSMTP:
+			ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
+		case global.ProtoIMAP:
+			ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
+		case global.ProtoPOP3:
+			ctx.Header("Auth-Server", config.EnvConfig.POP3BackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.POP3BackendPort))
+		}
 	}
 }
 
@@ -1447,8 +1462,34 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 	return authResult
 }
 
+// prepareNginxBackendServer prepares a map of Nginx backend servers based on the given Authentication protocol.
+// It iterates over the nginxBackendServer slice of NginxBackendServers, locks it for reading, filters the servers based on the protocol match,
+// and constructs a map with the server IP as the key and port as the value.
+// The function returns the constructed map.
+// The method does not modify the servers slice.
+func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, backendServers *[]map[string]int) {
+	servers.mu.RLock()
+
+	defer servers.mu.RUnlock()
+
+	for index := range servers.nginxBackendServer {
+		if servers.nginxBackendServer[index].Protocol == a.Protocol.Get() {
+			server := make(map[string]int)
+
+			server[servers.nginxBackendServer[index].IP] = servers.nginxBackendServer[index].Port
+			*backendServers = append(*backendServers, server)
+		}
+	}
+}
+
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+	backendServer := make([]map[string]int, 0)
+
+	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		a.prepareNginxBackendServer(NginxBackendServers, &backendServer)
+	}
+
 	filterRequest := &filter.Request{
 		Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		UserFound:     passDBResult.UserFound,
@@ -1469,11 +1510,14 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 			return ""
 		}(),
-		UniqueUserID: a.getUniqueUserID(),
-		DisplayName:  a.getDisplayName(),
-		Protocol:     a.Protocol.String(),
-		Password:     a.Password,
-		Context:      a.Context,
+		UniqueUserID:            a.getUniqueUserID(),
+		DisplayName:             a.getDisplayName(),
+		Protocol:                a.Protocol.String(),
+		Password:                a.Password,
+		NginxBackendServers:     backendServer,
+		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
+		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
+		Context:                 a.Context,
 	}
 
 	filterResult, err := filterRequest.CallFilterLua(ctx)
@@ -1491,6 +1535,9 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		if filterResult {
 			return global.AuthResultFail
 		}
+
+		a.UsedNginxBackendAddress = *filterRequest.UsedNginxBackendAddress
+		a.UsedNginxBackendPort = *filterRequest.UsedNginxBackendPort
 	}
 
 	if passDBResult.Authenticated {
