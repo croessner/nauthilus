@@ -150,7 +150,6 @@ func NewWorker() *Worker {
 
 	return &Worker{
 		resultMap: resultMap,
-		DoneChan:  make(chan Done),
 	}
 }
 
@@ -159,13 +158,15 @@ func NewWorker() *Worker {
 // If a request is received, it handles the request by running the corresponding script.
 // If the context is cancelled, it sends a WorkerEndChan signal to indicate that the worker has ended.
 func (aw *Worker) Work(ctx context.Context) {
-	defer close(aw.DoneChan)
-
 	aw.ctx = &ctx
 
 	if config.LoadableConfig.Lua == nil {
 		return
 	}
+
+	aw.DoneChan = make(chan Done)
+
+	defer close(aw.DoneChan)
 
 	aw.loadActionScriptsFromConfiguration()
 

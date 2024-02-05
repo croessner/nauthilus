@@ -203,7 +203,7 @@ func (f *Feature) String() string {
 func (f *Feature) Set(value string) error {
 	switch value {
 	case "":
-	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureGeoIP, global.FeatureRelayDomains, global.FeatureLua:
+	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureGeoIP, global.FeatureRelayDomains, global.FeatureLua, global.FeatureNginxMonitoring:
 		f.name = value
 	default:
 		return errors.ErrWrongFeature
@@ -367,6 +367,12 @@ type Config struct {
 	// IMAPBackendPort is the port of the IMAP backend server.
 	IMAPBackendPort int
 
+	// POP3BackendAddress is the address of the POP3 backend server.
+	POP3BackendAddress string
+
+	// POP3BackendPort is the port of the IMAP POP3 server.
+	POP3BackendPort int
+
 	// WaitDelay is the time in seconds to wait between connection attempts.
 	WaitDelay uint8
 
@@ -467,6 +473,8 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
 	viper.SetDefault("imap_backend_address", global.IMAPBackendAddress)
 	viper.SetDefault("imap_backend_port", global.IMAPBackendPort)
+	viper.SetDefault("pop3_backend_address", global.POP3BackendAddress)
+	viper.SetDefault("pop3_backend_port", global.POP3BackendPort)
 	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
 	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
 	viper.SetDefault("geoip_path", global.GeoIPPath)
@@ -694,6 +702,8 @@ func (c *Config) setConfigFromEnvVars() {
 	c.SMTPBackendPort = viper.GetInt("smtp_backend_port")
 	c.IMAPBackendAddress = viper.GetString("imap_backend_address")
 	c.IMAPBackendPort = viper.GetInt("imap_backend_port")
+	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
+	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
 	c.ResolveIP = viper.GetBool("resolve_ip")
 	c.GeoipPath = viper.GetString("geoip_path")
 	c.RedisAddress = viper.GetString("redis_address")

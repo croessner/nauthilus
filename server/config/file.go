@@ -33,6 +33,7 @@ type File struct {
 	RBLs               *RBLSection          `mapstructure:"realtime_blackhole_lists"`
 	ClearTextList      []string             `mapstructure:"cleartext_networks"`
 	RelayDomains       *RelayDomainsSection `mapstructure:"relay_domains"`
+	NginxMonitoring    *NginxMonitoring     `mapstructure:"nginx_monitoring"`
 	BruteForce         *BruteForceSection   `mapstructure:"brute_force"`
 	CSRFSecret         string               `mapstructure:"csrf_secret"`
 	CookieStoreAuthKey string               `mapstructure:"cookie_store_auth_key"`
@@ -44,6 +45,48 @@ type File struct {
 	LDAP               *LDAPSection
 	Other              map[string]any `mapstructure:",remain"`
 	Mu                 sync.Mutex
+}
+
+/*
+ * Nginx monitoring
+ */
+
+func (f *File) GetNginxMonitoring() *NginxMonitoring {
+	return f.NginxMonitoring
+}
+
+func (f *File) GetNginxBackendServers() []*NginxBackendServer {
+	if f.GetNginxMonitoring() != nil {
+		return f.NginxMonitoring.NginxBackendServer
+	}
+
+	return []*NginxBackendServer{}
+}
+
+func (f *File) GetNginxBackendServer(protocol string) *NginxBackendServer {
+	for _, server := range f.GetNginxBackendServers() {
+		if server.Protocol == protocol {
+			return server
+		}
+	}
+
+	return nil
+}
+
+func (f *File) GetNginxBackendServerIP(protocol string) string {
+	if f.GetNginxBackendServer(protocol) != nil {
+		return f.GetNginxBackendServer(protocol).IP
+	}
+
+	return ""
+}
+
+func (f *File) GetNginxBackendServerPort(protocol string) int {
+	if f.GetNginxBackendServer(protocol) != nil {
+		return f.GetNginxBackendServer(protocol).Port
+	}
+
+	return 0
 }
 
 /*
@@ -630,10 +673,14 @@ func (f *File) MapToStruct() (err error) {
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
 			}
+		case global.BackendUnknown:
+		case global.BackendCache:
+		case global.BackendSQL:
 		}
 	}
 
 	level.Debug(logging.DefaultLogger).Log("cleartext_networks", fmt.Sprintf("%+v", f.ClearTextList))
+	level.Debug(logging.DefaultLogger).Log("nginx_monitoring", fmt.Sprintf("%+v", f.NginxMonitoring))
 
 	if f.RelayDomains != nil {
 		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
@@ -698,6 +745,10 @@ func NewConfigFile() (newCfg *File, err error) {
 //nolint:forcetypeassert,gocognit // Ignore
 func ReloadConfigFile() (err error) {
 	newCfgReload := &File{}
+
+	if err = viper.ReadInConfig(); err != nil {
+		return
+	}
 
 	// Construct new configuration
 	if err = newCfgReload.MapToStruct(); err != nil {

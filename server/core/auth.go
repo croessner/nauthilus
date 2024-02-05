@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -39,6 +40,23 @@ type ClaimHandler struct {
 	// The function is intended to apply some process on the claim using the provided parameters,
 	// and return a boolean result.
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
+}
+
+type NginxBackendServer struct {
+	nginxBackendServer []*config.NginxBackendServer
+	mu                 sync.RWMutex
+}
+
+func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
+	n.mu.Lock()
+
+	defer n.mu.Unlock()
+
+	n.nginxBackendServer = servers
+}
+
+func NewNginxBackendServer() *NginxBackendServer {
+	return &NginxBackendServer{}
 }
 
 // JSONRequest is a data structure containing the details of a client's request in JSON format.
@@ -301,6 +319,8 @@ type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]webauthn.Credential, 
 
 // AddTOTPSecretFunc is a function signature that takes a *Authentication and *TOTPSecret as arguments and returns an error.
 type AddTOTPSecretFunc func(auth *Authentication, totp *TOTPSecret) (err error)
+
+var NginxBackendServers = NewNginxBackendServer()
 
 // String returns an Authentication object as string excluding the user password.
 func (a *Authentication) String() string {
@@ -572,9 +592,12 @@ func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	case global.ProtoSMTP:
 		ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
 		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
-	default:
+	case global.ProtoIMAP:
 		ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
 		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
+	case global.ProtoPOP3:
+		ctx.Header("Auth-Server", config.EnvConfig.POP3BackendAddress)
+		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.POP3BackendPort))
 	}
 }
 

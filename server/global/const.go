@@ -1,6 +1,5 @@
 package global
 
-// Logging strings.
 const (
 	// LogKeyGUID represents the session identifier used in log entries.
 	LogKeyGUID = "session"
@@ -203,6 +202,12 @@ const (
 	// LogKeyLuaScripttimeout represents timeout setting for lua scripts
 	LogKeyLuaScripttimeout = "lua_script_timeout"
 
+	// LogKeyNgxBackendIP represents the IP address of the nginx backend server.
+	LogKeyNgxBackendIP = "nginx_backend_ip"
+
+	// LogKeyNgxBackendPort represents the port of the nginx backend server.
+	LogKeyNgxBackendPort = "nginx_backend_port"
+
 	// NotAvailable is used when data for a particular field is not available.
 	NotAvailable = "N/A"
 )
@@ -249,6 +254,12 @@ const (
 	// IMAPBackendPort is the default IMAP backend port
 	IMAPBackendPort = 9931
 
+	// POP3BackendAddress is the default POP3 backend address
+	POP3BackendAddress = Localhost4
+
+	// POP3BackendPort is the default POP3 backend port
+	POP3BackendPort = 9951
+
 	// WaitDelay is the default delay (in seconds) between reconnection attempts
 	WaitDelay = 1
 
@@ -287,6 +298,9 @@ const (
 
 	// StatsDelay is the delay (in seconds) between collecting statistical data
 	StatsDelay = 60
+
+	// NginxMonitoringDelay is the delay (in seconds) between keep-alive checks
+	NginxMonitoringDelay = 60
 
 	// LDAPConnectTimeout is the connection timeout (in seconds) for the LDAP server
 	LDAPConnectTimeout = 30
@@ -382,6 +396,9 @@ const (
 
 	// FeatureLua is a constant for the string "lua"
 	FeatureLua = "lua"
+
+	// FeatureNginxMonitoring enables custom a Nginx backend list with fail-state monitoring
+	FeatureNginxMonitoring = "nginx_monitoring"
 )
 
 // Statistics label for the loin counter.
@@ -412,6 +429,12 @@ const (
 const (
 	// ProtoSMTP corresponds to the "smtp" protocol
 	ProtoSMTP = "smtp"
+
+	// ProtoIMAP corresponds to the "smtp" protocol
+	ProtoIMAP = "imap"
+
+	// ProtoPOP3 corresponds to the "smtp" protocol
+	ProtoPOP3 = "pop3"
 
 	// ProtoHTTP corresponds to the "http" protocol
 	ProtoHTTP = "http"
