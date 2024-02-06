@@ -687,18 +687,21 @@ func GetSkipConsent(clientId string) (skip bool) {
 	return
 }
 
-// MapToStruct applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
-// Nauthilus has a working configuration.
+// validateRBLs is a method on the File struct.
+// It validates the RBLs field in the File struct.
+// If the RBLs field is not nil, it checks if the Threshold value is greater than math.MaxInt and logs a warning if it is.
+// Then, it iterates over each RBL in the Lists field and checks if the Weight value is greater than math.MaxUint8 or less than -math.MaxUint8, logging a warning in each case.
+// Finally, it logs the RBLs field with Debug level.
 //
-//nolint:gocognit // Ignore
-func (f *File) MapToStruct() (err error) {
-	f.Mu.Lock()
-	defer f.Mu.Unlock()
-
-	if err = viper.UnmarshalExact(f); err != nil {
-		return
-	}
-
+// If there are no errors, it returns nil.
+//
+// Example usage:
+//
+//	err := validateRBLs()
+//	if err != nil {
+//	  log.Fatal(err)
+//	}
+func (f *File) validateRBLs() error {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
 			level.Warn(logging.DefaultLogger).Log(
@@ -723,6 +726,29 @@ func (f *File) MapToStruct() (err error) {
 		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", f.RBLs))
 	}
 
+	return nil
+}
+
+// validateBruteForce is a method on the File struct.
+//
+// It validates the BruteForce field in the File struct.
+// If the BruteForce field is not nil, it checks each rule in the Buckets slice.
+//
+// The validation rules for each rule are as follows:
+// - The rule must have a non-empty Name field, otherwise it returns errors.ErrRuleNoName.
+// - The rule cannot have both IPv4 and IPv6 flags set to true at the same time, otherwise it returns errors.ErrRuleNoIPv4AndIPv6.
+// - The rule must have either IPv4 or IPv6 flag set to true, otherwise it returns errors.ErrRuleMissingIPv4AndIPv6.
+// - The rule must have a non-zero CIDR value, otherwise it returns errors.ErrRuleNoCIDR.
+// - The rule must have a non-zero Period value, otherwise it returns errors.ErrRuleNoPeriod.
+// - The rule must have a non-zero FailedRequests value, otherwise it returns errors.ErrRuleNoFailedRequests.
+//
+// After validating each rule, it checks the total count of IPv4 and IPv6 rules.
+// If the count of either IPv4 or IPv6 rules is more than one, it returns errors.ErrBruteForceTooManyRules.
+//
+// Finally, it logs the BruteForce struct using the global logger with the key "brute_force".
+//
+// If the BruteForce field is nil, it returns nil indicating that the field is valid.
+func (f *File) validateBruteForce() error {
 	if f.BruteForce != nil {
 		for _, rule := range f.BruteForce.Buckets {
 			if rule.Name == "" {
@@ -760,6 +786,19 @@ func (f *File) MapToStruct() (err error) {
 		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", f.BruteForce))
 	}
 
+	return nil
+}
+
+// validateSecrets is a method on the File struct.
+// It validates the secrets used in the File struct.
+// If any of the secrets have incorrect sizes or are missing, it returns an error.
+// Possible error values:
+// - ErrCSRFSecretWrongSize: returned if the CSRFSecret length is not 32.
+// - ErrCookieStoreAuthSize: returned if the CookieStoreAuthKey length is not 32.
+// - ErrCookieStoreEncSize: returned if the CookieStoreEncKey length is not 16, 24 or 32.
+// - ErrNoPasswordNonce: returned if the PasswordNonce is empty.
+// It returns nil if all secrets are valid.
+func (f *File) validateSecrets() error {
 	if len(f.CSRFSecret) != 32 {
 		return errors.ErrCSRFSecretWrongSize
 	}
@@ -776,6 +815,20 @@ func (f *File) MapToStruct() (err error) {
 		return errors.ErrNoPasswordNonce
 	}
 
+	return nil
+}
+
+// validatePassDBBackends is a method on the File struct.
+// It validates the PassDB backends defined in the EnvConfig.
+// If any of the validations fail, it returns the corresponding error.
+// The method checks the specific configurations and settings for each backend.
+// It also sets default values for certain fields if they are not provided.
+//
+// The method uses the EnvConfig and PassDB structs defined in the codebase.
+// The Backend constants from the global package are also used for comparison.
+// The method logs debug information using the DefaultLogger from the logging package.
+// The errors package is used to define and return the error messages.
+func (f *File) validatePassDBBackends() error {
 	for _, passDB := range EnvConfig.PassDBs {
 		switch passDB.Get() {
 		case global.BackendLDAP:
@@ -840,13 +893,17 @@ func (f *File) MapToStruct() (err error) {
 		}
 	}
 
-	level.Debug(logging.DefaultLogger).Log("cleartext_networks", fmt.Sprintf("%+v", f.ClearTextList))
-	level.Debug(logging.DefaultLogger).Log("nginx_monitoring", fmt.Sprintf("%+v", f.NginxMonitoring))
+	return nil
+}
 
-	if f.RelayDomains != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
-	}
-
+// validateOAuth2 is a method for a File struct that checks if its OAuth2 field is not nil.
+// If it is not nil, it iterate through 'CustomScopes' of OAuth2 and searches for any 'description_' prefixed keys.
+// Each found key (that matches "description_"+baseName.String()) is stored in a map 'descriptions' along with their values,
+// after asserting they are of type string. Updated 'Other' map of each 'CustomScopes' with 'descriptions'.
+// Finally, it logs the whole OAuth2 field in a debug level log.
+//
+// It doesn't return any value, and it doesn't trigger any side effects other than logging.
+func (f *File) validateOAuth2() error {
 	if f.Oauth2 != nil {
 		var descriptions map[string]any
 
@@ -874,6 +931,71 @@ func (f *File) MapToStruct() (err error) {
 		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", f.Oauth2))
 	}
 
+	return nil
+}
+
+// validate is a method on the File struct that validates various aspects of the file.
+// It uses a list of validator functions and calls each of them in order.
+// If any of the validators return an error, the validation process stops and the error is returned.
+// If all validators pass, nil is returned.
+// The validators used in this method are:
+// - validateRBLs
+// - validateBruteForce
+// - validateSecrets
+// - validatePassDBBackends
+// - validateOAuth2
+func (f *File) validate() (err error) {
+	validators := []func() error{
+		f.validateRBLs,
+		f.validateBruteForce,
+		f.validateSecrets,
+		f.validatePassDBBackends,
+		f.validateOAuth2,
+	}
+
+	for _, validator := range validators {
+		if err = validator(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// logDebug is a method on the File struct.
+// It logs debug messages based on the values of the ClearTextList, RelayDomains, and NginxMonitoring fields.
+func (f *File) logDebug() {
+	if f.ClearTextList != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", f.ClearTextList))
+	}
+
+	if f.RelayDomains != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
+	}
+
+	if f.NginxMonitoring != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", f.NginxMonitoring))
+	}
+}
+
+// handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
+// Nauthilus has a working configuration.
+func (f *File) handleFile() (err error) {
+	f.Mu.Lock()
+
+	defer f.Mu.Unlock()
+
+	if err = viper.UnmarshalExact(f); err != nil {
+		return
+	}
+
+	err = f.validate()
+	if err != nil {
+		return
+	}
+
+	f.logDebug()
+
 	// Throw away unsupported keys
 	f.Other = nil
 
@@ -896,7 +1018,7 @@ func NewConfigFile() (newCfg *File, err error) {
 		return nil, err
 	}
 
-	err = newCfg.MapToStruct()
+	err = newCfg.handleFile()
 
 	return newCfg, err
 }
@@ -912,7 +1034,7 @@ func ReloadConfigFile() (err error) {
 	}
 
 	// Construct new configuration
-	if err = newCfgReload.MapToStruct(); err != nil {
+	if err = newCfgReload.handleFile(); err != nil {
 		return
 	}
 
