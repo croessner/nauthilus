@@ -42,11 +42,16 @@ type ClaimHandler struct {
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
 }
 
+// NginxBackendServer represents a type for managing a list of Nginx Backend servers
 type NginxBackendServer struct {
+	// nginxBackendServer is a slice of pointers to config.NginxBackendServer objects
 	nginxBackendServer []*config.NginxBackendServer
-	mu                 sync.RWMutex
+
+	// mu provides a read/write mutex for thread-safe operations on the nginxBackendServer
+	mu sync.RWMutex
 }
 
+// Update updates the nginxBackendServer field of the NginxBackendServer object with the provided servers slice.
 func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.mu.Lock()
 
@@ -55,6 +60,8 @@ func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.nginxBackendServer = servers
 }
 
+// NewNginxBackendServer creates a new instance of the NginxBackendServer struct.
+// It returns a pointer to the newly created NginxBackendServer.
 func NewNginxBackendServer() *NginxBackendServer {
 	return &NginxBackendServer{}
 }
@@ -95,13 +102,43 @@ type JSONRequest struct {
 	AuthLoginAttempt uint `json:"auth_login_attempt"`
 }
 
-// Authentication is the central object that is filled by a remote application request and is modified from each
-// Database that is involved in authentication.
-//
-// Most fields are related to the Nginx protocol, but can be set in a different way, if using another service type (i.e.
-// saslauthd). For further information have a look at the constructor NewAuthentication.
-//
-//nolint:maligned // Ignore further optimization
+// Authentication represents a struct that holds information related to authentication process.
+// UsernameReplace is a flag that is set if a user was found in a Database.
+// NoAuth is a flag that is set if the request mode does not require authentication.
+// ListAccounts is a flag that is set if Nauthilus is requested to send a full list of available user accounts.
+// UserFound is a flag that is set if a password Database found the user.
+// PasswordsAccountSeen is a counter that is increased whenever a new failed password was detected for the current account.
+// PasswordsTotalSeen is a counter that is increased whenever a new failed password was detected.
+// LoginAttempts is a counter that is incremented for each failed login request.
+// StatusCodeOK is the HTTP status code that is set by setStatusCodes.
+// StatusCodeInternalError is the HTTP status code that is set by setStatusCodes.
+// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
+// GUID is a global unique identifier that is inherited in all functions and methods that deal with the authentication process.
+// Method is set by the "Auth-Method" HTTP request header (Nginx protocol). It is typically something like "plain" or "login".
+// AccountField is the name of either a SQL field name or an LDAP attribute that was used to retrieve a user account.
+// Username is the value that was taken from the HTTP header "Auth-User" (Nginx protocol).
+// UsernameOrig is a copy from the username that was set by the HTTP request header "Auth-User" (Nginx protocol).
+// Password is the value that was taken from the HTTP header "Auth-Pass" (Nginx protocol).
+// ClientIP is the IP of a client that is to be authenticated.
+// XClientPort adds the remote client TCP port, which is set by the HTTP request header "X-Client-Port".
+// ClientHost is the DNS A name of the remote client. It is set with the HTTP request header "Client-Host" (Nginx protocol).
+// HAProxy specific headers: XSSL, XSSLSessionID, XSSLClientVerify, XSSLClientDN, XSSLClientCN, XSSLIssuer, XSSLClientNotBefore,
+// XSSLClientNotAfter, XSSLSubjectDN, XSSLIssuerDN, XSSLClientSubjectDN, XSSLClientIssuerDN, XSSLProtocol, XSSLCipher.
+// XClientID is delivered by some mail user agents when using IMAP. This value is set by the HTTP request header "X-Client-Id".
+// XLocalIP is the TCP/IP address of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-IP".
+// XPort is the TCP port of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-Port".
+// UserAgent may have been sent by a mail user agent and is set by the HTTP request header "User-Agent".
+// StatusMessage is the HTTP response payload that is sent to the remote server that asked for authentication.
+// Service is set by Nauthilus depending on the router endpoint.
+// BruteForceName is the canonical name of a brute force bucket that was triggered by a rule.
+// FeatureName is the name of a feature that has triggered a reject.
+// TOTPSecret is used to store a TOTP secret in a SQL Database.
+// TOTPSecretField is the SQL field or LDAP attribute that resolves the TOTP secret for two-factor authentication.
+// TOTPRecoveryField NYI.
+// UniqueUserIDField is a string representing a unique user identifier.
+// DisplayNameField is the display name of a user.
+// AdditionalLogging is a slice of strings that can be filled from Lua features and a Lua backend.
+// BruteForceCounter is a map
 type Authentication struct {
 	// UsernameReplace is a flag that is set, if a user was found in a Database.
 	UsernameReplace bool
@@ -238,8 +275,10 @@ type Authentication struct {
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
 	UsedPassDBBackend global.Backend
 
+	// UsedNginxBackendAddress is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Server'.
 	UsedNginxBackendAddress string
 
+	// UsedNginxBackendPort is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Port'.
 	UsedNginxBackendPort int
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
