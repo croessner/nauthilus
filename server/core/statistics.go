@@ -44,16 +44,22 @@ var (
 		},
 		[]string{"logins"})
 
-	// cpuUser variable declaration that creates a new Prometheus Gauge with the specified name and help message.
-	cpuUser = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "nauthilus_cpu_usser",
-		Help: "CPU user",
+	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
+	cpuUserUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "cpu_user_usage_percent",
+		Help: "CPU user usage in percent",
 	})
 
-	// cpuSystem variable declaration that creates a new Prometheus Gauge with the specified name and help message.
-	cpuSystem = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "nauthilus_cpu_system",
-		Help: "CPU system",
+	// cpuSystemUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, representing the CPU system usage in percent.
+	cpuSystemUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "cpu_system_usage_percent",
+		Help: "CPU system usage in percent",
+	})
+
+	// cpuIdleUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, representing the CPU idle usage in percent.
+	cpuIdleUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "cpu_idle_usage_percent",
+		Help: "CPU idle usage in percent",
 	})
 
 	// redisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
@@ -80,8 +86,10 @@ func init() {
 	prometheus.MustRegister(httpRequestsTotalCounter, httpResponseTimeSecondsHist)
 	prometheus.MustRegister(redisReadCounter, redisWriteCounter)
 	prometheus.MustRegister(loginsCounter)
-	prometheus.MustRegister(cpuUser, cpuSystem)
+	prometheus.MustRegister(cpuUserUsage, cpuSystemUsage, cpuIdleUsage)
 }
+
+var oldCpu cpu.Stats
 
 // MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
 //
@@ -115,15 +123,20 @@ func MeasureCPU(ctx context.Context) {
 		default:
 			time.Sleep(2 * time.Second)
 
-			c, err := cpu.Get()
+			newCpu, err := cpu.Get()
 			if err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 				return
 			}
 
-			cpuUser.Set(float64(c.User))
-			cpuSystem.Set(float64(c.System))
+			total := float64(newCpu.Total - oldCpu.Total)
+
+			cpuUserUsage.Set(float64(newCpu.User-oldCpu.User) / total * 100)
+			cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
+			cpuIdleUsage.Set(float64(newCpu.Idle-oldCpu.Idle) / total * 100)
+
+			oldCpu = *newCpu
 		}
 	}
 }
