@@ -14,9 +14,9 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
+	"github.com/mackerelio/go-osstat/cpu"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/shirou/gopsutil/cpu"
 )
 
 var (
@@ -44,10 +44,16 @@ var (
 		},
 		[]string{"logins"})
 
-	// cpuGauge variable declaration that creates a new Prometheus Gauge with the specified name and help message.
-	cpuGauge = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "nauthilus_cpu_usage",
-		Help: "Current usage of all CPUs.",
+	// cpuUser variable declaration that creates a new Prometheus Gauge with the specified name and help message.
+	cpuUser = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nauthilus_cpu_usser",
+		Help: "CPU user",
+	})
+
+	// cpuSystem variable declaration that creates a new Prometheus Gauge with the specified name and help message.
+	cpuSystem = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nauthilus_cpu_system",
+		Help: "CPU system",
 	})
 
 	// redisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
@@ -74,7 +80,7 @@ func init() {
 	prometheus.MustRegister(httpRequestsTotalCounter, httpResponseTimeSecondsHist)
 	prometheus.MustRegister(redisReadCounter, redisWriteCounter)
 	prometheus.MustRegister(loginsCounter)
-	prometheus.MustRegister(cpuGauge)
+	prometheus.MustRegister(cpuUser, cpuSystem)
 }
 
 // MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
@@ -107,16 +113,17 @@ func MeasureCPU(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			percent, err := cpu.PercentWithContext(ctx, time.Second, false)
+			time.Sleep(2 * time.Second)
+
+			c, err := cpu.Get()
 			if err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 				return
 			}
 
-			if len(percent) == 1 {
-				cpuGauge.Set(percent[0])
-			}
+			cpuUser.Set(float64(c.User))
+			cpuSystem.Set(float64(c.System))
 		}
 	}
 }
