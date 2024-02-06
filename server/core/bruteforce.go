@@ -86,6 +86,8 @@ func (a *Authentication) userExists() (bool, error) {
 	accountName, err := backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
 		return false, err
+	} else {
+		redisReadCounter.Inc()
 	}
 
 	if accountName == "" {
@@ -167,7 +169,7 @@ func (a *Authentication) getNetwork(rule *config.BruteForceRule) (*net.IPNet, er
 	ipAddress := net.ParseIP(a.ClientIP)
 
 	if ipAddress == nil {
-		return nil, errors2.ErrWrongIPAddress
+		return nil, fmt.Errorf("%s '%s'", errors2.ErrWrongIPAddress, a.ClientIP)
 	}
 
 	if strings.Contains(ipAddress.String(), ":") {
@@ -307,6 +309,8 @@ func (a *Authentication) loadBruteForcePasswordHistoryFromRedis(key string) {
 	if passwordHistory, err := backend.RedisHandleReplica.HGetAll(backend.RedisHandle.Context(), key).Result(); err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisReadCounter.Inc()
 		}
 
 		return
@@ -396,6 +400,8 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 
 			return
+		} else {
+			redisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -407,6 +413,8 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), keys[index], time.Duration(viper.GetInt("redis_negative_cache_ttl"))*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -436,8 +444,12 @@ func (a *Authentication) loadBruteForceBucketCounterFromRedis(rule *config.Brute
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
 		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
 
-		if err := backend.LoadCacheFromRedis(key, &cache); err != nil {
+		if isRedisErr, err := backend.LoadCacheFromRedis(key, &cache); err != nil {
 			return
+		} else {
+			if !isRedisErr {
+				redisReadCounter.Inc()
+			}
 		}
 	}
 
@@ -462,70 +474,94 @@ func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteFo
 		if a.BruteForceName != rule.Name {
 			if err := backend.RedisHandle.Incr(backend.RedisHandle.Context(), key).Err(); err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+			} else {
+				redisWriteCounter.Inc()
 			}
 
 		}
 
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
 		}
 	}
 }
 
-// SetPreResultBruteForceRedis sets the BruteForceRule name in the Redis hash map based on the network IP address obtained from the given BruteForceRule parameter.
+// setPreResultBruteForceRedis sets the BruteForceRule name in the Redis hash map based on the network IP address obtained from the given BruteForceRule parameter.
 // If there is an error during the operation, it logs the error using the DefaultErrLogger.
-func (a *Authentication) SetPreResultBruteForceRedis(rule *config.BruteForceRule) {
+func (a *Authentication) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
 
 	network, err := a.getNetwork(rule)
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-	} else if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, network.String(), a.BruteForceName).Err(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+	} else {
+		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, network.String(), a.BruteForceName).Err(); err != nil {
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisWriteCounter.Inc()
+		}
 	}
 }
 
-// GetPreResultBruteForceRedis retrieves the name of the BruteForceRule from the Redis hash map, based on the network IP address obtained from the given BruteForceRule parameter.
+// getPreResultBruteForceRedis retrieves the name of the BruteForceRule from the Redis hash map, based on the network IP address obtained from the given BruteForceRule parameter.
 // If there is an error during the retrieval, it will log the error using the DefaultErrLogger.
 // If the key-value pair does not exist in the Redis hash map, it will return an empty string.
 // The retrieved rule name will be returned as the result.
-func (a *Authentication) GetPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string) {
+func (a *Authentication) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string, err error) {
+	var network *net.IPNet
+
 	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
 
-	network, err := a.getNetwork(rule)
+	network, err = a.getNetwork(rule)
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+
+		return
 	} else if ruleName, err = backend.RedisHandle.HGet(backend.RedisHandle.Context(), key, network.String()).Result(); err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			redisReadCounter.Inc()
 		}
 	}
+
+	err = nil
 
 	return
 }
 
-// DelIPBruteForceRedis deletes the IP address from the Redis hash map for brute force prevention.
+// deleteIPBruteForceRedis deletes the IP address from the Redis hash map for brute force prevention.
 // It checks if the IP address is present in the hash map and matches the provided rule name or if the rule name is "*".
 // If there's a match, it retrieves the network associated with the rule, constructs the hash map key, and deletes the IP address from the hash map using Redis HDEL command.
 // If there's an error, it logs the error using the DefaultErrLogger.
-func (a *Authentication) DelIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) {
+func (a *Authentication) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) error {
 	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
 
-	result := a.GetPreResultBruteForceRedis(rule)
+	result, err := a.getPreResultBruteForceRedis(rule)
 	if result == "" {
-		return
+		return err
 	}
 
 	if result == ruleName || ruleName == "*" {
 		if network, err := a.getNetwork(rule); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-		} else if err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), key, network.String()).Err(); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			if err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), key, network.String()).Err(); err != nil {
+				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+			} else {
+				redisWriteCounter.Inc()
+			}
 		}
+
+		return err
 	}
+
+	return nil
 }
 
-// CheckBruteForce is a method of the `Authentication` struct and is responsible for
+// checkBruteForce is a method of the `Authentication` struct and is responsible for
 // ascertaining whether the client IP should be blocked due to unrestricted unauthorized access attempts
 // (i.e., a Brute Force attack on the system).
 //
@@ -542,7 +578,7 @@ func (a *Authentication) DelIPBruteForceRedis(rule *config.BruteForceRule, ruleN
 //     the appropriate message, and runs a Lua script for handling the detected brute force attempt.
 //
 // It returns 'true' if a Brute Force attack is detected, otherwise returns 'false'.
-func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
+func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 	var (
 		useCache         bool
 		needEnforce      bool
@@ -609,7 +645,7 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 	}
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
-		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
+		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
 			level.Info(logging.DefaultLogger).Log(
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyBruteForce, "Client is whitelisted",
@@ -641,7 +677,7 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 			continue
 		}
 
-		if ruleName := a.GetPreResultBruteForceRedis(&rules[index]); ruleName != "" {
+		if ruleName, err := a.getPreResultBruteForceRedis(&rules[index]); ruleName != "" && err == nil {
 			alreadyTriggered = true
 			message = "Brute force attack detected (cached result)"
 
@@ -713,7 +749,7 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 		a.getAllPasswordHistories()
 
 		if ruleTriggered {
-			a.SetPreResultBruteForceRedis(&rules[index])
+			a.setPreResultBruteForceRedis(&rules[index])
 		}
 
 		level.Info(logging.DefaultLogger).Log(
@@ -755,7 +791,7 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 	return false
 }
 
-// UpdateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
+// updateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
 // It checks if brute force is enabled for the current protocol and if the client IP is not in the whitelist
 // Then it iterates through the loaded brute force rules and saves the bucket counter to Redis
 // The method also logs debug information related to the authentication
@@ -764,7 +800,7 @@ func (a *Authentication) CheckBruteForce() (blockClientIP bool) {
 //   - a: a pointer to the Authentication struct which contains the authentication details
 //
 // Returns: none
-func (a *Authentication) UpdateBruteForceBucketsCounter() {
+func (a *Authentication) updateBruteForceBucketsCounter() {
 	if config.LoadableConfig.BruteForce == nil {
 		return
 	}
@@ -810,7 +846,7 @@ func (a *Authentication) UpdateBruteForceBucketsCounter() {
 	}
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
-		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
+		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
 			return
 		}
 	}

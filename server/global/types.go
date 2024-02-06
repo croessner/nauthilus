@@ -3,7 +3,7 @@ package global
 // Backend is a numeric identifier for a database backend.
 type Backend uint8
 
-// AuthResult is the numeric result of a password check done by HandlePassword()
+// AuthResult is the numeric result of a password check done by handlePassword()
 type AuthResult uint8
 
 // LDAPCommand represents the LDAP operation like search, add or modify.
@@ -37,10 +37,14 @@ func (b Backend) String() string {
 	}
 }
 
+// DbgModule represents a debug module identifier.
 type DbgModule uint8
 
+// LuaAction represents a numeric identifier for a Lua action.
 type LuaAction uint8
 
+// LuaCommand is a numeric identifier for a Lua command.
 type LuaCommand uint8
 
+// CacheNameBackend is a numeric identifier for a cache name backend.
 type CacheNameBackend uint8

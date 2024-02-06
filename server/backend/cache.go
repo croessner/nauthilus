@@ -61,19 +61,22 @@ func LookupUserAccountFromRedis(username string) (accountName string, err error)
 	return
 }
 
-// LoadCacheFromRedis is a generic routine to load a cache object from Redis. The type is a RedisCache, which is a
-// union.
-func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
+// LoadCacheFromRedis loads the cache value from Redis and unmarshals it into the provided cache pointer.
+// If the key does not exist in Redis, it returns isRedisErr=true and err=nil.
+// If there is an error retrieving the value from Redis, it returns isRedisErr=true and err.
+// Otherwise, it unmarshals the value into the cache pointer and returns isRedisErr=false and err=nil.
+// It also logs any error messages using the DefaultErrLogger.
+func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
 
 	if redisValue, err = RedisHandleReplica.Get(RedisHandleReplica.Context(), key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil
+			return true, nil
 		}
 
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
-		return
+		return true, err
 	}
 
 	*cache = new(T)
@@ -88,12 +91,12 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (err error) {
 		global.DbgCache,
 		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", **cache))
 
-	return nil
+	return false, nil
 }
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache *T) {
+func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache *T) error {
 	var result string
 
 	util.DebugModule(
@@ -109,7 +112,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 			global.LogKeyError, err,
 		)
 
-		return
+		return err
 	}
 
 	//nolint:lll // Ignore
@@ -124,8 +127,33 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 		global.DbgCache,
 		global.LogKeyGUID, guid,
 		"redis", result)
+
+	return err
 }
 
+// GetCacheNames returns the set of cache names for the requested protocol and cache backends.
+// It searches for cache names based on the requested protocol and cache backends provided.
+// If backends is CacheAll or CacheLDAP:
+//   - It retrieves the LDAP search protocol configuration for the requested protocol.
+//   - If a cache name is found in the LDAP search protocol configuration, it adds it to the cacheNames set.
+//
+// If backends is CacheAll or CacheSQL:
+//   - It retrieves the SQL search protocol configuration for the requested protocol.
+//   - If a cache name is found in the SQL search protocol configuration, it adds it to the cacheNames set.
+//
+// If backends is CacheAll or CacheLua:
+//   - It retrieves the Lua search protocol configuration for the requested protocol.
+//   - If a cache name is found in the Lua search protocol configuration, it adds it to the cacheNames set.
+//
+// If no cache names are found in the above steps, it sets the default cache name "__default__".
+//
+// Parameters:
+// - requestedProtocol: The protocol to search for cache names.
+// - backends: The cache backends to include in the search. This can be CacheAll, CacheLDAP, CacheSQL, or CacheLua.
+//
+// Returns:
+// - cacheNames: The set of cache names found for the requested protocol and cache backends.
+// It can be obtained as a string slice using the GetStringSlice() method.
 func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (cacheNames config.StringSet) {
 	var (
 		cacheName    string
@@ -167,6 +195,10 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 	return
 }
 
+// GetWebAuthnFromRedis returns the user object from Redis based on the unique user ID.
+// It retrieves the Redis value based on the provided key and unmarshals it into a User object.
+// If there is an error during the process, it logs the error and returns nil with the error.
+// Otherwise, it returns the user object.
 func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	var redisValue []byte
 
@@ -189,6 +221,10 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	return
 }
 
+// SaveWebAuthnToRedis saves the user's WebAuthn data to Redis with the specified time-to-live (TTL) duration.
+// It serializes the user object using JSON and stores it in Redis under the key "as_webauthn:user:<user id>".
+// If serialization fails, it logs the error and returns it. If saving to Redis fails, it logs the error.
+// Note: User is a struct representing a user in the system.
 func SaveWebAuthnToRedis(user *User, ttl uint) error {
 	var result string
 

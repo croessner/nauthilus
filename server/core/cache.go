@@ -7,31 +7,37 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 )
 
-// CachePassDB implements the redis password database backend.
-func CachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+// cachePassDB implements the redis password database backend.
+func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var (
 		accountName string
 		ppc         *backend.PositivePasswordCache
 	)
 
-	// defer UnexpectedCrashHandler(CachePassDB)
+	// defer UnexpectedCrashHandler(cachePassDB)
 
 	passDBResult = &PassDBResult{}
 
 	cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
 
 	for _, cacheName := range cacheNames.GetStringSlice() {
-		accountName, err = auth.GetUserAccountFromRedis()
+		accountName, err = auth.getUserAccountFromRedis()
 		if err != nil {
 			return
 		}
 
 		if accountName != "" {
+			var isRedisErr bool
+
 			redisPosUserKey := config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName
 
-			err = backend.LoadCacheFromRedis(redisPosUserKey, &ppc)
+			isRedisErr, err = backend.LoadCacheFromRedis(redisPosUserKey, &ppc)
 			if err != nil {
 				return
+			}
+
+			if !isRedisErr {
+				redisReadCounter.Inc()
 			}
 		}
 

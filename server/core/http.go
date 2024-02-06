@@ -49,7 +49,7 @@ type RESTResult struct {
 //nolint:gocognit // Main logic
 func httpQueryHandler(ctx *gin.Context) {
 	if ctx.FullPath() == "/ping" {
-		HealthCheck(ctx)
+		healthCheck(ctx)
 	} else {
 		switch ctx.Param("category") {
 		case global.CatMail, global.CatGeneric:
@@ -60,19 +60,19 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.CheckBruteForce() {
-				auth.UpdateBruteForceBucketsCounter()
-				auth.PostLuaAction(&PassDBResult{})
-				auth.AuthFail(ctx)
+			if auth.checkBruteForce() {
+				auth.updateBruteForceBucketsCounter()
+				auth.postLuaAction(&PassDBResult{})
+				auth.authFail(ctx)
 
 				return
 			}
 
 			switch ctx.Param("service") {
-			case global.ServNginx, global.ServDovecot, global.ServUserInfo:
-				auth.Generic(ctx)
+			case global.ServNginx, global.ServDovecot, global.ServUserInfo, global.ServJSON:
+				auth.generic(ctx)
 			case global.ServSaslauthd:
-				auth.SASLauthd(ctx)
+				auth.saslAuthd(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -85,17 +85,17 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.CheckBruteForce() {
-				auth.UpdateBruteForceBucketsCounter()
-				auth.PostLuaAction(&PassDBResult{})
-				auth.AuthFail(ctx)
+			if auth.checkBruteForce() {
+				auth.updateBruteForceBucketsCounter()
+				auth.postLuaAction(&PassDBResult{})
+				auth.authFail(ctx)
 
 				return
 			}
 
 			switch ctx.Param("service") {
 			case global.ServBasicAuth:
-				auth.Generic(ctx)
+				auth.generic(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -103,7 +103,7 @@ func httpQueryHandler(ctx *gin.Context) {
 		case global.CatBruteForce:
 			switch ctx.Param("service") {
 			case global.ServList:
-				ListBruteforce(ctx)
+				listBruteforce(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -120,13 +120,13 @@ func httpCacheHandler(ctx *gin.Context) {
 	case global.CatCache:
 		switch ctx.Param("service") {
 		case global.ServFlush:
-			FlushCache(ctx)
+			flushCache(ctx)
 		}
 
 	case global.CatBruteForce:
 		switch ctx.Param("service") {
 		case global.ServFlush:
-			FlushBruteForceRule(ctx)
+			flushBruteForceRule(ctx)
 		}
 	}
 }
@@ -155,8 +155,8 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 			Method:            &method,
 		}
 
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
+		auth.withUserAgent(ctx)
+		auth.withXSSL(ctx)
 
 		if clientIP == "" {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
@@ -178,26 +178,26 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(global.ClientIPKey, clientIP)
 
-		if auth.CheckBruteForce() {
-			auth.UpdateBruteForceBucketsCounter()
-			auth.PostLuaAction(&PassDBResult{})
-			auth.AuthFail(ctx)
+		if auth.checkBruteForce() {
+			auth.updateBruteForceBucketsCounter()
+			auth.postLuaAction(&PassDBResult{})
+			auth.authFail(ctx)
 			ctx.Abort()
 
 			return
 		}
 
 		//nolint:exhaustive // Ignore some results
-		switch auth.HandleFeatures(ctx) {
+		switch auth.handleFeatures(ctx) {
 		case global.AuthResultFeatureTLS:
-			auth.PostLuaAction(&PassDBResult{})
+			auth.postLuaAction(&PassDBResult{})
 			handleErr(ctx, errors2.ErrNoTLS)
 			ctx.Abort()
 
 			return
 		case global.AuthResultFeatureRelayDomain, global.AuthResultFeatureRBL, global.AuthResultFeatureLua:
-			auth.PostLuaAction(&PassDBResult{})
-			auth.AuthFail(ctx)
+			auth.postLuaAction(&PassDBResult{})
+			auth.authFail(ctx)
 			ctx.Abort()
 
 			return
@@ -462,7 +462,7 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 // 1. Extracts the path from the request context.
 // 2. Creates a new Prometheus timer to measure the duration of the request.
 // 3. Calls the Next() method to pass the request to the next middleware or handler.
-// 4. Increments the HTTPRequestsTotalCounter with the path label value.
+// 4. Increments the httpRequestsTotalCounter with the path label value.
 // 5. Observes the duration of the request using the timer.
 //
 // Usage:
@@ -472,11 +472,11 @@ func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		path := ctx.FullPath()
 
-		timer := prometheus.NewTimer(HTTPResponseTimeSecondsHist.WithLabelValues(path))
+		timer := prometheus.NewTimer(httpResponseTimeSecondsHist.WithLabelValues(path))
 
 		ctx.Next()
 
-		HTTPRequestsTotalCounter.WithLabelValues(path).Inc()
+		httpRequestsTotalCounter.WithLabelValues(path).Inc()
 
 		timer.ObserveDuration()
 	}

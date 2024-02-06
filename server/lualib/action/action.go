@@ -19,9 +19,6 @@ import (
 var (
 	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
 	RequestChan chan *Action
-
-	// WorkerEndChan is a buffered channel of type `lualib.Done` used to signal the end of a worker.
-	WorkerEndChan chan lualib.Done
 )
 
 // LuaPool is a pool of Lua state instances.
@@ -135,6 +132,9 @@ type Worker struct {
 	// resultMap is a map where the key is an int representing the exit code from an executed action, and the value is the corresponding textual representation or description of the exit code.
 	// The exit code is a system-generated status code returned when an action is executed. It allows for the determination of whether the script completed successfully, or an error occurred during its execution.
 	resultMap map[int]string
+
+	// DoneChan is a buffered channel of type `Done` used to signal the end of a worker.
+	DoneChan chan Done
 }
 
 // NewWorker creates a new instance of the Worker struct.
@@ -164,14 +164,18 @@ func (aw *Worker) Work(ctx context.Context) {
 		return
 	}
 
+	aw.DoneChan = make(chan Done)
+
+	defer close(aw.DoneChan)
+
 	aw.loadActionScriptsFromConfiguration()
 
 	for {
 		select {
 		case <-ctx.Done():
-			WorkerEndChan <- lualib.Done{}
+			aw.DoneChan <- Done{}
 
-			break
+			return
 		case aw.luaActionRequest = <-RequestChan:
 			aw.handleRequest()
 		}
@@ -256,6 +260,12 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 // If an error occurs while executing the script, it logs the failure.
 // After executing the script, it logs the result and cancels the Lua context.
 func (aw *Worker) handleRequest() {
+	if len(aw.actionScripts) == 0 {
+		aw.luaActionRequest.FinishedChan <- Done{}
+
+		return
+	}
+
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)

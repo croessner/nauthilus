@@ -65,6 +65,10 @@ var (
 	ErrNoPassDBs             = errors.New("assertion len(passDBs)>0 count=0")
 	ErrUnknownService        = errors.New("unknown service")
 	ErrAllBackendConfigError = errors.New("configuration errors in all Database sections")
+	ErrInvalidJSONPayload    = errors.New("invalid JSON payload")
+	ErrUnsupportedMediaType  = errors.New("unsupported media type")
+	ErrFeatureNgxDisables    = errors.New("nginx_monitoring not enabled")
+	ErrNgxMonitoringEmpty    = errors.New("no nginx monitoring backend servers configured")
 )
 
 // env.

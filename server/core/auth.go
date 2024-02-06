@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -29,9 +30,69 @@ import (
 	"gotest.tools/v3/assert"
 )
 
+// ClaimHandler represents a claim handler struct.
+// A claim handler in this context is something to work with JSON Web Tokens (JWT), often used for APIs.
 type ClaimHandler struct {
-	Type      reflect.Kind
+	// Type is the reflected Kind of the claim value.
+	Type reflect.Kind
+
+	// ApplyFunc is a function that takes in three parameters: the claim value, the map of claims and the claim key.
+	// The function is intended to apply some process on the claim using the provided parameters,
+	// and return a boolean result.
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
+}
+
+type NginxBackendServer struct {
+	nginxBackendServer []*config.NginxBackendServer
+	mu                 sync.RWMutex
+}
+
+func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
+	n.mu.Lock()
+
+	defer n.mu.Unlock()
+
+	n.nginxBackendServer = servers
+}
+
+func NewNginxBackendServer() *NginxBackendServer {
+	return &NginxBackendServer{}
+}
+
+// JSONRequest is a data structure containing the details of a client's request in JSON format.
+type JSONRequest struct {
+	// Username is the identifier of the client/user sending the request.
+	Username string `json:"username"`
+
+	// Password is the authentication credential of the client/user sending the request.
+	Password string `json:"password"`
+
+	// ClientIP is the IP address of the client/user making the request.
+	ClientIP string `json:"client_ip"`
+
+	// ClientPort is the port number from which the client/user is sending the request.
+	ClientPort string `json:"client_port"`
+
+	// ClientHostname is the hostname of the client which is sending the request.
+	ClientHostname string `json:"client_hostname"`
+
+	// ClientID is the unique identifier of the client/user, usually assigned by the application.
+	ClientID string `json:"client_id"`
+
+	// LocalIP is the IP address of the server or endpoint receiving the request.
+	LocalIP string `json:"local_ip"`
+
+	// LocalPort is the port number of the server or endpoint receiving the request.
+	LocalPort string `json:"local_port"`
+
+	// Service is the specific service that the client/user is trying to access with the request.
+	Service string `json:"service"`
+
+	// Method is the HTTP method used in the request (i.e., PLAIN, LOGIN, etc.)
+	Method string `json:"method"`
+
+	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
+	AuthLoginAttempt uint `json:"auth_login_attempt"`
 }
 
 // Authentication is the central object that is filled by a remote application request and is modified from each
@@ -63,13 +124,13 @@ type Authentication struct {
 	// LoginAttempts is a counter that is incremented for each failed login request
 	LoginAttempts uint
 
-	// StatusCodeOk is the HTTP status code that is set by SetStatusCode.
+	// StatusCodeOk is the HTTP status code that is set by setStatusCodes.
 	StatusCodeOK int
 
-	// StatusCodeInternalError is the HTTP status code that is set by SetStatusCode.
+	// StatusCodeInternalError is the HTTP status code that is set by setStatusCodes.
 	StatusCodeInternalError int
 
-	// StatusCodeFail is the HTTP status code that is set by SetStatusCode.
+	// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
 	StatusCodeFail int
 
 	// GUID is a global unique identifier that is inherited in all functions and methods that deal with the
@@ -177,6 +238,10 @@ type Authentication struct {
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
 	UsedPassDBBackend global.Backend
 
+	UsedNginxBackendAddress string
+
+	UsedNginxBackendPort int
+
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
 	// attribute name as key and the corresponding result as value.
 	Attributes backend.DatabaseResult
@@ -228,11 +293,11 @@ type (
 	PassDBOption func(auth *Authentication) (*PassDBResult, error)
 
 	// PassDBMap is a struct type that represents a mapping between a backend type and a PassDBOption function.
-	// It is used in the VerifyPassword method of the Authentication struct to perform password verification against multiple databases.
+	// It is used in the verifyPassword method of the Authentication struct to perform password verification against multiple databases.
 	// The backend field represents the type of database backend (global.Backend) and the fn field represents the PassDBOption function.
 	// The PassDBOption function takes an Authentication pointer as input and returns a PassDBResult pointer and an error.
 	// The PassDBResult pointer contains the result of the password verification process.
-	// This struct is used to store the database mappings in an array and loop through them in the VerifyPassword method.
+	// This struct is used to store the database mappings in an array and loop through them in the verifyPassword method.
 	PassDBMap struct {
 		backend global.Backend
 		fn      PassDBOption
@@ -258,6 +323,8 @@ type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]webauthn.Credential, 
 
 // AddTOTPSecretFunc is a function signature that takes a *Authentication and *TOTPSecret as arguments and returns an error.
 type AddTOTPSecretFunc func(auth *Authentication, totp *TOTPSecret) (err error)
+
+var NginxBackendServers = NewNginxBackendServer()
 
 // String returns an Authentication object as string excluding the user password.
 func (a *Authentication) String() string {
@@ -397,9 +464,9 @@ func (a *Authentication) LogLineMail(status string, endpoint string) []any {
 	return keyvals
 }
 
-// GetAccount returns the account value from the Authentication object. If the account field is not set or the account
+// getAccount returns the account value from the Authentication object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
-func (a *Authentication) GetAccount() string {
+func (a *Authentication) getAccount() string {
 	if a.AccountField == nil {
 		return ""
 	}
@@ -413,16 +480,16 @@ func (a *Authentication) GetAccount() string {
 	return ""
 }
 
-// GetAccountOk returns the account name of a user. If there is no account, it returns the empty string "". A boolean
+// getAccountOk returns the account name of a user. If there is no account, it returns the empty string "". A boolean
 // is set to return a "found" flag.
-func (a *Authentication) GetAccountOk() (string, bool) {
-	account := a.GetAccount()
+func (a *Authentication) getAccountOk() (string, bool) {
+	account := a.getAccount()
 
 	return account, account != ""
 }
 
-// GetTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
-func (a *Authentication) GetTOTPSecret() string {
+// getTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
+func (a *Authentication) getTOTPSecret() string {
 	if a.TOTPSecretField == nil {
 		return ""
 	}
@@ -436,16 +503,16 @@ func (a *Authentication) GetTOTPSecret() string {
 	return ""
 }
 
-// GetTOTPSecretOk returns the TOTP secret for a user. If there is no secret, it returns the empty string "". A boolean
+// getTOTPSecretOk returns the TOTP secret for a user. If there is no secret, it returns the empty string "". A boolean
 // is set to return a "found" flag.
-func (a *Authentication) GetTOTPSecretOk() (string, bool) {
-	totpSecret := a.GetTOTPSecret()
+func (a *Authentication) getTOTPSecretOk() (string, bool) {
+	totpSecret := a.getTOTPSecret()
 
 	return totpSecret, totpSecret != ""
 }
 
-// GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
-func (a *Authentication) GetUniqueUserID() string {
+// getUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
+func (a *Authentication) getUniqueUserID() string {
 	if a.UniqueUserIDField == nil {
 		return ""
 	}
@@ -462,13 +529,13 @@ func (a *Authentication) GetUniqueUserID() string {
 // GetUniqueUserIDOk returns the unique identifier for a user. If there is no id, it returns the empty string "". A boolean
 // is set to return a "found" flag.
 func (a *Authentication) GetUniqueUserIDOk() (string, bool) {
-	uniqueUserID := a.GetUniqueUserID()
+	uniqueUserID := a.getUniqueUserID()
 
 	return uniqueUserID, uniqueUserID != ""
 }
 
-// GetDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
-func (a *Authentication) GetDisplayName() string {
+// getDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
+func (a *Authentication) getDisplayName() string {
 	if a.DisplayNameField == nil {
 		return ""
 	}
@@ -485,50 +552,90 @@ func (a *Authentication) GetDisplayName() string {
 // GetDisplayNameOk returns the display name of a user. If there is no account, it returns the empty string "". A boolean
 // is set to return a "found" flag.
 func (a *Authentication) GetDisplayNameOk() (string, bool) {
-	displayName := a.GetDisplayName()
+	displayName := a.getDisplayName()
 
 	return displayName, displayName != ""
 }
 
-// AuthOK is the general method to indicate authentication success.
-func (a *Authentication) AuthOK(ctx *gin.Context) {
+// authOK is the general method to indicate authentication success.
+func (a *Authentication) authOK(ctx *gin.Context) {
 	setCommonHeaders(ctx, a)
 	switch a.Service {
 	case global.ServNginx:
 		setNginxHeaders(ctx, a)
 	case global.ServDovecot:
 		setDovecotHeaders(ctx, a)
-	case global.ServUserInfo:
+	case global.ServUserInfo, global.ServJSON:
 		setUserInfoHeaders(ctx, a)
 	}
 
 	handleLogging(ctx, a)
 
-	LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	loginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
+// setCommonHeaders sets common headers for the given gin.Context and Authentication.
+// It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the Authentication.
+// If the Authentication's Service is not global.ServBasicAuth and the UsernameReplace flag is true, it retrieves the account from the Authentication and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	ctx.Header("Auth-Status", "OK")
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	if a.Service != global.ServBasicAuth && a.UsernameReplace {
-		if account, found := a.GetAccountOk(); found {
+		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
 	}
 }
 
+// setNginxHeaders sets the appropriate headers for the given gin.Context and Authentication based on the configuration and feature flags.
+// If the global.FeatureNginxMonitoring feature is enabled, it checks if the Authentication's UsedNginxBackendAddress and UsedNginxBackendPort are set.
+// If they are, it sets the "Auth-Server" header to the UsedNginxBackendAddress and the "Auth-Port" header to the UsedNginxBackendPort.
+// If the global.FeatureNginxMonitoring feature is disabled, it checks the Authentication's Protocol.
+// If the Protocol is global.ProtoSMTP, it sets the "Auth-Server" header to the SMTPBackendAddress and the "Auth-Port" header to the SMTPBackendPort.
+// If the Protocol is global.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
+// If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
-	switch a.Protocol.Get() {
-	case global.ProtoSMTP:
-		ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
-		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
-	default:
-		ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
-		ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
+	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
+			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+		}
+	} else {
+		switch a.Protocol.Get() {
+		case global.ProtoSMTP:
+			ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
+		case global.ProtoIMAP:
+			ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
+		case global.ProtoPOP3:
+			ctx.Header("Auth-Server", config.EnvConfig.POP3BackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.POP3BackendPort))
+		}
 	}
 }
 
+// setDovecotHeaders sets the specified headers in the given gin.Context based on the attributes in the Authentication object.
+// It iterates through the attributes and calls the handleAttributeValue function for each attribute.
+//
+// Parameters:
+// - ctx: The gin.Context object to set the headers on.
+// - a: The Authentication object containing the attributes.
+//
+// Example:
+//
+//	a := &Authentication{
+//	    Attributes: map[string][]any{
+//	        "Attribute1": []any{"Value1"},
+//	        "Attribute2": []any{"Value2_1", "Value2_2"},
+//	    },
+//	}
+//	setDovecotHeaders(ctx, a)
+//
+// Resulting headers in ctx:
+// - X-Nauthilus-Attribute1: "Value1"
+// - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
 func setDovecotHeaders(ctx *gin.Context, a *Authentication) {
 	if a.Attributes != nil && len(a.Attributes) > 0 {
 		for name, value := range a.Attributes {
@@ -537,6 +644,15 @@ func setDovecotHeaders(ctx *gin.Context, a *Authentication) {
 	}
 }
 
+// handleAttributeValue sets the value of a header in the given gin.Context based on the name and value provided.
+// If the value length is 1, it formats the value as a string and assigns it to the headerValue variable.
+// If the value length is greater than 1, it formats each value and joins them with a comma separator, unless the name is "dn",
+// in which case it joins them with a semicolon separator.
+// Finally, it adds the header "X-Nauthilus-" + name with the value of headerValue to the gin.Context.
+// Parameters:
+// - ctx: the gin.Context to set the header in
+// - name: the name of the header
+// - value: the value of the header
 func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 	var headerValue string
 
@@ -606,12 +722,12 @@ func handleLogging(ctx *gin.Context, a *Authentication) {
 	}
 }
 
-// IncreaseLoginAttempts increments the number of login attempts for the Authentication object.
+// increaseLoginAttempts increments the number of login attempts for the Authentication object.
 // If the number of login attempts exceeds the maximum value allowed (MaxUint8), it sets it to the maximum value.
 // If the Authentication service is equal to ServNginx and the number of login attempts is less than the maximum login attempts specified in the environment configuration,
 // it increments the number of login attempts by one.
-// The usage example of this method can be found in the AuthFail function.
-func (a *Authentication) IncreaseLoginAttempts() {
+// The usage example of this method can be found in the authFail function.
+func (a *Authentication) increaseLoginAttempts() {
 	if a.LoginAttempts > math.MaxUint8 {
 		a.LoginAttempts = math.MaxUint8
 	}
@@ -623,9 +739,9 @@ func (a *Authentication) IncreaseLoginAttempts() {
 	}
 }
 
-// SetFailureHeaders sets the failure headers for the given authentication context.
+// setFailureHeaders sets the failure headers for the given authentication context.
 // It sets the "Auth-Status" header to the value of global.PasswordFail constant.
-// It sets the "X-Authserv-Session" header to the value of the authentication's GUID field.
+// It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
 // It updates the StatusMessage of the authentication to global.PasswordFail.
 //
 // If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
@@ -635,9 +751,9 @@ func (a *Authentication) IncreaseLoginAttempts() {
 //     If the PasswordHistory field is nil, it responds with an empty JSON object.
 //
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
-func (a *Authentication) SetFailureHeaders(ctx *gin.Context) {
+func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
 	ctx.Header("Auth-Status", global.PasswordFail)
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	a.StatusMessage = global.PasswordFail
 
@@ -655,29 +771,29 @@ func (a *Authentication) SetFailureHeaders(ctx *gin.Context) {
 	}
 }
 
-// LoginAttemptProcessing performs processing for a failed login attempt.
+// loginAttemptProcessing performs processing for a failed login attempt.
 // It checks the verbosity level in the environment configuration and logs the failed login attempt if it is greater than LogLevelWarn.
-// It then increments the LoginsCounter with the LabelFailure.
+// It then increments the loginsCounter with the LabelFailure.
 //
 // Example usage:
 //
 //	a := &Authentication{}
 //	ctx := &gin.Context{}
-//	a.LoginAttemptProcessing(ctx)
-func (a *Authentication) LoginAttemptProcessing(ctx *gin.Context) {
+//	a.loginAttemptProcessing(ctx)
+func (a *Authentication) loginAttemptProcessing(ctx *gin.Context) {
 	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
 		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 	}
 
-	LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
+	loginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 
-// AuthFail handles the failure of authentication.
+// authFail handles the failure of authentication.
 // It increases the login attempts, sets failure headers on the context, and performs login attempt processing.
-func (a *Authentication) AuthFail(ctx *gin.Context) {
-	a.IncreaseLoginAttempts()
-	a.SetFailureHeaders(ctx)
-	a.LoginAttemptProcessing(ctx)
+func (a *Authentication) authFail(ctx *gin.Context) {
+	a.increaseLoginAttempts()
+	a.setFailureHeaders(ctx)
+	a.loginAttemptProcessing(ctx)
 }
 
 // setSMPTHeaders sets SMTP headers in the specified `gin.Context` if the `Service` is `ServNginx` and the `Protocol` is `ProtoSMTP`.
@@ -695,7 +811,7 @@ func (a *Authentication) setSMPTHeaders(ctx *gin.Context) {
 // setUserInfoHeaders sets the necessary headers for UserInfo service in a Gin context
 // Usage example:
 //
-//	func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
+//	func (a *Authentication) authTempFail(ctx *gin.Context, reason string) {
 //	    ...
 //	    if a.Service == global.ServUserInfo {
 //	        a.setUserInfoHeaders(ctx, reason)
@@ -718,7 +834,7 @@ func (a *Authentication) setUserInfoHeaders(ctx *gin.Context, reason string) {
 	ctx.JSON(a.StatusCodeInternalError, &errType{Error: reason})
 }
 
-// AuthTempFail sets the necessary headers and status message for temporary authentication failure.
+// authTempFail sets the necessary headers and status message for temporary authentication failure.
 // If the service is "user", it also sets headers specific to user information.
 // After setting the headers, it returns the appropriate response based on the service.
 // If the service is not "user", it returns an internal server error response with the status message.
@@ -730,25 +846,25 @@ func (a *Authentication) setUserInfoHeaders(ctx *gin.Context, reason string) {
 //
 // Usage example:
 //
-//	  func (a *Authentication) Generic(ctx *gin.Context) {
+//	  func (a *Authentication) generic(ctx *gin.Context) {
 //	    ...
-//	    a.AuthTempFail(ctx, global.TempFailDefault)
+//	    a.authTempFail(ctx, global.TempFailDefault)
 //	    ...
 //	  }
-//	  func (a *Authentication) SASLauthd(ctx *gin.Context) {
+//	  func (a *Authentication) saslAuthd(ctx *gin.Context) {
 //		   ...
-//	    a.AuthTempFail(ctx, global.TempFailDefault)
+//	    a.authTempFail(ctx, global.TempFailDefault)
 //	    ...
 //	  }
 //
-// Declaration and usage of AuthTempFail:
+// Declaration and usage of authTempFail:
 //
-//	A: func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
+//	A: func (a *Authentication) authTempFail(ctx *gin.Context, reason string) {
 //	  ...
 //	}
-func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
+func (a *Authentication) authTempFail(ctx *gin.Context, reason string) {
 	ctx.Header("Auth-Status", reason)
-	ctx.Header("X-Authserv-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 	a.setSMPTHeaders(ctx)
 
 	a.StatusMessage = reason
@@ -762,8 +878,8 @@ func (a *Authentication) AuthTempFail(ctx *gin.Context, reason string) {
 	level.Info(logging.DefaultLogger).Log(a.LogLineMail("tempfail", ctx.Request.URL.Path)...)
 }
 
-// IsInNetwork checks an IP address against a network and returns true if it matches.
-func (a *Authentication) IsInNetwork(networkList []string) (matchIP bool) {
+// isInNetwork checks an IP address against a network and returns true if it matches.
+func (a *Authentication) isInNetwork(networkList []string) (matchIP bool) {
 	ipAddress := net.ParseIP(a.ClientIP)
 
 	for _, ipOrNet := range networkList {
@@ -795,10 +911,19 @@ func (a *Authentication) IsInNetwork(networkList []string) (matchIP bool) {
 	return
 }
 
+// logNetworkError logs a network error message.
+//
+// Parameters:
+// - ipOrNet (string): The IP or network causing the error.
+// - err (error): The error information.
+//
+// Usage example:
+// a.logNetworkError(ipOrNet, err)
 func (a *Authentication) logNetworkError(ipOrNet string, err error) {
 	level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
 }
 
+// checkAndLogNetwork logs the information about checking a network for the given authentication object.
 func (a *Authentication) checkAndLogNetwork(network *net.IPNet) {
 	util.DebugModule(
 		global.DbgWhitelist,
@@ -806,11 +931,12 @@ func (a *Authentication) checkAndLogNetwork(network *net.IPNet) {
 	)
 }
 
+// checkAndLogIP logs the IP address of the client along with the IP address or network being checked.
 func (a *Authentication) checkAndLogIP(ipOrNet string) {
 	util.DebugModule(global.DbgWhitelist, global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, ipOrNet))
 }
 
-// VerifyPassword takes in an array of PassDBMap and performs the following steps:
+// verifyPassword takes in an array of PassDBMap and performs the following steps:
 // - Check if there are any password databases available
 // - Iterate over each password database and call the corresponding function
 // - Log debug information for each database and its result
@@ -824,7 +950,7 @@ func (a *Authentication) checkAndLogIP(ipOrNet string) {
 // Return values:
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
-func (a *Authentication) VerifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
+func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
 	var (
 		passDBResult *PassDBResult
 		err          error
@@ -866,7 +992,7 @@ func (a *Authentication) VerifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 //
 // Example Usage:
 //
-//	func (a *Authentication) VerifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
+//	func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
 //	    var (
 //	        passDBResult *PassDBResult
 //	        err          error
@@ -1011,14 +1137,14 @@ func updateAuthentication(a *Authentication, passDBResult *PassDBResult, passDB 
 	return passDBResult
 }
 
-// SetStatusCode sets different status codes for various services.
-func (a *Authentication) SetStatusCode(service string) error {
+// setStatusCodes sets different status codes for various services.
+func (a *Authentication) setStatusCodes(service string) error {
 	switch service {
 	case global.ServNginx, global.ServDovecot:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo:
+	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -1029,8 +1155,8 @@ func (a *Authentication) SetStatusCode(service string) error {
 	return nil
 }
 
-// HandleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
-func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
+// handleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
+func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
 	doAction := func(luaAction global.LuaAction) {
@@ -1063,7 +1189,7 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	 */
 
 	if config.EnvConfig.HasFeature(global.FeatureGeoIP) {
-		a.FeatureGeoIP()
+		a.featureGeoIP()
 	}
 
 	/*
@@ -1071,12 +1197,12 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	 */
 
 	if config.EnvConfig.HasFeature(global.FeatureLua) {
-		if triggered, abortFeatures, err := a.FeatureLua(ctx); err != nil {
+		if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
 			return global.AuthResultTempFail
 		} else if triggered {
 			a.FeatureName = global.FeatureLua
 
-			a.UpdateBruteForceBucketsCounter()
+			a.updateBruteForceBucketsCounter()
 			doAction(global.LuaActionLua)
 
 			return global.AuthResultFeatureLua
@@ -1090,7 +1216,7 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	 */
 
 	if config.EnvConfig.HasFeature(global.FeatureTLSEncryption) {
-		if a.FeatureTLSEncryption() {
+		if a.featureTLSEncryption() {
 			a.FeatureName = global.FeatureTLSEncryption
 
 			doAction(global.LuaActionTLS)
@@ -1100,10 +1226,10 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	}
 
 	if config.EnvConfig.HasFeature(global.FeatureRelayDomains) {
-		if a.FeatureRelayDomains() {
+		if a.featureRelayDomains() {
 			a.FeatureName = global.FeatureRelayDomains
 
-			a.UpdateBruteForceBucketsCounter()
+			a.updateBruteForceBucketsCounter()
 			doAction(global.LuaActionRelayDomains)
 
 			return global.AuthResultFeatureRelayDomain
@@ -1111,12 +1237,12 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	}
 
 	if config.EnvConfig.HasFeature(global.FeatureRBL) {
-		if triggered, err := a.FeatureRBLs(ctx); err != nil {
+		if triggered, err := a.featureRBLs(ctx); err != nil {
 			return global.AuthResultTempFail
 		} else if triggered {
 			a.FeatureName = global.FeatureRBL
 
-			a.UpdateBruteForceBucketsCounter()
+			a.updateBruteForceBucketsCounter()
 			doAction(global.LuaActionRBL)
 
 			return global.AuthResultFeatureRBL
@@ -1126,8 +1252,10 @@ func (a *Authentication) HandleFeatures(ctx *gin.Context) (authResult global.Aut
 	return global.AuthResultOK
 }
 
-// PostLuaAction sends a Lua action to be executed asynchronously.
-func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
+// postLuaAction sends a Lua action to be executed asynchronously.
+func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
+	a.HTTPClientContext = nil
+
 	go func() {
 		finished := make(chan action.Done)
 
@@ -1149,13 +1277,13 @@ func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
 			Username:          a.Username,
 			Account: func() string {
 				if passDBResult.UserFound {
-					return a.GetAccount()
+					return a.getAccount()
 				}
 
 				return ""
 			}(),
-			UniqueUserID:   a.GetUniqueUserID(),
-			DisplayName:    a.GetDisplayName(),
+			UniqueUserID:   a.getUniqueUserID(),
+			DisplayName:    a.getDisplayName(),
 			Password:       a.Password,
 			Protocol:       a.Protocol.Get(),
 			BruteForceName: a.BruteForceName,
@@ -1168,11 +1296,11 @@ func (a *Authentication) PostLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
-// HandlePassword is the mein password checking routine. It calls VerifyPassword to check the user credentials. After
+// handlePassword is the mein password checking routine. It calls verifyPassword to check the user credentials. After
 // the verification process ended, it updates user information on the Redis server, if the cache backend is enabled.
 //
 //nolint:gocognit // Ignore
-func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.AuthResult) {
+func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
 	if a.Username == "" {
 		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Empty username")
 
@@ -1201,23 +1329,23 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 		case global.BackendCache:
 			passDBs = append(passDBs, &PassDBMap{
 				global.BackendCache,
-				CachePassDB,
+				cachePassDB,
 			})
 			useCache = true
 		case global.BackendLDAP:
 			passDBs = append(passDBs, &PassDBMap{
 				global.BackendLDAP,
-				LDAPPassDB,
+				ldapPassDB,
 			})
 		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 			passDBs = append(passDBs, &PassDBMap{
 				global.BackendSQL,
-				SQLPassDB,
+				sqlPassDB,
 			})
 		case global.BackendLua:
 			passDBs = append(passDBs, &PassDBMap{
 				global.BackendLua,
-				LuaPassDB,
+				luaPassDB,
 			})
 		case global.BackendUnknown:
 		}
@@ -1226,7 +1354,7 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 	}
 
 	// Capture the index to know which passdb answered the query
-	passDBResult, err := a.VerifyPassword(passDBs)
+	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors2.DetailedError
 
@@ -1264,7 +1392,7 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 				for _, cacheName := range cacheNames.GetStringSlice() {
 					var accountName string
 
-					accountName, err = a.GetUserAccountFromRedis()
+					accountName, err = a.getUserAccountFromRedis()
 					if err != nil {
 						level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
@@ -1289,7 +1417,11 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 							Attributes: a.Attributes,
 						}
 
-						go backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc)
+						go func() {
+							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
+								redisWriteCounter.Inc()
+							}
+						}()
 					}
 				}
 			}
@@ -1309,8 +1441,8 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 	}
 
 	if !passDBResult.Authenticated {
-		a.UpdateBruteForceBucketsCounter()
-		a.PostLuaAction(passDBResult)
+		a.updateBruteForceBucketsCounter()
+		a.postLuaAction(passDBResult)
 
 		return global.AuthResultFail
 	}
@@ -1323,15 +1455,41 @@ func (a *Authentication) HandlePassword(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	authResult = a.FilterLua(passDBResult, ctx)
+	authResult = a.filterLua(passDBResult, ctx)
 
-	a.PostLuaAction(passDBResult)
+	a.postLuaAction(passDBResult)
 
 	return authResult
 }
 
-// FilterLua calls Lua filters which can change the backend result.
-func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+// prepareNginxBackendServer prepares a map of Nginx backend servers based on the given Authentication protocol.
+// It iterates over the nginxBackendServer slice of NginxBackendServers, locks it for reading, filters the servers based on the protocol match,
+// and constructs a map with the server IP as the key and port as the value.
+// The function returns the constructed map.
+// The method does not modify the servers slice.
+func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, backendServers *[]map[string]int) {
+	servers.mu.RLock()
+
+	defer servers.mu.RUnlock()
+
+	for index := range servers.nginxBackendServer {
+		if servers.nginxBackendServer[index].Protocol == a.Protocol.Get() {
+			server := make(map[string]int)
+
+			server[servers.nginxBackendServer[index].IP] = servers.nginxBackendServer[index].Port
+			*backendServers = append(*backendServers, server)
+		}
+	}
+}
+
+// filterLua calls Lua filters which can change the backend result.
+func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+	backendServer := make([]map[string]int, 0)
+
+	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		a.prepareNginxBackendServer(NginxBackendServers, &backendServer)
+	}
+
 	filterRequest := &filter.Request{
 		Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 		UserFound:     passDBResult.UserFound,
@@ -1347,16 +1505,19 @@ func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		Username:      a.Username,
 		Account: func() string {
 			if passDBResult.UserFound {
-				return a.GetAccount()
+				return a.getAccount()
 			}
 
 			return ""
 		}(),
-		UniqueUserID: a.GetUniqueUserID(),
-		DisplayName:  a.GetDisplayName(),
-		Protocol:     a.Protocol.String(),
-		Password:     a.Password,
-		Context:      a.Context,
+		UniqueUserID:            a.getUniqueUserID(),
+		DisplayName:             a.getDisplayName(),
+		Protocol:                a.Protocol.String(),
+		Password:                a.Password,
+		NginxBackendServers:     backendServer,
+		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
+		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
+		Context:                 a.Context,
 	}
 
 	filterResult, err := filterRequest.CallFilterLua(ctx)
@@ -1374,6 +1535,9 @@ func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		if filterResult {
 			return global.AuthResultFail
 		}
+
+		a.UsedNginxBackendAddress = *filterRequest.UsedNginxBackendAddress
+		a.UsedNginxBackendPort = *filterRequest.UsedNginxBackendPort
 	}
 
 	if passDBResult.Authenticated {
@@ -1383,8 +1547,8 @@ func (a *Authentication) FilterLua(passDBResult *PassDBResult, ctx *gin.Context)
 	return global.AuthResultFail
 }
 
-// ListUserAccounts returns the list of all known users from the account databases.
-func (a *Authentication) ListUserAccounts() (accountList AccountList) {
+// listUserAccounts returns the list of all known users from the account databases.
+func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
 	for _, accountDB := range config.EnvConfig.PassDBs {
@@ -1392,17 +1556,17 @@ func (a *Authentication) ListUserAccounts() (accountList AccountList) {
 		case global.BackendLDAP:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLDAP,
-				LDAPAccountDB,
+				ldapAccountDB,
 			})
 		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendSQL,
-				SQLAccountDB,
+				sqlAccountDB,
 			})
 		case global.BackendLua:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLua,
-				LuaAccountDB,
+				luaAccountDB,
 			})
 		case global.BackendUnknown:
 		case global.BackendCache:
@@ -1446,9 +1610,9 @@ func (p PassDBResult) String() string {
 	return result[1:]
 }
 
-// GetUserAccountFromRedis returns the user account value from the user Redis hash. If none was found, a new entry in
+// getUserAccountFromRedis returns the user account value from the user Redis hash. If none was found, a new entry in
 // the hash table is created.
-func (a *Authentication) GetUserAccountFromRedis() (accountName string, err error) {
+func (a *Authentication) getUserAccountFromRedis() (accountName string, err error) {
 	var (
 		assertOk bool
 		accounts []string
@@ -1460,6 +1624,8 @@ func (a *Authentication) GetUserAccountFromRedis() (accountName string, err erro
 	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
 		return
+	} else {
+		redisReadCounter.Inc()
 	}
 
 	if accountName != "" {
@@ -1478,106 +1644,250 @@ func (a *Authentication) GetUserAccountFromRedis() (accountName string, err erro
 		sort.Sort(sort.StringSlice(accounts))
 
 		accountName = strings.Join(accounts, ":")
+
 		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
+		if err == nil {
+			redisWriteCounter.Inc()
+		}
 	}
 
 	return
 }
 
-// NewAuthentication is a constructor for services found in the request URI.
+// setupHeaderBasedAuth sets up the authentication based on the headers in the request.
+// It takes the context and the authentication object as parameters.
+// It retrieves the GUID value from the context using global.GUIDKey and casts it to a string.
+// It retrieves the "Auth-User" and "Auth-Pass" headers from the request and assigns them to the username and password fields of the authentication object.
+// It sets the protocol field of the authentication object by calling the Set method on auth.Protocol with the value of the "Auth-Protocol" header.
+// It parses the "Auth-Login-Attempt" header as an integer and assigns it to the loginAttempts variable.
+// If there is an error parsing the header or the loginAttempts is negative, it sets loginAttempts to 0.
+// It assigns the loginAttempts value to the LoginAttempts field of the authentication object using an immediately invoked function expression (IIFE).
+// It retrieves the "Auth-Method" header from the request and assigns it to the method variable.
+// It checks the "mode" query parameter in the context.
+// If it is set to "no-auth", it sets the NoAuth field of the authentication object to true.
+// If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
+// It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
+func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
+	guid := ctx.Value(global.GUIDKey).(string)
+
+	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
+	auth.Username = ctx.Request.Header.Get("Auth-User")
+	auth.UsernameOrig = auth.Username
+	auth.Password = ctx.Request.Header.Get("Auth-Pass")
+
+	auth.Protocol.Set(ctx.Request.Header.Get("Auth-Protocol"))
+
+	auth.LoginAttempts = func() uint {
+		loginAttempts, err := strconv.Atoi(ctx.Request.Header.Get("Auth-Login-Attempt"))
+		if err != nil {
+			return 0
+		}
+
+		if loginAttempts < 0 {
+			loginAttempts = 0
+		}
+
+		return uint(loginAttempts)
+	}()
+
+	method := ctx.Request.Header.Get("Auth-Method")
+
+	auth.Method = &method
+
+	switch ctx.Query("mode") {
+	case "no-auth":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
+
+		auth.NoAuth = true
+	case "list-accounts":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
+
+		auth.ListAccounts = true
+	}
+
+	auth.withClientInfo(ctx)
+	auth.withLocalInfo(ctx)
+	auth.withUserAgent(ctx)
+	auth.withXSSL(ctx)
+}
+
+// processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the Authentication object.
+// It extracts the values for the fields method, realm, user_agent, username, password, protocol, port, tls, and security from the request form.
+// If the realm field is not empty, it appends "@" + realm to the username field in the Authentication object.
+// It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the Authentication object.
+func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *Authentication) {
+	method := ctx.PostForm("method")
+	realm := ctx.PostForm("realm")
+	userAgent := ctx.PostForm("user_agent")
+
+	if len(realm) > 0 {
+		auth.Username += "@" + realm
+	}
+
+	auth.Method = &method
+	auth.UserAgent = &userAgent
+	auth.Username = ctx.PostForm("username")
+	auth.UsernameOrig = auth.Username
+	auth.Password = ctx.PostForm("password")
+	auth.Protocol = &config.Protocol{}
+	auth.Protocol.Set(ctx.PostForm("protocol"))
+	auth.XLocalIP = global.Localhost4
+	auth.XPort = ctx.PostForm("port")
+	auth.XSSL = ctx.PostForm("tls")
+	auth.XSSLProtocol = ctx.PostForm("security")
+
+}
+
+// processApplicationJSON takes a gin Context and an Authentication object.
+// It attempts to bind the JSON payload from the Context to a JSONRequest object.
+// If there is an error in the binding process, it sets the error type to "gin.ErrorTypeBind" and returns.
+// Otherwise, it calls the setAuthenticationFields function with the Authentication object and the JSONRequest object,
+// and sets additional fields in the Authentication object using the XSSL method.
+func processApplicationJSON(ctx *gin.Context, auth *Authentication) {
+	var jsonRequest *JSONRequest
+
+	err := ctx.ShouldBindJSON(&jsonRequest)
+	if err != nil {
+		ctx.Error(errors2.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+
+		return
+	}
+
+	setAuthenticationFields(auth, jsonRequest).withXSSL(ctx)
+}
+
+// setAuthenticationFields populates the fields of the Authentication struct with values from the JSONRequest.
+// It takes a pointer to the Authentication struct and a pointer to the JSONRequest struct as input.
+// It sets the values of the Method, UserAgent, Username, UsernameOrig, Password, ClientIP, XClientPort,
+// ClientHost, XLocalIP, XPort, and Service fields of the Authentication struct with the corresponding values
+// from the JSONRequest struct.
+// It then returns the pointer to the modified Authentication struct.
+//
+// Example usage:
+// auth := &Authentication{}
+//
+//	request := &JSONRequest{
+//	    Method:          "POST",
+//	    ClientID:        "client123",
+//	    Username:        "john",
+//	    Password:        "password",
+//	    ClientIP:        "192.168.1.100",
+//	    ClientPort:      "8080",
+//	    ClientHostname:  "example.com",
+//	    LocalIP:         "127.0.0.1",
+//	    LocalPort:       "3000",
+//	    Service:         "auth",
+//	    AuthLoginAttempt: 1,
+//	}
+//
+// setAuthenticationFields(auth, request)
+// // After the function call, the fields of auth would be populated with the values from request
+func setAuthenticationFields(auth *Authentication, request *JSONRequest) *Authentication {
+	auth.Method = &request.Method
+	auth.UserAgent = &request.ClientID
+	auth.Username = request.Username
+	auth.UsernameOrig = request.Username
+	auth.Password = request.Password
+	auth.ClientIP = request.ClientIP
+	auth.XClientPort = request.ClientPort
+	auth.ClientHost = request.ClientHostname
+	auth.XLocalIP = request.LocalIP
+	auth.XPort = request.LocalPort
+	auth.Service = request.Service
+
+	return auth
+}
+
+// setupBodyBasedAuth takes a Context and an Authentication object as input.
+// It retrieves the "Content-Type" header from the Context.
+// If the "Content-Type" starts with "application/x-www-form-urlencoded",
+// it calls the processApplicationXWWWFormUrlencoded function passing the Context and Authentication object.
+// If the "Content-Type" is "application/json",
+// it calls the processApplicationJSON function passing the Context and Authentication object.
+// If neither of the above conditions match, it sets the error associated with unsupported media type
+// and sets the error type to gin.ErrorTypeBind on the Context.
+func setupBodyBasedAuth(ctx *gin.Context, auth *Authentication) {
+	contentType := ctx.GetHeader("Content-Type")
+
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		processApplicationXWWWFormUrlencoded(ctx, auth)
+	} else if contentType == "application/json" {
+		processApplicationJSON(ctx, auth)
+	} else {
+		ctx.Error(errors2.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+	}
+}
+
+// setupHTTPBasiAuth sets up basic authentication for HTTP requests.
+// It takes in a gin.Context object and a pointer to an Authentication object.
+// It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the Authentication object to set client, local, user-agent, and X-SSL information, respectively
+func setupHTTPBasiAuth(ctx *gin.Context, auth *Authentication) {
+	// NOTE: We must get username and password later!
+	auth.withClientInfo(ctx)
+	auth.withLocalInfo(ctx)
+	auth.withUserAgent(ctx)
+	auth.withXSSL(ctx)
+}
+
+// setupAuth sets up the authentication based on the service parameter in the gin context.
+// It takes the gin context and an Authentication struct as input.
+//
+// If the service parameter is "nginx", "dovecot", or "user", it calls the setupHeaderBasedAuth function.
+// If the service parameter is "saslauthd", it calls the setupBodyBasedAuth function.
+// If the service parameter is "basicauth", it calls the setupHTTPBasiAuth function.
+//
+// After setting up the authentication, it calls the withDefaults method on the Authentication struct.
+//
+// Example usage:
+//
+//	auth := &Authentication{}
+//	ctx := gin.Context{}
+//	ctx.SetParam("service", "nginx")
+//	setupAuth(&ctx, auth)
+func setupAuth(ctx *gin.Context, auth *Authentication) {
+	auth.Protocol = &config.Protocol{}
+
+	switch ctx.Param("service") {
+	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
+		setupHeaderBasedAuth(ctx, auth)
+	case global.ServSaslauthd, global.ServJSON:
+		setupBodyBasedAuth(ctx, auth)
+	case global.ServBasicAuth:
+		setupHTTPBasiAuth(ctx, auth)
+	}
+
+	auth.withDefaults(ctx)
+}
+
+// NewAuthentication creates a new instance of the Authentication struct.
+// It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the Authentication struct.
+// If an error occurs while setting the StatusCode field using the setStatusCodes function, it logs the error and returns nil.
+// Otherwise, it calls the setupAuth function to setup the Authentication struct based on the service parameter from the gin.Context object.
+// Finally, it returns the created Authentication struct.
 func NewAuthentication(ctx *gin.Context) *Authentication {
 	auth := &Authentication{
 		HTTPClientContext: ctx,
 	}
 
-	guidStr := ctx.Value(global.GUIDKey).(string)
+	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
+		guid := ctx.Value(global.GUIDKey).(string)
 
-	if err := auth.SetStatusCode(ctx.Param("service")); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guidStr, global.LogKeyError, err)
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 		return nil
 	}
 
-	auth.Protocol = &config.Protocol{}
+	setupAuth(ctx, auth)
 
-	switch ctx.Param("service") {
-	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
-		// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-		auth.Username = ctx.Request.Header.Get("Auth-User")
-		auth.UsernameOrig = auth.Username
-		auth.Password = ctx.Request.Header.Get("Auth-Pass")
-
-		auth.Protocol.Set(ctx.Request.Header.Get("Auth-Protocol"))
-
-		auth.LoginAttempts = func() uint {
-			loginAttempts, err := strconv.Atoi(ctx.Request.Header.Get("Auth-Login-Attempt"))
-			if err != nil {
-				return 0
-			}
-
-			if loginAttempts < 0 {
-				loginAttempts = 0
-			}
-
-			return uint(loginAttempts)
-		}()
-
-		method := ctx.Request.Header.Get("Auth-Method")
-
-		auth.Method = &method
-
-		switch ctx.Query("mode") {
-		case "no-auth":
-			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=no-auth")
-
-			auth.NoAuth = true
-		case "list-accounts":
-			util.DebugModule(global.DbgAuth, global.LogKeyGUID, guidStr, global.LogKeyMsg, "mode=list-accounts")
-
-			auth.ListAccounts = true
-		}
-
-		auth.WithClientInfo(ctx)
-		auth.WithLocalInfo(ctx)
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
-
-	case global.ServSaslauthd:
-		method := ctx.PostForm("method")
-		realm := ctx.PostForm("realm")
-		userAgent := ctx.PostForm("user_agent")
-
-		if len(realm) > 0 {
-			auth.Username += "@" + realm
-		}
-
-		auth.Method = &method
-		auth.UserAgent = &userAgent
-		auth.Username = ctx.PostForm("username")
-		auth.UsernameOrig = auth.Username
-		auth.Password = ctx.PostForm("password")
-		auth.Protocol = &config.Protocol{}
-		auth.Protocol.Set(ctx.PostForm("protocol"))
-		auth.XLocalIP = global.Localhost4
-		auth.XPort = ctx.PostForm("port")
-		auth.XSSL = ctx.PostForm("tls")
-		auth.XSSLProtocol = ctx.PostForm("security")
-
-	case global.ServBasicAuth:
-		// NOTE: We must get username and password later!
-		auth.WithClientInfo(ctx)
-		auth.WithLocalInfo(ctx)
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
+	if ctx.Errors.Last() != nil {
+		return nil
 	}
-
-	auth.WithDefaults(ctx)
 
 	return auth
 }
 
-// WithDefaults sets default values for the Authentication structure including the GUID session value.
-func (a *Authentication) WithDefaults(ctx *gin.Context) *Authentication {
+// withDefaults sets default values for the Authentication structure including the GUID session value.
+func (a *Authentication) withDefaults(ctx *gin.Context) *Authentication {
 	if a == nil {
 		return nil
 	}
@@ -1598,8 +1908,8 @@ func (a *Authentication) WithDefaults(ctx *gin.Context) *Authentication {
 	return a
 }
 
-// WithLocalInfo adds the local IP and -port headers to the Authentication structure.
-func (a *Authentication) WithLocalInfo(ctx *gin.Context) *Authentication {
+// withLocalInfo adds the local IP and -port headers to the Authentication structure.
+func (a *Authentication) withLocalInfo(ctx *gin.Context) *Authentication {
 	if a == nil {
 		return nil
 	}
@@ -1610,8 +1920,8 @@ func (a *Authentication) WithLocalInfo(ctx *gin.Context) *Authentication {
 	return a
 }
 
-// WithClientInfo adds the client IP, -port and -ID headers to the Authentication structure.
-func (a *Authentication) WithClientInfo(ctx *gin.Context) *Authentication {
+// withClientInfo adds the client IP, -port and -ID headers to the Authentication structure.
+func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 	if a == nil {
 		return nil
 	}
@@ -1633,8 +1943,8 @@ func (a *Authentication) WithClientInfo(ctx *gin.Context) *Authentication {
 	return a
 }
 
-// WithUserAgent adds the User-Agent header to the Authentication structure.
-func (a *Authentication) WithUserAgent(ctx *gin.Context) *Authentication {
+// withUserAgent adds the User-Agent header to the Authentication structure.
+func (a *Authentication) withUserAgent(ctx *gin.Context) *Authentication {
 	if a == nil {
 		return nil
 	}
@@ -1646,8 +1956,8 @@ func (a *Authentication) WithUserAgent(ctx *gin.Context) *Authentication {
 	return a
 }
 
-// WithXSSL adds HAProxy header processing to the Authentication structure.
-func (a *Authentication) WithXSSL(ctx *gin.Context) *Authentication {
+// withXSSL adds HAProxy header processing to the Authentication structure.
+func (a *Authentication) withXSSL(ctx *gin.Context) *Authentication {
 	if a == nil {
 		return nil
 	}
@@ -1993,9 +2303,9 @@ func (a *Authentication) processCustomClaims(scopeIndex int, oauth2Client openap
 	}
 }
 
-// GetOauth2SubjectAndClaims retrieves the subject and claims for an OAuth2 client. It takes an OAuth2 client as a
+// getOauth2SubjectAndClaims retrieves the subject and claims for an OAuth2 client. It takes an OAuth2 client as a
 // parameter and returns the subject and claims as a string and a map
-func (a *Authentication) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
+func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
 	var (
 		okay    bool
 		index   int

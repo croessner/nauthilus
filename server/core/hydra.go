@@ -430,13 +430,13 @@ type ApiConfig struct {
 // If the error is of type *errors2.DetailedError, it logs the error details along with the error message.
 // Otherwise, it logs only the error message.
 // The function also prints the goroutine dump with the corresponding GUID.
-// Finally, it cleans up the session using the SessionCleaner function.
+// Finally, it cleans up the session using the sessionCleaner function.
 //
 // ctx: The Gin context.
 // err: The error to handle.
 func handleErr(ctx *gin.Context, err error) {
 	processErrorLogging(ctx, err)
-	SessionCleaner(ctx)
+	sessionCleaner(ctx)
 	ctx.Set("failure", true)
 	ctx.Set("message", err)
 	notifyGETHandler(ctx)
@@ -453,7 +453,7 @@ func handleErr(ctx *gin.Context, err error) {
 // Usage example:
 //
 //	handleErr(ctx, err)
-//	SessionCleaner(ctx)
+//	sessionCleaner(ctx)
 //	ctx.Set("failure", true)
 //	ctx.Set("message", err)
 //	notifyGETHandler(ctx)
@@ -780,30 +780,30 @@ func createLanguagePassive(ctx *gin.Context, languageTags []language.Tag, curren
 	return languagePassive
 }
 
-// Initialize sets up the `ApiConfig` object by initializing the HTTP client, GUID, and API client.
+// initialize sets up the `ApiConfig` object by initializing the HTTP client, GUID, and API client.
 // Must be called before using any other methods on `ApiConfig`.
 //
 // Example usage:
 //
 //	apiConfig := &ApiConfig{ctx: ctx}
-//	apiConfig.Initialize()
+//	apiConfig.initialize()
 //
 //	// Use the initialized `ApiConfig` object
-//	apiConfig.HandleLogin(apiConfig.loginRequest.GetSkip())
+//	apiConfig.handleLogin(apiConfig.loginRequest.GetSkip())
 //
 // Dependencies:
 // - `createHttpClient` function
 // - `createConfiguration` function
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
-func (a *ApiConfig) Initialize() {
+func (a *ApiConfig) initialize() {
 	a.httpClient = createHttpClient()
 	a.guid = a.ctx.Value(global.GUIDKey).(string)
 	configuration := createConfiguration(a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
 }
 
-// HandleLogin handles the login process based on the value of `skip`.
+// handleLogin handles the login process based on the value of `skip`.
 //
 // If `skip` is true, it calls the `handleLoginSkip` method.
 // If `skip` is false, it calls the `handleLoginNoSkip` method.
@@ -811,13 +811,13 @@ func (a *ApiConfig) Initialize() {
 // Example usage:
 //
 //	apiConfig := &ApiConfig{ctx: ctx}
-//	apiConfig.Initialize()
-//	apiConfig.HandleLogin(apiConfig.loginRequest.GetSkip())
+//	apiConfig.initialize()
+//	apiConfig.handleLogin(apiConfig.loginRequest.GetSkip())
 //
 // Dependencies:
 // - `handleLoginSkip` method
 // - `handleLoginNoSkip` method
-func (a *ApiConfig) HandleLogin(skip bool) {
+func (a *ApiConfig) handleLogin(skip bool) {
 	util.DebugModule(global.DbgHydra, global.LogKeyGUID, a.guid, global.LogKeyMsg, fmt.Sprintf("%s is %v", global.LogKeyLoginSkip, skip))
 
 	if skip {
@@ -846,25 +846,25 @@ func (a *ApiConfig) handleLoginSkip() {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	auth.WithDefaults(a.ctx).WithClientInfo(a.ctx).WithLocalInfo(a.ctx).WithUserAgent(a.ctx).WithXSSL(a.ctx)
+	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx)
 
 	auth.Username = a.loginRequest.GetSubject()
 	auth.UsernameOrig = a.loginRequest.GetSubject()
 
-	if err := auth.SetStatusCode(global.ServOryHydra); err != nil {
+	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
 		handleErr(a.ctx, err)
 
 		return
 	}
 
-	if authStatus := auth.HandlePassword(a.ctx); authStatus == global.AuthResultOK {
+	if authStatus := auth.handlePassword(a.ctx); authStatus == global.AuthResultOK {
 		if config.LoadableConfig.Oauth2 != nil {
-			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
+			_, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
 		auth.ClientIP = a.ctx.Value(global.ClientIPKey).(string)
 
-		auth.UpdateBruteForceBucketsCounter()
+		auth.updateBruteForceBucketsCounter()
 		a.ctx.AbortWithError(http.StatusInternalServerError, errors2.ErrUnknownCause)
 
 		return
@@ -1097,7 +1097,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	apiConfig := &ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
@@ -1121,7 +1121,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	apiConfig.clientName = oauth2Client.GetClientName()
 
-	apiConfig.HandleLogin(apiConfig.loginRequest.GetSkip())
+	apiConfig.handleLogin(apiConfig.loginRequest.GetSkip())
 }
 
 // initializeAuthLogin initializes the Authentication struct with the necessary information for logging in.
@@ -1133,11 +1133,11 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	if err := auth.SetStatusCode(global.ServOryHydra); err != nil {
+	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
 		return nil, err
 	}
 
-	return auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx), nil
+	return auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx), nil
 }
 
 // handleSessionDataLogin retrieves session data related to the login process and populates the provided `auth` variable with the values.
@@ -1218,7 +1218,7 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult global.A
 		err          error
 	)
 
-	account, found := auth.GetAccountOk()
+	account, found := auth.getAccountOk()
 	if !found {
 		return errors2.ErrNoAccount
 	}
@@ -1270,7 +1270,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *Authentication) (s
 
 	oauth2Client := a.loginRequest.GetClient()
 	if config.LoadableConfig.Oauth2 != nil {
-		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
+		subject, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
 	}
 
 	if subject == "" {
@@ -1305,7 +1305,7 @@ func (a *ApiConfig) handleNonPost2FA(auth *Authentication, session sessions.Sess
 		return false, nil
 	}
 
-	if _, found := auth.GetTOTPSecretOk(); found {
+	if _, found := auth.getTOTPSecretOk(); found {
 		if err := a.setSessionVariablesForAuth(session, authResult, subject); err != nil {
 			return false, err
 		}
@@ -1333,7 +1333,7 @@ func (a *ApiConfig) handlePost2FA(auth *Authentication, account string) error {
 		return errors2.ErrNoTOTPCode
 	}
 
-	totpSecret, found := auth.GetTOTPSecretOk()
+	totpSecret, found := auth.getTOTPSecretOk()
 	if !found {
 		return errors2.ErrNoTOTPCode
 	}
@@ -1543,7 +1543,7 @@ func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authRes
 // Dependencies:
 // - session.Default(): function for session management
 // - config.GetSkipTOTP(): function to check if TOTP should be skipped for a given clientID
-// - auth.GetTOTPSecretOk(): method to get the TOTP secret for the authentication
+// - auth.getTOTPSecretOk(): method to get the TOTP secret for the authentication
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
 func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global.AuthResult, post2FA bool) (err error) {
@@ -1551,7 +1551,7 @@ func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global
 
 	if !post2FA {
 		if !config.GetSkipTOTP(*a.clientId) {
-			if _, found := auth.GetTOTPSecretOk(); found {
+			if _, found := auth.getTOTPSecretOk(); found {
 				session.Set(global.CookieAuthResult, uint8(authResult))
 				session.Set(global.CookieUsername, a.ctx.Request.Form.Get("username"))
 
@@ -1571,7 +1571,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *Authentication) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
 	auth.ClientIP = a.ctx.Value(global.ClientIPKey).(string)
 
-	auth.UpdateBruteForceBucketsCounter()
+	auth.updateBruteForceBucketsCounter()
 
 	a.ctx.Redirect(
 		http.StatusFound,
@@ -1608,7 +1608,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	apiConfig := &ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = loginChallenge
 
@@ -1646,7 +1646,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 	apiConfig.clientName = oauth2Client.GetClientName()
 
 	if authResult == global.AuthResultUnset || authResult == global.AuthResultOK {
-		authResult = auth.HandlePassword(ctx)
+		authResult = auth.handlePassword(ctx)
 	}
 
 	switch authResult {
@@ -1922,12 +1922,12 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 // Example usage:
 //
 //	apiConfig := &ApiConfig{ctx: ctx}
-//	apiConfig.Initialize()
+//	apiConfig.initialize()
 //	apiConfig.HandleConsentSkip()
 //
 // Dependencies:
-//   - a.consentRequest.GetSkip() (from Initialize)
-//   - config.GetSkipConsent(*a.clientId) (from Initialize)
+//   - a.consentRequest.GetSkip() (from initialize)
+//   - config.GetSkipConsent(*a.clientId) (from initialize)
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
 func (a *ApiConfig) HandleConsentSkip() {
@@ -2159,7 +2159,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	apiConfig := &ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
@@ -2193,22 +2193,22 @@ func consentGETHandler(ctx *gin.Context) {
 	apiConfig.HandleConsentSkip()
 }
 
-// HandleConsentSubmit processes the form submission for the consent page.
+// handleConsentSubmit processes the form submission for the consent page.
 // If the submit value is "accept", it calls the processConsentAccept method.
 // Otherwise, it calls the processConsentReject method.
 //
 // Example usage:
 //
 //	apiConfig := &ApiConfig{ctx: ctx}
-//	apiConfig.Initialize()
+//	apiConfig.initialize()
 //
 //	// Use the initialized ApiConfig object
-//	apiConfig.HandleConsentSubmit()
+//	apiConfig.handleConsentSubmit()
 //
 // Dependencies:
 // - processConsentAccept method
 // - processConsentReject method
-func (a *ApiConfig) HandleConsentSubmit() {
+func (a *ApiConfig) handleConsentSubmit() {
 	if a.ctx.Request.Form.Get("submit") == "accept" {
 		a.processConsentAccept()
 	} else {
@@ -2227,7 +2227,7 @@ func (a *ApiConfig) HandleConsentSubmit() {
 //
 // Example usage:
 //
-//	apiConfig.HandleConsentSubmit()
+//	apiConfig.handleConsentSubmit()
 //
 // Dependencies:
 //
@@ -2354,7 +2354,7 @@ func (a *ApiConfig) processConsentReject() {
 		a.ctx.String(http.StatusForbidden, global.PasswordFail)
 	}
 
-	a.LogInfoConsentReject(redirectTo)
+	a.logInfoConsentReject(redirectTo)
 }
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
@@ -2371,8 +2371,8 @@ func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
 	)
 }
 
-// LogInfoConsentReject logs the information about a rejected consent request.
-func (a *ApiConfig) LogInfoConsentReject(redirectTo *string) {
+// logInfoConsentReject logs the information about a rejected consent request.
+func (a *ApiConfig) logInfoConsentReject(redirectTo *string) {
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
@@ -2401,7 +2401,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig := &ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = consentChallenge
 
@@ -2424,18 +2424,18 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.clientName = oauth2Client.GetClientName()
 
-	apiConfig.HandleConsentSubmit()
+	apiConfig.handleConsentSubmit()
 }
 
-// HandleLogout handles the logout functionality of the API.
+// handleLogout handles the logout functionality of the API.
 // It retrieves the session and gets the value of the language cookie.
 // It then parses the language value into a language tag and builds the language name.
 // It creates the LogoutPageData struct with the necessary fields for the logout page template.
 // Finally, it renders the logout.html template with the logoutData and logs the logout event.
 //
 // Example usage:
-// apiConfig.HandleLogout()
-func (a *ApiConfig) HandleLogout() {
+// apiConfig.handleLogout()
+func (a *ApiConfig) handleLogout() {
 	session := sessions.Default(a.ctx)
 	cookieValue := session.Get(global.CookieLang)
 
@@ -2507,7 +2507,7 @@ func logoutGETHandler(ctx *gin.Context) {
 
 	apiConfig := ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
@@ -2525,22 +2525,22 @@ func logoutGETHandler(ctx *gin.Context) {
 		util.DebugModule(global.DbgHydra, global.LogKeyGUID, apiConfig.guid, global.LogKeyMsg, "rp_initiated==true")
 	}
 
-	apiConfig.HandleLogout()
+	apiConfig.handleLogout()
 }
 
-// HandleLogoutSubmit handles the logout submit action.
+// handleLogoutSubmit handles the logout submit action.
 // If the "submit" value in the request's post form is "accept", it calls the acceptLogout function.
 // Otherwise, it calls the rejectLogout function.
 //
 // Example usage:
 //
-//	apiConfig.HandleLogoutSubmit()
+//	apiConfig.handleLogoutSubmit()
 //
 // Dependencies:
 // - None
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
-func (a *ApiConfig) HandleLogoutSubmit() {
+func (a *ApiConfig) handleLogoutSubmit() {
 	if a.ctx.PostForm("submit") == "accept" {
 		a.acceptLogout()
 	} else {
@@ -2655,7 +2655,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 
 	apiConfig := &ApiConfig{ctx: ctx}
 
-	apiConfig.Initialize()
+	apiConfig.initialize()
 
 	apiConfig.challenge = logoutChallenge
 
@@ -2667,7 +2667,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	apiConfig.HandleLogoutSubmit()
+	apiConfig.handleLogoutSubmit()
 }
 
 // getClaimsFromConsentContext extracts claims from consentContext based on acceptedScopes

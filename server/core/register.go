@@ -64,8 +64,8 @@ type HomePageData struct {
 	LanguagePassive     []Language
 }
 
-// SessionCleaner removes all user information from the current session.
-func SessionCleaner(ctx *gin.Context) {
+// sessionCleaner removes all user information from the current session.
+func sessionCleaner(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 
 	// Cleanup
@@ -92,7 +92,7 @@ func loginGET2FAHandler(ctx *gin.Context) {
 		csrfToken       = ctx.Value(global.CSRFTokenKey).(string)
 	)
 
-	SessionCleaner(ctx)
+	sessionCleaner(ctx)
 
 	session := sessions.Default(ctx)
 
@@ -181,9 +181,9 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx)
+	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
-	if err = auth.SetStatusCode(global.ServOryHydra); err != nil {
+	if err = auth.setStatusCodes(global.ServOryHydra); err != nil {
 		handleErr(ctx, err)
 
 		return
@@ -193,7 +193,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	auth.UsernameOrig = auth.Username
 
-	authResult = auth.HandlePassword(ctx)
+	authResult = auth.handlePassword(ctx)
 
 	if authResult == global.AuthResultOK {
 		var (
@@ -203,13 +203,13 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 			displayName  string
 		)
 
-		if account, found = auth.GetAccountOk(); !found {
+		if account, found = auth.getAccountOk(); !found {
 			handleErr(ctx, errors2.ErrNoAccount)
 
 			return
 		}
 
-		if _, found = auth.GetTOTPSecretOk(); found {
+		if _, found = auth.getTOTPSecretOk(); found {
 			session.Set(global.CookieHaveTOTP, true)
 		}
 
@@ -250,7 +250,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	auth.ClientIP = ctx.Value(global.ClientIPKey).(string)
 
-	auth.UpdateBruteForceBucketsCounter()
+	auth.updateBruteForceBucketsCounter()
 
 	ctx.Redirect(
 		http.StatusFound,
@@ -529,11 +529,11 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	switch sourceBackend.(uint8) {
 	case uint8(global.BackendLDAP):
-		addTOTPSecret = LDAPAddTOTPSecret
+		addTOTPSecret = ldapAddTOTPSecret
 	case uint8(global.BackendMySQL), uint8(global.BackendPostgres), uint8(global.BackendSQL):
-		addTOTPSecret = SQLAddTOTPSecret
+		addTOTPSecret = sqlAddTOTPSecret
 	case uint8(global.BackendLua):
-		addTOTPSecret = LuaAddTOTPSecret
+		addTOTPSecret = luaAddTOTPSecret
 	default:
 		handleErr(ctx, errors2.NewDetailedError("unsupported_backend").WithDetail(
 			"Database backend not supported"))
@@ -569,6 +569,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			handleErr(ctx, err)
 
 			return
+		} else {
+			redisReadCounter.Inc()
 		}
 
 		for index := range protocols {
@@ -583,6 +585,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
+					redisWriteCounter.Inc()
+
 					continue
 				}
 
@@ -594,7 +598,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	}
 
 	// POST cleanup
-	SessionCleaner(ctx)
+	sessionCleaner(ctx)
 
 	ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=OTP code is valid. Registration completed successfully")
 

@@ -39,10 +39,10 @@ type GeoIPCity struct {
 	} `maxminddb:"location"`
 }
 
-// GetGeoIPCity does an IP address lookup and returns the GeoIPCity object.
+// getGeoIPCity does an IP address lookup and returns the GeoIPCity object.
 //
 //goland:noinspection GoUnhandledErrorResult
-func (g *GeoIPCity) GetGeoIPCity(ipAddress net.IP, guid string) *GeoIPCity {
+func (g *GeoIPCity) getGeoIPCity(ipAddress net.IP, guid string) *GeoIPCity {
 	var err error
 
 	if GeoIPReader == nil || ipAddress == nil {

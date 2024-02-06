@@ -6,8 +6,8 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 )
 
-// LuaPassDB implements the Lua password database backend.
-func LuaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+// luaPassDB implements the Lua password database backend.
+func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *backend.LuaBackendResult
 
 	passDBResult = &PassDBResult{}
@@ -106,8 +106,8 @@ func LuaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	return
 }
 
-// LuaAccountDB implements the list-account mode and returns all known users from a Lua backend logic.
-func LuaAccountDB(auth *Authentication) (accounts AccountList, err error) {
+// luaAccountDB implements the list-account mode and returns all known users from a Lua backend logic.
+func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	var luaBackendResult *backend.LuaBackendResult
 
 	luaReplyChan := make(chan *backend.LuaBackendResult)
@@ -150,8 +150,8 @@ func LuaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	return accountSet.GetStringSlice(), nil
 }
 
-// LuaAddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
-func LuaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
+// luaAddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
+func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	var luaBackendResult *backend.LuaBackendResult
 
 	luaReplyChan := make(chan *backend.LuaBackendResult)
@@ -167,7 +167,7 @@ func LuaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		LocalIP:      auth.XLocalIP,
 		LocalPprt:    auth.XPort,
 		Protocol:     auth.Protocol,
-		TOTPSecret:   totp.GetValue(),
+		TOTPSecret:   totp.getValue(),
 		LuaReplyChan: luaReplyChan,
 		Function:     global.LuaCommandAddMFAValue,
 	}

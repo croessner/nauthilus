@@ -3,19 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	logStdLib "log"
+	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
-	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
@@ -38,7 +41,7 @@ type contextTuple struct {
 }
 
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
-// The structure contains the following fields: ldapLookup, ldapAuth, lua, sql, and action.
+// The structure contains the following fields: ldapLookup, ldapAuth, lua, sql, action and nginx.
 // Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
 type contextStore struct {
 	ldapLookup *contextTuple
@@ -46,6 +49,7 @@ type contextStore struct {
 	lua        *contextTuple
 	sql        *contextTuple
 	action     *contextTuple
+	nginx      *contextTuple
 }
 
 // newContextStore creates a new instance of a contextStore.
@@ -218,20 +222,19 @@ func PreCompileFilters() error {
 	return nil
 }
 
-// handleSignals is a function to manage OS signals within the Go application.
-// It initiates two goroutines to handle termination and reload signals respectively.
-// All signal-handling functions are called asynchronously.
+// handleSignals starts two goroutines to listen for termination and reload signals respectively.
+// On a termination signal, it will cancel the provided context, stop the statsTicker and stop all actionWorkers.
+// On a reload signal, it will reload the stored context and restart all actionWorkers.
 //
-// Parameters:
-// - `ctx context.Context`: a context that carries deadline, cancelation signals, and other request-scoped values
-// - `cancel context.CancelFunc`: a cancel function that can be called to cancel the context
-// - `store *contextStore`: a pointer to the context store that may need to be modified or queried upon receiving a signal
-// - `statsTimer *time.Ticker`: a pointer to a ticker that performs some action after a certain duration. Might be stopped on receiving a signal.
-//
-// This function doesn't return any values.
-func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker) {
-	go handleTerminateSignal(cancel, statsTicker)
-	go handleReloadSignal(ctx, store)
+// Arguments:
+// - ctx : The primary application context, cancellation of which leads to application shutdown.
+// - cancel : The function to call in order to cancel the provided context. Typically, it's the cancel function returned from context.WithCancel(ctx).
+// - store : contextStore instance where application contexts are managed.
+// - statsTicker : Time ticker for stats data. It's stopped on termination signal.
+// - actionWorkers : A slice of action.Worker pointers. All workers are stopped on termination signal and restarted on reload signal.
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
+	go handleTerminateSignal(cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
+	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
 
 // terminateLuaStatePools shuts down the Lua state pools used by various modules.
@@ -250,30 +253,27 @@ func terminateLuaStatePools() {
 // closeChannels closes the HTTPEndChan and WorkerEndChan channels.
 func closeChannels() {
 	close(core.HTTPEndChan)
-	close(action.WorkerEndChan)
 }
 
-// handleTerminateSignal is a function which listens for system level termination signals (SIGINT, SIGTERM).
-// Upon receiving such signal, it initiates an orderly shutdown of the application by
-// cancelling context and executing cleanup tasks such as handling backend connections,
-// syncing Prometheus metrics to Redis and stopping the stats timer before ultimately
-// exiting the application. It's specifically designed to gracefully shut down "Nauthilus" service.
-//
-// cancel arg: method to call to cancel the context
-//
-// statsTimer arg: reference to the statistics timer that keeps track of application statistics
-//
-// How to use:
-//
-//	func main() {
-//	     // Create context, and statsTimer
-//	     ctx, cancel := context.WithCancel(context.Background())
-//	     statsTimer := time.NewTicker(5 * time.Second)
-//	     // Then call this function to handle termination signals
-//	     go handleTerminateSignal(cancel, statsTimer)
-//	     // Rest of your application logic
-//	}
-func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) {
+// handleTerminateSignal handles the termination signal (SIGINT or SIGTERM) and performs cleanup tasks before shutting down the program.
+// The cancel function is used to cancel any ongoing context operations.
+// The statsTicker is a ticker used for periodically saving statistics to Redis.
+// The actionWorkers is a slice of action workers.
+// It sets up a channel to receive the termination signal.
+// It waits for a signal to be received.
+// It logs the shutdown message along with the received signal.
+// It cancels the context to stop ongoing operations.
+// It waits for the HTTP server to terminate.
+// It handles the backend for each passDB in the configuration.
+// It waits for all action workers to complete their work.
+// It syncs some Prometheus data to Redis.
+// It logs the shutdown complete message.
+// It terminates the Lua state pools.
+// It closes all channels.
+// It stops the statsTicker.
+// Signature:
+// func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, actionWorkers []*action.Worker) {
+func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -291,7 +291,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) 
 		handleBackend(passDB)
 	}
 
-	<-action.WorkerEndChan
+	waitForActionWorkers(actionWorkers)
 
 	// Sync some Prometheus data to Redis
 	core.SaveStatsToRedis()
@@ -302,18 +302,20 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker) 
 	closeChannels()
 
 	statsTicker.Stop()
+	ngxMonitoringTicker.Stop()
 }
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
 // When the signal is received, the function handles the reload process by calling the handleReload function.
-// It takes two arguments: a context defined by the caller (ctx) which dictates the lifetime of the process,
-// and a pointer to a contextStore (store) which presumably stores context data used by the handler.
+// It takes three arguments: a context defined by the caller (ctx) which dictates the lifetime of the process,
+// a pointer to a contextStore (store) which presumably stores context data used by the handler and a slice of pointers
+// to action.Worker.
 //
 // handleReloadSignal operates in an infinite loop, continuously listening for signals until the context is cancelled.
 // If the received signal is SIGHUP, the loop calls handleReload with the same context and store, plus the received signal.
 //
 // The function does not return anything, and it continues to run until the provided context is cancelled, at which point it exits the loop and the function.
-func handleReloadSignal(ctx context.Context, store *contextStore) {
+func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
 	sigsReload := make(chan os.Signal, 1)
 
 	signal.Notify(sigsReload, syscall.SIGHUP)
@@ -323,7 +325,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore) {
 		case <-ctx.Done():
 			return
 		case sig := <-sigsReload:
-			handleReload(ctx, store, sig)
+			handleReload(ctx, store, sig, ngxMonitoringTicker, actionWorkers)
 		}
 	}
 }
@@ -414,19 +416,33 @@ func handleLuaBackend(lua *contextTuple, ctx context.Context) *contextTuple {
 	return lua
 }
 
-// stopAndRestartActionWorker is a helper function that first stops a running action worker
-// associated with the context tuple provided (act), then restarts it with a fresh context.
-// The function achieves this by utilizing the context's cancel function to stop the ongoing work,
-// waiting for the action worker to completely shut down, and then starting a new action worker
-// with a fresh context derived from the original context (ctx).
-func stopAndRestartActionWorker(act *contextTuple, ctx context.Context) {
+// stopAndRestartActionWorker is a function that stops the currently running action workers and restarts them.
+// It takes three parameters: a slice of pointers to action workers, a context tuple, and a context variable.
+// The function first calls the stopContext function that stops the context.
+// It then enters a loop that iterates through the slice of action workers and waits for them to finish their tasks.
+// After all action workers have finished their tasks, a new context with cancellation is created for the context tuple.
+// Finally, the function calls startActionWorker to start the action workers with the new context.
+//
+// Parameters:
+//   - actionWorkers: A slice of pointers to action workers that are being stopped and restarted.
+//   - act: A context tuple that gets stopped and a new context with cancellation is created for it.
+//   - ctx: A context variable from which a new context with cancellation is derived.
+func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTuple, ctx context.Context) {
 	stopContext(act)
 
-	<-action.WorkerEndChan
+	waitForActionWorkers(actionWorkers)
 
 	act.ctx, act.cancel = context.WithCancel(ctx)
 
-	startActionWorker(act)
+	startActionWorker(actionWorkers, act)
+}
+
+// waitForActionWorkers waits for the completion of all action workers.
+// It takes in an array of action workers and waits for each worker's DoneChan to receive a value.
+func waitForActionWorkers(actionWorkers []*action.Worker) {
+	for i := 0; i < len(actionWorkers); i++ {
+		<-actionWorkers[i].DoneChan
+	}
 }
 
 // stopContext cancels the context associated with the given contextTuple.
@@ -434,10 +450,11 @@ func stopContext(tuple *contextTuple) {
 	tuple.cancel()
 }
 
-// startActionWorker starts a new worker to perform an action.
-// It creates a new instance of the Worker struct and calls the Work method with the given contextTuple.
-func startActionWorker(act *contextTuple) {
-	go action.NewWorker().Work(act.ctx)
+// startActionWorker starts the action workers concurrently to perform the specified actions using the provided context.
+func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
+	for i := 0; i < len(actionWorkers); i++ {
+		go actionWorkers[i].Work(act.ctx)
+	}
 }
 
 // It takes two parameters, "lookup" of type *contextTuple and "auth" of type *contextTuple.
@@ -460,18 +477,31 @@ func startLuaWorker(lua *contextTuple) {
 	go backend.LuaMainWorker(lua.ctx)
 }
 
-// handleReload takes in a context, a contextStore and an operating signal as input.
-// Based on the type of backend used (LDAP, MySQL, Postgres, Lua, or Cache), it reloads the
-// corresponding services, and restarts the necessary workers by calling the relevant functions.
-// Specific logging messages and error handlers are called at various stages during the process.
-// This function is generally invoked when a reload signal is received by Nauthilus, requiring it to
-// refresh its configuration and restart the services according to the updated configuration.
+// handleReload is a function that handles the reloading of Nauthilus based on a received operating signal.
+// The function works with various backends (LDAP, MySQL, Postgres, Lua, or Cache), and based on the specific
+// backend, it will reload the related services. The function manages the necessary workers, stopping
+// and restarting them as appropriate.
+//
+// Throughout the process, the function logs key events and handles errors. Specifically, the function logs
+// a reload, configuration file reload success or failure, setup features success or failure and the conclusion
+// of the reloading procedure.
+//
+// This function is generally invoked when a reload signal is received by Nauthilus. This signal triggers
+// Nauthilus to refresh its configuration and restart services based on the updated configuration.
+//
 // Parameters:
 //
-//	ctx:     The context on which this function will operate
-//	store:   The contextStore containing the current state of the backend services
-//	sig:     The signal that triggers the reloading of Nauthilus
-func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
+//		ctx:   A context on which this function will operate. It represents the state that potentially includes
+//	          deadlines, cancel signals, and other request-scoped values across API boundaries and between processes.
+//
+//		store: A contextStore containing the current state of the backend services. It holds the context
+//	          for each backend state which is manipulated based on the backend during the process.
+//
+//		sig:   A signal that triggers the reloading of Nauthilus. sig represents the operating system
+//	          signal information sent to Nauthilus.
+//
+//	 actionWorkers: A slice of action workers that are stopped and restarted during the process.
+func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
@@ -490,7 +520,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 		}
 	}
 
-	stopAndRestartActionWorker(store.action, ctx)
+	stopAndRestartActionWorker(actionWorkers, store.action, ctx)
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
@@ -519,24 +549,36 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal) {
 		}
 	}
 
+	restartNgxMonitoring(ctx, store, ngxMonitoringTicker)
+
 	level.Debug(logging.DefaultLogger).Log(
 		global.LogKeyMsg, "Reload complete",
 	)
 }
 
-// setupWorkers initializes workers for different backend types based on the
-// environment configuration. Each type of worker (e.g., LDAP, SQL, Lua) is setup
-// according to the backend type provided in the PassDBs variable from the environment
-// configuration. An action worker is started first, and worker channels are created to
-// communicate between different workers. If an unknown backend is encountered, a
-// warning is logged.
-// Parameters:
-// ctx – context for managing the life cycle of the workers
-// store – contains various components required for backend processing
-func setupWorkers(ctx context.Context, store *contextStore) {
-	action.WorkerEndChan = make(chan lualib.Done)
+// initializeActionWorkers creates and initializes a slice of action workers.
+// It creates `global.MaxActionWorkers` number of workers, each worker is created using `action.NewWorker()`.
+// The workers are then appended to the `workers` slice.
+// Finally, the `workers` slice is returned.
+func initializeActionWorkers() []*action.Worker {
+	var workers []*action.Worker
 
-	startActionWorker(store.action)
+	for i := 0; i < int(config.EnvConfig.MaxActionWorkers); i++ {
+		workers = append(workers, action.NewWorker())
+	}
+
+	return workers
+}
+
+// setupWorkers sets up the action workers based on the configuration and starts them in separate goroutines.
+// It takes a context, a store, and a slice of action workers as parameters.
+// It starts the action workers by calling the `startActionWorker` function with the appropriate parameters.
+// Then, for each passDB in the `config.EnvConfig.PassDBs` slice, it performs the necessary setup based on the passDB type.
+// The setup depends on the passDB's backend type and calls corresponding setup functions, such as `setupLDAPWorker`, `setupSQLWorker`, or `setupLuaWorker`.
+// If the passDB's backend is `global.BackendCache`, no setup is performed.
+// If the passDB's backend is unknown, a warning log is generated for an unknown backend.
+func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
+	startActionWorker(actionWorkers, store.action)
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
@@ -641,6 +683,8 @@ func startHTTPServer(ctx context.Context) {
 	go core.HTTPApp(ctx)
 }
 
+// logLuaStatePoolDebug logs the statistics of different Lua state pools.
+// It calls the LogStatistics function of each Lua state pool.
 func logLuaStatePoolDebug() {
 	feature.LuaPool.LogStatistics("feature")
 	backend.LuaPool.LogStatistics("backend")
@@ -667,12 +711,12 @@ func logLuaStatePoolDebug() {
 //	go startStatsLoop(statsTicker, statsEndChan)
 //
 //	time.Sleep(30 * time.Second)
-func startStatsLoop(ctx context.Context, statsTicker *time.Ticker) error {
+func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 	go core.MeasureCPU(ctx)
 
 	for {
 		select {
-		case <-statsTicker.C:
+		case <-ticker.C:
 			core.PrintStats()
 			core.SaveStatsToRedis()
 
@@ -681,6 +725,226 @@ func startStatsLoop(ctx context.Context, statsTicker *time.Ticker) error {
 			return ctx.Err()
 		}
 	}
+}
+
+// checkNgxBackendServer checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
+// It returns an error if the connection cannot be established within the timeout period.
+// The function does not retry the connection and closes the connection before returning.
+func checkNgxBackendServer(ipAddress string, port int) error {
+	timeout := 5 * time.Second
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port)), timeout)
+	if err != nil {
+		return err
+	}
+
+	defer conn.Close()
+
+	return nil
+}
+
+// logNgxBackendError logs an error originating from Nginx Backend Server,
+// detailing the server configuration at the time of the error.
+// The logged details include error message, protocol used by the server,
+// and the IP address and Port used by the Nginx Backend Server.
+//
+// Parameters:
+//
+//	server: a pointer to the configuration of the Nginx Backend Server at the time of the error
+//	err: the error that has occurred
+func logNgxBackendError(server *config.NginxBackendServer, err error) {
+	level.Error(logging.DefaultErrLogger).Log(
+		global.LogKeyError, err,
+		global.LogKeyMsg, "Server doen",
+		global.LogKeyProtocol, server.Protocol,
+		global.LogKeyNgxBackendIP, server.IP,
+		global.LogKeyNgxBackendPort, server.Port,
+	)
+}
+
+// logNgxBackendDebug logs debug information for an Nginx backend server. It uses the util.DebugModule function to log the debug message and key-value pairs.
+// Parameters:
+// - server: a pointer to the NginxBackendServer struct that contains the server information.
+// Example usage:
+//
+//	logNgxBackendDebug(server)
+func logNgxBackendDebug(server *config.NginxBackendServer) {
+	util.DebugModule(
+		global.DbgFeature,
+		global.LogKeyMsg, "Server alive",
+		global.LogKeyProtocol, server.Protocol,
+		global.LogKeyNgxBackendIP, server.IP,
+		global.LogKeyNgxBackendPort, server.Port,
+	)
+}
+
+// loopNgxBackendServers iterates over a slice of NginxBackendServer objects, checks the availability of each server,
+// and updates the NginxBackendServers collection if necessary.
+//
+// Parameters:
+// - servers: A slice of NginxBackendServer objects representing the backend servers to be monitored.
+//
+// type nginxServers: A struct that holds information related to the monitoring process.
+// - update: A boolean flag indicating whether any backend server failed to respond.
+// - servers: A slice of NginxBackendServer objects representing the available backend servers.
+// - mu: A mutex used for synchronizing access to the nginxServers struct fields.
+//
+// var wg: A WaitGroup used to wait for all goroutines to finish.
+//
+// ngxAlive: An instance of the nginxServers struct.
+//
+// Iterates over each server in the servers slice using a goroutine.
+// - For each server, it checks the connectivity using the checkNgxBackendServer function.
+// - Acquires a lock on ngxAlive.mu to prevent concurrent writes.
+// - If an error occurs, sets ngxAlive.update to true and logs the error using the logNgxBackendError function.
+// - If no error occurs, appends the server to ngxAlive.servers.
+// - Decrements the WaitGroup counter by calling wg.Done().
+//
+// Waits for all goroutines to finish by calling wg.Wait().
+//
+// If ngxAlive.update is true, it updates the NginxBackendServers collection using the core.NginxBackendServers.Update method.
+func loopNgxBackendServers(servers []*config.NginxBackendServer) {
+	type nginxServers struct {
+		update  bool
+		servers []*config.NginxBackendServer
+		mu      sync.Mutex
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(len(servers))
+
+	ngxAlive := &nginxServers{}
+
+	for _, server := range servers {
+		go func(server *config.NginxBackendServer) {
+			err := checkNgxBackendServer(server.IP, server.Port)
+
+			ngxAlive.mu.Lock()
+
+			defer ngxAlive.mu.Unlock()
+
+			if err != nil {
+				ngxAlive.update = true
+
+				logNgxBackendError(server, err)
+			} else {
+				ngxAlive.servers = append(ngxAlive.servers, server)
+
+				logNgxBackendDebug(server)
+			}
+
+			wg.Done()
+		}(server)
+	}
+
+	wg.Wait()
+
+	if ngxAlive.update {
+		core.NginxBackendServers.Update(ngxAlive.servers)
+	}
+}
+
+// verifyNginxMonitoringConfig checks if the nginx monitoring feature is enabled.
+// If enabled, it gets the backend servers from the LoadableConfig.
+// If there are no backend servers or the feature is not enabled, it returns an error.
+// It returns a list with Nginx backend servers or an error.
+func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
+	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		return nil, errors2.ErrFeatureNgxDisables
+	}
+
+	nginxBackendServers := config.LoadableConfig.GetNginxBackendServers()
+	if len(nginxBackendServers) == 0 {
+		return nil, errors2.ErrNgxMonitoringEmpty
+	}
+
+	return nginxBackendServers, nil
+}
+
+// runNgxMonitoring sets a new context for Nginx monitoring and initiates the monitoring.
+// The function requires three parameters: a base context ctx, a store of context objects, and a ticker for Nginx monitoring.
+// It creates a new context specifically for Nginx with its own cancellation function and stores these in the context store.
+// It then attempts to start Nginx monitoring using the startNginxMonitoring function.
+// If an error occurs during the start of monitoring, it is handled by the handleNgxMonitoringError function.
+//
+// ctx is the base context from which the Nginx-specific context is derived.
+// store is a store for context objects that can hold the specific context for Nginx monitoring.
+// ngxMonitoringTicker is a ticker that triggers the Nginx monitoring at regular intervals.
+func runNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoringTicker *time.Ticker) {
+	ngxCtx, ngxCancel := context.WithCancel(ctx)
+
+	store.nginx = &contextTuple{
+		ctx:    ngxCtx,
+		cancel: ngxCancel,
+	}
+
+	if err := startNginxMonitoring(store, ngxMonitoringTicker); err != nil {
+		handleNgxMonitoringError(err)
+	}
+}
+
+// startNginxMonitoring initiates the monitoring of Nginx servers. It takes a contextStore
+// and a ticker as arguments. The contextStore is used to manage context-specific values across API boundaries
+// and between processes, and the ticker is used to trigger Nginx server assessment at regular intervals.
+// The function first validates the Nginx monitoring configuration and updates the NginxBackendServers in the
+// core package as necessary. It then enters a loop which repeatedly evaluates the status of the Nginx backend servers
+// at intervals defined by the ticker. The loop continues until the context is cancelled.
+//
+// Arguments:
+// - store: A pointer to a contextStore instance. Used to manage context-specific values.
+// - ticker: A pointer to a time.Ticker instance. Used to trigger Nginx server assessments at regular intervals.
+//
+// Returns:
+// Returns an error if the Nginx monitoring configuration verification fails or if the context is cancelled.
+func startNginxMonitoring(store *contextStore, ticker *time.Ticker) error {
+	nginxBackendServers, err := verifyNginxMonitoringConfig()
+	if err != nil {
+		return err
+	}
+
+	core.NginxBackendServers.Update(nginxBackendServers)
+	loopNgxBackendServers(nginxBackendServers)
+
+	for {
+		select {
+		case <-ticker.C:
+			loopNgxBackendServers(nginxBackendServers)
+		case <-store.nginx.ctx.Done():
+			return store.nginx.ctx.Err()
+		}
+	}
+}
+
+// handleNgxMonitoringError is a function that handles errors related
+// to the Nginx monitoring feature. If the Nginx monitoring feature is
+// not enabled, it logs an informational message. If there are no
+// configured backend servers for Nginx monitoring, it logs an error message.
+func handleNgxMonitoringError(err error) {
+	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+		if errors.Is(err, errors2.ErrFeatureNgxDisables) {
+			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Nginx monitoring feature is not enabled")
+		}
+	} else if errors.Is(err, errors2.ErrNgxMonitoringEmpty) {
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, "Nginx monitoring backend servers are not configured")
+	}
+}
+
+// restartNgxMonitoring stops the current monitoring ticker, cancels the nginx context from the store,
+// then starts a new monitoring ticker and begins monitoring nginx again in a new goroutine.
+// This function is useful when you need to restart the nginx monitoring process for any reason, like configuration changes.
+//
+// Params:
+// - ctx: The context in which we run monitoring. Can be used to stop monitoring externally.
+// - store: A reference to the contextStore, which holds the cancel function for the nginx context.
+// - ngxMonitoring: A double pointer to a time Ticker, which we stop and replace with a new Ticker.
+func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoring **time.Ticker) {
+	(*ngxMonitoring).Stop()
+	store.nginx.cancel()
+
+	*ngxMonitoring = time.NewTicker(global.NginxMonitoringDelay * time.Second)
+
+	go runNgxMonitoring(ctx, store, *ngxMonitoring)
 }
 
 // main initializes the application and manages the lifecycle of various components.
@@ -705,15 +969,21 @@ func main() {
 	}
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
+	ngxMonitoringTicker := time.NewTicker(global.NginxMonitoringDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
 
-	setupWorkers(ctx, store)
-	handleSignals(ctx, cancel, store, statsTicker)
+	actionWorkers := initializeActionWorkers()
+
+	setupWorkers(ctx, store, actionWorkers)
+	handleSignals(ctx, cancel, store, statsTicker, &ngxMonitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx)
+
+	// Nginx monitoring feature
+	go runNgxMonitoring(ctx, store, ngxMonitoringTicker)
 
 	startStatsLoop(ctx, statsTicker)
 
