@@ -13,6 +13,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ldapPassDB implements the LDAP password database backend.
@@ -30,6 +31,10 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ldapReply          *backend.LDAPReply
 		protocol           *config.LDAPSearchProtocol
 	)
+
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Authentication", "ldapPassDB"))
+
+	defer timer.ObserveDuration()
 
 	passDBResult = &PassDBResult{}
 
@@ -176,6 +181,10 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		protocol     *config.LDAPSearchProtocol
 	)
 
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Account", "ldapAccountDB"))
+
+	defer timer.ObserveDuration()
+
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
 	defer close(ldapReplyChan)
@@ -261,6 +270,10 @@ func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		protocol    *config.LDAPSearchProtocol
 		ldapError   *ldap.Error
 	)
+
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("StoreTOTP", "ldapAddTOTPSecret"))
+
+	defer timer.ObserveDuration()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 

@@ -18,6 +18,7 @@ import (
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
 
@@ -589,6 +590,10 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		index            int
 		network          *net.IPNet
 	)
+
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("BruteForce", "checkBruteForce"))
+
+	defer timer.ObserveDuration()
 
 	if config.LoadableConfig.BruteForce == nil {
 		return false

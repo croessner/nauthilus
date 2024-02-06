@@ -27,6 +27,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"gotest.tools/v3/assert"
 )
 
@@ -1198,7 +1199,11 @@ func (a *Authentication) setStatusCodes(service string) error {
 func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
-	doAction := func(luaAction global.LuaAction) {
+	doAction := func(luaAction global.LuaAction, luaActionName string) {
+		timer := prometheus.NewTimer(functionDuration.WithLabelValues("Action", luaActionName))
+
+		defer timer.ObserveDuration()
+
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
@@ -1242,7 +1247,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureLua
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionLua)
+			doAction(global.LuaActionLua, global.LuaActionLuaName)
 
 			return global.AuthResultFeatureLua
 		} else if abortFeatures {
@@ -1258,7 +1263,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		if a.featureTLSEncryption() {
 			a.FeatureName = global.FeatureTLSEncryption
 
-			doAction(global.LuaActionTLS)
+			doAction(global.LuaActionTLS, global.LuaActionTLSName)
 
 			return global.AuthResultFeatureTLS
 		}
@@ -1269,7 +1274,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureRelayDomains
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionRelayDomains)
+			doAction(global.LuaActionRelayDomains, global.LuaActionRelayDomainsName)
 
 			return global.AuthResultFeatureRelayDomain
 		}
@@ -1282,7 +1287,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureRBL
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionRBL)
+			doAction(global.LuaActionRBL, global.LuaActionRBLName)
 
 			return global.AuthResultFeatureRBL
 		}
@@ -1296,6 +1301,10 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	a.HTTPClientContext = nil
 
 	go func() {
+		timer := prometheus.NewTimer(functionDuration.WithLabelValues("PostAction", "postLuaAction"))
+
+		defer timer.ObserveDuration()
+
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
@@ -1523,6 +1532,10 @@ func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, 
 
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Filter", "filterLua"))
+
+	defer timer.ObserveDuration()
+
 	backendServer := make([]map[string]int, 0)
 
 	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {

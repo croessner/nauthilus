@@ -16,12 +16,13 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/mackerelio/go-osstat/cpu"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
 )
 
 var (
 	// httpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
-	httpRequestsTotalCounter = prometheus.NewCounterVec(
+	httpRequestsTotalCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
 			Help: "Number of HTTP requests.",
@@ -29,7 +30,7 @@ var (
 		[]string{"path"})
 
 	// httpResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
-	httpResponseTimeSecondsHist = prometheus.NewHistogramVec(
+	httpResponseTimeSecondsHist = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
@@ -37,7 +38,7 @@ var (
 		[]string{"path"})
 
 	// loginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
-	loginsCounter = prometheus.NewCounterVec(
+	loginsCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "logins_total",
 			Help: "Number of failed and successful login attempts.",
@@ -45,48 +46,45 @@ var (
 		[]string{"logins"})
 
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
-	cpuUserUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_user_usage_percent",
 		Help: "CPU user usage in percent",
 	})
 
 	// cpuSystemUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, representing the CPU system usage in percent.
-	cpuSystemUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+	cpuSystemUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_system_usage_percent",
 		Help: "CPU system usage in percent",
 	})
 
 	// cpuIdleUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, representing the CPU idle usage in percent.
-	cpuIdleUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+	cpuIdleUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_idle_usage_percent",
 		Help: "CPU idle usage in percent",
 	})
 
 	// redisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
-	redisReadCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	redisReadCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "redis_read_total",
 		Help: "Total number of Redis read operations",
 	})
 
 	// redisWriteCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis write operations.
-	redisWriteCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	redisWriteCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "redis_write_total",
 		Help: "Total number of Redis write operations",
 	})
+
+	functionDuration = promauto.NewSummaryVec(prometheus.SummaryOpts{
+		Name: "function_duration_seconds",
+		Help: "Time spent in function",
+	}, []string{"service", "method"})
 )
 
 // Metric is a prometheus metric with a value and a label.
 type Metric struct {
 	Value float64 `redis:"value"`
 	Label string  `redis:"label"`
-}
-
-//nolint:errcheck,gochecknoinits // Ignore
-func init() {
-	prometheus.MustRegister(httpRequestsTotalCounter, httpResponseTimeSecondsHist)
-	prometheus.MustRegister(redisReadCounter, redisWriteCounter)
-	prometheus.MustRegister(loginsCounter)
-	prometheus.MustRegister(cpuUserUsage, cpuSystemUsage, cpuIdleUsage)
 }
 
 var oldCpu cpu.Stats

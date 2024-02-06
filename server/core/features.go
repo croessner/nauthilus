@@ -15,6 +15,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // featureGeoIP logs some geographical information.
@@ -32,6 +33,10 @@ func (a *Authentication) featureGeoIP() {
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Feature", global.FeatureLua))
+
+	defer timer.ObserveDuration()
+
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		l := feature.Request{
 			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
@@ -78,6 +83,10 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *Authentication) featureTLSEncryption() (triggered bool) {
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Feature", global.FeatureTLSEncryption))
+
+	defer timer.ObserveDuration()
+
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		if a.XSSL == global.NotAvailable {
 			matchIP := a.isInNetwork(config.LoadableConfig.ClearTextList)
@@ -108,6 +117,10 @@ func (a *Authentication) featureTLSEncryption() (triggered bool) {
 // featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *Authentication) featureRelayDomains() (triggered bool) {
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Feature", global.FeatureRelayDomains))
+
+	defer timer.ObserveDuration()
+
 	if config.LoadableConfig.RelayDomains == nil {
 		return
 	}
@@ -147,6 +160,10 @@ func (a *Authentication) featureRBLs(ctx *gin.Context) (triggered bool, err erro
 		rblScore      int
 		totalRBLScore int
 	)
+
+	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Feature", global.FeatureRBL))
+
+	defer timer.ObserveDuration()
 
 	if config.LoadableConfig.RBLs == nil {
 		return
