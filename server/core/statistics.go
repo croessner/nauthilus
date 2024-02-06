@@ -23,7 +23,7 @@ var (
 	// httpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	httpRequestsTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "nauthilus_http_requests_total",
+			Name: "http_requests_total",
 			Help: "Number of HTTP requests.",
 		},
 		[]string{"path"})
@@ -31,7 +31,7 @@ var (
 	// httpResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
 	httpResponseTimeSecondsHist = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "nauthilus_http_response_time_seconds",
+			Name: "http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
 		},
 		[]string{"path"})
@@ -39,7 +39,7 @@ var (
 	// loginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
 	loginsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "nauthilus_logins_total",
+			Name: "logins_total",
 			Help: "Number of failed and successful login attempts.",
 		},
 		[]string{"logins"})
@@ -64,13 +64,13 @@ var (
 
 	// redisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
 	redisReadCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "nauthilus_redis_read_total",
+		Name: "redis_read_total",
 		Help: "Total number of Redis read operations",
 	})
 
 	// redisWriteCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis write operations.
 	redisWriteCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "nauthilus_redis_write_total",
+		Name: "redis_write_total",
 		Help: "Total number of Redis write operations",
 	})
 )
