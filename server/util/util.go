@@ -318,8 +318,6 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 		moduleName = global.DbgLDAPName
 	case global.DbgLDAPPool:
 		moduleName = global.DbgLDAPPoolName
-	case global.DbgSQL:
-		moduleName = global.DbgSQLName
 	case global.DbgCache:
 		moduleName = global.DbgCacheName
 	case global.DbgBf:

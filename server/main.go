@@ -346,10 +346,6 @@ func handleBackend(passDB *config.PassDB) {
 		close(backend.LDAPAuthEndChan)
 		close(backend.LDAPRequestChan)
 		close(backend.LDAPAuthRequestChan)
-	case global.BackendMySQL, global.BackendPostgres:
-		if backend.Database != nil && backend.Database.Conn != nil {
-			backend.Database.Conn.Close()
-		}
 	case global.BackendLua:
 		<-backend.LuaMainWorkerEndChan
 
@@ -379,27 +375,6 @@ func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contex
 	auth.ctx, auth.cancel = context.WithCancel(ctx)
 
 	return lookup, auth
-}
-
-// handleSQLBackend is a function that operates on a context tuple and a given context.
-// It closes the database connection if it exists and cancels the previously running context.
-// This function then starts a new context with cancel capability and assigns it to the
-// context tuple before returning the tuple.
-// Input:
-// - sql: a pointer to the contextTuple which holds the active context and its cancel function.
-// - ctx: a context that will be used to create a new context with cancel capability.
-// Output:
-// - Returns a pointer to the updated contextTuple with the new context and its associated cancel function.
-func handleSQLBackend(sql *contextTuple, ctx context.Context) *contextTuple {
-	if backend.Database != nil && backend.Database.Conn != nil {
-		backend.Database.Conn.Close()
-	}
-
-	stopContext(sql)
-
-	sql.ctx, sql.cancel = context.WithCancel(ctx)
-
-	return sql
 }
 
 // handleLuaBackend receives a contextTuple and a context as parameters.
@@ -511,8 +486,6 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		switch passDB.Get() {
 		case global.BackendLDAP:
 			store.ldapLookup, store.ldapAuth = handleLDAPBackend(store.ldapLookup, store.ldapAuth, ctx)
-		case global.BackendMySQL, global.BackendPostgres:
-			store.sql = handleSQLBackend(store.sql, ctx)
 		case global.BackendLua:
 			store.lua = handleLuaBackend(store.lua, ctx)
 		case global.BackendCache:
@@ -540,8 +513,6 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		switch passDB.Get() {
 		case global.BackendLDAP:
 			startLDAPWorkers(store.ldapLookup, store.ldapAuth)
-		case global.BackendMySQL, global.BackendPostgres:
-			backend.Database = backend.NewDatabase(store.sql.ctx)
 		case global.BackendLua:
 			startLuaWorker(store.lua)
 		case global.BackendCache:
@@ -585,8 +556,6 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 		switch passDB.Get() {
 		case global.BackendLDAP:
 			setupLDAPWorker(store, ctx)
-		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-			setupSQLWorker(store, ctx, passDB)
 		case global.BackendLua:
 			setupLuaWorker(store, ctx)
 		case global.BackendCache:
@@ -619,22 +588,6 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 	store.ldapAuth = newContextTuple(ctx)
 
 	startLDAPWorkers(store.ldapLookup, store.ldapAuth)
-}
-
-// setupSQLWorker configures a SQL worker given a context store, a context, and a PassDB configuration.
-// It sets the store's sql to a new context tuple created with the input context, and the backend's Database to a new database instance.
-// If a database already exists, it logs a warning stating that only one SQLConf Database is allowed and doesn't proceed with
-func setupSQLWorker(store *contextStore, ctx context.Context, passDB *config.PassDB) {
-	if backend.Database != nil {
-		level.Warn(logging.DefaultLogger).Log(
-			global.LogKeyWarning, "Currently only one SQLConf Database is allowed!",
-			"skipping", passDB)
-
-		return
-	}
-
-	store.sql = newContextTuple(ctx)
-	backend.Database = backend.NewDatabase(store.sql.ctx)
 }
 
 // setupLuaWorker initializes a Lua worker with the help of channels.

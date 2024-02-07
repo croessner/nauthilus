@@ -531,8 +531,6 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	switch sourceBackend.(uint8) {
 	case uint8(global.BackendLDAP):
 		addTOTPSecret = ldapAddTOTPSecret
-	case uint8(global.BackendMySQL), uint8(global.BackendPostgres), uint8(global.BackendSQL):
-		addTOTPSecret = sqlAddTOTPSecret
 	case uint8(global.BackendLua):
 		addTOTPSecret = luaAddTOTPSecret
 	default:

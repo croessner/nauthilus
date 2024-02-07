@@ -42,7 +42,6 @@ type File struct {
 	PasswordNonce      string               `mapstructure:"password_nonce"`
 	Lua                *LuaSection
 	Oauth2             *Oauth2Section
-	SQL                *SQLSection
 	LDAP               *LDAPSection
 	Other              map[string]any `mapstructure:",remain"`
 	Mu                 sync.Mutex
@@ -124,57 +123,6 @@ func (f *File) GetNginxBackendServerPort(protocol string) int {
 	}
 
 	return 0
-}
-
-/*
- * SQL Config
- */
-
-func (f *File) GetSQLConfigDSN() string {
-	getConfig := f.GetConfig(global.BackendSQL)
-	if getConfig == nil {
-		return ""
-	}
-
-	if sqlConf, assertOk := getConfig.(*SQLConf); assertOk {
-		return sqlConf.DSN
-	}
-
-	return ""
-}
-
-func (f *File) GetSQLConfigCrypt() bool {
-	getConfig := f.GetConfig(global.BackendSQL)
-	if getConfig == nil {
-		return false
-	}
-
-	if sqlConf, assertOk := getConfig.(*SQLConf); assertOk {
-		return sqlConf.Crypt
-	}
-
-	return false
-}
-
-func (f *File) GetSQLSearchProtocol(protocol string) (*SQLSearchProtocol, error) {
-	getSearch := f.GetProtocols(global.BackendSQL)
-	if getSearch == nil {
-		return nil, errors.ErrSQLConfig.WithDetail("Missing search::protocol section and no default")
-	}
-
-	for index := range getSearch.([]SQLSearchProtocol) {
-		for protoIndex := range getSearch.([]SQLSearchProtocol)[index].Protocols {
-			if getSearch.([]SQLSearchProtocol)[index].Protocols[protoIndex] == protocol {
-				return &getSearch.([]SQLSearchProtocol)[index], nil
-			}
-		}
-	}
-
-	if protocol == global.ProtoDefault {
-		return nil, errors.ErrSQLConfig.WithDetail("Missing search::protocol section and no default")
-	}
-
-	return f.GetSQLSearchProtocol(global.ProtoDefault)
 }
 
 /*
@@ -534,10 +482,6 @@ func (f *File) RetrieveGetterMap() map[global.Backend]GetterHandler {
 		getterMap[global.BackendLDAP] = ldapSection
 	}
 
-	if sqlSection, ok := f.GetSection(global.BackendSQL).(*SQLSection); ok {
-		getterMap[global.BackendSQL] = sqlSection
-	}
-
 	if luaSection, ok := f.GetSection(global.BackendLua).(*LuaSection); ok {
 		getterMap[global.BackendLua] = luaSection
 	}
@@ -594,8 +538,6 @@ func (f *File) GetSection(backend global.Backend) any {
 	switch backend {
 	case global.BackendLDAP:
 		return f.LDAP
-	case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-		return f.SQL
 	case global.BackendLua:
 		return f.Lua
 	default:
@@ -629,14 +571,6 @@ func (f *File) GetAllProtocols() []string {
 		for index := range ldapProtocols.([]LDAPSearchProtocol) {
 			for protoIndex := range LoadableConfig.LDAP.Search[index].Protocols {
 				protocols.Set(LoadableConfig.LDAP.Search[index].Protocols[protoIndex])
-			}
-		}
-	}
-
-	if sqlProtocols := f.GetProtocols(global.BackendSQL); sqlProtocols != nil {
-		for index := range sqlProtocols.([]SQLSearchProtocol) {
-			for protoIndex := range LoadableConfig.SQL.Search[index].Protocols {
-				protocols.Set(LoadableConfig.SQL.Search[index].Protocols[protoIndex])
 			}
 		}
 	}
@@ -877,19 +811,12 @@ func (f *File) validatePassDBBackends() error {
 			}
 
 			level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", f.LDAP.Config))
-		case global.BackendMySQL, global.BackendPostgres:
-			if f.SQL == nil {
-				return errors.ErrNoSQLSection
-			}
-
-			level.Debug(logging.DefaultLogger).Log("sql", fmt.Sprintf("%+v", f.SQL.Config))
 		case global.BackendLua:
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
 			}
 		case global.BackendUnknown:
 		case global.BackendCache:
-		case global.BackendSQL:
 		}
 	}
 

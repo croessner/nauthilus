@@ -165,8 +165,6 @@ func (p *PassDB) Set(value string) error {
 		p.backend = global.BackendCache
 	case global.BackendLDAPName:
 		p.backend = global.BackendLDAP
-	case global.BackendMySQLName, global.BackendPostgresName, global.BackendSQLName:
-		p.backend = global.BackendSQL
 	case global.BackendLuaName:
 		p.backend = global.BackendLua
 	default:
@@ -258,8 +256,6 @@ func (d *DbgModule) Set(value string) error {
 		d.module = global.DbgLDAP
 	case global.DbgLDAPPoolName:
 		d.module = global.DbgLDAPPool
-	case global.DbgSQLName:
-		d.module = global.DbgSQL
 	case global.DbgCacheName:
 		d.module = global.DbgCache
 	case global.DbgBfName:
@@ -534,14 +530,6 @@ func setProtectionDefaultEnvVars() {
 	viper.SetDefault("trusted_proxies", []string{"127.0.0.1", "::1"})
 }
 
-// setSQLDefaultEnvVars sets the default environment variables for SQL configurations.
-// It initializes the "sql_max_connections" and "sql_max_idle_connections" variables with default values.
-// The default values are taken from the global constants defined in the code.
-func setSQLDefaultEnvVars() {
-	viper.SetDefault("sql_max_connections", global.SQLMaxConns)
-	viper.SetDefault("sql_max_idle_connections", global.SQLMaxIdleConns)
-}
-
 // setWebDefaultEnvVars sets the default environment variables for the web-related functionality of the application.
 // It initializes various viper configuration variables with default values specific to the web module.
 // The default values are based on the constants and types defined in the code.
@@ -648,7 +636,6 @@ func setDefaultEnvVars() {
 	setCommonDefaultEnvVars()
 	setRedisDefaultEnvVars()
 	setProtectionDefaultEnvVars()
-	setSQLDefaultEnvVars()
 	setWebDefaultEnvVars()
 
 	setLoginPageDefaultEnvVars()

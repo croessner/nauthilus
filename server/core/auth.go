@@ -1386,11 +1386,6 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 				global.BackendLDAP,
 				ldapPassDB,
 			})
-		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendSQL,
-				sqlPassDB,
-			})
 		case global.BackendLua:
 			passDBs = append(passDBs, &PassDBMap{
 				global.BackendLua,
@@ -1428,8 +1423,6 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 				switch a.UsedPassDBBackend {
 				case global.BackendLDAP:
 					usedBackend = global.CacheLDAP
-				case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-					usedBackend = global.CacheSQL
 				case global.BackendLua:
 					usedBackend = global.CacheLua
 				case global.BackendUnknown:
@@ -1610,11 +1603,6 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLDAP,
 				ldapAccountDB,
-			})
-		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-			accounts = append(accounts, &AccountListMap{
-				global.BackendSQL,
-				sqlAccountDB,
 			})
 		case global.BackendLua:
 			accounts = append(accounts, &AccountListMap{

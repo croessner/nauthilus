@@ -42,8 +42,6 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 			switch passDB {
 			case global.BackendLDAP:
 				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-			case global.BackendPostgres, global.BackendMySQL:
-				credentialDBs = append(credentialDBs, sqlGetWebAuthnCredentials)
 			default:
 				return nil, errors.ErrUnknownDatabaseBackend
 			}
@@ -58,8 +56,6 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 				credentialDBs = append(credentialDBs, nil)
 			case global.BackendLDAP:
 				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
-			case global.BackendMySQL, global.BackendPostgres:
-				credentialDBs = append(credentialDBs, sqlGetWebAuthnCredentials)
 			// TODO: Add more databases
 			default:
 				return nil, errors.ErrUnknownDatabaseBackend
