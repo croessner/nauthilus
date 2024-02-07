@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -611,7 +612,7 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 
 	handleLogging(ctx, a)
 
-	loginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
 // setCommonHeaders sets common headers for the given gin.Context and Authentication.
@@ -813,7 +814,7 @@ func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
 
 // loginAttemptProcessing performs processing for a failed login attempt.
 // It checks the verbosity level in the environment configuration and logs the failed login attempt if it is greater than LogLevelWarn.
-// It then increments the loginsCounter with the LabelFailure.
+// It then increments the LoginsCounter with the LabelFailure.
 //
 // Example usage:
 //
@@ -825,7 +826,7 @@ func (a *Authentication) loginAttemptProcessing(ctx *gin.Context) {
 		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 	}
 
-	loginsCounter.WithLabelValues(global.LabelFailure).Inc()
+	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 
 // authFail handles the failure of authentication.
@@ -1200,7 +1201,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
 	doAction := func(luaAction global.LuaAction, luaActionName string) {
-		timer := prometheus.NewTimer(functionDuration.WithLabelValues("Action", luaActionName))
+		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", luaActionName))
 
 		defer timer.ObserveDuration()
 
@@ -1301,7 +1302,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	a.HTTPClientContext = nil
 
 	go func() {
-		timer := prometheus.NewTimer(functionDuration.WithLabelValues("PostAction", "postLuaAction"))
+		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
 
 		defer timer.ObserveDuration()
 
@@ -1467,7 +1468,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 
 						go func() {
 							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
-								redisWriteCounter.Inc()
+								stats.RedisWriteCounter.Inc()
 							}
 						}()
 					}
@@ -1532,7 +1533,7 @@ func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, 
 
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Filter", "filterLua"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Filter", "filterLua"))
 
 	defer timer.ObserveDuration()
 
@@ -1677,7 +1678,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 	if err != nil {
 		return
 	} else {
-		redisReadCounter.Inc()
+		stats.RedisReadCounter.Inc()
 	}
 
 	if accountName != "" {
@@ -1699,7 +1700,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 
 		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
 		if err == nil {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 	}
 

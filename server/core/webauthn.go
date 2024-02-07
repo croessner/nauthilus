@@ -9,6 +9,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -91,7 +92,7 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 		if user, err = backend.GetWebAuthnFromRedis(uniqueUserID); err != nil {
 			return nil, err
 		} else {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 	}
 
@@ -102,7 +103,7 @@ func putUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
 	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
-		redisWriteCounter.Inc()
+		stats.RedisWriteCounter.Inc()
 	}
 }
 
@@ -110,7 +111,7 @@ func updateUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
 	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
-		redisWriteCounter.Inc()
+		stats.RedisWriteCounter.Inc()
 	}
 }
 

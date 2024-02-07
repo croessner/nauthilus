@@ -14,6 +14,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/go-kit/log/level"
@@ -88,7 +89,7 @@ func (a *Authentication) userExists() (bool, error) {
 	if err != nil {
 		return false, err
 	} else {
-		redisReadCounter.Inc()
+		stats.RedisReadCounter.Inc()
 	}
 
 	if accountName == "" {
@@ -311,7 +312,7 @@ func (a *Authentication) loadBruteForcePasswordHistoryFromRedis(key string) {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 
 		return
@@ -402,7 +403,7 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 
 			return
 		} else {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -415,7 +416,7 @@ func (a *Authentication) saveBruteForcePasswordToRedis() {
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), keys[index], time.Duration(viper.GetInt("redis_negative_cache_ttl"))*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 
 		util.DebugModule(
@@ -449,7 +450,7 @@ func (a *Authentication) loadBruteForceBucketCounterFromRedis(rule *config.Brute
 			return
 		} else {
 			if !isRedisErr {
-				redisReadCounter.Inc()
+				stats.RedisReadCounter.Inc()
 			}
 		}
 	}
@@ -476,7 +477,7 @@ func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteFo
 			if err := backend.RedisHandle.Incr(backend.RedisHandle.Context(), key).Err(); err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 			} else {
-				redisWriteCounter.Inc()
+				stats.RedisWriteCounter.Inc()
 			}
 
 		}
@@ -484,7 +485,7 @@ func (a *Authentication) saveBruteForceBucketCounterToRedis(rule *config.BruteFo
 		if err := backend.RedisHandle.Expire(backend.RedisHandle.Context(), key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 	}
 }
@@ -501,7 +502,7 @@ func (a *Authentication) setPreResultBruteForceRedis(rule *config.BruteForceRule
 		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, network.String(), a.BruteForceName).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 	}
 }
@@ -524,7 +525,7 @@ func (a *Authentication) getPreResultBruteForceRedis(rule *config.BruteForceRule
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 	}
 
@@ -552,7 +553,7 @@ func (a *Authentication) deleteIPBruteForceRedis(rule *config.BruteForceRule, ru
 			if err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), key, network.String()).Err(); err != nil {
 				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 			} else {
-				redisWriteCounter.Inc()
+				stats.RedisWriteCounter.Inc()
 			}
 		}
 
@@ -591,7 +592,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		network          *net.IPNet
 	)
 
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("BruteForce", "checkBruteForce"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("BruteForce", "checkBruteForce"))
 
 	defer timer.ObserveDuration()
 

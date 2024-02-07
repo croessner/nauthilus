@@ -9,6 +9,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/go-redis/redis/v8"
@@ -180,7 +181,7 @@ func listBruteforce(ctx *gin.Context) {
 		} else {
 			list.Error = "none"
 
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 	} else {
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
@@ -324,13 +325,13 @@ func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
 	accountName, err := backend.LookupUserAccountFromRedis(userCmd.User)
 	if err != nil || accountName == "" {
 		if err == nil {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 
 		return "", false, true
 	}
 
-	redisReadCounter.Inc()
+	stats.RedisReadCounter.Inc()
 
 	return accountName, false, false
 }
@@ -385,7 +386,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 		return
 	}
 
-	redisWriteCounter.Inc()
+	stats.RedisWriteCounter.Inc()
 
 	for _, userKey := range userKeys.GetStringSlice() {
 		if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
@@ -394,7 +395,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 			return
 		}
 
-		redisWriteCounter.Inc()
+		stats.RedisWriteCounter.Inc()
 
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 	}
@@ -553,7 +554,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 					return ruleFlushError, err
 				}
 
-				redisWriteCounter.Inc()
+				stats.RedisWriteCounter.Inc()
 
 				level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
 			}

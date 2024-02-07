@@ -4,6 +4,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -15,7 +16,7 @@ func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ppc         *backend.PositivePasswordCache
 	)
 
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Authentication", "cachePassDB"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "cachePassDB"))
 
 	defer timer.ObserveDuration()
 
@@ -40,7 +41,7 @@ func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			}
 
 			if !isRedisErr {
-				redisReadCounter.Inc()
+				stats.RedisReadCounter.Inc()
 			}
 		}
 

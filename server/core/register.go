@@ -10,6 +10,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -570,7 +571,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 			return
 		} else {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 
 		for index := range protocols {
@@ -585,7 +586,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
-					redisWriteCounter.Inc()
+					stats.RedisWriteCounter.Inc()
 
 					continue
 				}

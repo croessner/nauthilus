@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -712,12 +713,12 @@ func logLuaStatePoolDebug() {
 //
 //	time.Sleep(30 * time.Second)
 func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
-	go core.MeasureCPU(ctx)
+	go stats.MeasureCPU(ctx)
 
 	for {
 		select {
 		case <-ticker.C:
-			core.PrintStats()
+			stats.PrintStats()
 			core.SaveStatsToRedis()
 
 			logLuaStatePoolDebug()

@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
@@ -462,7 +463,7 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 // 1. Extracts the path from the request context.
 // 2. Creates a new Prometheus timer to measure the duration of the request.
 // 3. Calls the Next() method to pass the request to the next middleware or handler.
-// 4. Increments the httpRequestsTotalCounter with the path label value.
+// 4. Increments the HttpRequestsTotalCounter with the path label value.
 // 5. Observes the duration of the request using the timer.
 //
 // Usage:
@@ -472,11 +473,11 @@ func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		path := ctx.FullPath()
 
-		timer := prometheus.NewTimer(httpResponseTimeSecondsHist.WithLabelValues(path))
+		timer := prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
 
 		ctx.Next()
 
-		httpRequestsTotalCounter.WithLabelValues(path).Inc()
+		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
 
 		timer.ObserveDuration()
 	}

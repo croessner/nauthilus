@@ -9,6 +9,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
@@ -32,7 +33,7 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		protocol           *config.LDAPSearchProtocol
 	)
 
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Authentication", "ldapPassDB"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "ldapPassDB"))
 
 	defer timer.ObserveDuration()
 
@@ -181,7 +182,7 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("Account", "ldapAccountDB"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Account", "ldapAccountDB"))
 
 	defer timer.ObserveDuration()
 
@@ -271,7 +272,7 @@ func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		ldapError   *ldap.Error
 	)
 
-	timer := prometheus.NewTimer(functionDuration.WithLabelValues("StoreTOTP", "ldapAddTOTPSecret"))
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("StoreTOTP", "ldapAddTOTPSecret"))
 
 	defer timer.ObserveDuration()
 
