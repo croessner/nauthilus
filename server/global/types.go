@@ -26,6 +26,8 @@ func (b Backend) String() string {
 		return BackendLDAPName
 	case BackendLua:
 		return BackendLuaName
+	case BackendLocalCache:
+		return BackendLocalCacheName
 	default:
 		return BackendUnknownName
 	}

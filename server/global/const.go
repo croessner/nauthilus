@@ -333,13 +333,16 @@ const (
 	BackendUnknown Backend = iota
 
 	// BackendCache represents a Cache backend
-	BackendCache Backend = iota
+	BackendCache
 
 	// BackendLDAP represents an LDAP backend
-	BackendLDAP Backend = iota
+	BackendLDAP
 
 	// BackendLua represents a Lua backend
-	BackendLua Backend = iota
+	BackendLua
+
+	// BackendLocalCache represents the local in-memory cache localcache.LocalCache
+	BackendLocalCache
 )
 
 const (
@@ -354,6 +357,9 @@ const (
 
 	// BackendLuaName refers to a Lua backend
 	BackendLuaName = "lua"
+
+	// BackendLocalCacheName refers to th elocal in memory localcache.LocalCache.
+	BackendLocalCacheName = "memory"
 )
 
 // Supported features.
@@ -668,6 +674,9 @@ const (
 
 	// DataExchangeKey is used as a key to store the session's data exchange information in session.Store
 	DataExchangeKey = "data_exchange"
+
+	// LocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
+	LocalCacheAuthKey = "local_cache_auth"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

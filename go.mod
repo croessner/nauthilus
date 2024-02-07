@@ -21,6 +21,7 @@ require (
 	github.com/nicksnyder/go-i18n/v2 v2.3.0
 	github.com/ory/hydra-client-go/v2 v2.1.1
 	github.com/oschwald/maxminddb-golang v1.12.0
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pquerna/otp v1.4.0
 	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.5.0

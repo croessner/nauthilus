@@ -18,6 +18,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -1345,11 +1346,47 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
-// handlePassword is the mein password checking routine. It calls verifyPassword to check the user credentials. After
-// the verification process ended, it updates user information on the Redis server, if the cache backend is enabled.
-//
-//nolint:gocognit // Ignore
+// handlePassword handles the authentication process for the password flow.
+// It performs common validation checks and then proceeds based on the value of ctx.Value(global.LocalCacheAuthKey).
+// If it is true, it calls the handleLocalCache function.
+// Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
+// In the next step, it calls the postVerificationProcesses function to perform further control flow based on cache usage and authentication status.
+// Finally, it returns the authResult which indicates the authentication result of the process.
 func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
+	// Common validation checks
+	authResult = a.usernamePasswordChecks()
+
+	if ctx.Value(global.LocalCacheAuthKey).(bool) {
+		return a.handleLocalCache(ctx)
+	}
+
+	useCache, backendPos, passDBs := a.handleBackendTypes()
+
+	// Further control flow based on whether cache is used and authentication status
+	authResult = a.postVerificationProcesses(ctx, useCache, backendPos, passDBs)
+
+	return authResult
+}
+
+// usernamePasswordChecks performs checks on the Username and Password fields of the Authentication object.
+// It logs debug messages for empty username or empty password cases.
+// It returns global.AuthResultEmptyUsername if the username is empty.
+// It returns global.AuthResultEmptyPassword if the password is empty.
+// Otherwise, it returns global.AuthResultUnset.
+// Usage example:
+//
+//	func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
+//		a.usernamePasswordChecks()
+//		...
+//	}
+//
+// Dependencies:
+// - util.DebugModule
+// - global.AuthResult
+// - global.DbgAuth
+// - global.LogKeyGUID
+// - global.LogKeyMsg
+func (a *Authentication) usernamePasswordChecks() global.AuthResult {
 	if a.Username == "" {
 		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Empty username")
 
@@ -1362,42 +1399,94 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		return global.AuthResultEmptyPassword
 	}
 
-	/*
-	 * Verify user password
-	 */
+	return global.AuthResultUnset
+}
 
-	var passDBs []*PassDBMap
+// handleLocalCache handles the local cache authentication logic for the Authentication object.
+// It sets the operation mode and initializes the passDBResult.
+// Then, it filters the authentication result through the Lua filter.
+// After that, the postLuaAction is executed on the passDBResult.
+// Finally, it returns the authResult of type global.AuthResult.
+func (a *Authentication) handleLocalCache(ctx *gin.Context) global.AuthResult {
+	a.setOperationMode(ctx)
 
-	useCache := false
-	backendPos := make(map[global.Backend]int)
+	passDBResult := a.initializePassDBResult()
+	authResult := a.filterLua(passDBResult, ctx)
+
+	a.postLuaAction(passDBResult)
+
+	return authResult
+}
+
+// initializePassDBResult initializes a new instance of PassDBResult with values from the Authentication object.
+// It sets Authenticated and UserFound to true and copies the values of AccountField, TOTPSecretField, TOTPRecoveryField,
+// UniqueUserIDField, DisplayNameField, Backend, and Attributes from the Authentication object.
+// The initialized PassDBResult instance is returned.
+func (a *Authentication) initializePassDBResult() *PassDBResult {
+	return &PassDBResult{
+		Authenticated:     true,
+		UserFound:         true,
+		AccountField:      a.AccountField,
+		TOTPSecretField:   a.TOTPSecretField,
+		TOTPRecoveryField: a.TOTPRecoveryField,
+		UniqueUserIDField: a.UniqueUserIDField,
+		DisplayNameField:  a.DisplayNameField,
+		Backend:           a.UsedPassDBBackend,
+		Attributes:        a.Attributes,
+	}
+}
+
+// handleBackendTypes initializes and populates variables related to backend types.
+// The `backendPos` map stores the position of each backend type in the configuration list.
+// The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
+// The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
+// This method loops through the `config.EnvConfig.PassDBs` slice and processes each PassDB object to determine the backend type. It populates the `backendPos` map with the backend type
+func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) {
+	backendPos = make(map[global.Backend]int)
 
 	for index, passDB := range config.EnvConfig.PassDBs {
 		db := passDB.Get()
-
 		switch db {
 		case global.BackendCache:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendCache,
-				cachePassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
 			useCache = true
 		case global.BackendLDAP:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendLDAP,
-				ldapPassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
 		case global.BackendLua:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendLua,
-				luaPassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendLua, luaPassDB)
 		case global.BackendUnknown:
+		case global.BackendLocalCache:
 		}
 
 		backendPos[db] = index
 	}
 
-	// Capture the index to know which passdb answered the query
+	return useCache, backendPos, passDBs
+}
+
+// appendBackend appends a new PassDBMap object to the passDBs slice.
+// Parameters:
+// - passDBs: the slice of PassDBMap objects to append to
+// - backendType: the global.Backend value representing the backend type
+// - backendFunction: the PassDBOption function to assign to the PassDBMap object
+// Returns:
+// - The modified passDBs slice with the new PassDBMap object appended
+func (a *Authentication) appendBackend(passDBs []*PassDBMap, backendType global.Backend, backendFunction PassDBOption) []*PassDBMap {
+	return append(passDBs, &PassDBMap{
+		backendType,
+		backendFunction,
+	})
+}
+
+// postVerificationProcesses manages the post-verification steps in the authentication process.
+// It first verifies the password provided by the user. If the verification fails, it logs the error and returns temporary failure.
+// If the cache is being used and the user is not excluded from authentication, it ensures that the cache backend precedes the used backend.
+// If the verification is successful, user data is saved to Redis. If it fails, it increases the brute force counter.
+// It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
+// call post Lua action and return authentication failure.
+// It also checks if the user is found during password verification, if true, it sets a new username to the user.
+// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
+func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors2.DetailedError
@@ -1427,6 +1516,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 					usedBackend = global.CacheLua
 				case global.BackendUnknown:
 				case global.BackendCache:
+				case global.BackendLocalCache:
 				}
 
 				cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
@@ -1497,7 +1587,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	authResult = a.filterLua(passDBResult, ctx)
+	authResult := a.filterLua(passDBResult, ctx)
 
 	a.postLuaAction(passDBResult)
 
@@ -1611,6 +1701,7 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 			})
 		case global.BackendUnknown:
 		case global.BackendCache:
+		case global.BackendLocalCache:
 		}
 	}
 
@@ -1695,6 +1786,35 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 	return
 }
 
+// setOperationMode sets the operation mode of the Authentication object based on the "mode" query parameter from the provided gin context.
+// It retrieves the GUID from the gin context and uses it for logging purposes.
+// The operation mode can be "no-auth" or "list-accounts".
+// If the mode is "no-auth", it sets the NoAuth field of the Authentication object to true.
+// If the mode is "list-accounts", it sets the ListAccounts field of the Authentication object to true.
+// The function "util.DebugModule" is used for logging debug messages with the appropriate module name and function name.
+// Example usage of setOperationMode:
+//
+//	a.setOperationMode(ctx)
+//
+//	func setupAuth(ctx *gin.Context, auth *Authentication) {
+//	  //...
+//	  auth.setOperationMode(ctx)
+//	}
+func (a *Authentication) setOperationMode(ctx *gin.Context) {
+	guid := ctx.Value(global.GUIDKey).(string)
+
+	switch ctx.Query("mode") {
+	case "no-auth":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
+
+		a.NoAuth = true
+	case "list-accounts":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
+
+		a.ListAccounts = true
+	}
+}
+
 // setupHeaderBasedAuth sets up the authentication based on the headers in the request.
 // It takes the context and the authentication object as parameters.
 // It retrieves the GUID value from the context using global.GUIDKey and casts it to a string.
@@ -1709,8 +1829,6 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 // If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
-	guid := ctx.Value(global.GUIDKey).(string)
-
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	auth.Username = ctx.Request.Header.Get("Auth-User")
 	auth.UsernameOrig = auth.Username
@@ -1734,17 +1852,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 	method := ctx.Request.Header.Get("Auth-Method")
 
 	auth.Method = &method
-
-	switch ctx.Query("mode") {
-	case "no-auth":
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
-
-		auth.NoAuth = true
-	case "list-accounts":
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
-
-		auth.ListAccounts = true
-	}
 
 	auth.withClientInfo(ctx)
 	auth.withLocalInfo(ctx)
@@ -1898,6 +2005,8 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 	}
 
 	auth.withDefaults(ctx)
+
+	auth.setOperationMode(ctx)
 }
 
 // NewAuthentication creates a new instance of the Authentication struct.
@@ -2416,4 +2525,29 @@ func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 	}
 
 	return subject, claims
+}
+
+// generateLocalChacheKey generates a string key used for caching the Authentication object in the local cache.
+// The key is constructed by concatenating the UsernameOrig, Password, Service, ClientIp, and XClientPort values
+// using a null character ('\0') as a separator.
+func (a *Authentication) generateLocalChacheKey() string {
+	return fmt.Sprintf(`%s\0%s\0%s\0%s\0%s`,
+		a.UsernameOrig,
+		a.Password,
+		a.Service,
+		a.ClientIP,
+		a.XClientPort)
+}
+
+// queryLocalCache queries the local cache to retrieve the Authentication object associated with the provided Authentication object a. It returns the Authentication object and a boolean
+func (a *Authentication) queryLocalCache() (auth *Authentication, found bool) {
+	var assertOk bool
+
+	if cachedAuth, foundKey := localcache.LocalCache.Get(a.generateLocalChacheKey()); foundKey {
+		if auth, assertOk = cachedAuth.(*Authentication); !assertOk {
+			return nil, false
+		}
+	}
+
+	return
 }

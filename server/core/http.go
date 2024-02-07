@@ -61,12 +61,20 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.checkBruteForce() {
-				auth.updateBruteForceBucketsCounter()
-				auth.postLuaAction(&PassDBResult{})
-				auth.authFail(ctx)
+			cachedAuth, found := auth.queryLocalCache()
+			if !found {
+				if auth.checkBruteForce() {
+					auth.updateBruteForceBucketsCounter()
+					auth.postLuaAction(&PassDBResult{})
+					auth.authFail(ctx)
 
-				return
+					return
+				}
+			} else {
+				auth = cachedAuth
+				auth.UsedPassDBBackend = global.BackendLocalCache
+
+				ctx.Set(global.LocalCacheAuthKey, true)
 			}
 
 			switch ctx.Param("service") {
@@ -86,12 +94,20 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.checkBruteForce() {
-				auth.updateBruteForceBucketsCounter()
-				auth.postLuaAction(&PassDBResult{})
-				auth.authFail(ctx)
+			cachedAuth, found := auth.queryLocalCache()
+			if !found {
+				if auth.checkBruteForce() {
+					auth.updateBruteForceBucketsCounter()
+					auth.postLuaAction(&PassDBResult{})
+					auth.authFail(ctx)
 
-				return
+					return
+				}
+			} else {
+				auth = cachedAuth
+				auth.UsedPassDBBackend = global.BackendLocalCache
+
+				ctx.Set(global.LocalCacheAuthKey, true)
 			}
 
 			switch ctx.Param("service") {
@@ -284,6 +300,7 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		guid := ksuid.New().String()
 		ctx.Set(global.GUIDKey, guid)
+		ctx.Set(global.LocalCacheAuthKey, false)
 
 		// Start timer
 		start := time.Now()

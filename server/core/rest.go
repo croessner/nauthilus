@@ -84,7 +84,7 @@ func (a *Authentication) generic(ctx *gin.Context) {
 
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
 	} else {
-		if !a.NoAuth {
+		if !(a.NoAuth || ctx.Value(global.LocalCacheAuthKey).(bool)) {
 			//nolint:exhaustive // Ignore some results
 			switch a.handleFeatures(ctx) {
 			case global.AuthResultFeatureTLS:
