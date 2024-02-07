@@ -33,10 +33,6 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		protocol           *config.LDAPSearchProtocol
 	)
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "ldapPassDB"))
-
-	defer timer.ObserveDuration()
-
 	passDBResult = &PassDBResult{}
 
 	ldapReplyChan := make(chan *backend.LDAPReply)

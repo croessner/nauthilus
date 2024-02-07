@@ -10,8 +10,10 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	"github.com/yuin/gopher-lua"
 )
@@ -363,6 +365,10 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 // Returns: none
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) {
 	var err error
+
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", aw.actionScripts[index].ScriptPath))
+
+	defer timer.ObserveDuration()
 
 	luaCtx, luaCancel := context.WithTimeout(*(aw.ctx), viper.GetDuration("lua_script_timeout")*time.Second)
 	L.SetContext(luaCtx)

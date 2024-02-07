@@ -17,9 +17,11 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -1201,7 +1203,10 @@ func LDAPMainWorker(ctx context.Context) {
 					rawResult []*ldap.Entry
 				)
 
+				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPMainWorker"))
+
 				defer func() {
+					timer.ObserveDuration()
 					ldapWaitGroup.Done()
 				}()
 
@@ -1309,7 +1314,10 @@ func LDAPAuthWorker(ctx context.Context) {
 			go func(index int, ldapUserBindRequest *LDAPAuthRequest) {
 				var err error
 
+				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPAuthWorker"))
+
 				defer func() {
+					timer.ObserveDuration()
 					ldapWaitGroup.Done()
 				}()
 

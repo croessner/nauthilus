@@ -55,7 +55,7 @@ var (
 	FunctionDuration = promauto.NewSummaryVec(prometheus.SummaryOpts{
 		Name: "function_duration_seconds",
 		Help: "Time spent in function",
-	}, []string{"service", "method"})
+	}, []string{"service", "task"})
 
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
