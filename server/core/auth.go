@@ -2549,15 +2549,13 @@ func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 }
 
 // generateLocalChacheKey generates a string key used for caching the Authentication object in the local cache.
-// The key is constructed by concatenating the UsernameOrig, Password, Service, ClientIp, and XClientPort values
-// using a null character ('\0') as a separator.
+// The key is constructed by concatenating the UsernameOrig, Password and  Service values using a null character ('\0')
+// as a separator.
 func (a *Authentication) generateLocalChacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
+	return fmt.Sprintf("%s\000%s\000%s",
 		a.UsernameOrig,
 		a.Password,
-		a.Service,
-		a.ClientIP,
-		a.XClientPort)
+		a.Service)
 }
 
 // getFromLocalCache retrieves the Authentication object from the local cache using the generateLocalChacheKey() as the key.
