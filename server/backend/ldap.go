@@ -415,35 +415,29 @@ func determineIdlePoolSize(l *LDAPPool, poolSize int) (idlePoolSize int, openCon
 	return idlePoolSize, openConnections
 }
 
-// initializeConnections initializes the connections for the given LDAPPool object l.
-// It takes a boolean bind parameter to specify whether to perform binding on the connections.
-// The idlePoolSize parameter specifies the number of connections to initialize.
-// It creates a WaitGroup wg and sets diffConnections to the idlePoolSize.
-//
-// It then iterates through the idlePoolSize and performs the following steps:
-// - Increments the WaitGroup wg by 1.
-// - Generates a unique GUID string based on the index.
-// - Logs the connection info using the logConnectionInfo method of the LDAPPool.
-// - Calls the setupConnection method of the LDAPPool to set up the connection.
-//   - If the setupConnection method returns nil (no error), it decrements diffConnections by 1.
-//
-// - Checks if diffConnections is equal to 0. If so, it breaks the loop.
-//
-// Finally, it checks if diffConnections is not equal to 0 and waits for all goroutines to complete using the Wait method of the WaitGroup wg.
-func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int) (err error) {
-	diffConnections := idlePoolSize
-
-	for index := 0; index < idlePoolSize; index++ {
+// initializeConnections initializes connections in the LDAPPool object l.
+// If bind is true, it will perform the setupConnection with bind set to true.
+// idlePoolSize is the number of idle connections in the pool to be created.
+// poolSize is the total number of possible pool connections.
+// It iterates through the poolSize and performs the following steps for each connection:
+// - Generates a unique identifier for the connection.
+// - Logs connection information using l.logConnectionInfo.
+// - Sets up the connection using l.setupConnection, passing in the unique identifier, bind value, and index.
+// - Decrements idlePoolSize if the connection setup was successful.
+// - Returns early if idlePoolSize reaches zero.
+// Returns errors2.ErrLDAPConnect if all connections fail to be set up.
+func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int, poolSize int) (err error) {
+	for index := 0; index < poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
 		l.logConnectionInfo(&guidStr, index)
 
 		err = l.setupConnection(&guidStr, bind, index)
 		if err == nil {
-			diffConnections--
+			idlePoolSize--
 		}
 
-		if diffConnections == 0 {
+		if idlePoolSize == 0 {
 			return nil
 		}
 	}
@@ -536,7 +530,7 @@ func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
 	idlePoolSize, openConnections := determineIdlePoolSize(l, poolSize)
 
 	if openConnections < idlePoolSize {
-		err = initializeConnections(l, bind, idlePoolSize)
+		err = initializeConnections(l, bind, idlePoolSize, poolSize)
 	}
 
 	return
