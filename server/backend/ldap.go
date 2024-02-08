@@ -1223,18 +1223,29 @@ func LDAPMainWorker(ctx context.Context) {
 				case global.LDAPSearch:
 					if result, rawResult, err = ldapPool.conn[index].search(ldapRequest); err != nil {
 						if err != nil {
-							var ldapError *ldap.Error
+							var (
+								ldapError *ldap.Error
+								doLog     bool
+							)
 
 							if errors.As(err, &ldapError) {
 								if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
-									level.Error(logging.DefaultErrLogger).Log(
-										global.LogKeyLDAPPoolName, ldapPool.name,
-										global.LogKeyGUID, *ldapRequest.GUID,
-										global.LogKeyError, ldapError.Error(),
-									)
-
+									doLog = true
 									ldapReply.Err = ldapError.Err
 								}
+
+								// Unknown user!
+							} else {
+								doLog = true
+								ldapReply.Err = err
+							}
+
+							if doLog {
+								level.Error(logging.DefaultErrLogger).Log(
+									global.LogKeyLDAPPoolName, ldapPool.name,
+									global.LogKeyGUID, *ldapRequest.GUID,
+									global.LogKeyError, ldapError.Error(),
+								)
 							}
 						}
 					}
