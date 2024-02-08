@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -438,7 +439,8 @@ func logError(r *Request, script *LuaFilter, err error) {
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	resultMap := map[int]string{global.ResultOk: "ok", global.ResultFail: "fail"}
 
-	level.Info(logging.DefaultLogger).Log(
+	util.DebugModule(
+		global.DbgFilter,
 		global.LogKeyGUID, r.Session,
 		"name", script.Name,
 		global.LogKeyMsg, "Lua filter finished",

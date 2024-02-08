@@ -269,6 +269,8 @@ func (d *DbgModule) Set(value string) error {
 		d.module = global.DbgFeature
 	case global.DbgLuaName:
 		d.module = global.DbgLua
+	case global.DbgFilterName:
+		d.module = global.DbgFilter
 	default:
 		return errors.ErrWrongDebugModule
 	}
