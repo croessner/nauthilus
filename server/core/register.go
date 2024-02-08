@@ -194,10 +194,12 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	auth.UsernameOrig = auth.Username
 
-	if auth.preproccessAuthRequest(ctx) {
+	if found, reject := auth.preproccessAuthRequest(ctx); reject {
 		handleErr(ctx, errors2.ErrBruteForceAttack)
 
 		return
+	} else if found {
+		auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 	}
 
 	authResult = auth.handlePassword(ctx)
