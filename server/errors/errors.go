@@ -1,6 +1,8 @@
 package errors
 
-import "errors"
+import (
+	"errors"
+)
 
 type DetailedError struct {
 	err      error
@@ -160,6 +162,7 @@ var (
 	ErrNoTLS            = errors.New("no tls connection")
 	ErrTOTPCodeInvalid  = errors.New("totp code invalid")
 	ErrNoTOTPCode       = errors.New("totp code not found")
+	ErrBruteForceAttack = errors.New("please contact the support")
 )
 
 // features.

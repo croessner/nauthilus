@@ -194,6 +194,12 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	auth.UsernameOrig = auth.Username
 
+	if auth.preproccessAuthRequest(ctx) {
+		handleErr(ctx, errors2.ErrBruteForceAttack)
+
+		return
+	}
+
 	authResult = auth.handlePassword(ctx)
 
 	if authResult == global.AuthResultOK {

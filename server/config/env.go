@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -450,6 +451,9 @@ type Config struct {
 	// MaxActionWorkers is the maximum number of action workers that can be run simultaneously.
 	MaxActionWorkers uint16
 
+	// LocalCacheAuthTTL
+	LocalCacheAuthTTL time.Duration
+
 	// HTTPOptions contains configurations related to HTTP(S) server.
 	HTTPOptions
 }
@@ -611,12 +615,21 @@ func setNotifyPageDefaultEnvVars() {
 	viper.SetDefault("notify_page_logo_image_alt", global.ImageCopyright)
 }
 
+// setLocalCacheDefaults sets the default value for the "local_cache_auth_ttl" configuration key to 30 seconds.
+//
+// Example usage:
+// setLocalCacheDefaults()
+func setLocalCacheDefaults() {
+	viper.SetDefault("local_cache_auth_ttl", 30*time.Second)
+}
+
 // setDefaultEnvVars sets the default environment variables for the application.
 // It initializes various viper configuration variables with default values.
 // The default values are taken from the global constants and types defined in the code.
 //
 // setDefaultEnvVars() calls the following functions to set the respective configuration variables:
 // - setCommonDefaultEnvVars()
+// - setLocalCacheDefaults()
 // - setRedisDefaultEnvVars()
 // - setProtectionDefaultEnvVars()
 // - setSQLDefaultEnvVars()
@@ -634,6 +647,7 @@ func setDefaultEnvVars() {
 	viper.SetEnvPrefix("nauthilus")
 
 	setCommonDefaultEnvVars()
+	setLocalCacheDefaults()
 	setRedisDefaultEnvVars()
 	setProtectionDefaultEnvVars()
 	setWebDefaultEnvVars()
@@ -957,6 +971,22 @@ func (c *Config) setConfigFeatures() error {
 	return nil
 }
 
+// setLocalCacheTTL sets the value of the LocalCacheAuthTTL field in the Config struct based on the value retrieved from the configuration file (viper).
+// If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
+// Otherwise, the field will be assigned the value of 5 seconds.
+// Please note that this method does not return errors.
+func (c *Config) setLocalCacheTTL() {
+	if val := viper.GetDuration("local_cache_auth_ttl"); val > 5*time.Second {
+		if val < time.Hour {
+			c.LocalCacheAuthTTL = val
+		} else {
+			c.LocalCacheAuthTTL = time.Hour
+		}
+	} else {
+		c.LocalCacheAuthTTL = 5 * time.Second
+	}
+}
+
 // setConfig initializes the configuration options based on the environment variables and flags.
 // It calls several helper methods to set each specific option.
 func (c *Config) setConfig() {
@@ -967,6 +997,7 @@ func (c *Config) setConfig() {
 	c.setConfigDNSTimeout()
 	c.setConfigMaxActionWorkers()
 	c.setConfigBruteforceProtection()
+	c.setLocalCacheTTL()
 }
 
 // setConfigWithError sets the configuration with error handling.

@@ -1354,7 +1354,9 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 // Finally, it returns the authResult which indicates the authentication result of the process.
 func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
 	// Common validation checks
-	authResult = a.usernamePasswordChecks()
+	if authResult = a.usernamePasswordChecks(); authResult != global.AuthResultUnset {
+		return
+	}
 
 	if ctx.Value(global.LocalCacheAuthKey).(bool) {
 		return a.handleLocalCache(ctx)
@@ -1585,6 +1587,10 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 			a.AccountField = passDBResult.AccountField
 			a.UsernameReplace = true
 		}
+	}
+
+	if passDBResult.Authenticated {
+		localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
 	}
 
 	authResult := a.filterLua(passDBResult, ctx)
@@ -2531,7 +2537,7 @@ func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 // The key is constructed by concatenating the UsernameOrig, Password, Service, ClientIp, and XClientPort values
 // using a null character ('\0') as a separator.
 func (a *Authentication) generateLocalChacheKey() string {
-	return fmt.Sprintf(`%s\0%s\0%s\0%s\0%s`,
+	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
 		a.UsernameOrig,
 		a.Password,
 		a.Service,
@@ -2539,15 +2545,53 @@ func (a *Authentication) generateLocalChacheKey() string {
 		a.XClientPort)
 }
 
-// queryLocalCache queries the local cache to retrieve the Authentication object associated with the provided Authentication object a. It returns the Authentication object and a boolean
-func (a *Authentication) queryLocalCache() (auth *Authentication, found bool) {
-	var assertOk bool
+// getFromLocalCache retrieves the Authentication object from the local cache using the generateLocalChacheKey() as the key.
+// If the object is found in the cache, it updates the fields of the current Authentication object with the cached values.
+// It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
+// If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the Authentication object.
+// It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
+// Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
+func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
+	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
+		guid := *a.GUID
+		restoreCtx := false
 
-	if cachedAuth, foundKey := localcache.LocalCache.Get(a.generateLocalChacheKey()); foundKey {
-		if auth, assertOk = cachedAuth.(*Authentication); !assertOk {
-			return nil, false
+		if a.HTTPClientContext != nil {
+			a.HTTPClientContext = nil
+			restoreCtx = true
+		}
+
+		*a = *value.(*Authentication)
+
+		a.GUID = &guid
+		a.UsedPassDBBackend = global.BackendLocalCache
+
+		if restoreCtx {
+			a.HTTPClientContext = ctx
+		}
+
+		ctx.Set(global.LocalCacheAuthKey, true)
+
+		return found
+	} else {
+		return false
+	}
+}
+
+// preproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
+// If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
+// It then performs a post Lua action and triggers a failed authentication response.
+// If a brute force attack is detected, it returns true, otherwise false.
+func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
+	if found := a.getFromLocalCache(ctx); !found {
+		if a.checkBruteForce() {
+			a.updateBruteForceBucketsCounter()
+			a.postLuaAction(&PassDBResult{})
+			a.authFail(ctx)
+
+			return true
 		}
 	}
 
-	return
+	return false
 }
