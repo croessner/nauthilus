@@ -17,9 +17,11 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -413,45 +415,34 @@ func determineIdlePoolSize(l *LDAPPool, poolSize int) (idlePoolSize int, openCon
 	return idlePoolSize, openConnections
 }
 
-// initializeConnections initializes the connections for the given LDAPPool object l.
-// It takes a boolean bind parameter to specify whether to perform binding on the connections.
-// The idlePoolSize parameter specifies the number of connections to initialize.
-// It creates a WaitGroup wg and sets diffConnections to the idlePoolSize.
-//
-// It then iterates through the idlePoolSize and performs the following steps:
-// - Increments the WaitGroup wg by 1.
-// - Generates a unique GUID string based on the index.
-// - Logs the connection info using the logConnectionInfo method of the LDAPPool.
-// - Calls the setupConnection method of the LDAPPool to set up the connection.
-//   - If the setupConnection method returns nil (no error), it decrements diffConnections by 1.
-//
-// - Checks if diffConnections is equal to 0. If so, it breaks the loop.
-//
-// Finally, it checks if diffConnections is not equal to 0 and waits for all goroutines to complete using the Wait method of the WaitGroup wg.
-func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int) {
-	wg := sync.WaitGroup{}
-	diffConnections := idlePoolSize
-
-	for index := 0; index < idlePoolSize; index++ {
-		wg.Add(1)
-
+// initializeConnections initializes connections in the LDAPPool object l.
+// If bind is true, it will perform the setupConnection with bind set to true.
+// idlePoolSize is the number of idle connections in the pool to be created.
+// poolSize is the total number of possible pool connections.
+// It iterates through the poolSize and performs the following steps for each connection:
+// - Generates a unique identifier for the connection.
+// - Logs connection information using l.logConnectionInfo.
+// - Sets up the connection using l.setupConnection, passing in the unique identifier, bind value, and index.
+// - Decrements idlePoolSize if the connection setup was successful.
+// - Returns early if idlePoolSize reaches zero.
+// Returns errors2.ErrLDAPConnect if all connections fail to be set up.
+func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int, poolSize int) (err error) {
+	for index := 0; index < poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
 		l.logConnectionInfo(&guidStr, index)
 
-		err := l.setupConnection(&guidStr, bind, index)
+		err = l.setupConnection(&guidStr, bind, index)
 		if err == nil {
-			diffConnections--
+			idlePoolSize--
 		}
 
-		if diffConnections == 0 {
-			break
+		if idlePoolSize == 0 {
+			return nil
 		}
 	}
 
-	if diffConnections != 0 {
-		wg.Wait()
-	}
+	return errors2.ErrLDAPConnect
 }
 
 // setupConnection sets up a connection in the LDAPPool. It takes the following parameters:
@@ -534,13 +525,15 @@ func (l *LDAPPool) logConnectionError(guid *string, err error) {
 // If the number of open connections is less than the idle pool size,
 // it initializes new connections by calling the initializeConnections function,
 // and optionally binds them based on the bind parameter.
-func (l *LDAPPool) setIdleConnections(bind bool) {
+func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
 	poolSize := len(l.conn)
 	idlePoolSize, openConnections := determineIdlePoolSize(l, poolSize)
 
 	if openConnections < idlePoolSize {
-		initializeConnections(l, bind, idlePoolSize)
+		err = initializeConnections(l, bind, idlePoolSize, poolSize)
 	}
+
+	return
 }
 
 // waitForFreeConnection waits for a free connection in the LDAPPool.
@@ -1188,7 +1181,9 @@ func LDAPMainWorker(ctx context.Context) {
 
 		case ldapRequest := <-LDAPRequestChan:
 			// Check that we have enough idle connections.
-			ldapPool.setIdleConnections(true)
+			if err := ldapPool.setIdleConnections(true); err != nil {
+				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+			}
 
 			connNumber := ldapPool.getConnection(ldapRequest.GUID, &ldapWaitGroup)
 
@@ -1201,7 +1196,10 @@ func LDAPMainWorker(ctx context.Context) {
 					rawResult []*ldap.Entry
 				)
 
+				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPMainWorker"))
+
 				defer func() {
+					timer.ObserveDuration()
 					ldapWaitGroup.Done()
 				}()
 
@@ -1218,18 +1216,29 @@ func LDAPMainWorker(ctx context.Context) {
 				case global.LDAPSearch:
 					if result, rawResult, err = ldapPool.conn[index].search(ldapRequest); err != nil {
 						if err != nil {
-							var ldapError *ldap.Error
+							var (
+								ldapError *ldap.Error
+								doLog     bool
+							)
 
 							if errors.As(err, &ldapError) {
 								if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
-									level.Error(logging.DefaultErrLogger).Log(
-										global.LogKeyLDAPPoolName, ldapPool.name,
-										global.LogKeyGUID, *ldapRequest.GUID,
-										global.LogKeyError, ldapError.Error(),
-									)
-
+									doLog = true
 									ldapReply.Err = ldapError.Err
 								}
+
+								// Unknown user!
+							} else {
+								doLog = true
+								ldapReply.Err = err
+							}
+
+							if doLog {
+								level.Error(logging.DefaultErrLogger).Log(
+									global.LogKeyLDAPPoolName, ldapPool.name,
+									global.LogKeyGUID, *ldapRequest.GUID,
+									global.LogKeyError, ldapError.Error(),
+								)
 							}
 						}
 					}
@@ -1300,7 +1309,9 @@ func LDAPAuthWorker(ctx context.Context) {
 			return
 		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
-			ldapPool.setIdleConnections(true)
+			if err := ldapPool.setIdleConnections(true); err != nil {
+				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+			}
 
 			connNumber := ldapPool.getConnection(ldapAuthRequest.GUID, &ldapWaitGroup)
 
@@ -1309,7 +1320,10 @@ func LDAPAuthWorker(ctx context.Context) {
 			go func(index int, ldapUserBindRequest *LDAPAuthRequest) {
 				var err error
 
+				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPAuthWorker"))
+
 				defer func() {
+					timer.ObserveDuration()
 					ldapWaitGroup.Done()
 				}()
 

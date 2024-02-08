@@ -10,6 +10,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -192,6 +193,12 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 
 	auth.UsernameOrig = auth.Username
+
+	if auth.preproccessAuthRequest(ctx) {
+		handleErr(ctx, errors2.ErrBruteForceAttack)
+
+		return
+	}
 
 	authResult = auth.handlePassword(ctx)
 
@@ -530,8 +537,6 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	switch sourceBackend.(uint8) {
 	case uint8(global.BackendLDAP):
 		addTOTPSecret = ldapAddTOTPSecret
-	case uint8(global.BackendMySQL), uint8(global.BackendPostgres), uint8(global.BackendSQL):
-		addTOTPSecret = sqlAddTOTPSecret
 	case uint8(global.BackendLua):
 		addTOTPSecret = luaAddTOTPSecret
 	default:
@@ -570,7 +575,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 			return
 		} else {
-			redisReadCounter.Inc()
+			stats.RedisReadCounter.Inc()
 		}
 
 		for index := range protocols {
@@ -585,7 +590,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
-					redisWriteCounter.Inc()
+					stats.RedisWriteCounter.Inc()
 
 					continue
 				}

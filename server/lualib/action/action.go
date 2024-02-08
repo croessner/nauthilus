@@ -10,8 +10,10 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	"github.com/yuin/gopher-lua"
 )
@@ -349,6 +351,12 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	return request
 }
 
+func getTaskName(action *LuaScriptAction) string {
+	actionName := getLuaActionName(action)
+
+	return fmt.Sprintf("%s:%s", actionName, action.ScriptPath)
+}
+
 // runScript executes the Lua script at the specified index.
 // It sets the context and timeout for the script execution.
 // If an error occurs during script execution, it logs the failure and cancels the Lua context.
@@ -363,6 +371,10 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 // Returns: none
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) {
 	var err error
+
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", getTaskName(aw.actionScripts[index])))
+
+	defer timer.ObserveDuration()
 
 	luaCtx, luaCancel := context.WithTimeout(*(aw.ctx), viper.GetDuration("lua_script_timeout")*time.Second)
 	L.SetContext(luaCtx)
@@ -488,5 +500,33 @@ func getLuaActionType(actionName string) global.LuaAction {
 		return global.LuaActionPost
 	default:
 		return global.LuaActionNone
+	}
+}
+
+// getLuaActionName returns the name of the Lua action based on the given LuaScriptAction.
+// It takes an action of type LuaScriptAction as input and returns a string representing the name of the action.
+// If the LuaAction is LuaActionBruteForce, it returns "brute_force".
+// If the LuaAction is LuaActionRBL, it returns "rbl".
+// If the LuaAction is LuaActionTLS, it returns "tls_encryption".
+// If the LuaAction is LuaActionRelayDomains, it returns "relay_domains".
+// If the LuaAction is LuaActionLua, it returns "lua".
+// If the LuaAction is LuaActionPost, it returns "post".
+// If the LuaAction is any other value, it returns an empty string.
+func getLuaActionName(action *LuaScriptAction) string {
+	switch action.LuaAction {
+	case global.LuaActionBruteForce:
+		return global.LuaActionBruteForceName
+	case global.LuaActionRBL:
+		return global.LuaActionRBLName
+	case global.LuaActionTLS:
+		return global.LuaActionTLSName
+	case global.LuaActionRelayDomains:
+		return global.LuaActionRelayDomainsName
+	case global.LuaActionLua:
+		return global.LuaActionLuaName
+	case global.LuaActionPost:
+		return global.LuaActionPostName
+	default:
+		return "-"
 	}
 }

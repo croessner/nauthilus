@@ -27,10 +27,6 @@ func (t *TOTPSecret) getLDAPTOTPSecret(protocol *config.LDAPSearchProtocol) stri
 	return protocol.TOTPSecretField
 }
 
-func (t *TOTPSecret) getSQLTOTPSecret(protocol *config.SQLSearchProtocol) string {
-	return protocol.TOTPSecret
-}
-
 func NewTOTPSecret(value string) *TOTPSecret {
 	totpObj := &TOTPSecret{}
 	totpObj.setValue(value)
@@ -51,10 +47,6 @@ func (w *WebAuthn) setValue(value string) {
 }
 
 func (w *WebAuthn) getLDAPUniqueUserID(protocol *config.LDAPSearchProtocol) string {
-	return protocol.UniqueUserIDField
-}
-
-func (w *WebAuthn) getSQLUniqueUserID(protocol *config.SQLSearchProtocol) string {
 	return protocol.UniqueUserIDField
 }
 

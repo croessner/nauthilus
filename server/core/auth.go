@@ -18,15 +18,18 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"gotest.tools/v3/assert"
 )
 
@@ -42,11 +45,16 @@ type ClaimHandler struct {
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
 }
 
+// NginxBackendServer represents a type for managing a list of Nginx Backend servers
 type NginxBackendServer struct {
+	// nginxBackendServer is a slice of pointers to config.NginxBackendServer objects
 	nginxBackendServer []*config.NginxBackendServer
-	mu                 sync.RWMutex
+
+	// mu provides a read/write mutex for thread-safe operations on the nginxBackendServer
+	mu sync.RWMutex
 }
 
+// Update updates the nginxBackendServer field of the NginxBackendServer object with the provided servers slice.
 func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.mu.Lock()
 
@@ -55,6 +63,8 @@ func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.nginxBackendServer = servers
 }
 
+// NewNginxBackendServer creates a new instance of the NginxBackendServer struct.
+// It returns a pointer to the newly created NginxBackendServer.
 func NewNginxBackendServer() *NginxBackendServer {
 	return &NginxBackendServer{}
 }
@@ -95,13 +105,43 @@ type JSONRequest struct {
 	AuthLoginAttempt uint `json:"auth_login_attempt"`
 }
 
-// Authentication is the central object that is filled by a remote application request and is modified from each
-// Database that is involved in authentication.
-//
-// Most fields are related to the Nginx protocol, but can be set in a different way, if using another service type (i.e.
-// saslauthd). For further information have a look at the constructor NewAuthentication.
-//
-//nolint:maligned // Ignore further optimization
+// Authentication represents a struct that holds information related to authentication process.
+// UsernameReplace is a flag that is set if a user was found in a Database.
+// NoAuth is a flag that is set if the request mode does not require authentication.
+// ListAccounts is a flag that is set if Nauthilus is requested to send a full list of available user accounts.
+// UserFound is a flag that is set if a password Database found the user.
+// PasswordsAccountSeen is a counter that is increased whenever a new failed password was detected for the current account.
+// PasswordsTotalSeen is a counter that is increased whenever a new failed password was detected.
+// LoginAttempts is a counter that is incremented for each failed login request.
+// StatusCodeOK is the HTTP status code that is set by setStatusCodes.
+// StatusCodeInternalError is the HTTP status code that is set by setStatusCodes.
+// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
+// GUID is a global unique identifier that is inherited in all functions and methods that deal with the authentication process.
+// Method is set by the "Auth-Method" HTTP request header (Nginx protocol). It is typically something like "plain" or "login".
+// AccountField is the name of either a SQL field name or an LDAP attribute that was used to retrieve a user account.
+// Username is the value that was taken from the HTTP header "Auth-User" (Nginx protocol).
+// UsernameOrig is a copy from the username that was set by the HTTP request header "Auth-User" (Nginx protocol).
+// Password is the value that was taken from the HTTP header "Auth-Pass" (Nginx protocol).
+// ClientIP is the IP of a client that is to be authenticated.
+// XClientPort adds the remote client TCP port, which is set by the HTTP request header "X-Client-Port".
+// ClientHost is the DNS A name of the remote client. It is set with the HTTP request header "Client-Host" (Nginx protocol).
+// HAProxy specific headers: XSSL, XSSLSessionID, XSSLClientVerify, XSSLClientDN, XSSLClientCN, XSSLIssuer, XSSLClientNotBefore,
+// XSSLClientNotAfter, XSSLSubjectDN, XSSLIssuerDN, XSSLClientSubjectDN, XSSLClientIssuerDN, XSSLProtocol, XSSLCipher.
+// XClientID is delivered by some mail user agents when using IMAP. This value is set by the HTTP request header "X-Client-Id".
+// XLocalIP is the TCP/IP address of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-IP".
+// XPort is the TCP port of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-Port".
+// UserAgent may have been sent by a mail user agent and is set by the HTTP request header "User-Agent".
+// StatusMessage is the HTTP response payload that is sent to the remote server that asked for authentication.
+// Service is set by Nauthilus depending on the router endpoint.
+// BruteForceName is the canonical name of a brute force bucket that was triggered by a rule.
+// FeatureName is the name of a feature that has triggered a reject.
+// TOTPSecret is used to store a TOTP secret in a SQL Database.
+// TOTPSecretField is the SQL field or LDAP attribute that resolves the TOTP secret for two-factor authentication.
+// TOTPRecoveryField NYI.
+// UniqueUserIDField is a string representing a unique user identifier.
+// DisplayNameField is the display name of a user.
+// AdditionalLogging is a slice of strings that can be filled from Lua features and a Lua backend.
+// BruteForceCounter is a map
 type Authentication struct {
 	// UsernameReplace is a flag that is set, if a user was found in a Database.
 	UsernameReplace bool
@@ -238,8 +278,10 @@ type Authentication struct {
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
 	UsedPassDBBackend global.Backend
 
+	// UsedNginxBackendAddress is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Server'.
 	UsedNginxBackendAddress string
 
+	// UsedNginxBackendPort is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Port'.
 	UsedNginxBackendPort int
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
@@ -569,9 +611,24 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 		setUserInfoHeaders(ctx, a)
 	}
 
-	handleLogging(ctx, a)
+	dontLog := false
+	cachedAuth := ctx.Value(global.LocalCacheAuthKey).(bool)
 
-	loginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	if cachedAuth {
+		ctx.Header("X-Auth-Cache", "Hit")
+
+		if !config.EnvConfig.LocalCacheAuthLogging {
+			dontLog = true
+		}
+	} else {
+		ctx.Header("X-Auth-Cache", "Miss")
+	}
+
+	if !dontLog {
+		handleLogging(ctx, a)
+	}
+
+	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
 // setCommonHeaders sets common headers for the given gin.Context and Authentication.
@@ -773,7 +830,7 @@ func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
 
 // loginAttemptProcessing performs processing for a failed login attempt.
 // It checks the verbosity level in the environment configuration and logs the failed login attempt if it is greater than LogLevelWarn.
-// It then increments the loginsCounter with the LabelFailure.
+// It then increments the LoginsCounter with the LabelFailure.
 //
 // Example usage:
 //
@@ -785,7 +842,7 @@ func (a *Authentication) loginAttemptProcessing(ctx *gin.Context) {
 		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 	}
 
-	loginsCounter.WithLabelValues(global.LabelFailure).Inc()
+	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 
 // authFail handles the failure of authentication.
@@ -1159,7 +1216,11 @@ func (a *Authentication) setStatusCodes(service string) error {
 func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
-	doAction := func(luaAction global.LuaAction) {
+	doAction := func(luaAction global.LuaAction, luaActionName string) {
+		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", luaActionName))
+
+		defer timer.ObserveDuration()
+
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
@@ -1203,7 +1264,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureLua
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionLua)
+			doAction(global.LuaActionLua, global.LuaActionLuaName)
 
 			return global.AuthResultFeatureLua
 		} else if abortFeatures {
@@ -1219,7 +1280,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		if a.featureTLSEncryption() {
 			a.FeatureName = global.FeatureTLSEncryption
 
-			doAction(global.LuaActionTLS)
+			doAction(global.LuaActionTLS, global.LuaActionTLSName)
 
 			return global.AuthResultFeatureTLS
 		}
@@ -1230,7 +1291,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureRelayDomains
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionRelayDomains)
+			doAction(global.LuaActionRelayDomains, global.LuaActionRelayDomainsName)
 
 			return global.AuthResultFeatureRelayDomain
 		}
@@ -1243,7 +1304,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			a.FeatureName = global.FeatureRBL
 
 			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionRBL)
+			doAction(global.LuaActionRBL, global.LuaActionRBLName)
 
 			return global.AuthResultFeatureRBL
 		}
@@ -1257,6 +1318,10 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	a.HTTPClientContext = nil
 
 	go func() {
+		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
+
+		defer timer.ObserveDuration()
+
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
@@ -1296,11 +1361,49 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
-// handlePassword is the mein password checking routine. It calls verifyPassword to check the user credentials. After
-// the verification process ended, it updates user information on the Redis server, if the cache backend is enabled.
-//
-//nolint:gocognit // Ignore
+// handlePassword handles the authentication process for the password flow.
+// It performs common validation checks and then proceeds based on the value of ctx.Value(global.LocalCacheAuthKey).
+// If it is true, it calls the handleLocalCache function.
+// Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
+// In the next step, it calls the postVerificationProcesses function to perform further control flow based on cache usage and authentication status.
+// Finally, it returns the authResult which indicates the authentication result of the process.
 func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
+	// Common validation checks
+	if authResult = a.usernamePasswordChecks(); authResult != global.AuthResultUnset {
+		return
+	}
+
+	if ctx.Value(global.LocalCacheAuthKey).(bool) {
+		return a.handleLocalCache(ctx)
+	}
+
+	useCache, backendPos, passDBs := a.handleBackendTypes()
+
+	// Further control flow based on whether cache is used and authentication status
+	authResult = a.postVerificationProcesses(ctx, useCache, backendPos, passDBs)
+
+	return authResult
+}
+
+// usernamePasswordChecks performs checks on the Username and Password fields of the Authentication object.
+// It logs debug messages for empty username or empty password cases.
+// It returns global.AuthResultEmptyUsername if the username is empty.
+// It returns global.AuthResultEmptyPassword if the password is empty.
+// Otherwise, it returns global.AuthResultUnset.
+// Usage example:
+//
+//	func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
+//		a.usernamePasswordChecks()
+//		...
+//	}
+//
+// Dependencies:
+// - util.DebugModule
+// - global.AuthResult
+// - global.DbgAuth
+// - global.LogKeyGUID
+// - global.LogKeyMsg
+func (a *Authentication) usernamePasswordChecks() global.AuthResult {
 	if a.Username == "" {
 		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Empty username")
 
@@ -1313,47 +1416,94 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		return global.AuthResultEmptyPassword
 	}
 
-	/*
-	 * Verify user password
-	 */
+	return global.AuthResultUnset
+}
 
-	var passDBs []*PassDBMap
+// handleLocalCache handles the local cache authentication logic for the Authentication object.
+// It sets the operation mode and initializes the passDBResult.
+// Then, it filters the authentication result through the Lua filter.
+// After that, the postLuaAction is executed on the passDBResult.
+// Finally, it returns the authResult of type global.AuthResult.
+func (a *Authentication) handleLocalCache(ctx *gin.Context) global.AuthResult {
+	a.setOperationMode(ctx)
 
-	useCache := false
-	backendPos := make(map[global.Backend]int)
+	passDBResult := a.initializePassDBResult()
+	authResult := a.filterLua(passDBResult, ctx)
+
+	a.postLuaAction(passDBResult)
+
+	return authResult
+}
+
+// initializePassDBResult initializes a new instance of PassDBResult with values from the Authentication object.
+// It sets Authenticated and UserFound to true and copies the values of AccountField, TOTPSecretField, TOTPRecoveryField,
+// UniqueUserIDField, DisplayNameField, Backend, and Attributes from the Authentication object.
+// The initialized PassDBResult instance is returned.
+func (a *Authentication) initializePassDBResult() *PassDBResult {
+	return &PassDBResult{
+		Authenticated:     true,
+		UserFound:         true,
+		AccountField:      a.AccountField,
+		TOTPSecretField:   a.TOTPSecretField,
+		TOTPRecoveryField: a.TOTPRecoveryField,
+		UniqueUserIDField: a.UniqueUserIDField,
+		DisplayNameField:  a.DisplayNameField,
+		Backend:           a.UsedPassDBBackend,
+		Attributes:        a.Attributes,
+	}
+}
+
+// handleBackendTypes initializes and populates variables related to backend types.
+// The `backendPos` map stores the position of each backend type in the configuration list.
+// The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
+// The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
+// This method loops through the `config.EnvConfig.PassDBs` slice and processes each PassDB object to determine the backend type. It populates the `backendPos` map with the backend type
+func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) {
+	backendPos = make(map[global.Backend]int)
 
 	for index, passDB := range config.EnvConfig.PassDBs {
 		db := passDB.Get()
-
 		switch db {
 		case global.BackendCache:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendCache,
-				cachePassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
 			useCache = true
 		case global.BackendLDAP:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendLDAP,
-				ldapPassDB,
-			})
-		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendSQL,
-				sqlPassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
 		case global.BackendLua:
-			passDBs = append(passDBs, &PassDBMap{
-				global.BackendLua,
-				luaPassDB,
-			})
+			passDBs = a.appendBackend(passDBs, global.BackendLua, luaPassDB)
 		case global.BackendUnknown:
+		case global.BackendLocalCache:
 		}
 
 		backendPos[db] = index
 	}
 
-	// Capture the index to know which passdb answered the query
+	return useCache, backendPos, passDBs
+}
+
+// appendBackend appends a new PassDBMap object to the passDBs slice.
+// Parameters:
+// - passDBs: the slice of PassDBMap objects to append to
+// - backendType: the global.Backend value representing the backend type
+// - backendFunction: the PassDBOption function to assign to the PassDBMap object
+// Returns:
+// - The modified passDBs slice with the new PassDBMap object appended
+func (a *Authentication) appendBackend(passDBs []*PassDBMap, backendType global.Backend, backendFunction PassDBOption) []*PassDBMap {
+	return append(passDBs, &PassDBMap{
+		backendType,
+		backendFunction,
+	})
+}
+
+// postVerificationProcesses manages the post-verification steps in the authentication process.
+// It first verifies the password provided by the user. If the verification fails, it logs the error and returns temporary failure.
+// If the cache is being used and the user is not excluded from authentication, it ensures that the cache backend precedes the used backend.
+// If the verification is successful, user data is saved to Redis. If it fails, it increases the brute force counter.
+// It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
+// call post Lua action and return authentication failure.
+// It also checks if the user is found during password verification, if true, it sets a new username to the user.
+// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
+func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors2.DetailedError
@@ -1379,12 +1529,11 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 				switch a.UsedPassDBBackend {
 				case global.BackendLDAP:
 					usedBackend = global.CacheLDAP
-				case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-					usedBackend = global.CacheSQL
 				case global.BackendLua:
 					usedBackend = global.CacheLua
 				case global.BackendUnknown:
 				case global.BackendCache:
+				case global.BackendLocalCache:
 				}
 
 				cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
@@ -1419,7 +1568,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 
 						go func() {
 							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
-								redisWriteCounter.Inc()
+								stats.RedisWriteCounter.Inc()
 							}
 						}()
 					}
@@ -1455,7 +1604,11 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	authResult = a.filterLua(passDBResult, ctx)
+	if passDBResult.Authenticated {
+		localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+	}
+
+	authResult := a.filterLua(passDBResult, ctx)
 
 	a.postLuaAction(passDBResult)
 
@@ -1484,6 +1637,10 @@ func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, 
 
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Filter", "filterLua"))
+
+	defer timer.ObserveDuration()
+
 	backendServer := make([]map[string]int, 0)
 
 	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
@@ -1558,11 +1715,6 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 				global.BackendLDAP,
 				ldapAccountDB,
 			})
-		case global.BackendMySQL, global.BackendPostgres, global.BackendSQL:
-			accounts = append(accounts, &AccountListMap{
-				global.BackendSQL,
-				sqlAccountDB,
-			})
 		case global.BackendLua:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLua,
@@ -1570,6 +1722,7 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 			})
 		case global.BackendUnknown:
 		case global.BackendCache:
+		case global.BackendLocalCache:
 		}
 	}
 
@@ -1625,7 +1778,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 	if err != nil {
 		return
 	} else {
-		redisReadCounter.Inc()
+		stats.RedisReadCounter.Inc()
 	}
 
 	if accountName != "" {
@@ -1647,11 +1800,40 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 
 		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
 		if err == nil {
-			redisWriteCounter.Inc()
+			stats.RedisWriteCounter.Inc()
 		}
 	}
 
 	return
+}
+
+// setOperationMode sets the operation mode of the Authentication object based on the "mode" query parameter from the provided gin context.
+// It retrieves the GUID from the gin context and uses it for logging purposes.
+// The operation mode can be "no-auth" or "list-accounts".
+// If the mode is "no-auth", it sets the NoAuth field of the Authentication object to true.
+// If the mode is "list-accounts", it sets the ListAccounts field of the Authentication object to true.
+// The function "util.DebugModule" is used for logging debug messages with the appropriate module name and function name.
+// Example usage of setOperationMode:
+//
+//	a.setOperationMode(ctx)
+//
+//	func setupAuth(ctx *gin.Context, auth *Authentication) {
+//	  //...
+//	  auth.setOperationMode(ctx)
+//	}
+func (a *Authentication) setOperationMode(ctx *gin.Context) {
+	guid := ctx.Value(global.GUIDKey).(string)
+
+	switch ctx.Query("mode") {
+	case "no-auth":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
+
+		a.NoAuth = true
+	case "list-accounts":
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
+
+		a.ListAccounts = true
+	}
 }
 
 // setupHeaderBasedAuth sets up the authentication based on the headers in the request.
@@ -1668,8 +1850,6 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 // If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
-	guid := ctx.Value(global.GUIDKey).(string)
-
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	auth.Username = ctx.Request.Header.Get("Auth-User")
 	auth.UsernameOrig = auth.Username
@@ -1693,17 +1873,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 	method := ctx.Request.Header.Get("Auth-Method")
 
 	auth.Method = &method
-
-	switch ctx.Query("mode") {
-	case "no-auth":
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=no-auth")
-
-		auth.NoAuth = true
-	case "list-accounts":
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
-
-		auth.ListAccounts = true
-	}
 
 	auth.withClientInfo(ctx)
 	auth.withLocalInfo(ctx)
@@ -1857,6 +2026,8 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 	}
 
 	auth.withDefaults(ctx)
+
+	auth.setOperationMode(ctx)
 }
 
 // NewAuthentication creates a new instance of the Authentication struct.
@@ -2375,4 +2546,71 @@ func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 	}
 
 	return subject, claims
+}
+
+// generateLocalChacheKey generates a string key used for caching the Authentication object in the local cache.
+// The key is constructed by concatenating the UsernameOrig, Password, Service, ClientIp, and XClientPort values
+// using a null character ('\0') as a separator.
+func (a *Authentication) generateLocalChacheKey() string {
+	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
+		a.UsernameOrig,
+		a.Password,
+		a.Service,
+		a.ClientIP,
+		a.XClientPort)
+}
+
+// getFromLocalCache retrieves the Authentication object from the local cache using the generateLocalChacheKey() as the key.
+// If the object is found in the cache, it updates the fields of the current Authentication object with the cached values.
+// It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
+// If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the Authentication object.
+// It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
+// Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
+func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
+	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
+		guid := *a.GUID
+		restoreCtx := false
+
+		if a.HTTPClientContext != nil {
+			a.HTTPClientContext = nil
+			restoreCtx = true
+		}
+
+		*a = *value.(*Authentication)
+
+		a.GUID = &guid
+		a.UsedPassDBBackend = global.BackendLocalCache
+
+		if restoreCtx {
+			a.HTTPClientContext = ctx
+		}
+
+		ctx.Set(global.LocalCacheAuthKey, true)
+
+		return found
+	} else {
+		return false
+	}
+}
+
+// preproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
+// If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
+// It then performs a post Lua action and triggers a failed authentication response.
+// If a brute force attack is detected, it returns true, otherwise false.
+func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
+	if found := a.getFromLocalCache(ctx); !found {
+		stats.CacheMisses.Inc()
+
+		if a.checkBruteForce() {
+			a.updateBruteForceBucketsCounter()
+			a.postLuaAction(&PassDBResult{})
+			a.authFail(ctx)
+
+			return true
+		}
+	} else {
+		stats.CacheHits.Inc()
+	}
+
+	return false
 }

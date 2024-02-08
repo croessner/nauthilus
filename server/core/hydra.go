@@ -464,10 +464,12 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	buf := make([]byte, 1<<20)
-	stackLen := runtime.Stack(buf, false)
+	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug && config.EnvConfig.DevMode {
+		buf := make([]byte, 1<<20)
+		stackLen := runtime.Stack(buf, false)
 
-	fmt.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
+		fmt.Printf("=== guid=%s\n*** goroutine dump...\n%s\n*** end\n", guid, buf[:stackLen])
+	}
 }
 
 // logError logs the error details along with the corresponding GUID, client IP, and error message.
@@ -1137,7 +1139,13 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 		return nil, err
 	}
 
-	return auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx), nil
+	auth = auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
+
+	if auth.preproccessAuthRequest(ctx) {
+		return nil, errors2.ErrBruteForceAttack
+	}
+
+	return auth, nil
 }
 
 // handleSessionDataLogin retrieves session data related to the login process and populates the provided `auth` variable with the values.

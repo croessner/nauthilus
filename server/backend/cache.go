@@ -158,7 +158,6 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 	var (
 		cacheName    string
 		protocolLDAP *config.LDAPSearchProtocol
-		protocolSQL  *config.SQLSearchProtocol
 		protocolLua  *config.LuaSearchProtocol
 	)
 
@@ -167,14 +166,6 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 	if backends == global.CacheAll || backends == global.CacheLDAP {
 		if protocolLDAP, _ = config.LoadableConfig.GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
 			if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
-				cacheNames.Set(cacheName)
-			}
-		}
-	}
-
-	if backends == global.CacheAll || backends == global.CacheSQL {
-		if protocolSQL, _ = config.LoadableConfig.GetSQLSearchProtocol(requestedProtocol); protocolSQL != nil {
-			if cacheName, _ = protocolSQL.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
 			}
 		}

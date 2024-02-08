@@ -275,12 +275,6 @@ const (
 	// LDAPMaxRetries is the maximum number of retries for a failed LDAP operation
 	LDAPMaxRetries = 9
 
-	// SQLMaxConns is the maximum number of open connections to the SQL database
-	SQLMaxConns = 10
-
-	// SQLMaxIdleConns is the maximum number of idle connections to the SQL database
-	SQLMaxIdleConns = 10
-
 	// RedisAddress is the default Redis server address
 	RedisAddress = Localhost4
 
@@ -339,22 +333,16 @@ const (
 	BackendUnknown Backend = iota
 
 	// BackendCache represents a Cache backend
-	BackendCache Backend = iota
+	BackendCache
 
 	// BackendLDAP represents an LDAP backend
-	BackendLDAP Backend = iota
-
-	// BackendSQL represents a SQL backend
-	BackendSQL Backend = iota
-
-	// BackendMySQL represents a MySQL backend
-	BackendMySQL Backend = iota
-
-	// BackendPostgres represents a Postgres backend
-	BackendPostgres Backend = iota
+	BackendLDAP
 
 	// BackendLua represents a Lua backend
-	BackendLua Backend = iota
+	BackendLua
+
+	// BackendLocalCache represents the local in-memory cache localcache.LocalCache
+	BackendLocalCache
 )
 
 const (
@@ -367,17 +355,11 @@ const (
 	// BackendLDAPName indicates an LDAP backend
 	BackendLDAPName = "ldap"
 
-	// BackendSQLName signifies an SQL backend
-	BackendSQLName = "sql"
-
-	// BackendMySQLName signifies a MySQL backend
-	BackendMySQLName = "mysql"
-
-	// BackendPostgresName signifies a PostgreSQL backend
-	BackendPostgresName = "postgresql"
-
 	// BackendLuaName refers to a Lua backend
 	BackendLuaName = "lua"
+
+	// BackendLocalCacheName refers to th elocal in memory localcache.LocalCache.
+	BackendLocalCacheName = "memory"
 )
 
 // Supported features.
@@ -692,6 +674,9 @@ const (
 
 	// DataExchangeKey is used as a key to store the session's data exchange information in session.Store
 	DataExchangeKey = "data_exchange"
+
+	// LocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
+	LocalCacheAuthKey = "local_cache_auth"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
@@ -809,9 +794,6 @@ const (
 	// DbgLDAPPool is the dedicated module for debugging LDAP connection pooling issues.
 	DbgLDAPPool
 
-	// DbgSQL is used for SQL query related debugging.
-	DbgSQL
-
 	// DbgCache is suitable for cache mechanism debugging.
 	DbgCache
 
@@ -861,9 +843,6 @@ const (
 
 	// DbgLDAPPoolName is the debug identifier for LDAP pool
 	DbgLDAPPoolName = "ldappool"
-
-	// DbgSQLName is the debug identifier for SQL
-	DbgSQLName = "sql"
 
 	// DbgCacheName is the debug identifier for cache
 	DbgCacheName = "cache"
@@ -1183,9 +1162,6 @@ const (
 
 	// CacheLDAP refers to the enum value for LDAP cache backend
 	CacheLDAP
-
-	// CacheSQL refers to the enum value for SQL cache backend
-	CacheSQL
 
 	// CacheLua refers to the enum value for Lua cache backend
 	CacheLua

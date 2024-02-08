@@ -12,8 +12,10 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -352,6 +354,8 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 // err error: an error that might have occurred during the execution of the scripts.
 func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.LTable) (triggered bool, abortFeatures bool, err error) {
 	for index := range LuaFeatures.LuaScripts {
+		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", LuaFeatures.LuaScripts[index].Name))
+
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
@@ -360,7 +364,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		L.SetContext(luaCtx)
 
 		if err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript); err != nil {
-			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name)
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
 			continue
 		}
@@ -370,7 +374,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 			NRet:    3,
 			Protect: true,
 		}, request); err != nil {
-			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name)
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
 			continue
 		}
@@ -388,6 +392,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 			r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 		}
 
+		timer.ObserveDuration()
 		luaCancel()
 
 		if triggered || abortFeatures {
@@ -399,13 +404,14 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 }
 
 // handleError logs the error message and cancels the Lua context.
-func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string) {
+func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, timer *prometheus.Timer) {
 	level.Error(logging.DefaultErrLogger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyError, err,
 	)
 
+	timer.ObserveDuration()
 	luaCancel()
 }
 

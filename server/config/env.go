@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -165,8 +166,6 @@ func (p *PassDB) Set(value string) error {
 		p.backend = global.BackendCache
 	case global.BackendLDAPName:
 		p.backend = global.BackendLDAP
-	case global.BackendMySQLName, global.BackendPostgresName, global.BackendSQLName:
-		p.backend = global.BackendSQL
 	case global.BackendLuaName:
 		p.backend = global.BackendLua
 	default:
@@ -258,8 +257,6 @@ func (d *DbgModule) Set(value string) error {
 		d.module = global.DbgLDAP
 	case global.DbgLDAPPoolName:
 		d.module = global.DbgLDAPPool
-	case global.DbgSQLName:
-		d.module = global.DbgSQL
 	case global.DbgCacheName:
 		d.module = global.DbgCache
 	case global.DbgBfName:
@@ -272,6 +269,8 @@ func (d *DbgModule) Set(value string) error {
 		d.module = global.DbgFeature
 	case global.DbgLuaName:
 		d.module = global.DbgLua
+	case global.DbgFilterName:
+		d.module = global.DbgFilter
 	default:
 		return errors.ErrWrongDebugModule
 	}
@@ -454,6 +453,12 @@ type Config struct {
 	// MaxActionWorkers is the maximum number of action workers that can be run simultaneously.
 	MaxActionWorkers uint16
 
+	// LocalCacheAuthTTL
+	LocalCacheAuthTTL time.Duration
+
+	// LocalCacheAuthLogging indicates wether to log messages for memory-cached logins.
+	LocalCacheAuthLogging bool
+
 	// HTTPOptions contains configurations related to HTTP(S) server.
 	HTTPOptions
 }
@@ -468,6 +473,7 @@ func setCommonDefaultEnvVars() {
 		{global.DbgAuthName, global.DbgAuth},
 		{global.DbgStatsName, global.DbgStats},
 	})
+	viper.SetDefault("local_cache_auth_logging", false)
 	viper.SetDefault("http_address", global.HTTPAddress)
 	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
 	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
@@ -532,14 +538,6 @@ func setProtectionDefaultEnvVars() {
 		{global.ProtoHTTP},
 	})
 	viper.SetDefault("trusted_proxies", []string{"127.0.0.1", "::1"})
-}
-
-// setSQLDefaultEnvVars sets the default environment variables for SQL configurations.
-// It initializes the "sql_max_connections" and "sql_max_idle_connections" variables with default values.
-// The default values are taken from the global constants defined in the code.
-func setSQLDefaultEnvVars() {
-	viper.SetDefault("sql_max_connections", global.SQLMaxConns)
-	viper.SetDefault("sql_max_idle_connections", global.SQLMaxIdleConns)
 }
 
 // setWebDefaultEnvVars sets the default environment variables for the web-related functionality of the application.
@@ -623,12 +621,21 @@ func setNotifyPageDefaultEnvVars() {
 	viper.SetDefault("notify_page_logo_image_alt", global.ImageCopyright)
 }
 
+// setLocalCacheDefaults sets the default value for the "local_cache_auth_ttl" configuration key to 30 seconds.
+//
+// Example usage:
+// setLocalCacheDefaults()
+func setLocalCacheDefaults() {
+	viper.SetDefault("local_cache_auth_ttl", 30*time.Second)
+}
+
 // setDefaultEnvVars sets the default environment variables for the application.
 // It initializes various viper configuration variables with default values.
 // The default values are taken from the global constants and types defined in the code.
 //
 // setDefaultEnvVars() calls the following functions to set the respective configuration variables:
 // - setCommonDefaultEnvVars()
+// - setLocalCacheDefaults()
 // - setRedisDefaultEnvVars()
 // - setProtectionDefaultEnvVars()
 // - setSQLDefaultEnvVars()
@@ -646,9 +653,9 @@ func setDefaultEnvVars() {
 	viper.SetEnvPrefix("nauthilus")
 
 	setCommonDefaultEnvVars()
+	setLocalCacheDefaults()
 	setRedisDefaultEnvVars()
 	setProtectionDefaultEnvVars()
-	setSQLDefaultEnvVars()
 	setWebDefaultEnvVars()
 
 	setLoginPageDefaultEnvVars()
@@ -694,6 +701,7 @@ func (c *Config) String() string {
 // and DevMode.
 func (c *Config) setConfigFromEnvVars() {
 	c.LogJSON = viper.GetBool("log_format_json")
+	c.LocalCacheAuthLogging = viper.GetBool("local_cache_auth_logging")
 	c.InstanceName = viper.GetString("instance_name")
 	c.HTTPAddress = viper.GetString("http_address")
 	c.HTTPOptions.UseSSL = viper.GetBool("http_use_ssl")
@@ -970,6 +978,22 @@ func (c *Config) setConfigFeatures() error {
 	return nil
 }
 
+// setLocalCacheTTL sets the value of the LocalCacheAuthTTL field in the Config struct based on the value retrieved from the configuration file (viper).
+// If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
+// Otherwise, the field will be assigned the value of 5 seconds.
+// Please note that this method does not return errors.
+func (c *Config) setLocalCacheTTL() {
+	if val := viper.GetDuration("local_cache_auth_ttl"); val > 5*time.Second {
+		if val < time.Hour {
+			c.LocalCacheAuthTTL = val
+		} else {
+			c.LocalCacheAuthTTL = time.Hour
+		}
+	} else {
+		c.LocalCacheAuthTTL = 5 * time.Second
+	}
+}
+
 // setConfig initializes the configuration options based on the environment variables and flags.
 // It calls several helper methods to set each specific option.
 func (c *Config) setConfig() {
@@ -980,6 +1004,7 @@ func (c *Config) setConfig() {
 	c.setConfigDNSTimeout()
 	c.setConfigMaxActionWorkers()
 	c.setConfigBruteforceProtection()
+	c.setLocalCacheTTL()
 }
 
 // setConfigWithError sets the configuration with error handling.

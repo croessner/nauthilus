@@ -24,14 +24,10 @@ func (b Backend) String() string {
 		return BackendCacheName
 	case BackendLDAP:
 		return BackendLDAPName
-	case BackendMySQL:
-		return BackendMySQLName
-	case BackendPostgres:
-		return BackendPostgresName
-	case BackendSQL:
-		return BackendSQLName
 	case BackendLua:
 		return BackendLuaName
+	case BackendLocalCache:
+		return BackendLocalCacheName
 	default:
 		return BackendUnknownName
 	}

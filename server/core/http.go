@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
@@ -60,11 +61,7 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.checkBruteForce() {
-				auth.updateBruteForceBucketsCounter()
-				auth.postLuaAction(&PassDBResult{})
-				auth.authFail(ctx)
-
+			if auth.preproccessAuthRequest(ctx) {
 				return
 			}
 
@@ -85,11 +82,7 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.checkBruteForce() {
-				auth.updateBruteForceBucketsCounter()
-				auth.postLuaAction(&PassDBResult{})
-				auth.authFail(ctx)
-
+			if auth.preproccessAuthRequest(ctx) {
 				return
 			}
 
@@ -283,6 +276,7 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		guid := ksuid.New().String()
 		ctx.Set(global.GUIDKey, guid)
+		ctx.Set(global.LocalCacheAuthKey, false)
 
 		// Start timer
 		start := time.Now()
@@ -456,29 +450,23 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 	}
 }
 
-// prometheusMiddleware is a function that adds Prometheus middleware to a gin.Engine router.
-// It returns a gin.HandlerFunc that is used to handle HTTP requests.
-// The function performs the following steps:
-// 1. Extracts the path from the request context.
-// 2. Creates a new Prometheus timer to measure the duration of the request.
-// 3. Calls the Next() method to pass the request to the next middleware or handler.
-// 4. Increments the httpRequestsTotalCounter with the path label value.
-// 5. Observes the duration of the request using the timer.
-//
-// Usage:
-// router := gin.New()
-// router.Use(prometheusMiddleware())
+// `prometheusMiddleware` is a middleware function for Gin Web Framework that collects metrics using Prometheus.
+// It measures the duration of the HTTP request and increments a counter for the number of requests for each path.
+// The collected metrics are stored in the Prometheus histogram, counter, and summary variables.
+// This middleware function should be used in the setup of routing to collect metrics for each HTTP request.
 func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		path := ctx.FullPath()
 
-		timer := prometheus.NewTimer(httpResponseTimeSecondsHist.WithLabelValues(path))
+		timer := prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
+		timer2 := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Request", "prometheusMiddleware"))
 
 		ctx.Next()
 
-		httpRequestsTotalCounter.WithLabelValues(path).Inc()
+		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
 
 		timer.ObserveDuration()
+		timer2.ObserveDuration()
 	}
 }
 
@@ -604,8 +592,8 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 		group.Use(basicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", luaContextMiddleware(), httpQueryHandler)
-	group.POST("/:category/:service", luaContextMiddleware(), httpQueryHandler)
+	group.GET("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
+	group.POST("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
 	group.DELETE("/:category/:service", httpCacheHandler)
 }
 

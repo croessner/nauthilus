@@ -9,10 +9,12 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ldapPassDB implements the LDAP password database backend.
@@ -144,9 +146,9 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ldapReply = <-ldapReplyChan
 
 		if ldapReply.Err != nil {
-			level.Debug(logging.DefaultLogger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
-
 			var ldapError *ldap.Error
+
+			level.Debug(logging.DefaultLogger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
 
 			if errors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
@@ -175,6 +177,10 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		scope        *config.LDAPScope
 		protocol     *config.LDAPSearchProtocol
 	)
+
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Account", "ldapAccountDB"))
+
+	defer timer.ObserveDuration()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
@@ -261,6 +267,10 @@ func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		protocol    *config.LDAPSearchProtocol
 		ldapError   *ldap.Error
 	)
+
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("StoreTOTP", "ldapAddTOTPSecret"))
+
+	defer timer.ObserveDuration()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
