@@ -454,6 +454,9 @@ type Config struct {
 	// LocalCacheAuthTTL
 	LocalCacheAuthTTL time.Duration
 
+	// LocalCacheAuthLogging indicates wether to log messages for memory-cached logins.
+	LocalCacheAuthLogging bool
+
 	// HTTPOptions contains configurations related to HTTP(S) server.
 	HTTPOptions
 }
@@ -468,6 +471,7 @@ func setCommonDefaultEnvVars() {
 		{global.DbgAuthName, global.DbgAuth},
 		{global.DbgStatsName, global.DbgStats},
 	})
+	viper.SetDefault("local_cache_auth_logging", false)
 	viper.SetDefault("http_address", global.HTTPAddress)
 	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
 	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
@@ -695,6 +699,7 @@ func (c *Config) String() string {
 // and DevMode.
 func (c *Config) setConfigFromEnvVars() {
 	c.LogJSON = viper.GetBool("log_format_json")
+	c.LocalCacheAuthLogging = viper.GetBool("local_cache_auth_logging")
 	c.InstanceName = viper.GetString("instance_name")
 	c.HTTPAddress = viper.GetString("http_address")
 	c.HTTPOptions.UseSSL = viper.GetBool("http_use_ssl")

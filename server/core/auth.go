@@ -611,7 +611,22 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 		setUserInfoHeaders(ctx, a)
 	}
 
-	handleLogging(ctx, a)
+	dontLog := false
+	cachedAuth := ctx.Value(global.LocalCacheAuthKey).(bool)
+
+	if cachedAuth {
+		ctx.Header("X-Auth-Cache", "Hit")
+
+		if !config.EnvConfig.LocalCacheAuthLogging {
+			dontLog = true
+		}
+	} else {
+		ctx.Header("X-Auth-Cache", "Miss")
+	}
+
+	if !dontLog {
+		handleLogging(ctx, a)
+	}
 
 	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
