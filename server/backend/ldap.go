@@ -430,30 +430,25 @@ func determineIdlePoolSize(l *LDAPPool, poolSize int) (idlePoolSize int, openCon
 // - Checks if diffConnections is equal to 0. If so, it breaks the loop.
 //
 // Finally, it checks if diffConnections is not equal to 0 and waits for all goroutines to complete using the Wait method of the WaitGroup wg.
-func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int) {
-	wg := sync.WaitGroup{}
+func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int) (err error) {
 	diffConnections := idlePoolSize
 
 	for index := 0; index < idlePoolSize; index++ {
-		wg.Add(1)
-
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
 		l.logConnectionInfo(&guidStr, index)
 
-		err := l.setupConnection(&guidStr, bind, index)
+		err = l.setupConnection(&guidStr, bind, index)
 		if err == nil {
 			diffConnections--
 		}
 
 		if diffConnections == 0 {
-			break
+			return nil
 		}
 	}
 
-	if diffConnections != 0 {
-		wg.Wait()
-	}
+	return errors2.ErrLDAPConnect
 }
 
 // setupConnection sets up a connection in the LDAPPool. It takes the following parameters:
@@ -536,13 +531,15 @@ func (l *LDAPPool) logConnectionError(guid *string, err error) {
 // If the number of open connections is less than the idle pool size,
 // it initializes new connections by calling the initializeConnections function,
 // and optionally binds them based on the bind parameter.
-func (l *LDAPPool) setIdleConnections(bind bool) {
+func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
 	poolSize := len(l.conn)
 	idlePoolSize, openConnections := determineIdlePoolSize(l, poolSize)
 
 	if openConnections < idlePoolSize {
-		initializeConnections(l, bind, idlePoolSize)
+		err = initializeConnections(l, bind, idlePoolSize)
 	}
+
+	return
 }
 
 // waitForFreeConnection waits for a free connection in the LDAPPool.
@@ -1190,7 +1187,9 @@ func LDAPMainWorker(ctx context.Context) {
 
 		case ldapRequest := <-LDAPRequestChan:
 			// Check that we have enough idle connections.
-			ldapPool.setIdleConnections(true)
+			if err := ldapPool.setIdleConnections(true); err != nil {
+				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+			}
 
 			connNumber := ldapPool.getConnection(ldapRequest.GUID, &ldapWaitGroup)
 
@@ -1316,7 +1315,9 @@ func LDAPAuthWorker(ctx context.Context) {
 			return
 		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
-			ldapPool.setIdleConnections(true)
+			if err := ldapPool.setIdleConnections(true); err != nil {
+				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+			}
 
 			connNumber := ldapPool.getConnection(ldapAuthRequest.GUID, &ldapWaitGroup)
 
