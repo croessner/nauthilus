@@ -2595,8 +2595,8 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 // If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
-func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
-	if found := a.getFromLocalCache(ctx); !found {
+func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
+	if found = a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 
 		if a.checkBruteForce() {
@@ -2604,11 +2604,11 @@ func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) 
 			a.postLuaAction(&PassDBResult{})
 			a.authFail(ctx)
 
-			return true
+			return false, true
 		}
 	} else {
 		stats.CacheHits.Inc()
 	}
 
-	return false
+	return found, false
 }

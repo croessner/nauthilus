@@ -61,8 +61,10 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.preproccessAuthRequest(ctx) {
+			if found, reject := auth.preproccessAuthRequest(ctx); reject {
 				return
+			} else if found {
+				auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 			}
 
 			switch ctx.Param("service") {
@@ -82,8 +84,10 @@ func httpQueryHandler(ctx *gin.Context) {
 				return
 			}
 
-			if auth.preproccessAuthRequest(ctx) {
+			if found, reject := auth.preproccessAuthRequest(ctx); reject {
 				return
+			} else if found {
+				auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 			}
 
 			switch ctx.Param("service") {
