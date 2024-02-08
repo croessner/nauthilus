@@ -57,6 +57,18 @@ var (
 		Help: "Time spent in function",
 	}, []string{"service", "task"})
 
+	// CacheHits variable declaration that creates a new Prometheus Counter with the specified name and help message, which counts the total number of cache hits.
+	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "cache_hits_total",
+		Help: "The total number of cache hits",
+	})
+
+	// CacheMisses variable declaration that creates a new Prometheus Counter with the specified name and help message, representing the total number of cache misses.
+	CacheMisses = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "cache_misses_total",
+		Help: "The total number of cache misses",
+	})
+
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_user_usage_percent",

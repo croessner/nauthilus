@@ -2584,6 +2584,8 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.getFromLocalCache(ctx); !found {
+		stats.CacheMisses.Inc()
+
 		if a.checkBruteForce() {
 			a.updateBruteForceBucketsCounter()
 			a.postLuaAction(&PassDBResult{})
@@ -2591,6 +2593,8 @@ func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (reject bool) 
 
 			return true
 		}
+	} else {
+		stats.CacheHits.Inc()
 	}
 
 	return false
