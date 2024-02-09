@@ -294,7 +294,6 @@ type Authentication struct {
 	// HTTPClientContext tracks the context for an HTTP client connection.
 	HTTPClientContext context.Context
 
-	*GeoIPCity
 	*backend.PasswordHistory
 	*lualib.Context
 }
@@ -391,54 +390,6 @@ func (a *Authentication) String() string {
 	}
 
 	return result[1:]
-}
-
-// logLineGeoIP returns an array of key-value pairs representing the geoIP information of the Authentication object.
-// It includes the GUID, GeoIP ISO code, GeoIP country name, GeoIP city name, whether the GeoIP is in the European Union,
-// GeoIP accuracy radius, latitude, longitude, metro code, and time zone.
-// If any value is not available, it is replaced with the "N/A" constant
-func (a *Authentication) logLineGeoIP() []any {
-	var (
-		geoIPCityCountryName string
-		geoIPCityCityName    string
-	)
-
-	if val, okay := a.GeoIPCity.City.Names["en"]; okay {
-		if val != "" {
-			geoIPCityCityName = val
-		} else {
-			geoIPCityCityName = global.NotAvailable
-		}
-	} else {
-		geoIPCityCityName = global.NotAvailable
-	}
-
-	if val, okay := a.GeoIPCity.Country.Names["en"]; okay {
-		if val != "" {
-			geoIPCityCountryName = val
-		} else {
-			geoIPCityCountryName = global.NotAvailable
-		}
-	} else {
-		geoIPCityCountryName = global.NotAvailable
-	}
-
-	if a.GeoIPCity.Location.TimeZone == "" {
-		a.GeoIPCity.Location.TimeZone = global.NotAvailable
-	}
-
-	return []any{
-		global.LogKeyGUID, util.WithNotAvailable(*a.GUID),
-		global.LogKeyGeoIPISOCode, util.WithNotAvailable(a.GeoIPCity.Country.IsoCode),
-		global.LogKeyGeoIPCountryName, geoIPCityCountryName,
-		global.LogKeyGeoIPCityName, geoIPCityCityName,
-		global.LogKeyGeoIPIsInEuropeanUnion, fmt.Sprintf("%v", a.GeoIPCity.Country.IsInEuropeanUnion),
-		global.LogKeyGeoIPAccuracyRadius, fmt.Sprintf("%d", a.GeoIPCity.Location.AccuracyRadius),
-		global.LogKeyGeoIPLatitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Latitude),
-		global.LogKeyGeoIPLongitude, fmt.Sprintf("%f", a.GeoIPCity.Location.Longitude),
-		global.LogKeyGeoIPMetroCode, fmt.Sprintf("%d", a.GeoIPCity.Location.MetroCode),
-		global.LogKeyGeoIPTimeZone, a.GeoIPCity.Location.TimeZone,
-	}
 }
 
 // LogLineMail returns an array of key-value pairs used for logging mail information.
@@ -1243,14 +1194,6 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		}
 
 		<-finished
-	}
-
-	/*
-	 * Neutral features
-	 */
-
-	if config.EnvConfig.HasFeature(global.FeatureGeoIP) {
-		a.featureGeoIP()
 	}
 
 	/*
@@ -2066,7 +2009,6 @@ func (a *Authentication) withDefaults(ctx *gin.Context) *Authentication {
 	guidStr := ctx.Value(global.GUIDKey).(string)
 
 	a.GUID = &guidStr
-	a.GeoIPCity = &GeoIPCity{}
 	a.UsedPassDBBackend = global.BackendUnknown
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.Param("service")

@@ -55,33 +55,6 @@ const (
 	// LogKeyLoginAttempts represents the number of current password retry attempts.
 	LogKeyLoginAttempts = "current_password_retries"
 
-	// LogKeyGeoIPISOCode represents the ISO standard country code for the geolocation of the IP.
-	LogKeyGeoIPISOCode = "geoip_iso_code"
-
-	// LogKeyGeoIPCountryName represents the country name inferred from the geolocation of the IP.
-	LogKeyGeoIPCountryName = "geoip_country_name"
-
-	// LogKeyGeoIPCityName represents the city name inferred from geolocation data.
-	LogKeyGeoIPCityName = "geoip_city_name"
-
-	// LogKeyGeoIPIsInEuropeanUnion indicates whether or not the inferred geolocation resolves to an European Union address.
-	LogKeyGeoIPIsInEuropeanUnion = "geoip_is_in_european_union"
-
-	// LogKeyGeoIPAccuracyRadius represents the approximation of accuracy (in kilometers) for the geolocation data.
-	LogKeyGeoIPAccuracyRadius = "geoip_accuracy_radius"
-
-	// LogKeyGeoIPLatitude represents the latitude inferred from the geolocation of the IP.
-	LogKeyGeoIPLatitude = "geoip_latitude"
-
-	// LogKeyGeoIPLongitude represents the longitude inferred from the geolocation of the IP.
-	LogKeyGeoIPLongitude = "geoip_longitude"
-
-	// LogKeyGeoIPMetroCode represents the metro code area inferred from the geolocation of the IP.
-	LogKeyGeoIPMetroCode = "geoip_metro_code"
-
-	// LogKeyGeoIPTimeZone represents the timezone inferred from the geolocation of the IP.
-	LogKeyGeoIPTimeZone = "geoip_timezone"
-
 	// LogKeyUserAgent represents the user-agent string of the client.
 	LogKeyUserAgent = "user_agent"
 
@@ -266,9 +239,6 @@ const (
 	// MaxLoginAttempts is the maximum allowed number of login attempts
 	MaxLoginAttempts = 15
 
-	// GeoIPPath is the location of the GeoIP database
-	GeoIPPath = "/usr/share/GeoIP/GeoLite2-City.mmdb"
-
 	// LDAPIdlePoolSize is the number of idle connections in LDAP connection pool
 	LDAPIdlePoolSize = 2
 
@@ -366,9 +336,6 @@ const (
 const (
 	// FeatureTLSEncryption is a constant for the string "tls_encryption"
 	FeatureTLSEncryption = "tls_encryption"
-
-	// FeatureGeoIP is a constant for the string "geoip"
-	FeatureGeoIP = "geoip"
 
 	// FeatureRBL is a constant for the string "rbl"
 	FeatureRBL = "rbl"
