@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -901,6 +902,13 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitorin
 	go runNgxMonitoring(ctx, store, *ngxMonitoring)
 }
 
+// enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
+func enableBlockProfile() {
+	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug {
+		runtime.SetBlockProfileRate(1)
+	}
+}
+
 // main initializes the application and manages the lifecycle of various components.
 //
 // It first sets up the environment and checks if any errors occurred during the process. If an error is encountered, it's logged and the application terminates.
@@ -921,6 +929,8 @@ func main() {
 	if err := setupFeatures(); err != nil {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)
 	}
+
+	enableBlockProfile()
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
 	ngxMonitoringTicker := time.NewTicker(global.NginxMonitoringDelay * time.Second)
