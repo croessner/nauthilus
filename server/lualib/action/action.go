@@ -162,7 +162,7 @@ func NewWorker() *Worker {
 func (aw *Worker) Work(ctx context.Context) {
 	aw.ctx = &ctx
 
-	if config.LoadableConfig.Lua == nil {
+	if !config.LoadableConfig.HaveLuaActions() {
 		return
 	}
 

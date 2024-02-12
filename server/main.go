@@ -197,8 +197,10 @@ func PreCompileFeatures() error {
 		return nil
 	}
 
-	if err := feature.PreCompileLuaFeatures(); err != nil {
-		return err
+	if config.LoadableConfig.HaveLuaFeatures() {
+		if err := feature.PreCompileLuaFeatures(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -213,12 +215,10 @@ func PreCompileFilters() error {
 		return nil
 	}
 
-	if len(config.LoadableConfig.Lua.Filters) == 0 {
-		return nil
-	}
-
-	if err := filter.PreCompileLuaFilters(); err != nil {
-		return err
+	if config.LoadableConfig.HaveLuaFilters() {
+		if err := filter.PreCompileLuaFilters(); err != nil {
+			return err
+		}
 	}
 
 	return nil

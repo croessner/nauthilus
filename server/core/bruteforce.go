@@ -767,29 +767,31 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 			"rule", rules[index].Name,
 		)
 
-		finished := make(chan action.Done)
+		if config.LoadableConfig.HaveLuaActions() {
+			finished := make(chan action.Done)
 
-		action.RequestChan <- &action.Action{
-			LuaAction:         global.LuaActionBruteForce,
-			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:         alreadyTriggered,
-			BruteForceCounter: a.BruteForceCounter[rules[index].Name],
-			Session:           *a.GUID,
-			ClientIP:          a.ClientIP,
-			ClientPort:        a.XClientPort,
-			ClientNet:         network.String(),
-			ClientID:          a.XClientID,
-			LocalIP:           a.XLocalIP,
-			LocalPort:         a.XPort,
-			Username:          a.Username,
-			Password:          a.Password,
-			Protocol:          a.Protocol.Get(),
-			BruteForceName:    rules[index].Name,
-			Context:           a.Context,
-			FinishedChan:      finished,
+			action.RequestChan <- &action.Action{
+				LuaAction:         global.LuaActionBruteForce,
+				Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Repeating:         alreadyTriggered,
+				BruteForceCounter: a.BruteForceCounter[rules[index].Name],
+				Session:           *a.GUID,
+				ClientIP:          a.ClientIP,
+				ClientPort:        a.XClientPort,
+				ClientNet:         network.String(),
+				ClientID:          a.XClientID,
+				LocalIP:           a.XLocalIP,
+				LocalPort:         a.XPort,
+				Username:          a.Username,
+				Password:          a.Password,
+				Protocol:          a.Protocol.Get(),
+				BruteForceName:    rules[index].Name,
+				Context:           a.Context,
+				FinishedChan:      finished,
+			}
+
+			<-finished
 		}
-
-		<-finished
 
 		return true
 	}
