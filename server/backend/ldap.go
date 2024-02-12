@@ -1146,19 +1146,140 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 	return
 }
 
-// LDAPMainWorker is the main working function for managing LDAP (Lightweight Directory Access Protocol) operations.
-// It operates as a Goroutine performing numerous LDAP tasks such as search, add, and modify operations on an LDAP directory.
-// This function incrementally fetches requests from the LDAPRequestChan and processes them in a separate Goroutine.
-// Each request is processed using a certain connection from the connection pool.
-// Connections are freed up once they have completed their task.
-// The function operates continuously until the context is cancelled, at which point it closes the connection pool and
-// sends a signal to the LDAPEndChan, signifying its completion.
-//
+// Function processLookupSearchRequest processes a lookup search request for an LDAP connection at the specified index.
+// It takes an index representing the position of the LDAP connection in the pool, an LDAPRequest, and an LDAPReply.
+// It performs the search operation on the connection using the provided request and updates the reply accordingly.
+// If there is an error during the search operation, it handles the error and logs it if necessary.
+// After the search operation, it sets the result and rawResult fields of the reply and checks if there is a context error in the request.
+func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPRequest, ldapReply *LDAPReply) {
+	var (
+		err       error
+		result    DatabaseResult
+		rawResult []*ldap.Entry
+	)
+
+	if result, rawResult, err = l.conn[index].search(ldapRequest); err != nil {
+		if err != nil {
+			var (
+				ldapError *ldap.Error
+				doLog     bool
+			)
+
+			if errors.As(err, &ldapError) {
+				if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
+					doLog = true
+					ldapReply.Err = ldapError.Err
+				}
+
+				// Unknown user!
+			} else {
+				doLog = true
+				ldapReply.Err = err
+			}
+
+			if doLog {
+				level.Error(logging.DefaultErrLogger).Log(
+					global.LogKeyLDAPPoolName, l.name,
+					global.LogKeyGUID, *ldapRequest.GUID,
+					global.LogKeyError, ldapError.Error(),
+				)
+			}
+		}
+	}
+
+	ldapReply.Result = result
+	ldapReply.RawResult = rawResult
+
+	if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
+		ldapReply.Err = ctxErr
+	}
+}
+
+// processLookupModifyAddRequest modifies an LDAP entry by adding attribute values.
 // Parameters:
+// - index: The index of the connection in the LDAP pool.
+// - ldapRequest: The LDAP request containing the information needed to perform the modification.
+// - ldapReply: The LDAP reply to be populated with the result of the modification.
+// Description:
+// - The method calls the modifyAdd method of the connection at the given index in the LDAP pool with the provided LDAP request.
+// - If an error occurs during the modification, the error is assigned to the ldapReply.Err field.
+// Example usage:
 //
-//	ctx (context.Context): The context in which the function operates.
-//
-// Note: This function does not return a value.
+// ldapReply := &LDAPReply{}
+// l.processLookupModifyAddRequest(index, ldapRequest, ldapReply)
+// ldapRequest.LDAPReplyChan <- ldapReply
+func (l *LDAPPool) processLookupModifyAddRequest(index int, ldapRequest *LDAPRequest, ldapReply *LDAPReply) {
+	if err := l.conn[index].modifyAdd(ldapRequest); err != nil {
+		ldapReply.Err = err
+	}
+}
+
+// proccessLookupRequest processes a lookup request for a given LDAP connection.
+// It starts a timer to measure the duration of the function.
+// It defers a cleanup function that will stop the timer and signal the completion of the request to the wait group.
+// It creates a new LDAPReply struct to hold the result of the lookup request.
+// If there is an error in the LDAP connection for this request, it sets the error in the LDAPReply and sends it to the reply channel.
+// It checks the command of the request and performs the appropriate action:
+// - If the command is global.LDAPSearch, it calls the processLookupSearchRequest method to perform a search operation.
+// - If the command is global.LDAPModifyAdd, it calls the processLookupModifyAddRequest method to perform an add modification operation.
+// It sends the LDAPReply to the reply channel.
+// It locks the connection to update its state.
+// It sets the connection state to global.LDAPStateFree.
+// It unlocks the connection.
+func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPMainWorker"))
+
+	defer func() {
+		timer.ObserveDuration()
+		ldapWaitGroup.Done()
+	}()
+
+	ldapReply := &LDAPReply{}
+
+	if ldapReply.Err = l.checkConnection(ldapRequest.GUID, index); ldapReply.Err != nil {
+		ldapRequest.LDAPReplyChan <- ldapReply
+
+		return
+	}
+
+	switch ldapRequest.Command {
+	case global.LDAPSearch:
+		l.processLookupSearchRequest(index, ldapRequest, ldapReply)
+	case global.LDAPModifyAdd:
+		l.processLookupModifyAddRequest(index, ldapRequest, ldapReply)
+	}
+
+	ldapRequest.LDAPReplyChan <- ldapReply
+
+	l.conn[index].Mu.Lock()
+
+	l.conn[index].state = global.LDAPStateFree
+
+	l.conn[index].Mu.Unlock()
+}
+
+// handleLookupRequest obtains a connection number from the LDAPPool using the provided GUID and ldapWaitGroup.
+// It then adds 1 to the ldapWaitGroup. Finally, it launches a goroutine to process the lookup request using the obtained connection number, the ldapRequest, and the ldapWaitGroup.
+func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
+	connNumber := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
+
+	ldapWaitGroup.Add(1)
+
+	go l.proccessLookupRequest(connNumber, ldapRequest, ldapWaitGroup)
+}
+
+// LDAPMainWorker is a function that handles LDAP requests in a worker thread.
+// It takes a context.Context as a parameter.
+// It creates a sync.WaitGroup to wait for all started goroutines to complete.
+// It creates an LDAPPool by calling the NewPool function with the context and global.LDAPPoolLookup.
+// If the LDAPPool is nil, it returns.
+// It starts the houseKeeper goroutine by calling ldapPool.houseKeeper() in a separate goroutine.
+// It starts an infinite loop with a select statement.
+// The select statement waits for either the context to be done or a request to be received from the LDAPRequestChan channel.
+// If the context is done, it closes the LDAP pool, sends a Done struct to the LDAPEndChan channel, and returns.
+// If a request is received from the LDAPRequestChan channel, it checks if there are enough idle connections in the LDAPPool.
+// If not, it sends an error as an LDAPReply to the request's LDAPReplyChan.
+// It then calls ldapPool.handleLookupRequest to handle the LDAP request, passing in the request and the ldapWaitGroup.
 func LDAPMainWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
@@ -1185,85 +1306,7 @@ func LDAPMainWorker(ctx context.Context) {
 				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
 			}
 
-			connNumber := ldapPool.getConnection(ldapRequest.GUID, &ldapWaitGroup)
-
-			ldapWaitGroup.Add(1)
-
-			go func(index int, ldapRequest *LDAPRequest) {
-				var (
-					err       error
-					result    DatabaseResult
-					rawResult []*ldap.Entry
-				)
-
-				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPMainWorker"))
-
-				defer func() {
-					timer.ObserveDuration()
-					ldapWaitGroup.Done()
-				}()
-
-				ldapReply := &LDAPReply{}
-				ldapReplyChan := ldapRequest.LDAPReplyChan
-
-				if ldapReply.Err = ldapPool.checkConnection(ldapRequest.GUID, index); ldapReply.Err != nil {
-					ldapReplyChan <- ldapReply
-
-					return
-				}
-
-				switch ldapRequest.Command {
-				case global.LDAPSearch:
-					if result, rawResult, err = ldapPool.conn[index].search(ldapRequest); err != nil {
-						if err != nil {
-							var (
-								ldapError *ldap.Error
-								doLog     bool
-							)
-
-							if errors.As(err, &ldapError) {
-								if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
-									doLog = true
-									ldapReply.Err = ldapError.Err
-								}
-
-								// Unknown user!
-							} else {
-								doLog = true
-								ldapReply.Err = err
-							}
-
-							if doLog {
-								level.Error(logging.DefaultErrLogger).Log(
-									global.LogKeyLDAPPoolName, ldapPool.name,
-									global.LogKeyGUID, *ldapRequest.GUID,
-									global.LogKeyError, ldapError.Error(),
-								)
-							}
-						}
-					}
-
-				case global.LDAPModifyAdd:
-					if err = ldapPool.conn[index].modifyAdd(ldapRequest); err != nil {
-						ldapReply.Err = err
-					}
-				}
-
-				ldapReply.Result = result
-				ldapReply.RawResult = rawResult
-
-				if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
-					ldapReply.Err = ctxErr
-				}
-
-				ldapReplyChan <- ldapReply
-
-				ldapPool.conn[index].Mu.Lock()
-
-				ldapPool.conn[index].state = global.LDAPStateFree
-
-				ldapPool.conn[index].Mu.Unlock()
-			}(connNumber, ldapRequest)
+			ldapPool.handleLookupRequest(ldapRequest, &ldapWaitGroup)
 		}
 	}
 }
