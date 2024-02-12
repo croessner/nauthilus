@@ -38,6 +38,13 @@ var (
 	LDAPAuthRequestChan chan *LDAPAuthRequest //nolint:gochecknoglobals // Needed for LDAP pooling
 )
 
+// PoolRequest is an interface that represents a request made to a connection pool.
+// It provides a method to retrieve the channel where the LDAP reply will be sent.
+// The type parameter `T` can be any type.
+type PoolRequest[T any] interface {
+	GetLDAPReplyChan() chan *LDAPReply
+}
+
 // LDAPConnection represents the connection with an LDAP server.
 // It encapsulates the LDAP connection state and provides a means to synchronize access to it.
 type LDAPConnection struct {
@@ -110,6 +117,12 @@ type LDAPRequest struct {
 	HTTPClientContext context.Context
 }
 
+// GetLDAPReplyChan returns the channel where replies from the LDAP server are sent.
+// It retrieves and returns the value of the `LDAPReplyChan` field of the `LDAPRequest` struct.
+func (l *LDAPRequest) GetLDAPReplyChan() chan *LDAPReply {
+	return l.LDAPReplyChan
+}
+
 // LDAPAuthRequest represents a request to authenticate with an LDAP server.
 type LDAPAuthRequest struct {
 	// GUID is the unique identifier for the LDAP auth request.
@@ -128,6 +141,12 @@ type LDAPAuthRequest struct {
 	// HTTPClientContext is the context for the HTTP client
 	// carrying the LDAP auth request.
 	HTTPClientContext context.Context
+}
+
+// GetLDAPReplyChan returns the channel where replies from the LDAP server are sent.
+// It retrieves and returns the value of the `LDAPReplyChan` field of the `LDAPAuthRequest` struct.
+func (l *LDAPAuthRequest) GetLDAPReplyChan() chan *LDAPReply {
+	return l.LDAPReplyChan
 }
 
 // LDAPReply encapsulates the result of an LDAP operation.
@@ -1146,6 +1165,21 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 	return
 }
 
+// sendLDAPReplyAndUnlockState sends the provided ldapReply to the request's GetLDAPReplyChan channel and unlocks the state of the connection at index in the ldapPool object.
+// It uses the provided request's GetLDAPReplyChan() method to send the ldapReply.
+// It first locks the state of the connection using the ldapPool.conn[index].Mu.Lock() method.
+// Then it sets the state of the connection to global.LDAPStateFree.
+// Finally, it unlocks the state of the connection using the ldapPool.conn[index].Mu.Unlock() method.
+func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *LDAPPool, index int, request T, ldapReply *LDAPReply) {
+	request.GetLDAPReplyChan() <- ldapReply
+
+	ldapPool.conn[index].Mu.Lock()
+
+	ldapPool.conn[index].state = global.LDAPStateFree
+
+	ldapPool.conn[index].Mu.Unlock()
+}
+
 // Function processLookupSearchRequest processes a lookup search request for an LDAP connection at the specified index.
 // It takes an index representing the position of the LDAP connection in the pool, an LDAPRequest, and an LDAPReply.
 // It performs the search operation on the connection using the provided request and updates the reply accordingly.
@@ -1249,13 +1283,7 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 		l.processLookupModifyAddRequest(index, ldapRequest, ldapReply)
 	}
 
-	ldapRequest.LDAPReplyChan <- ldapReply
-
-	l.conn[index].Mu.Lock()
-
-	l.conn[index].state = global.LDAPStateFree
-
-	l.conn[index].Mu.Unlock()
+	sendLDAPReplyAndUnlockState(l, index, ldapRequest, ldapReply)
 }
 
 // handleLookupRequest obtains a connection number from the LDAPPool using the provided GUID and ldapWaitGroup.
@@ -1359,13 +1387,7 @@ func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthReques
 
 	l.processAuthBindRequest(index, ldapAuthRequest, ldapReply)
 
-	ldapAuthRequest.LDAPReplyChan <- ldapReply
-
-	l.conn[index].Mu.Lock()
-
-	l.conn[index].state = global.LDAPStateFree
-
-	l.conn[index].Mu.Unlock()
+	sendLDAPReplyAndUnlockState(l, index, ldapAuthRequest, ldapReply)
 }
 
 // handleAuthRequest handles the LDAP authentication request.
