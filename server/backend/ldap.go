@@ -1311,26 +1311,84 @@ func LDAPMainWorker(ctx context.Context) {
 	}
 }
 
-// LDAPAuthWorker is a function that performs multiple tasks as part of LDAP Authentication.
-//
-//  1. LDAP Connection Pool Management: It initializes a new LDAP connection pool and conducts housekeeping tasks
-//     in a separate Go routine. If a housekeeping task completes or fails, the function closes the LDAP pool and
-//     sends a message to the LDAPAuthEndChan.
-//
-//  2. LDAP Request Processing: The function continuously listens to requests on LDAPAuthRequestChan.
-//     For each incoming request, it takes the following steps:
-//     - Checks if there are enough idle connections in the pool.
-//     - Gets a connection from the pool.
-//     - Spawns a new Go routine to deal with the authentication. This concurrency allows the function to handle
-//     subsequent requests without waiting for the previous ones. Inside this Go routine:
-//     - The integrity of the connection is verified.
-//     - It tries to authenticate the user against the LDAP using the Bind credentials provided in the request.
-//     - Checks for any errors in the HTTPClientContext of the request and reflects them in the LDAPReply object.
-//     - Sends the LDAPReply object through the LDAPReplyChan provided in the request.
-//     - Frees up the state of the LDAP connection for future use.
-//
-// The function runs continuously until its context is canceled or it encounters a fatal error.
-// If the context is canceled, the function ensures it cleans up any open LDAP connections before termination.
+// processAuthBindRequest tries to authenticate a user by performing a bind operation on a connection in the LDAPPool.
+// It takes an index, which represents the index of the connection to use, an LDAPAuthRequest, which contains the bind credentials,
+// and an LDAPReply, which will store the result of the bind operation.
+func (l *LDAPPool) processAuthBindRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapReply *LDAPReply) {
+	// Try to authenticate a user.
+	if err := l.conn[index].Conn.Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
+		ldapReply.Err = err
+	}
+
+	/*
+		// XXX: As the unbind() call closes the connection, we re-bind...
+		ldapPool.conn[index].Conn.unbind()
+	*/
+
+	if ctxErr := ldapAuthRequest.HTTPClientContext.Err(); ctxErr != nil {
+		ldapReply.Err = ctxErr
+	}
+}
+
+// processAuthRequest processes an authentication request for a specific LDAP connection.
+// It takes the following parameters:
+// - index: the index of the LDAP connection in the LDAPPool.
+// - ldapAuthRequest: a pointer to an LDAPAuthRequest object that contains the authentication request details.
+// - ldapWaitGroup: a pointer to a sync.WaitGroup object used for synchronization.
+// The function starts a timer to measure its execution duration and defers the observation of the duration and the completion of the wait group.
+// It initializes an empty LDAPReply object.
+// If there is an error in checking the connection, the function sends the LDAPReply object with the error to the LDAPAuthRequest channel and returns.
+// Then, it calls the processAuthBindRequest method to process the authentication bind request for the given connection.
+// The function sends the LDAPReply object (which may contain the result, the raw result, or an error) to the LDAPAuthRequest channel.
+// It locks the connection's mutex, sets the connection state to LDAPStateFree, and unlocks the mutex.
+func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
+	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPAuthWorker"))
+
+	defer func() {
+		timer.ObserveDuration()
+		ldapWaitGroup.Done()
+	}()
+
+	ldapReply := &LDAPReply{}
+
+	if ldapReply.Err = l.checkConnection(ldapAuthRequest.GUID, index); ldapReply.Err != nil {
+		ldapAuthRequest.LDAPReplyChan <- ldapReply
+
+		return
+	}
+
+	l.processAuthBindRequest(index, ldapAuthRequest, ldapReply)
+
+	ldapAuthRequest.LDAPReplyChan <- ldapReply
+
+	l.conn[index].Mu.Lock()
+
+	l.conn[index].state = global.LDAPStateFree
+
+	l.conn[index].Mu.Unlock()
+}
+
+// handleAuthRequest handles the LDAP authentication request.
+// It retrieves a connection from the LDAP pool using the GUID and waits a group.
+// Then, it calls the processAuthRequest method to process the authentication request.
+func (l *LDAPPool) handleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
+	connNumber := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
+
+	ldapWaitGroup.Add(1)
+
+	l.processAuthRequest(connNumber, ldapAuthRequest, ldapWaitGroup)
+}
+
+// LDAPAuthWorker is a function that handles LDAP authentication requests.
+// It expects a context.Context parameter.
+// The function initializes a WaitGroup variable ldapWaitGroup to synchronize its operations.
+// It creates an LDAP pool using the NewPool function with the context and LDAPPoolAuth as the poolType.
+// If the LDAP pool creation fails (returns nil), the function returns.
+// It starts the background cleaner process of the LDAP pool using the houseKeeper method in a goroutine.
+// The function enters an infinite loop that selects between two cases:
+//  1. The context is done. In this case, it closes the LDAP pool, sends a Done value to the LDAPAuthEndChan channel,
+//     and returns from the function.
+//  2. An LDAP authentication request is received from the LDAPAuthRequestChan channel. The function checks if there are enough idle connections in the pool, and if not, it sends an error
 func LDAPAuthWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
@@ -1356,51 +1414,7 @@ func LDAPAuthWorker(ctx context.Context) {
 				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
 			}
 
-			connNumber := ldapPool.getConnection(ldapAuthRequest.GUID, &ldapWaitGroup)
-
-			ldapWaitGroup.Add(1)
-
-			go func(index int, ldapUserBindRequest *LDAPAuthRequest) {
-				var err error
-
-				timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPAuthWorker"))
-
-				defer func() {
-					timer.ObserveDuration()
-					ldapWaitGroup.Done()
-				}()
-
-				ldapReply := &LDAPReply{}
-				ldapReplyChan := ldapUserBindRequest.LDAPReplyChan
-
-				if ldapReply.Err = ldapPool.checkConnection(ldapUserBindRequest.GUID, index); ldapReply.Err != nil {
-					ldapReplyChan <- ldapReply
-
-					return
-				}
-
-				// Try to authenticate a user.
-				if err = ldapPool.conn[index].Conn.Bind(ldapUserBindRequest.BindDN, ldapUserBindRequest.BindPW); err != nil {
-					ldapReply.Err = err
-				}
-
-				/*
-					// XXX: As the unbind() call closes the connection, we re-bind...
-					ldapPool.conn[index].Conn.unbind()
-				*/
-
-				if ctxErr := ldapUserBindRequest.HTTPClientContext.Err(); ctxErr != nil {
-					ldapReply.Err = ctxErr
-				}
-
-				ldapReplyChan <- ldapReply
-
-				ldapPool.conn[index].Mu.Lock()
-
-				ldapPool.conn[index].state = global.LDAPStateFree
-
-				ldapPool.conn[index].Mu.Unlock()
-			}(connNumber, ldapAuthRequest)
+			ldapPool.handleAuthRequest(ldapAuthRequest, &ldapWaitGroup)
 		}
 	}
 }
