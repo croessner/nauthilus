@@ -71,7 +71,7 @@
     ]
   },
   "description": "Nginx authserv IMAP and SMTP authentication service",
-  "editable": true,
+  "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
@@ -117,7 +117,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
+        "h": 7,
         "w": 4,
         "x": 0,
         "y": 1
@@ -156,7 +156,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "rate(logins_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "logins_total{job=\"nauthilus\", instance=~\"$instance\"}",
           "interval": "",
           "legendFormat": "{{logins}}",
           "range": true,
@@ -196,8 +196,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 13,
+        "h": 7,
+        "w": 9,
         "x": 4,
         "y": 1
       },
@@ -240,7 +240,54 @@
           "legendFormat": "System",
           "range": true,
           "refId": "CPU system"
+        }
+      ],
+      "title": "CPU usage",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "Idle",
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 13,
+        "y": 1
+      },
+      "id": 62,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": false
+      },
+      "pluginVersion": "10.0.4",
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
@@ -248,7 +295,6 @@
           },
           "editorMode": "code",
           "expr": "cpu_idle_usage_percent{job=\"nauthilus\", instance=~\"$instance\"}",
-          "hide": false,
           "instant": false,
           "legendFormat": "Idle",
           "range": true,
@@ -267,7 +313,7 @@
         "defaults": {
           "displayName": "Threads",
           "mappings": [],
-          "max": 100,
+          "max": 25,
           "min": 0,
           "thresholds": {
             "mode": "absolute",
@@ -278,11 +324,11 @@
               },
               {
                 "color": "orange",
-                "value": 70
+                "value": 15
               },
               {
                 "color": "red",
-                "value": 85
+                "value": 20
               }
             ]
           },
@@ -291,7 +337,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
+        "h": 7,
         "w": 4,
         "x": 17,
         "y": 1
@@ -337,7 +383,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 8
       },
       "id": 26,
       "panels": [],
@@ -410,7 +456,7 @@
         "h": 9,
         "w": 21,
         "x": 0,
-        "y": 8
+        "y": 9
       },
       "id": 22,
       "options": {
@@ -511,7 +557,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 17
+        "y": 18
       },
       "id": 52,
       "options": {
@@ -624,7 +670,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 25
+        "y": 26
       },
       "id": 48,
       "options": {
@@ -682,7 +728,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 34
       },
       "id": 50,
       "panels": [],
@@ -696,6 +742,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -716,10 +763,14 @@
               "viz": false
             },
             "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
-              "type": "linear"
+              "log": 10,
+              "type": "log"
             },
             "showPoints": "auto",
             "spanNulls": false,
@@ -728,7 +779,7 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "dashed"
             }
           },
           "mappings": [],
@@ -741,7 +792,7 @@
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 50
               }
             ]
           },
@@ -750,10 +801,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 15,
+        "h": 8,
         "w": 21,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "id": 51,
       "options": {
@@ -788,7 +839,7 @@
           "refId": "A"
         }
       ],
-      "title": "Panel Title",
+      "title": "Request timeings",
       "type": "timeseries"
     },
     {
@@ -797,7 +848,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 43
       },
       "id": 53,
       "panels": [],
@@ -838,7 +889,7 @@
         "h": 5,
         "w": 3,
         "x": 0,
-        "y": 50
+        "y": 44
       },
       "id": 54,
       "options": {
@@ -901,7 +952,7 @@
         "h": 5,
         "w": 6,
         "x": 3,
-        "y": 50
+        "y": 44
       },
       "id": 56,
       "options": {
@@ -965,7 +1016,7 @@
         "h": 5,
         "w": 6,
         "x": 9,
-        "y": 50
+        "y": 44
       },
       "id": 58,
       "options": {
@@ -1029,7 +1080,7 @@
         "h": 5,
         "w": 6,
         "x": 15,
-        "y": 50
+        "y": 44
       },
       "id": 61,
       "options": {
@@ -1081,7 +1132,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1092,7 +1143,8 @@
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
-              "type": "linear"
+              "log": 10,
+              "type": "log"
             },
             "showPoints": "auto",
             "spanNulls": false,
@@ -1126,7 +1178,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 55
+        "y": 49
       },
       "id": 6,
       "options": {
@@ -1161,7 +1213,7 @@
           "interval": "",
           "legendFormat": "Sys",
           "range": true,
-          "refId": "B"
+          "refId": "Sys"
         }
       ],
       "title": "Number of bytes obtained from system",
@@ -1185,7 +1237,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1202,7 +1254,7 @@
             "spanNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"
@@ -1230,13 +1282,13 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 63
+        "y": 57
       },
       "id": 8,
       "options": {
         "legend": {
           "calcs": [
-            "last",
+            "lastNotNull",
             "min",
             "max",
             "mean",
@@ -1264,7 +1316,7 @@
           "interval": "",
           "legendFormat": "Heap alloc",
           "range": true,
-          "refId": "A"
+          "refId": "Alloc"
         },
         {
           "datasource": {
@@ -1278,7 +1330,7 @@
           "interval": "",
           "legendFormat": "Heap in use",
           "range": true,
-          "refId": "B"
+          "refId": "Inuse"
         },
         {
           "datasource": {
@@ -1292,7 +1344,7 @@
           "interval": "",
           "legendFormat": "Heap idle",
           "range": true,
-          "refId": "C"
+          "refId": "Idle"
         }
       ],
       "title": "Number of heap bytes",
@@ -1316,7 +1368,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1361,13 +1413,13 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 71
+        "y": 65
       },
       "id": 16,
       "options": {
         "legend": {
           "calcs": [
-            "last",
+            "lastNotNull",
             "min",
             "max",
             "mean"
@@ -1419,7 +1471,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1464,7 +1516,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 79
+        "y": 73
       },
       "id": 55,
       "options": {
@@ -1519,7 +1571,108 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 21,
+        "x": 0,
+        "y": 81
+      },
+      "id": 60,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "go_memstats_heap_released_bytes{job=\"nauthilus\",instance=~\"$instance\"}",
+          "instant": false,
+          "legendFormat": "Bytes",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Number of heap bytes released to OS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1555,7 +1708,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
@@ -1563,7 +1717,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 87
+        "y": 89
       },
       "id": 57,
       "options": {
@@ -1618,7 +1772,7 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1629,7 +1783,8 @@
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
-              "type": "linear"
+              "log": 10,
+              "type": "log"
             },
             "showPoints": "auto",
             "spanNulls": false,
@@ -1654,7 +1809,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
@@ -1662,7 +1818,7 @@
         "h": 8,
         "w": 21,
         "x": 0,
-        "y": 95
+        "y": 97
       },
       "id": 59,
       "options": {
@@ -1699,106 +1855,6 @@
       ],
       "title": "Number of allocated objects",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 21,
-        "x": 0,
-        "y": 103
-      },
-      "id": 60,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "min",
-            "max",
-            "mean"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
-          "width": 350
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "go_memstats_heap_released_bytes{job=\"nauthilus\",instance=~\"$instance\"}",
-          "instant": false,
-          "legendFormat": "Bytes",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Number of heap bytes released to OS",
-      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -1815,9 +1871,9 @@
         },
         "definition": "label_values(logins_total,instance)",
         "hide": 0,
-        "includeAll": true,
+        "includeAll": false,
         "label": "instance",
-        "multi": true,
+        "multi": false,
         "name": "instance",
         "options": [],
         "query": {
@@ -1833,13 +1889,13 @@
     ]
   },
   "time": {
-    "from": "now-30m",
+    "from": "now-6h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "Nauthilus",
   "uid": "ut-C6ghnk",
-  "version": 38,
+  "version": 47,
   "weekStart": ""
 }
