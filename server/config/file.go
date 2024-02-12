@@ -465,6 +465,46 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 	return f.GetLuaSearchProtocol(global.ProtoDefault)
 }
 
+// HaveLuaFilters is a method on the File struct.
+// It checks if the File struct has Lua filters.
+// It returns true if there are Lua filters, and false otherwise.
+func (f *File) HaveLuaFilters() bool {
+	if f.HaveLua() {
+		return len(f.Lua.Filters) > 0
+	}
+
+	return false
+}
+
+// HaveLuaFeatures is a method on the File struct.
+// It checks if the File struct has Lua features.
+// It returns true if there are Lua features, and false otherwise.
+func (f *File) HaveLuaFeatures() bool {
+	if f.HaveLua() {
+		return len(f.Lua.Features) > 0
+	}
+
+	return false
+}
+
+// HaveLuaActions is a method on the File struct.
+// It checks if the File struct has Lua actions.
+// It returns true if the File struct has Lua actions, otherwise returns false.
+func (f *File) HaveLuaActions() bool {
+	if f.HaveLua() {
+		return len(f.Lua.Actions) > 0
+	}
+
+	return false
+}
+
+// HaveLua is a method on the File struct.
+// It checks if the Lua field in the File struct is not nil.
+// It returns a boolean value indicating whether Lua is present or not.
+func (f *File) HaveLua() bool {
+	return f.Lua != nil
+}
+
 /*
  * Generic EnvConfig mapping
  */
@@ -817,6 +857,7 @@ func (f *File) validatePassDBBackends() error {
 			}
 		case global.BackendUnknown:
 		case global.BackendCache:
+		case global.BackendLocalCache:
 		}
 	}
 

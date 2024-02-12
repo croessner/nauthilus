@@ -1168,6 +1168,10 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
 	doAction := func(luaAction global.LuaAction, luaActionName string) {
+		if !config.LoadableConfig.HaveLuaActions() {
+			return
+		}
+
 		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", luaActionName))
 
 		defer timer.ObserveDuration()
@@ -1201,17 +1205,19 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	 */
 
 	if config.EnvConfig.HasFeature(global.FeatureLua) {
-		if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
-			return global.AuthResultTempFail
-		} else if triggered {
-			a.FeatureName = global.FeatureLua
+		if config.LoadableConfig.HaveLuaFeatures() {
+			if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
+				return global.AuthResultTempFail
+			} else if triggered {
+				a.FeatureName = global.FeatureLua
 
-			a.updateBruteForceBucketsCounter()
-			doAction(global.LuaActionLua, global.LuaActionLuaName)
+				a.updateBruteForceBucketsCounter()
+				doAction(global.LuaActionLua, global.LuaActionLuaName)
 
-			return global.AuthResultFeatureLua
-		} else if abortFeatures {
-			return global.AuthResultOK
+				return global.AuthResultFeatureLua
+			} else if abortFeatures {
+				return global.AuthResultOK
+			}
 		}
 	}
 
@@ -1258,6 +1264,10 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 
 // postLuaAction sends a Lua action to be executed asynchronously.
 func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
+	if !config.LoadableConfig.HaveLuaActions() {
+		return
+	}
+
 	a.HTTPClientContext = nil
 
 	go func() {
@@ -1580,6 +1590,14 @@ func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, 
 
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
+	if !config.LoadableConfig.HaveLuaFilters() {
+		if passDBResult.Authenticated {
+			return global.AuthResultOK
+		}
+
+		return global.AuthResultFail
+	}
+
 	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Filter", "filterLua"))
 
 	defer timer.ObserveDuration()
