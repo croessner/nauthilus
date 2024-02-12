@@ -2,7 +2,6 @@ package core
 
 import (
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,19 +17,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 )
-
-// featureGeoIP logs some geographical information.
-func (a *Authentication) featureGeoIP() {
-	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
-		a.GeoIPCity.getGeoIPCity(net.ParseIP(a.ClientIP), *a.GUID)
-	} else {
-		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.FeatureGeoIP, "localhost")
-		a.GeoIPCity.Country.Names = make(map[string]string)
-		a.GeoIPCity.City.Names = make(map[string]string)
-	}
-
-	level.Info(logging.DefaultLogger).Log(a.logLineGeoIP()...)
-}
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {

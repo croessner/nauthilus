@@ -196,13 +196,13 @@ func (f *Feature) String() string {
 
 // Set updates the feature name based on the provided value.
 // It returns an error if the value is not a valid feature name.
-// Valid feature names are "tls_encryption", "rbl", "geoip", "relay_domains", and "lua".
+// Valid feature names are "tls_encryption", "rbl", "relay_domains", and "lua".
 // If the value is valid, the name field of the Feature struct is updated accordingly.
 // An error of type ErrWrongFeature is returned if the value is not valid.
 func (f *Feature) Set(value string) error {
 	switch value {
 	case "":
-	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureGeoIP, global.FeatureRelayDomains, global.FeatureLua, global.FeatureNginxMonitoring:
+	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureNginxMonitoring:
 		f.name = value
 	default:
 		return errors.ErrWrongFeature
@@ -384,9 +384,6 @@ type Config struct {
 	// MasterSeparator is the character used to separate master data fields.
 	MasterSeparator string
 
-	// GeoipPath is the file path to the GeoIP database.
-	GeoipPath string
-
 	// RedisAddress is the address of the Redis server for master pool.
 	RedisAddress string
 
@@ -483,7 +480,6 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("pop3_backend_port", global.POP3BackendPort)
 	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
 	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
-	viper.SetDefault("geoip_path", global.GeoIPPath)
 	viper.SetDefault("dns_timeout", uint(10))
 	viper.SetDefault("passdb_backends", []*PassDB{{global.BackendCache}, {global.BackendLDAP}})
 	viper.SetDefault("developer_mode", false)
@@ -531,7 +527,6 @@ func setProtectionDefaultEnvVars() {
 	viper.SetDefault("features", []*Feature{
 		{global.FeatureTLSEncryption},
 		{global.FeatureRBL},
-		{global.FeatureGeoIP},
 		{global.FeatureRelayDomains},
 	})
 	viper.SetDefault("brute_force_protection", []*Protocol{
@@ -695,7 +690,7 @@ func (c *Config) String() string {
 // Each configuration value is retrieved from the corresponding environment variable using Viper's Get method,
 // and then assigned to the corresponding field in the Config struct.
 // The configuration fields that are set in this method include LogJSON, InstanceName, HTTPAddress, HTTPOptions,
-// SMTPBackendAddress, SMTPBackendPort, IMAPBackendAddress, IMAPBackendPort, ResolveIP, GeoipPath, RedisAddress,
+// SMTPBackendAddress, SMTPBackendPort, IMAPBackendAddress, IMAPBackendPort, ResolveIP, RedisAddress,
 // RedisPort, RedisDB, RedisUsername, RedisPassword, RedisAddressRO, RedisPortRO, RedisPrefix, RedisPosCacheTTL,
 // RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
 // and DevMode.
@@ -713,7 +708,6 @@ func (c *Config) setConfigFromEnvVars() {
 	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
 	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
 	c.ResolveIP = viper.GetBool("resolve_ip")
-	c.GeoipPath = viper.GetString("geoip_path")
 	c.RedisAddress = viper.GetString("redis_address")
 	c.RedisPort = viper.GetInt("redis_port")
 	c.RedisDB = viper.GetInt("redis_database_number")
