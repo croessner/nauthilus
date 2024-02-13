@@ -113,6 +113,48 @@ type Action struct {
 	// FeatureName is a feature that triggered the action.
 	FeatureName string
 
+	// XSSL contains SSL information.
+	XSSL string
+
+	// XSSLSessionID is the SSL session identifier.
+	XSSLSessionID string
+
+	// XSSLClientVerify indicates whether SSL client is verified.
+	XSSLClientVerify string
+
+	// XSSLClientDN is the client's Distinguished Name in the SSL certificate.
+	XSSLClientDN string
+
+	// XSSLClientCN is the client's Common Name in the SSL certificate.
+	XSSLClientCN string
+
+	// XSSLIssuer is the issuer of the SSL certificate.
+	XSSLIssuer string
+
+	// XSSLClientNotBefore is the date before which the SSL certificate is not valid.
+	XSSLClientNotBefore string
+
+	// XSSLClientNotAfter is the date after which the SSL certificate is not valid.
+	XSSLClientNotAfter string
+
+	// XSSLSubjectDN is the Subject's Distinguished Name in the SSL certificate.
+	XSSLSubjectDN string
+
+	// XSSLIssuerDN is the Issuer's Distinguished Name in the SSL certificate.
+	XSSLIssuerDN string
+
+	// XSSLClientSubjectDN is the client's Subject Distinguished Name in the SSL certificate.
+	XSSLClientSubjectDN string
+
+	// XSSLClientIssuerDN is the client's Issuer Distinguished Name in the SSL certificate.
+	XSSLClientIssuerDN string
+
+	// XSSLProtocol is the SSL protocol used.
+	XSSLProtocol string
+
+	// XSSLCipher is the encryption cipher used in the SSL protocol.
+	XSSLCipher string
+
 	// Context represents the shared Lua context which is used by all Lua states accross the request.
 	*lualib.Context
 
@@ -347,6 +389,20 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request.RawSetString(global.LuaRequestProtocol, lua.LString(aw.luaActionRequest.Protocol))
 	request.RawSetString(global.LuaRequestBruteForceBucket, lua.LString(aw.luaActionRequest.BruteForceName))
 	request.RawSetString(global.LuaRequestFeature, lua.LString(aw.luaActionRequest.FeatureName))
+	request.RawSetString(global.LuaRequestXSSL, lua.LString(aw.luaActionRequest.XSSL))
+	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(aw.luaActionRequest.XSSLSessionID))
+	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(aw.luaActionRequest.XSSLClientVerify))
+	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(aw.luaActionRequest.XSSLClientDN))
+	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(aw.luaActionRequest.XSSLClientCN))
+	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(aw.luaActionRequest.XSSLIssuer))
+	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(aw.luaActionRequest.XSSLClientNotBefore))
+	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(aw.luaActionRequest.XSSLClientNotAfter))
+	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(aw.luaActionRequest.XSSLSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(aw.luaActionRequest.XSSLIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(aw.luaActionRequest.XSSLClientSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(aw.luaActionRequest.XSSLClientIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(aw.luaActionRequest.XSSLProtocol))
+	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(aw.luaActionRequest.XSSLCipher))
 
 	return request
 }
