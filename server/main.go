@@ -43,13 +43,12 @@ type contextTuple struct {
 }
 
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
-// The structure contains the following fields: ldapLookup, ldapAuth, lua, sql, action and nginx.
+// The structure contains the following fields: ldapLookup, ldapAuth, lua, action, nginx and server.
 // Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
 type contextStore struct {
 	ldapLookup *contextTuple
 	ldapAuth   *contextTuple
 	lua        *contextTuple
-	sql        *contextTuple
 	action     *contextTuple
 	nginx      *contextTuple
 	server     *contextTuple
@@ -233,6 +232,7 @@ func PreCompileFilters() error {
 // - actionWorkers : A slice of action.Worker pointers. All workers are stopped on termination signal and restarted on reload signal.
 func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
 	go handleTerminateSignal(cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
+	go handleUsr1Signal(ctx, store)
 	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
 
@@ -302,6 +302,27 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	statsTicker.Stop()
 	ngxMonitoringTicker.Stop()
+}
+
+// handleUsr1Signal listens for the SIGUSR1 signal and handles server restart.
+//
+// It creates a channel to receive the SIGUSR1 signal and registers it with the signal package.
+// It then enters a loop to select between receiving signals and checking if the context is done.
+// If the context is done, it returns and stops handling signals.
+// If a SIGUSR1 signal is received, it calls the handleServerRestart function with the context, store, and signal as arguments.
+func handleUsr1Signal(ctx context.Context, store *contextStore) {
+	sigsReload := make(chan os.Signal, 1)
+
+	signal.Notify(sigsReload, syscall.SIGUSR1)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig := <-sigsReload:
+			handleServerRestart(ctx, store, sig)
+		}
+	}
 }
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
@@ -449,6 +470,20 @@ func startLDAPWorkers(lookup, auth *contextTuple) {
 // This function doesn't return anything as the LDAP worker methods are called as goroutines and do their work separately.
 func startLuaWorker(lua *contextTuple) {
 	go backend.LuaMainWorker(lua.ctx)
+}
+
+// handleServerRestart handles the server restart process. It stops the server, waits for the HTTP server to stop,
+// and then starts the HTTP server again with the given context and contextStore.
+func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal) {
+	level.Info(logging.DefaultLogger).Log(
+		global.LogKeyMsg, "Restarting Nauthilus", "signal", sig,
+	)
+
+	stopContext(store.server)
+
+	<-core.HTTPEndChan
+
+	startHTTPServer(ctx, store)
 }
 
 // handleReload is a function that handles the reloading of Nauthilus based on a received operating signal.
@@ -632,7 +667,9 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 
 	store.server = newContextTuple(ctx)
 
-	core.HTTPEndChan = make(chan core.Done)
+	if core.HTTPEndChan == nil {
+		core.HTTPEndChan = make(chan core.Done)
+	}
 
 	go core.HTTPApp(store.server.ctx)
 }
@@ -826,12 +863,7 @@ func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
 // store is a store for context objects that can hold the specific context for Nginx monitoring.
 // ngxMonitoringTicker is a ticker that triggers the Nginx monitoring at regular intervals.
 func runNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoringTicker *time.Ticker) {
-	ngxCtx, ngxCancel := context.WithCancel(ctx)
-
-	store.nginx = &contextTuple{
-		ctx:    ngxCtx,
-		cancel: ngxCancel,
-	}
+	store.nginx = newContextTuple(ctx)
 
 	if err := startNginxMonitoring(store, ngxMonitoringTicker); err != nil {
 		handleNgxMonitoringError(err)
