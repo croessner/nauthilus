@@ -458,9 +458,9 @@ func handleErr(ctx *gin.Context, err error) {
 //	ctx.Set("message", err)
 //	notifyGETHandler(ctx)
 //
-// See logError, global.GUIDKey, and runtime.Stack for additional information.
+// See logError, global.CtxGUIDKey, and runtime.Stack for additional information.
 func processErrorLogging(ctx *gin.Context, err error) {
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 
 	logError(ctx, err)
 
@@ -481,7 +481,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 func logError(ctx *gin.Context, err error) {
 	var detailedError *errors2.DetailedError
 
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 
 	if errors.As(err, &detailedError) {
 		level.Error(logging.DefaultErrLogger).Log(
@@ -563,7 +563,7 @@ func notifyGETHandler(ctx *gin.Context) {
 // getLocalized is a function that returns the localized message based on the message ID and the context provided.
 // If the localization fails, an error is logged.
 func getLocalized(ctx *gin.Context, messageID string) string {
-	localizer := ctx.Value(global.LocalizedKey).(*i18n.Localizer)
+	localizer := ctx.MustGet(global.CtxLocalizedKey).(*i18n.Localizer)
 
 	localizeConfig := i18n.LocalizeConfig{
 		MessageID: messageID,
@@ -571,7 +571,7 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			global.LogKeyGUID, ctx.Value(global.GUIDKey).(string),
+			global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
 			"message_id", messageID, global.LogKeyError, err.Error(),
 		)
 	}
@@ -655,7 +655,7 @@ func withLanguageMiddleware() gin.HandlerFunc {
 			langFromCookie string
 		)
 
-		guid := ctx.Value(global.GUIDKey).(string)
+		guid := ctx.GetString(global.CtxGUIDKey)
 
 		// Try to get language tag from URL
 		langFromURL = ctx.Param("languageTag")
@@ -695,8 +695,8 @@ func withLanguageMiddleware() gin.HandlerFunc {
 			session.Save()
 		}
 
-		ctx.Set(global.CSRFTokenKey, nosurf.Token(ctx.Request))
-		ctx.Set(global.LocalizedKey, localizer)
+		ctx.Set(global.CtxCSRFTokenKey, nosurf.Token(ctx.Request))
+		ctx.Set(global.CtxLocalizedKey, localizer)
 
 		if needRedirect {
 			ctx.Redirect(
@@ -800,7 +800,7 @@ func createLanguagePassive(ctx *gin.Context, languageTags []language.Tag, curren
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
 func (a *ApiConfig) initialize() {
 	a.httpClient = createHttpClient()
-	a.guid = a.ctx.Value(global.GUIDKey).(string)
+	a.guid = a.ctx.GetString(global.CtxGUIDKey)
 	configuration := createConfiguration(a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
 }
@@ -843,7 +843,7 @@ func (a *ApiConfig) handleLoginSkip() {
 	oauth2Client := a.loginRequest.GetClient()
 
 	auth := &Authentication{
-		HTTPClientContext: a.ctx,
+		HTTPClientContext: a.ctx.Copy(),
 		NoAuth:            true,
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
@@ -864,7 +864,7 @@ func (a *ApiConfig) handleLoginSkip() {
 			_, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
-		auth.ClientIP = a.ctx.Value(global.ClientIPKey).(string)
+		auth.ClientIP = a.ctx.GetString(global.CtxClientIPKey)
 
 		auth.updateBruteForceBucketsCounter()
 		a.ctx.AbortWithError(http.StatusInternalServerError, errors2.ErrUnknownCause)
@@ -1102,7 +1102,7 @@ func loginGETHandler(ctx *gin.Context) {
 	apiConfig.initialize()
 
 	apiConfig.challenge = loginChallenge
-	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
+	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
 	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		apiConfig.challenge).Execute()
@@ -1129,7 +1129,7 @@ func loginGETHandler(ctx *gin.Context) {
 // initializeAuthLogin initializes the Authentication struct with the necessary information for logging in.
 func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		Username:          ctx.PostForm("username"),
 		Password:          ctx.PostForm("password"),
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
@@ -1579,7 +1579,7 @@ func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global
 // logFailedLoginAndRedirect logs a failed login attempt and redirects the user to a login page with an error message.
 func (a *ApiConfig) logFailedLoginAndRedirect(auth *Authentication) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
-	auth.ClientIP = a.ctx.Value(global.ClientIPKey).(string)
+	auth.ClientIP = a.ctx.GetString(global.CtxClientIPKey)
 
 	auth.updateBruteForceBucketsCounter()
 
@@ -1697,8 +1697,8 @@ func deviceGETHandler(ctx *gin.Context) {
 		errorMessage string
 		err          error
 		clientId     *string
-		guid         = ctx.Value(global.GUIDKey).(string)
-		csrfToken    = ctx.Value(global.CSRFTokenKey).(string)
+		guid         = ctx.GetString(global.CtxGUIDKey)
+		csrfToken    = ctx.GetString(global.CtxCSRFTokenKey)
 		loginRequest *openapi.OAuth2LoginRequest
 		httpResponse *http.Response
 	)
@@ -2172,7 +2172,7 @@ func consentGETHandler(ctx *gin.Context) {
 	apiConfig.initialize()
 
 	apiConfig.challenge = consentChallenge
-	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
+	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
 		apiConfig.challenge).Execute()
@@ -2520,7 +2520,7 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig.initialize()
 
 	apiConfig.challenge = logoutChallenge
-	apiConfig.csrfToken = ctx.Value(global.CSRFTokenKey).(string)
+	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
 	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		logoutChallenge).Execute()

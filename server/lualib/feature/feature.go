@@ -52,7 +52,7 @@ var LuaPool = lualib.NewLuaStatePool()
 // The compiled Lua feature is added to the LuaFeatures variable using the Add method.
 // Finally, it returns nil if there are no errors.
 func PreCompileLuaFeatures() (err error) {
-	if config.LoadableConfig.Lua != nil {
+	if config.LoadableConfig.HaveLuaFeatures() {
 		if LuaFeatures == nil {
 			LuaFeatures = &PreCompiledLuaFeatures{}
 		} else {

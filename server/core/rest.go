@@ -84,7 +84,7 @@ func (a *Authentication) generic(ctx *gin.Context) {
 
 		level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
 	} else {
-		if !(a.NoAuth || ctx.Value(global.LocalCacheAuthKey).(bool)) {
+		if !(a.NoAuth || ctx.GetBool(global.CtxLocalCacheAuthKey)) {
 			//nolint:exhaustive // Ignore some results
 			switch a.handleFeatures(ctx) {
 			case global.AuthResultFeatureTLS:
@@ -150,7 +150,7 @@ func (a *Authentication) saslAuthd(ctx *gin.Context) {
 
 // healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
 func healthCheck(ctx *gin.Context) {
-	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, ctx.Value(global.GUIDKey).(string), global.LogKeyMsg, "Health check")
+	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey), global.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
 }
@@ -166,7 +166,7 @@ func listBruteforce(ctx *gin.Context) {
 		Error       string            `json:"error"`
 	}
 
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 	list := &List{}
 	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
@@ -226,7 +226,7 @@ func listBruteforce(ctx *gin.Context) {
 //  6. Based on the useCache flag and the outcome of the cache flush operation, the function
 //     updates the statusMsg and sends the cache status to the client.
 func flushCache(ctx *gin.Context) {
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 	userCmd := &FlushUserCmd{}
 
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
@@ -415,7 +415,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 // Example usage:
 //
 //	func flushCache(ctx *gin.Context) {
-//	   guid := ctx.Value(global.GUIDKey).(string)
+//	   guid := ctx.GetString(global.CtxGUIDKey)
 //	   userCmd := &FlushUserCmd{}
 //
 //	   level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
@@ -474,7 +474,7 @@ func flushBruteForceRule(ctx *gin.Context) {
 		err            error
 	)
 
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 	statusMsg := "flushed"
 
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, guid, global.CatBruteForce, global.ServFlush)
@@ -535,7 +535,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 	ruleFlushError := false
 
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		Username:          "*",
 		ClientIP:          ipCmd.IPAddress,
 	}

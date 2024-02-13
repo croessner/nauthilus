@@ -135,7 +135,7 @@ func httpCacheHandler(ctx *gin.Context) {
 // This middleware function should be used in the setup of routing to ensure the security of the endpoint it is applied to.
 func protectEndpointMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		guid := ctx.Value(global.GUIDKey).(string) // MiddleWare behind Logger!
+		guid := ctx.GetString(global.CtxGUIDKey) // MiddleWare behind Logger!
 
 		protocol := &config.Protocol{}
 		protocol.Set(global.ProtoHTTP)
@@ -145,7 +145,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		method := "plain"
 
 		auth := &Authentication{
-			HTTPClientContext: ctx,
+			HTTPClientContext: ctx.Copy(),
 			NoAuth:            true,
 			GUID:              &guid,
 			Protocol:          protocol,
@@ -173,7 +173,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		auth.XClientPort = clientPort
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
-		ctx.Set(global.ClientIPKey, clientIP)
+		ctx.Set(global.CtxClientIPKey, clientIP)
 
 		if auth.checkBruteForce() {
 			auth.updateBruteForceBucketsCounter()
@@ -219,7 +219,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 // and inserts a WWW-Authenticate field into response header.
 func basicAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		guid := ctx.Value(global.GUIDKey).(string)
+		guid := ctx.GetString(global.CtxGUIDKey)
 
 		// Note: Chicken-egg problem.
 		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
@@ -259,7 +259,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 }
 
 // loggerMiddleware is a middleware function that logs information about the incoming HTTP request and response.
-// It sets a GUID (generated using ksuid.New().String()) in the Gin context with the key defined by global.GUIDKey.
+// It sets a GUID (generated using ksuid.New().String()) in the Gin context with the key defined by global.CtxGUIDKey.
 // The function starts a timer to measure the latency of the request.
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
@@ -279,8 +279,8 @@ func loggerMiddleware() gin.HandlerFunc {
 		)
 
 		guid := ksuid.New().String()
-		ctx.Set(global.GUIDKey, guid)
-		ctx.Set(global.LocalCacheAuthKey, false)
+		ctx.Set(global.CtxGUIDKey, guid)
+		ctx.Set(global.CtxLocalCacheAuthKey, false)
 
 		// Start timer
 		start := time.Now()
@@ -342,11 +342,11 @@ func loggerMiddleware() gin.HandlerFunc {
 }
 
 // luaContextMiddleware is a middleware function that adds a Lua context to the Gin context.
-// It sets the value of global.DataExchangeKey in the Gin context to a new instance of Context created by lualib.NewContext().
+// It sets the value of global.CtxDataExchangeKey in the Gin context to a new instance of Context created by lualib.NewContext().
 // The function then calls the Next() method in the Gin context to proceed to the next middleware or handler in the chain.
 func luaContextMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Set(global.DataExchangeKey, lualib.NewContext())
+		ctx.Set(global.CtxDataExchangeKey, lualib.NewContext())
 
 		ctx.Next()
 	}

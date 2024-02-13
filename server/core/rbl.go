@@ -21,7 +21,7 @@ func (a *Authentication) isListed(ctx *gin.Context, rbl *config.RBL) (rblListSta
 		reverseIPAddr string
 	)
 
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 	ipAddress := net.ParseIP(a.ClientIP)
 	if ipAddress.IsLoopback() {
 		return false, "", nil

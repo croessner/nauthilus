@@ -563,7 +563,7 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 	}
 
 	dontLog := false
-	cachedAuth := ctx.Value(global.LocalCacheAuthKey).(bool)
+	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
 
 	if cachedAuth {
 		ctx.Header("X-Auth-Cache", "Hit")
@@ -1179,22 +1179,45 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:    luaAction,
-			Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:    false,
-			Session:      *a.GUID,
-			ClientIP:     a.ClientIP,
-			ClientPort:   a.XClientPort,
-			ClientHost:   a.ClientHost,
-			ClientID:     a.XClientID,
-			LocalIP:      a.XLocalIP,
-			LocalPort:    a.XPort,
-			Username:     a.UsernameOrig,
-			Password:     a.Password,
-			Protocol:     a.Protocol.Get(),
-			FeatureName:  a.FeatureName,
-			Context:      a.Context,
-			FinishedChan: finished,
+			LuaAction:           luaAction,
+			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Repeating:           false,
+			UserFound:           false, // unavailable
+			Authenticated:       false, // unavailable
+			NoAuth:              a.NoAuth,
+			BruteForceCounter:   0, // unavailable
+			Session:             *a.GUID,
+			ClientIP:            a.ClientIP,
+			ClientPort:          a.XClientPort,
+			ClientNet:           "", // unavailable
+			ClientHost:          a.ClientHost,
+			ClientID:            a.XClientID,
+			LocalIP:             a.XLocalIP,
+			LocalPort:           a.XPort,
+			Username:            a.UsernameOrig,
+			Account:             "", // unavailable
+			UniqueUserID:        "", // unavailable
+			DisplayName:         "", // unavailable
+			Password:            a.Password,
+			Protocol:            a.Protocol.Get(),
+			BruteForceName:      "", // unavailable
+			FeatureName:         a.FeatureName,
+			XSSL:                a.XSSL,
+			XSSLSessionID:       a.XSSLSessionID,
+			XSSLClientVerify:    a.XSSLClientVerify,
+			XSSLClientDN:        a.XSSLClientDN,
+			XSSLClientCN:        a.XSSLClientCN,
+			XSSLIssuer:          a.XSSLIssuer,
+			XSSLClientNotBefore: a.XSSLClientNotBefore,
+			XSSLClientNotAfter:  a.XSSLClientNotAfter,
+			XSSLSubjectDN:       a.XSSLSubjectDN,
+			XSSLIssuerDN:        a.XSSLIssuerDN,
+			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+			XSSLProtocol:        a.XSSLProtocol,
+			XSSLCipher:          a.XSSLCipher,
+			Context:             a.Context,
+			FinishedChan:        finished,
 		}
 
 		<-finished
@@ -1268,8 +1291,6 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 		return
 	}
 
-	a.HTTPClientContext = nil
-
 	go func() {
 		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
 
@@ -1288,6 +1309,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 			Session:           *a.GUID,
 			ClientIP:          a.ClientIP,
 			ClientPort:        a.XClientPort,
+			ClientNet:         "", // unavailable
 			ClientHost:        a.ClientHost,
 			ClientID:          a.XClientID,
 			LocalIP:           a.XLocalIP,
@@ -1300,14 +1322,28 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 
 				return ""
 			}(),
-			UniqueUserID:   a.getUniqueUserID(),
-			DisplayName:    a.getDisplayName(),
-			Password:       a.Password,
-			Protocol:       a.Protocol.Get(),
-			BruteForceName: a.BruteForceName,
-			FeatureName:    a.FeatureName,
-			Context:        a.Context,
-			FinishedChan:   finished,
+			UniqueUserID:        a.getUniqueUserID(),
+			DisplayName:         a.getDisplayName(),
+			Password:            a.Password,
+			Protocol:            a.Protocol.Get(),
+			BruteForceName:      a.BruteForceName,
+			FeatureName:         a.FeatureName,
+			XSSL:                a.XSSL,
+			XSSLSessionID:       a.XSSLSessionID,
+			XSSLClientVerify:    a.XSSLClientVerify,
+			XSSLClientDN:        a.XSSLClientDN,
+			XSSLClientCN:        a.XSSLClientCN,
+			XSSLIssuer:          a.XSSLIssuer,
+			XSSLClientNotBefore: a.XSSLClientNotBefore,
+			XSSLClientNotAfter:  a.XSSLClientNotAfter,
+			XSSLSubjectDN:       a.XSSLSubjectDN,
+			XSSLIssuerDN:        a.XSSLIssuerDN,
+			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+			XSSLProtocol:        a.XSSLProtocol,
+			XSSLCipher:          a.XSSLCipher,
+			Context:             a.Context,
+			FinishedChan:        finished,
 		}
 
 		<-finished
@@ -1315,7 +1351,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 }
 
 // handlePassword handles the authentication process for the password flow.
-// It performs common validation checks and then proceeds based on the value of ctx.Value(global.LocalCacheAuthKey).
+// It performs common validation checks and then proceeds based on the value of ctx.Value(global.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
 // Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
 // In the next step, it calls the postVerificationProcesses function to perform further control flow based on cache usage and authentication status.
@@ -1326,7 +1362,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		return
 	}
 
-	if ctx.Value(global.LocalCacheAuthKey).(bool) {
+	if ctx.GetBool(global.CtxLocalCacheAuthKey) {
 		return a.handleLocalCache(ctx)
 	}
 
@@ -1630,11 +1666,26 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		}(),
 		UniqueUserID:            a.getUniqueUserID(),
 		DisplayName:             a.getDisplayName(),
-		Protocol:                a.Protocol.String(),
 		Password:                a.Password,
+		Protocol:                a.Protocol.String(),
+		XSSL:                    a.XSSL,
+		XSSLSessionID:           a.XSSLSessionID,
+		XSSLClientVerify:        a.XSSLClientVerify,
+		XSSLClientDN:            a.XSSLClientDN,
+		XSSLClientCN:            a.XSSLClientCN,
+		XSSLIssuer:              a.XSSLIssuer,
+		XSSLClientNotBefore:     a.XSSLClientNotBefore,
+		XSSLClientNotAfter:      a.XSSLClientNotAfter,
+		XSSLSubjectDN:           a.XSSLSubjectDN,
+		XSSLIssuerDN:            a.XSSLIssuerDN,
+		XSSLClientSubjectDN:     a.XSSLClientSubjectDN,
+		XSSLClientIssuerDN:      a.XSSLClientIssuerDN,
+		XSSLProtocol:            a.XSSLProtocol,
+		XSSLCipher:              a.XSSLCipher,
 		NginxBackendServers:     backendServer,
 		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
 		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
+		Logs:                    nil,
 		Context:                 a.Context,
 	}
 
@@ -1783,7 +1834,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 //	  auth.setOperationMode(ctx)
 //	}
 func (a *Authentication) setOperationMode(ctx *gin.Context) {
-	guid := ctx.Value(global.GUIDKey).(string)
+	guid := ctx.GetString(global.CtxGUIDKey)
 
 	switch ctx.Query("mode") {
 	case "no-auth":
@@ -1799,7 +1850,7 @@ func (a *Authentication) setOperationMode(ctx *gin.Context) {
 
 // setupHeaderBasedAuth sets up the authentication based on the headers in the request.
 // It takes the context and the authentication object as parameters.
-// It retrieves the GUID value from the context using global.GUIDKey and casts it to a string.
+// It retrieves the GUID value from the context using global.CtxGUIDKey and casts it to a string.
 // It retrieves the "Auth-User" and "Auth-Pass" headers from the request and assigns them to the username and password fields of the authentication object.
 // It sets the protocol field of the authentication object by calling the Set method on auth.Protocol with the value of the "Auth-Protocol" header.
 // It parses the "Auth-Login-Attempt" header as an integer and assigns it to the loginAttempts variable.
@@ -1998,11 +2049,11 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 // Finally, it returns the created Authentication struct.
 func NewAuthentication(ctx *gin.Context) *Authentication {
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 	}
 
 	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
-		guid := ctx.Value(global.GUIDKey).(string)
+		guid := ctx.GetString(global.CtxGUIDKey)
 
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
@@ -2024,13 +2075,13 @@ func (a *Authentication) withDefaults(ctx *gin.Context) *Authentication {
 		return nil
 	}
 
-	guidStr := ctx.Value(global.GUIDKey).(string)
+	guidStr := ctx.GetString(global.CtxGUIDKey)
 
 	a.GUID = &guidStr
 	a.UsedPassDBBackend = global.BackendUnknown
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.Param("service")
-	a.Context = ctx.Value(global.DataExchangeKey).(*lualib.Context)
+	a.Context = ctx.MustGet(global.CtxDataExchangeKey).(*lualib.Context)
 
 	if a.Protocol.Get() == "" {
 		a.Protocol.Set(global.ProtoDefault)
@@ -2540,10 +2591,10 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 		a.UsedPassDBBackend = global.BackendLocalCache
 
 		if restoreCtx {
-			a.HTTPClientContext = ctx
+			a.HTTPClientContext = ctx.Copy()
 		}
 
-		ctx.Set(global.LocalCacheAuthKey, true)
+		ctx.Set(global.CtxLocalCacheAuthKey, true)
 
 		return found
 	} else {

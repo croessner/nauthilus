@@ -211,7 +211,7 @@ func beginRegistration(ctx *gin.Context) {
 
 	util.DebugModule(
 		global.DbgWebAuthn,
-		global.LogKeyGUID, ctx.Value(global.GUIDKey).(string),
+		global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
 		global.LogKeyMsg, "session data begin",
 		"content", fmt.Sprintf("%#v", sessionData),
 	)
@@ -313,7 +313,7 @@ func finishRegistration(ctx *gin.Context) {
 
 	util.DebugModule(
 		global.DbgWebAuthn,
-		global.LogKeyGUID, ctx.Value(global.GUIDKey).(string),
+		global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
 		global.LogKeyMsg, "session data finish",
 		"content", fmt.Sprintf("%#v", sessionData),
 	)

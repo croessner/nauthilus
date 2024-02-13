@@ -627,23 +627,23 @@ const (
 )
 
 const (
-	// GUIDKey is used as a key to store the session's unique identifier in session.Store
-	GUIDKey = "guid"
+	// CtxGUIDKey is used as a key to store the session's unique identifier in session.Store
+	CtxGUIDKey = "guid"
 
-	// CSRFTokenKey is used as a key to store the session's CSRF token in session.Store
-	CSRFTokenKey = "csrf"
+	// CtxCSRFTokenKey is used as a key to store the session's CSRF token in session.Store
+	CtxCSRFTokenKey = "csrf"
 
-	// LocalizedKey is used as a key to store the session's localization data in session.Store
-	LocalizedKey = "localizer"
+	// CtxLocalizedKey is used as a key to store the session's localization data in session.Store
+	CtxLocalizedKey = "localizer"
 
-	// ClientIPKey is used as a key to store the session's client IP address in session.Store
-	ClientIPKey = "client_ip"
+	// CtxClientIPKey is used as a key to store the session's client IP address in session.Store
+	CtxClientIPKey = "client_ip"
 
-	// DataExchangeKey is used as a key to store the session's data exchange information in session.Store
-	DataExchangeKey = "data_exchange"
+	// CtxDataExchangeKey is used as a key to store the session's data exchange information in session.Store
+	CtxDataExchangeKey = "data_exchange"
 
-	// LocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
-	LocalCacheAuthKey = "local_cache_auth"
+	// CtxLocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
+	CtxLocalCacheAuthKey = "local_cache_auth"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

@@ -39,7 +39,7 @@ var LuaPool = lualib.NewLuaStatePool()
 //
 //	error if any error occurs while initializing the Lua filters
 func PreCompileLuaFilters() (err error) {
-	if config.LoadableConfig.Lua != nil {
+	if config.LoadableConfig.HaveLuaFilters() {
 		if LuaFilters == nil {
 			LuaFilters = &PreCompiledLuaFilters{}
 		} else {
@@ -232,6 +232,48 @@ type Request struct {
 	// Protocol is the protocol used by the client making the request.
 	Protocol string
 
+	// XSSL contains SSL information.
+	XSSL string
+
+	// XSSLSessionID is the SSL session identifier.
+	XSSLSessionID string
+
+	// XSSLClientVerify indicates whether SSL client is verified.
+	XSSLClientVerify string
+
+	// XSSLClientDN is the client's Distinguished Name in the SSL certificate.
+	XSSLClientDN string
+
+	// XSSLClientCN is the client's Common Name in the SSL certificate.
+	XSSLClientCN string
+
+	// XSSLIssuer is the issuer of the SSL certificate.
+	XSSLIssuer string
+
+	// XSSLClientNotBefore is the date before which the SSL certificate is not valid.
+	XSSLClientNotBefore string
+
+	// XSSLClientNotAfter is the date after which the SSL certificate is not valid.
+	XSSLClientNotAfter string
+
+	// XSSLSubjectDN is the Subject's Distinguished Name in the SSL certificate.
+	XSSLSubjectDN string
+
+	// XSSLIssuerDN is the Issuer's Distinguished Name in the SSL certificate.
+	XSSLIssuerDN string
+
+	// XSSLClientSubjectDN is the client's Subject Distinguished Name in the SSL certificate.
+	XSSLClientSubjectDN string
+
+	// XSSLClientIssuerDN is the client's Issuer Distinguished Name in the SSL certificate.
+	XSSLClientIssuerDN string
+
+	// XSSLProtocol is the SSL protocol used.
+	XSSLProtocol string
+
+	// XSSLCipher is the encryption cipher used in the SSL protocol.
+	XSSLCipher string
+
 	NginxBackendServers []map[string]int
 
 	UsedNginxBackendAddress *string
@@ -376,6 +418,20 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 	request.RawSetString(global.LuaRequestDisplayName, lua.LString(r.DisplayName))
 	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
 	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
+	request.RawSetString(global.LuaRequestXSSL, lua.LString(r.XSSL))
+	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(r.XSSLSessionID))
+	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(r.XSSLClientVerify))
+	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(r.XSSLClientDN))
+	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(r.XSSLClientCN))
+	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(r.XSSLIssuer))
+	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(r.XSSLClientNotBefore))
+	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(r.XSSLClientNotAfter))
+	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(r.XSSLSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(r.XSSLIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(r.XSSLClientSubjectDN))
+	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(r.XSSLClientIssuerDN))
+	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(r.XSSLProtocol))
+	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(r.XSSLCipher))
 
 	return request
 }
