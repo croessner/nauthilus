@@ -535,7 +535,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 	ruleFlushError := false
 
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		Username:          "*",
 		ClientIP:          ipCmd.IPAddress,
 	}

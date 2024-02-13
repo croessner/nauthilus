@@ -1291,8 +1291,6 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 		return
 	}
 
-	a.HTTPClientContext = nil
-
 	go func() {
 		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
 
@@ -2051,7 +2049,7 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 // Finally, it returns the created Authentication struct.
 func NewAuthentication(ctx *gin.Context) *Authentication {
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 	}
 
 	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
@@ -2593,7 +2591,7 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 		a.UsedPassDBBackend = global.BackendLocalCache
 
 		if restoreCtx {
-			a.HTTPClientContext = ctx
+			a.HTTPClientContext = ctx.Copy()
 		}
 
 		ctx.Set(global.LocalCacheAuthKey, true)

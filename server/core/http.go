@@ -145,7 +145,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		method := "plain"
 
 		auth := &Authentication{
-			HTTPClientContext: ctx,
+			HTTPClientContext: ctx.Copy(),
 			NoAuth:            true,
 			GUID:              &guid,
 			Protocol:          protocol,

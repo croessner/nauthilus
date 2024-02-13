@@ -175,7 +175,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	)
 
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		GUID:              &guid,
 		Username:          ctx.PostForm("username"),
 		Password:          ctx.PostForm("password"),
@@ -528,7 +528,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	username := session.Get(global.CookieUsername).(string)
 
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		GUID:              &guid,
 		Username:          username,
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),

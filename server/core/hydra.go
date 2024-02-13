@@ -843,7 +843,7 @@ func (a *ApiConfig) handleLoginSkip() {
 	oauth2Client := a.loginRequest.GetClient()
 
 	auth := &Authentication{
-		HTTPClientContext: a.ctx,
+		HTTPClientContext: a.ctx.Copy(),
 		NoAuth:            true,
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
@@ -1129,7 +1129,7 @@ func loginGETHandler(ctx *gin.Context) {
 // initializeAuthLogin initializes the Authentication struct with the necessary information for logging in.
 func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 	auth := &Authentication{
-		HTTPClientContext: ctx,
+		HTTPClientContext: ctx.Copy(),
 		Username:          ctx.PostForm("username"),
 		Password:          ctx.PostForm("password"),
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
