@@ -627,7 +627,11 @@ func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 func waitForShutdown(www *http.Server, ctx context.Context) {
 	<-ctx.Done()
 
-	www.Shutdown(ctx)
+	waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
+
+	defer cancel()
+
+	www.Shutdown(waitCtx)
 
 	HTTPEndChan <- Done{}
 

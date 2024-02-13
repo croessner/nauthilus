@@ -52,6 +52,7 @@ type contextStore struct {
 	sql        *contextTuple
 	action     *contextTuple
 	nginx      *contextTuple
+	server     *contextTuple
 }
 
 // newContextStore creates a new instance of a contextStore.
@@ -623,15 +624,17 @@ func setupRedis() {
 // After starting the HTTP server it logs the message "Starting Nauthilus HTTP server" along with its version.
 // The server is started as a goroutine and runs asynchronously in the background.
 // Any signal sent to close the server is sent through the HTTPEndChan channel of type Done.
-func startHTTPServer(ctx context.Context) {
+func startHTTPServer(ctx context.Context, store *contextStore) {
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
 	)
 
+	store.server = newContextTuple(ctx)
+
 	core.HTTPEndChan = make(chan core.Done)
 
-	go core.HTTPApp(ctx)
+	go core.HTTPApp(store.server.ctx)
 }
 
 // logLuaStatePoolDebug logs the statistics of different Lua state pools.
@@ -940,7 +943,7 @@ func main() {
 	handleSignals(ctx, cancel, store, statsTicker, &ngxMonitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
-	startHTTPServer(ctx)
+	startHTTPServer(ctx, store)
 
 	// Nginx monitoring feature
 	go runNgxMonitoring(ctx, store, ngxMonitoringTicker)
