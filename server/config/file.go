@@ -31,6 +31,7 @@ type GetterHandler interface {
 }
 
 type File struct {
+	Server             *ServerSection       `mapstructure:"server"`
 	RBLs               *RBLSection          `mapstructure:"realtime_blackhole_lists"`
 	ClearTextList      []string             `mapstructure:"cleartext_networks"`
 	RelayDomains       *RelayDomainsSection `mapstructure:"relay_domains"`
@@ -503,6 +504,83 @@ func (f *File) HaveLuaActions() bool {
 // It returns a boolean value indicating whether Lua is present or not.
 func (f *File) HaveLua() bool {
 	return f.Lua != nil
+}
+
+/*
+ * Dynamic server configuration
+ */
+
+// GetServerInsightsEnablePprof is a method on the File struct.
+// It checks if the File struct has a server and returns the value of EnablePprof from the ServerInsights field of the File struct.
+// If the File struct does not have a server, it returns false.
+//
+// Example usage:
+//
+//	if config.LoadableConfig.GetServerInsightsEnablePprof() {
+//	    pprof.Register(router)
+//	}
+func (f *File) GetServerInsightsEnablePprof() bool {
+	if f.HaveServer() {
+		return f.GetServerInsights().EnablePprof
+	}
+
+	return false
+}
+
+// GetServerInsightsEnableBlockProfile is a method on the File struct.
+// It returns the value of the EnableBlockProfile field from the ServerInsights field of the File struct.
+// If the HaveServer method returns false, it will return false.
+//
+// Example usage:
+//
+//	func enableBlockProfile() {
+//	    if config.LoadableConfig.GetServerInsightsEnableBlockProfile() {
+//	        runtime.SetBlockProfileRate(1)
+//	    } else {
+//	        runtime.SetBlockProfileRate(-1)
+//	    }
+//	}
+func (f *File) GetServerInsightsEnableBlockProfile() bool {
+	if f.HaveServer() {
+		return f.GetServerInsights().EnableBlockProfile
+	}
+
+	return false
+}
+
+// GetServerInsights is a method on the File struct.
+// It returns the Insights field from the Server struct, which is accessed through the GetServer() method on the File struct.
+// If the File struct does not have a Server, it returns nil.
+func (f *File) GetServerInsights() *Insights {
+	if f.HaveServer() {
+		return &f.GetServer().Insights
+	}
+
+	return nil
+}
+
+// GetServer is a method on the File struct.
+// It checks if the File struct has a ServerSection.
+// If it does, it returns the ServerSection.
+// Otherwise, it returns nil.
+// Example usage:
+//
+//	server := file.GetServer()
+//	if server != nil {
+//	    // do something with server
+//	}
+func (f *File) GetServer() *ServerSection {
+	if f.HaveServer() {
+		return f.Server
+	}
+
+	return nil
+}
+
+// HaveServer is a method on the File struct.
+// It returns true if the Server field in the File struct is not nil, indicating that a server exists.
+func (f *File) HaveServer() bool {
+	return f.Server != nil
 }
 
 /*

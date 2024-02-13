@@ -172,11 +172,11 @@ func setTimeZone() {
 	}
 }
 
-// setupFeatures prepares the feature and filter for compilation and performs error checking.
+// setupFeaturesAndFilters prepares the feature and filter for compilation and performs error checking.
 // It sequentially runs the PreCompileFeatures and PreCompileFilters methods.
-// If those methods return an error, the setupFeatures method will propagated that error up the stack.
+// If those methods return an error, the setupFeaturesAndFilters method will propagated that error up the stack.
 // If the pre-compilation is successful, it will return nil.
-func setupFeatures() error {
+func setupFeaturesAndFilters() error {
 	if err := PreCompileFeatures(); err != nil {
 		return err
 	}
@@ -535,12 +535,14 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		)
 	}
 
-	if err := setupFeatures(); err != nil {
+	if err := setupFeaturesAndFilters(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
 			global.LogKeyMsg, "Unable to setup the features",
 			global.LogKeyError, err,
 		)
 	}
+
+	enableBlockProfile()
 
 	for _, passDB := range config.EnvConfig.PassDBs {
 		switch passDB.Get() {
@@ -935,8 +937,10 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitorin
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
 func enableBlockProfile() {
-	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug {
+	if config.LoadableConfig.GetServerInsightsEnableBlockProfile() {
 		runtime.SetBlockProfileRate(1)
+	} else {
+		runtime.SetBlockProfileRate(-1)
 	}
 }
 
@@ -957,7 +961,7 @@ func main() {
 		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
 	}
 
-	if err := setupFeatures(); err != nil {
+	if err := setupFeaturesAndFilters(); err != nil {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)
 	}
 

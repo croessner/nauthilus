@@ -659,7 +659,7 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
-	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug {
+	if config.LoadableConfig.GetServerInsightsEnablePprof() {
 		pprof.Register(router)
 	}
 
