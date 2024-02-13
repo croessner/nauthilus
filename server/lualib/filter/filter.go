@@ -39,7 +39,7 @@ var LuaPool = lualib.NewLuaStatePool()
 //
 //	error if any error occurs while initializing the Lua filters
 func PreCompileLuaFilters() (err error) {
-	if config.LoadableConfig.Lua != nil {
+	if config.LoadableConfig.HaveLuaFilters() {
 		if LuaFilters == nil {
 			LuaFilters = &PreCompiledLuaFilters{}
 		} else {
