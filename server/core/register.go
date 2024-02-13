@@ -89,8 +89,8 @@ func loginGET2FAHandler(ctx *gin.Context) {
 		haveError       bool
 		errorMessage    string
 		languagePassive []Language
-		guid            = ctx.Value(global.GUIDKey).(string)
-		csrfToken       = ctx.Value(global.CSRFTokenKey).(string)
+		guid            = ctx.GetString(global.CtxGUIDKey)
+		csrfToken       = ctx.GetString(global.CtxCSRFTokenKey)
 	)
 
 	sessionCleaner(ctx)
@@ -171,7 +171,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	var (
 		err        error
 		authResult = global.AuthResultUnset
-		guid       = ctx.Value(global.GUIDKey).(string)
+		guid       = ctx.GetString(global.CtxGUIDKey)
 	)
 
 	auth := &Authentication{
@@ -257,7 +257,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		return
 	}
 
-	auth.ClientIP = ctx.Value(global.ClientIPKey).(string)
+	auth.ClientIP = ctx.GetString(global.CtxClientIPKey)
 
 	auth.updateBruteForceBucketsCounter()
 
@@ -360,7 +360,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 		haveError       bool
 		errorMessage    string
 		languagePassive []Language
-		csrfToken       = ctx.Value(global.CSRFTokenKey).(string)
+		csrfToken       = ctx.GetString(global.CtxCSRFTokenKey)
 	)
 
 	session := sessions.Default(ctx)
@@ -483,7 +483,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		accountName   string
 		err           error
 		totpKey       *otp.Key
-		guid          = ctx.Value(global.GUIDKey).(string)
+		guid          = ctx.GetString(global.CtxGUIDKey)
 		addTOTPSecret AddTOTPSecretFunc
 	)
 
