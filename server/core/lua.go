@@ -4,6 +4,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -23,37 +24,39 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		NoAuth:              auth.NoAuth,
-		Function:            global.LuaCommandPassDB,
-		Session:             auth.GUID,
-		Username:            auth.Username,
-		Password:            auth.Password,
-		ClientIP:            auth.ClientIP,
-		ClientPort:          auth.XClientPort,
-		ClientHost:          auth.ClientHost,
-		LocalIP:             auth.XLocalIP,
-		LocalPprt:           auth.XPort,
-		ClientID:            auth.XClientID,
-		XSSL:                auth.XSSL,
-		XSSLSessionID:       auth.XSSLSessionID,
-		XSSLClientVerify:    auth.XSSLClientVerify,
-		XSSLClientDN:        auth.XSSLClientDN,
-		XSSLClientCN:        auth.XSSLClientCN,
-		XSSLIssuer:          auth.XSSLIssuer,
-		XSSLClientNotBefore: auth.XSSLClientNotBefore,
-		XSSLClientNotAfter:  auth.XSSLClientNotAfter,
-		XSSLSubjectDN:       auth.XSSLSubjectDN,
-		XSSLIssuerDN:        auth.XSSLIssuerDN,
-		XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
-		XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
-		XSSLProtocol:        auth.XSSLProtocol,
-		XSSLCipher:          auth.XSSLCipher,
-		UserAgent:           *auth.UserAgent,
-		Service:             auth.Service,
-		Protocol:            auth.Protocol,
-		Context:             auth.Context,
-		LuaReplyChan:        luaReplyChan,
+		Function:     global.LuaCommandPassDB,
+		Service:      auth.Service,
+		Protocol:     auth.Protocol,
+		Context:      auth.Context,
+		LuaReplyChan: luaReplyChan,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			NoAuth:              auth.NoAuth,
+			Session:             *auth.GUID,
+			Username:            auth.Username,
+			Password:            auth.Password,
+			ClientIP:            auth.ClientIP,
+			ClientPort:          auth.XClientPort,
+			ClientHost:          auth.ClientHost,
+			LocalIP:             auth.XLocalIP,
+			LocalPort:           auth.XPort,
+			ClientID:            auth.XClientID,
+			XSSL:                auth.XSSL,
+			XSSLSessionID:       auth.XSSLSessionID,
+			XSSLClientVerify:    auth.XSSLClientVerify,
+			XSSLClientDN:        auth.XSSLClientDN,
+			XSSLClientCN:        auth.XSSLClientCN,
+			XSSLIssuer:          auth.XSSLIssuer,
+			XSSLClientNotBefore: auth.XSSLClientNotBefore,
+			XSSLClientNotAfter:  auth.XSSLClientNotAfter,
+			XSSLSubjectDN:       auth.XSSLSubjectDN,
+			XSSLIssuerDN:        auth.XSSLIssuerDN,
+			XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
+			XSSLProtocol:        auth.XSSLProtocol,
+			XSSLCipher:          auth.XSSLCipher,
+			UserAgent:           *auth.UserAgent,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest
@@ -125,15 +128,17 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		Session:      auth.GUID,
-		ClientIP:     auth.ClientIP,
-		ClientPort:   auth.XClientPort,
-		LocalIP:      auth.XLocalIP,
-		LocalPprt:    auth.XPort,
+		Function:     global.LuaCommandListAccounts,
 		Protocol:     auth.Protocol,
 		LuaReplyChan: luaReplyChan,
-		Function:     global.LuaCommandListAccounts,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:      config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Session:    *auth.GUID,
+			ClientIP:   auth.ClientIP,
+			ClientPort: auth.XClientPort,
+			LocalIP:    auth.XLocalIP,
+			LocalPort:  auth.XPort,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest
@@ -173,17 +178,19 @@ func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		Session:      auth.GUID,
-		Username:     auth.Username,
-		ClientIP:     auth.ClientIP,
-		ClientPort:   auth.XClientPort,
-		LocalIP:      auth.XLocalIP,
-		LocalPprt:    auth.XPort,
+		Function:     global.LuaCommandAddMFAValue,
 		Protocol:     auth.Protocol,
 		TOTPSecret:   totp.getValue(),
 		LuaReplyChan: luaReplyChan,
-		Function:     global.LuaCommandAddMFAValue,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:      config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Session:    *auth.GUID,
+			Username:   auth.Username,
+			ClientIP:   auth.ClientIP,
+			ClientPort: auth.XClientPort,
+			LocalIP:    auth.XLocalIP,
+			LocalPort:  auth.XPort,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest

@@ -1179,45 +1179,48 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:           luaAction,
-			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:           false,
-			UserFound:           false, // unavailable
-			Authenticated:       false, // unavailable
-			NoAuth:              a.NoAuth,
-			BruteForceCounter:   0, // unavailable
-			Session:             *a.GUID,
-			ClientIP:            a.ClientIP,
-			ClientPort:          a.XClientPort,
-			ClientNet:           "", // unavailable
-			ClientHost:          a.ClientHost,
-			ClientID:            a.XClientID,
-			LocalIP:             a.XLocalIP,
-			LocalPort:           a.XPort,
-			Username:            a.UsernameOrig,
-			Account:             "", // unavailable
-			UniqueUserID:        "", // unavailable
-			DisplayName:         "", // unavailable
-			Password:            a.Password,
-			Protocol:            a.Protocol.Get(),
-			BruteForceName:      "", // unavailable
-			FeatureName:         a.FeatureName,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			Context:             a.Context,
-			FinishedChan:        finished,
+			LuaAction:    luaAction,
+			Context:      a.Context,
+			FinishedChan: finished,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Repeating:           false,
+				UserFound:           false, // unavailable
+				Authenticated:       false, // unavailable
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   0, // unavailable
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				ClientNet:           "", // unavailable
+				ClientHost:          a.ClientHost,
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				Username:            a.UsernameOrig,
+				Account:             "", // unavailable
+				UniqueUserID:        "", // unavailable
+				DisplayName:         "", // unavailable
+				Password:            a.Password,
+				Protocol:            a.Protocol.Get(),
+				BruteForceName:      "", // unavailable
+				FeatureName:         a.FeatureName,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+			},
 		}
 
 		<-finished
@@ -1299,51 +1302,54 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:         global.LuaActionPost,
-			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:         false,
-			UserFound:         passDBResult.UserFound,
-			Authenticated:     passDBResult.Authenticated,
-			NoAuth:            a.NoAuth,
-			BruteForceCounter: 0,
-			Session:           *a.GUID,
-			ClientIP:          a.ClientIP,
-			ClientPort:        a.XClientPort,
-			ClientNet:         "", // unavailable
-			ClientHost:        a.ClientHost,
-			ClientID:          a.XClientID,
-			LocalIP:           a.XLocalIP,
-			LocalPort:         a.XPort,
-			Username:          a.Username,
-			Account: func() string {
-				if passDBResult.UserFound {
-					return a.getAccount()
-				}
+			LuaAction:    global.LuaActionPost,
+			Context:      a.Context,
+			FinishedChan: finished,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Repeating:         false,
+				UserFound:         passDBResult.UserFound,
+				Authenticated:     passDBResult.Authenticated,
+				NoAuth:            a.NoAuth,
+				BruteForceCounter: 0,
+				Session:           *a.GUID,
+				ClientIP:          a.ClientIP,
+				ClientPort:        a.XClientPort,
+				ClientNet:         "", // unavailable
+				ClientHost:        a.ClientHost,
+				ClientID:          a.XClientID,
+				LocalIP:           a.XLocalIP,
+				LocalPort:         a.XPort,
+				UserAgent:         *a.UserAgent,
+				Username:          a.Username,
+				Account: func() string {
+					if passDBResult.UserFound {
+						return a.getAccount()
+					}
 
-				return ""
-			}(),
-			UniqueUserID:        a.getUniqueUserID(),
-			DisplayName:         a.getDisplayName(),
-			Password:            a.Password,
-			Protocol:            a.Protocol.Get(),
-			BruteForceName:      a.BruteForceName,
-			FeatureName:         a.FeatureName,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			Context:             a.Context,
-			FinishedChan:        finished,
+					return ""
+				}(),
+				UniqueUserID:        a.getUniqueUserID(),
+				DisplayName:         a.getDisplayName(),
+				Password:            a.Password,
+				Protocol:            a.Protocol.Get(),
+				BruteForceName:      a.BruteForceName,
+				FeatureName:         a.FeatureName,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+			},
 		}
 
 		<-finished
@@ -1645,48 +1651,51 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 	}
 
 	filterRequest := &filter.Request{
-		Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		UserFound:     passDBResult.UserFound,
-		Authenticated: passDBResult.Authenticated,
-		NoAuth:        a.NoAuth,
-		Session:       *a.GUID,
-		ClientIP:      a.ClientIP,
-		ClientPort:    a.XClientPort,
-		ClientHost:    a.ClientHost,
-		ClientID:      a.XClientID,
-		LocalIP:       a.XLocalIP,
-		LocalPort:     a.XPort,
-		Username:      a.Username,
-		Account: func() string {
-			if passDBResult.UserFound {
-				return a.getAccount()
-			}
-
-			return ""
-		}(),
-		UniqueUserID:            a.getUniqueUserID(),
-		DisplayName:             a.getDisplayName(),
-		Password:                a.Password,
-		Protocol:                a.Protocol.String(),
-		XSSL:                    a.XSSL,
-		XSSLSessionID:           a.XSSLSessionID,
-		XSSLClientVerify:        a.XSSLClientVerify,
-		XSSLClientDN:            a.XSSLClientDN,
-		XSSLClientCN:            a.XSSLClientCN,
-		XSSLIssuer:              a.XSSLIssuer,
-		XSSLClientNotBefore:     a.XSSLClientNotBefore,
-		XSSLClientNotAfter:      a.XSSLClientNotAfter,
-		XSSLSubjectDN:           a.XSSLSubjectDN,
-		XSSLIssuerDN:            a.XSSLIssuerDN,
-		XSSLClientSubjectDN:     a.XSSLClientSubjectDN,
-		XSSLClientIssuerDN:      a.XSSLClientIssuerDN,
-		XSSLProtocol:            a.XSSLProtocol,
-		XSSLCipher:              a.XSSLCipher,
 		NginxBackendServers:     backendServer,
 		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
 		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
 		Logs:                    nil,
 		Context:                 a.Context,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			UserFound:     passDBResult.UserFound,
+			Authenticated: passDBResult.Authenticated,
+			NoAuth:        a.NoAuth,
+			Session:       *a.GUID,
+			ClientIP:      a.ClientIP,
+			ClientPort:    a.XClientPort,
+			ClientHost:    a.ClientHost,
+			ClientID:      a.XClientID,
+			LocalIP:       a.XLocalIP,
+			LocalPort:     a.XPort,
+			UserAgent:     *a.UserAgent,
+			Username:      a.Username,
+			Account: func() string {
+				if passDBResult.UserFound {
+					return a.getAccount()
+				}
+
+				return ""
+			}(),
+			UniqueUserID:        a.getUniqueUserID(),
+			DisplayName:         a.getDisplayName(),
+			Password:            a.Password,
+			Protocol:            a.Protocol.String(),
+			XSSL:                a.XSSL,
+			XSSLSessionID:       a.XSSLSessionID,
+			XSSLClientVerify:    a.XSSLClientVerify,
+			XSSLClientDN:        a.XSSLClientDN,
+			XSSLClientCN:        a.XSSLClientCN,
+			XSSLIssuer:          a.XSSLIssuer,
+			XSSLClientNotBefore: a.XSSLClientNotBefore,
+			XSSLClientNotAfter:  a.XSSLClientNotAfter,
+			XSSLSubjectDN:       a.XSSLSubjectDN,
+			XSSLIssuerDN:        a.XSSLIssuerDN,
+			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+			XSSLProtocol:        a.XSSLProtocol,
+			XSSLCipher:          a.XSSLCipher,
+		},
 	}
 
 	filterResult, err := filterRequest.CallFilterLua(ctx)

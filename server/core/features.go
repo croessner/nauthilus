@@ -10,6 +10,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -25,39 +26,41 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 	defer timer.ObserveDuration()
 
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
-		l := feature.Request{
-			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Session:             *a.GUID,
-			ClientIP:            a.ClientIP,
-			ClientPort:          a.XClientPort,
-			Username:            a.UsernameOrig,
-			Password:            a.Password,
-			Protocol:            a.Protocol.String(),
-			ClientID:            a.XClientID,
-			LocalIP:             a.XLocalIP,
-			LocalPort:           a.XPort,
-			UserAgent:           *a.UserAgent,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			Context:             a.Context,
+		featureRequest := feature.Request{
+			Context: a.Context,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				Username:            a.UsernameOrig,
+				Password:            a.Password,
+				Protocol:            a.Protocol.String(),
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+			},
 		}
 
-		triggered, abortFeatures, err = l.CallFeatureLua(ctx)
+		triggered, abortFeatures, err = featureRequest.CallFeatureLua(ctx)
 
-		for index := range *l.Logs {
-			a.AdditionalLogs = append(a.AdditionalLogs, (*l.Logs)[index])
+		for index := range *featureRequest.Logs {
+			a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
 		}
 
 		return
