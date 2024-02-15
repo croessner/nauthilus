@@ -63,6 +63,9 @@ type CommonRequest struct {
 	// BruteForceCounter keeps track of unsuccessful login attempts for the user.
 	BruteForceCounter uint
 
+	// Service is the http routers endpoint name.
+	Service string
+
 	// Session stores the unique session identifier.
 	Session string // GUID
 
@@ -113,6 +116,9 @@ type CommonRequest struct {
 
 	// FeatureName is a feature that triggered the action.
 	FeatureName string
+
+	// StatusMessage is a configurable message that is returned to the client upon errors (not tempfail).
+	StatusMessage *string
 
 	// XSSL contains SSL information.
 	XSSL string
@@ -167,6 +173,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 
 	request.RawSet(lua.LString(global.LuaRequestBruteForceCounter), lua.LNumber(c.BruteForceCounter))
 
+	request.RawSetString(global.LuaRequestService, lua.LString(c.Service))
 	request.RawSetString(global.LuaRequestSession, lua.LString(c.Session))
 	request.RawSetString(global.LuaRequestClientIP, lua.LString(c.ClientIP))
 	request.RawSetString(global.LuaRequestClientPort, lua.LString(c.ClientPort))
@@ -184,6 +191,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(global.LuaRequestProtocol, lua.LString(c.Protocol))
 	request.RawSetString(global.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(global.LuaRequestFeature, lua.LString(c.FeatureName))
+	request.RawSetString(global.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
 	request.RawSetString(global.LuaRequestXSSL, lua.LString(c.XSSL))
 	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
 	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))
@@ -200,4 +208,14 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
 
 	return request
+}
+
+func SetStatusMessage(status **string) lua.LGFunction {
+	return func(L *lua.LState) int {
+		newStatus := L.CheckString(1)
+
+		*status = &newStatus
+
+		return 0
+	}
 }

@@ -216,6 +216,7 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
 	return globals
 }

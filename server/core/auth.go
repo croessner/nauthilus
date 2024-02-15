@@ -760,10 +760,12 @@ func (a *Authentication) increaseLoginAttempts() {
 //
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
-	ctx.Header("Auth-Status", global.PasswordFail)
-	ctx.Header("X-Nauthilus-Session", *a.GUID)
+	if a.StatusMessage == "" {
+		a.StatusMessage = global.PasswordFail
+	}
 
-	a.StatusMessage = global.PasswordFail
+	ctx.Header("Auth-Status", a.StatusMessage)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	if a.Service == global.ServUserInfo {
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
@@ -1189,6 +1191,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 				Authenticated:       false, // unavailable
 				NoAuth:              a.NoAuth,
 				BruteForceCounter:   0, // unavailable
+				Service:             a.Service,
 				Session:             *a.GUID,
 				ClientIP:            a.ClientIP,
 				ClientPort:          a.XClientPort,
@@ -1206,6 +1209,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 				Protocol:            a.Protocol.Get(),
 				BruteForceName:      "", // unavailable
 				FeatureName:         a.FeatureName,
+				StatusMessage:       &a.StatusMessage,
 				XSSL:                a.XSSL,
 				XSSLSessionID:       a.XSSLSessionID,
 				XSSLClientVerify:    a.XSSLClientVerify,
@@ -1312,6 +1316,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 				Authenticated:     passDBResult.Authenticated,
 				NoAuth:            a.NoAuth,
 				BruteForceCounter: 0,
+				Service:           a.Service,
 				Session:           *a.GUID,
 				ClientIP:          a.ClientIP,
 				ClientPort:        a.XClientPort,
@@ -1335,6 +1340,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 				Protocol:            a.Protocol.Get(),
 				BruteForceName:      a.BruteForceName,
 				FeatureName:         a.FeatureName,
+				StatusMessage:       &a.StatusMessage,
 				XSSL:                a.XSSL,
 				XSSLSessionID:       a.XSSLSessionID,
 				XSSLClientVerify:    a.XSSLClientVerify,
@@ -1586,9 +1592,12 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 
 	if !passDBResult.Authenticated {
 		a.updateBruteForceBucketsCounter()
+
+		authResult := a.filterLua(passDBResult, ctx)
+
 		a.postLuaAction(passDBResult)
 
-		return global.AuthResultFail
+		return authResult
 	}
 
 	// Set new username
@@ -1661,6 +1670,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 			UserFound:     passDBResult.UserFound,
 			Authenticated: passDBResult.Authenticated,
 			NoAuth:        a.NoAuth,
+			Service:       a.Service,
 			Session:       *a.GUID,
 			ClientIP:      a.ClientIP,
 			ClientPort:    a.XClientPort,
@@ -1681,6 +1691,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 			DisplayName:         a.getDisplayName(),
 			Password:            a.Password,
 			Protocol:            a.Protocol.String(),
+			StatusMessage:       &a.StatusMessage,
 			XSSL:                a.XSSL,
 			XSSLSessionID:       a.XSSLSessionID,
 			XSSLClientVerify:    a.XSSLClientVerify,
@@ -1708,6 +1719,10 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 	} else {
 		for index := range *filterRequest.Logs {
 			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+		}
+
+		if statusMessage := filterRequest.StatusMessage; *statusMessage != a.StatusMessage {
+			a.StatusMessage = *statusMessage
 		}
 
 		if filterResult {

@@ -940,6 +940,8 @@ const (
 
 	// LuaFnSelectNginxBackend represents the constant used as the key for the Lua function "nauthilus_select_nginx_backend".
 	LuaFnSelectNginxBackend = "select_nginx_backend_server"
+
+	LuaFnSetStatusMessage = "status_message_set"
 )
 
 const (
@@ -1112,6 +1114,8 @@ const (
 
 	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
 	LuaRequestTOTPSecret = "totp_secret"
+
+	LuaRequestStatusMessage = "status_message"
 )
 
 // Exit status codes.

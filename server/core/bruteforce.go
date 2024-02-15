@@ -782,6 +782,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 					Authenticated:       false, // unavailable
 					NoAuth:              a.NoAuth,
 					BruteForceCounter:   a.BruteForceCounter[rules[index].Name],
+					Service:             a.Service,
 					Session:             *a.GUID,
 					ClientIP:            a.ClientIP,
 					ClientPort:          a.XClientPort,
@@ -799,6 +800,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 					Protocol:            a.Protocol.Get(),
 					BruteForceName:      rules[index].Name,
 					FeatureName:         "", // unavailable
+					StatusMessage:       &a.StatusMessage,
 					XSSL:                a.XSSL,
 					XSSLSessionID:       a.XSSLSessionID,
 					XSSLClientVerify:    a.XSSLClientVerify,

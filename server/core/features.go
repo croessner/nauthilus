@@ -30,6 +30,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 			Context: a.Context,
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Service:             a.Service,
 				Session:             *a.GUID,
 				ClientIP:            a.ClientIP,
 				ClientPort:          a.XClientPort,
@@ -40,6 +41,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 				LocalIP:             a.XLocalIP,
 				LocalPort:           a.XPort,
 				UserAgent:           *a.UserAgent,
+				StatusMessage:       &a.StatusMessage,
 				XSSL:                a.XSSL,
 				XSSLSessionID:       a.XSSLSessionID,
 				XSSLClientVerify:    a.XSSLClientVerify,
@@ -61,6 +63,10 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 		for index := range *featureRequest.Logs {
 			a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
+		}
+
+		if statusMessage := featureRequest.StatusMessage; *statusMessage != a.StatusMessage {
+			a.StatusMessage = *statusMessage
 		}
 
 		return

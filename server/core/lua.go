@@ -32,6 +32,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		CommonRequest: &lualib.CommonRequest{
 			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
 			NoAuth:              auth.NoAuth,
+			Service:             auth.Service,
 			Session:             *auth.GUID,
 			Username:            auth.Username,
 			Password:            auth.Password,
@@ -41,6 +42,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			LocalIP:             auth.XLocalIP,
 			LocalPort:           auth.XPort,
 			ClientID:            auth.XClientID,
+			StatusMessage:       &auth.StatusMessage,
 			XSSL:                auth.XSSL,
 			XSSLSessionID:       auth.XSSLSessionID,
 			XSSLClientVerify:    auth.XSSLClientVerify,
@@ -71,6 +73,10 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		err = luaBackendResult.Err
 
 		return
+	}
+
+	if statusMessage := luaRequest.StatusMessage; *statusMessage != auth.StatusMessage {
+		auth.StatusMessage = *statusMessage
 	}
 
 	accountField := luaBackendResult.AccountField
@@ -133,6 +139,7 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		LuaReplyChan: luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:      config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Service:    auth.Service,
 			Session:    *auth.GUID,
 			ClientIP:   auth.ClientIP,
 			ClientPort: auth.XClientPort,
@@ -184,6 +191,7 @@ func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		LuaReplyChan: luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:      config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Service:    auth.Service,
 			Session:    *auth.GUID,
 			Username:   auth.Username,
 			ClientIP:   auth.ClientIP,

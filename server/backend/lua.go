@@ -390,6 +390,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
