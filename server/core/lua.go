@@ -31,17 +31,29 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		LuaReplyChan: luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Repeating:           false, // unavailable
+			UserFound:           false, // set by backend_result
+			Authenticated:       false, // set by backend_result
 			NoAuth:              auth.NoAuth,
+			BruteForceCounter:   0, // unavailable
 			Service:             auth.Service,
 			Session:             *auth.GUID,
-			Username:            auth.Username,
-			Password:            auth.Password,
 			ClientIP:            auth.ClientIP,
 			ClientPort:          auth.XClientPort,
+			ClientNet:           "", // unavailable
 			ClientHost:          auth.ClientHost,
+			ClientID:            auth.XClientID,
+			UserAgent:           *auth.UserAgent,
 			LocalIP:             auth.XLocalIP,
 			LocalPort:           auth.XPort,
-			ClientID:            auth.XClientID,
+			Username:            auth.Username,
+			Account:             "", // set by backend_result
+			UniqueUserID:        "", // set by backend_result
+			DisplayName:         "", // set by backend_result
+			Password:            auth.Password,
+			Protocol:            auth.Protocol.Get(),
+			BruteForceName:      "", // unavailable
+			FeatureName:         "", // unavailable
 			StatusMessage:       &auth.StatusMessage,
 			XSSL:                auth.XSSL,
 			XSSLSessionID:       auth.XSSLSessionID,
@@ -57,7 +69,6 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
 			XSSLProtocol:        auth.XSSLProtocol,
 			XSSLCipher:          auth.XSSLCipher,
-			UserAgent:           *auth.UserAgent,
 		},
 	}
 

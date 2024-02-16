@@ -30,17 +30,29 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 			Context: a.Context,
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Repeating:           false, // unavailable
+				UserFound:           false, // unavailable
+				Authenticated:       false, // unavailable
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   0, // unavailable
 				Service:             a.Service,
 				Session:             *a.GUID,
 				ClientIP:            a.ClientIP,
 				ClientPort:          a.XClientPort,
-				Username:            a.UsernameOrig,
-				Password:            a.Password,
-				Protocol:            a.Protocol.String(),
+				ClientNet:           "", // unavailable
+				ClientHost:          a.ClientHost,
 				ClientID:            a.XClientID,
+				UserAgent:           *a.UserAgent,
 				LocalIP:             a.XLocalIP,
 				LocalPort:           a.XPort,
-				UserAgent:           *a.UserAgent,
+				Username:            a.UsernameOrig,
+				Account:             "", // unavailable
+				UniqueUserID:        "", // unavailable
+				DisplayName:         "", // unavailable
+				Password:            a.Password,
+				Protocol:            a.Protocol.String(),
+				BruteForceName:      "", // unavailable
+				FeatureName:         "", // unavailable
 				StatusMessage:       &a.StatusMessage,
 				XSSL:                a.XSSL,
 				XSSLSessionID:       a.XSSLSessionID,

@@ -1666,20 +1666,23 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		Logs:                    nil,
 		Context:                 a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			UserFound:     passDBResult.UserFound,
-			Authenticated: passDBResult.Authenticated,
-			NoAuth:        a.NoAuth,
-			Service:       a.Service,
-			Session:       *a.GUID,
-			ClientIP:      a.ClientIP,
-			ClientPort:    a.XClientPort,
-			ClientHost:    a.ClientHost,
-			ClientID:      a.XClientID,
-			LocalIP:       a.XLocalIP,
-			LocalPort:     a.XPort,
-			UserAgent:     *a.UserAgent,
-			Username:      a.Username,
+			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Repeating:         false, // unavailable
+			UserFound:         passDBResult.UserFound,
+			Authenticated:     passDBResult.Authenticated,
+			NoAuth:            a.NoAuth,
+			BruteForceCounter: 0, // unavailable
+			Service:           a.Service,
+			Session:           *a.GUID,
+			ClientIP:          a.ClientIP,
+			ClientPort:        a.XClientPort,
+			ClientNet:         "", // unavailable
+			ClientHost:        a.ClientHost,
+			ClientID:          a.XClientID,
+			UserAgent:         *a.UserAgent,
+			LocalIP:           a.XLocalIP,
+			LocalPort:         a.XPort,
+			Username:          a.Username,
 			Account: func() string {
 				if passDBResult.UserFound {
 					return a.getAccount()
@@ -1691,6 +1694,8 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 			DisplayName:         a.getDisplayName(),
 			Password:            a.Password,
 			Protocol:            a.Protocol.String(),
+			BruteForceName:      "", // unavailable
+			FeatureName:         "", // unavailable
 			StatusMessage:       &a.StatusMessage,
 			XSSL:                a.XSSL,
 			XSSLSessionID:       a.XSSLSessionID,
