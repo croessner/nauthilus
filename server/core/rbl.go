@@ -63,12 +63,13 @@ func (a *Authentication) isListed(ctx *gin.Context, rbl *config.RBL) (rblListSta
 
 	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.RBL)
 
-	rblCtx, cancel := context.WithDeadline(ctx, time.Now().Add(time.Duration(config.EnvConfig.DNSTimeout)*time.Second))
+	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
+
 	defer cancel()
 
 	resolver := util.NewDNSResolver()
 
-	results, err = resolver.LookupIP(rblCtx, "ip4", query)
+	results, err = resolver.LookupIP(ctxTimeut, "ip4", query)
 	if err != nil {
 		return false, "", err
 	}

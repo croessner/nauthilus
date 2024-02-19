@@ -2128,8 +2128,8 @@ func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 
 	a.ClientIP = ctx.Request.Header.Get("Client-IP")
 
-	if config.EnvConfig.ResolveIP {
-		a.ClientHost = util.ResolveIPAddress(a.ClientIP)
+	if config.LoadableConfig.Server.DNS.ResolveClientIP {
+		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
 	}
 
 	if a.ClientHost == "" {

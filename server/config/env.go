@@ -45,12 +45,6 @@ type Config struct {
 	// MaxLoginAttempts is the maximum number of login attempts.
 	MaxLoginAttempts uint8
 
-	// ResolveIP is a flag indicating whether to resolve IP addresses to hostnames.
-	ResolveIP bool
-
-	// MasterSeparator is the character used to separate master data fields.
-	MasterSeparator string
-
 	// RedisAddress is the address of the Redis server for master pool.
 	RedisAddress string
 
@@ -92,12 +86,6 @@ type Config struct {
 
 	// RedisNegCacheTTL is the negative response cache time-to-live in Redis.
 	RedisNegCacheTTL uint
-
-	// DNSResolver specifies the DNS resolver to use.
-	DNSResolver string
-
-	// DNSTimeout is the DNS resolution timeout in seconds.
-	DNSTimeout uint
 
 	// PassDBs is a list of password databases.
 	PassDBs []*PassDB
@@ -343,7 +331,6 @@ func (c *Config) setConfigFromEnvVars() {
 	c.IMAPBackendPort = viper.GetInt("imap_backend_port")
 	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
 	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
-	c.ResolveIP = viper.GetBool("resolve_ip")
 	c.RedisAddress = viper.GetString("redis_address")
 	c.RedisPort = viper.GetInt("redis_port")
 	c.RedisDB = viper.GetInt("redis_database_number")
@@ -358,7 +345,6 @@ func (c *Config) setConfigFromEnvVars() {
 	c.RedisSentinelMasterName = viper.GetString("redis_sentinel_master_name")
 	c.RedisSentinelUsername = viper.GetString("redis-sentinel-username")
 	c.RedisSentinelPassword = viper.GetString("redis-sentinel-password")
-	c.DNSResolver = viper.GetString("dns_resolver")
 	c.DevMode = viper.GetBool("developer_mode")
 }
 
@@ -420,23 +406,6 @@ func (c *Config) setConfigMaxLoginAttempts() {
 		} else {
 			c.MaxLoginAttempts = math.MaxUint8
 		}
-	}
-}
-
-// setConfigDNSTimeout sets the DNS timeout value in the Config struct
-// based on the value retrieved from the "dns_timeout" configuration.
-// If the value is greater than 1, it is set as the DNSTimeout.
-// If the value is greater than math.MaxUint8, DNSTimeout is set to math.MaxUint8.
-// If the value is less than or equal to 1, DNSTimeout is set to 1.
-func (c *Config) setConfigDNSTimeout() {
-	if val := viper.GetUint("dns_timeout"); val > 1 {
-		if val < math.MaxUint8 {
-			c.DNSTimeout = val
-		} else {
-			c.DNSTimeout = math.MaxUint8
-		}
-	} else {
-		c.DNSTimeout = 1
 	}
 }
 
@@ -514,7 +483,6 @@ func (c *Config) setConfig() {
 	c.setConfigHTTPOptionUseBasicAuth()
 	c.setConfigWaitDelay()
 	c.setConfigMaxLoginAttempts()
-	c.setConfigDNSTimeout()
 	c.setConfigMaxActionWorkers()
 	c.setLocalCacheTTL()
 }

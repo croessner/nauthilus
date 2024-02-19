@@ -986,6 +986,29 @@ func (f *File) validateInstanceName() error {
 	return nil
 }
 
+// validateDNSTimeout is a method on the File struct.
+// It validates the DNS timeout value to ensure it is not less than 1 second and not more than 30 seconds.
+// If the timeout is less than 1 second, it sets it to 1 second.
+// If the timeout is more than 32 seconds, it sets it to 32 seconds.
+// This method does not return any errors.
+func (f *File) validateDNSTimeout() error {
+	if f.Server.DNS.Timeout == 0 {
+		f.Server.DNS.Timeout = global.DNSResolveTimeout
+	}
+
+	// Not less than 1 second
+	if f.Server.DNS.Timeout < 1 {
+		f.Server.DNS.Timeout = 1
+	}
+
+	// Not more than 30 seconds
+	if f.Server.DNS.Timeout > 30 {
+		f.Server.DNS.Timeout = 30
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1003,7 +1026,10 @@ func (f *File) validate() (err error) {
 		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
+
+		// Without errors, but fixing things
 		f.validateInstanceName,
+		f.validateDNSTimeout,
 	}
 
 	for _, validator := range validators {
@@ -1099,6 +1125,14 @@ func processDebugModules(input any) (any, error) {
 	return dbgModules, nil
 }
 
+// processFeatures processes the input and returns a slice of Feature pointers and an error.
+// The function accepts an `any` as input, which can be either a string, a slice of strings, or a slice of `any` values.
+// If the input is a string, a single Feature is created with the input as its name and added to the features slice.
+// If the input is a slice of strings, each string is processed as a separate Feature, and all the Features are added to the features slice.
+// If the input is a slice of `any` values, each value is checked if it is a string. If it is not a string, an error is returned.
+// If the value is a string, it is processed as a Feature and added to the features slice.
+// If the input is of any other type, an error is returned.
+// The function returns the features slice and any error that occurred during processing.
 func processFeatures(input any) (any, error) {
 	var features []*Feature
 
@@ -1142,6 +1176,12 @@ func processFeatures(input any) (any, error) {
 	return features, nil
 }
 
+// processProtocols processes the input data and returns a slice of Protocol pointers and an error.
+//
+// The function takes an input of type `any`, which can be either a string, a slice of strings, or a slice of `any`.
+// If the input is a string, it creates a new Protocol with the given data and appends it to the protocols slice.
+// If the input is a slice of strings, it iterates over each string, creates a new Protocol with the string as data, and appends it to the protocols slice.
+// If the input is a slice of `any`, it iterates over each element and checks if it is a string. If it is, it creates a new Protocol with the string as data and appends it to the protocols
 func processProtocols(input any) (any, error) {
 	var protocols []*Protocol
 

@@ -225,25 +225,25 @@ func NewRedisReplicaClient() redis.UniversalClient {
 	return nil
 }
 
+// NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
-	if config.EnvConfig.DNSResolver == "" {
+	if config.LoadableConfig.Server.DNS.Resolver == "" {
 		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Using default DNS resolver")
 
 		resolver = &net.Resolver{
 			PreferGo: true,
 		}
 	} else {
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.EnvConfig.DNSResolver))
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
 
 		resolver = &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
-					//nolint:gomnd // Ignore
 					Timeout: time.Millisecond * time.Duration(10000),
 				}
 
-				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.EnvConfig.DNSResolver))
+				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))
 			},
 		}
 	}
@@ -252,13 +252,14 @@ func NewDNSResolver() (resolver *net.Resolver) {
 }
 
 // ResolveIPAddress returns the hostname for a given IP address.
-func ResolveIPAddress(address string) (hostname string) {
-	ctx, cancel := context.WithDeadline(context.TODO(), time.Now().Add(time.Duration(config.EnvConfig.DNSTimeout)*time.Second))
+func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
+
 	defer cancel()
 
 	resolver := NewDNSResolver()
 
-	if hostNames, err := resolver.LookupAddr(ctx, address); err == nil {
+	if hostNames, err := resolver.LookupAddr(ctxTimeout, address); err == nil {
 		if len(hostNames) > 0 {
 			hostname = hostNames[0]
 			hostname = strings.TrimSuffix(hostname, ".")
