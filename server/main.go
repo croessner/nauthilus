@@ -99,24 +99,20 @@ func newContextTuple(ctx context.Context) *contextTuple {
 func setupEnvironment() (err error) {
 	config.EnvConfig, err = config.NewConfig()
 	if err != nil {
-		return fmt.Errorf("unable to load EnvConfig: %w", err)
+		return fmt.Errorf("unable to load environment config: %w", err)
 	}
 
 	loadLanguageBundles()
-
-	logging.SetupLogging(config.EnvConfig.Verbosity.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
-	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
 
 	setTimeZone()
 
 	config.LoadableConfig, err = config.NewConfigFile()
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
-			global.LogKeyWarning, err,
-		)
-
-		return fmt.Errorf("unable to load ConfigFile: %w", err)
+		return fmt.Errorf("unable to load config file: %w", err)
 	}
+
+	logging.SetupLogging(config.LoadableConfig.Server.Level.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
+	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
 
 	return nil
 }
@@ -533,6 +529,10 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		level.Error(logging.DefaultErrLogger).Log(
 			global.LogKeyError, err,
 		)
+	} else {
+		logging.SetupLogging(config.LoadableConfig.Server.Level.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
+
+		postEnvironmentDebug()
 	}
 
 	if err := setupFeaturesAndFilters(); err != nil {
@@ -944,6 +944,36 @@ func enableBlockProfile() {
 	}
 }
 
+func postEnvironmentDebug() {
+	if config.LoadableConfig.RBLs != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
+	}
+
+	if config.LoadableConfig.ClearTextList != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
+	}
+
+	if config.LoadableConfig.RelayDomains != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
+	}
+
+	if config.LoadableConfig.NginxMonitoring != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.NginxMonitoring))
+	}
+
+	if config.LoadableConfig.BruteForce != nil {
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
+	}
+
+	if config.LoadableConfig.Oauth2 != nil {
+		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", config.LoadableConfig.Oauth2))
+	}
+
+	if config.LoadableConfig.LDAP != nil {
+		level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", config.LoadableConfig.LDAP.Config))
+	}
+}
+
 // main initializes the application and manages the lifecycle of various components.
 //
 // It first sets up the environment and checks if any errors occurred during the process. If an error is encountered, it's logged and the application terminates.
@@ -960,6 +990,8 @@ func main() {
 	if err := setupEnvironment(); err != nil {
 		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
 	}
+
+	postEnvironmentDebug()
 
 	if err := setupFeaturesAndFilters(); err != nil {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)

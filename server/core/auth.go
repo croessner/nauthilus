@@ -719,15 +719,13 @@ func setUserInfoHeaders(ctx *gin.Context, a *Authentication) {
 // The logged information includes the result of the a.LogLineMail() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, a *Authentication) {
-	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
-		level.Info(logging.DefaultLogger).Log(a.LogLineMail(func() string {
-			if !a.NoAuth {
-				return "ok"
-			}
+	level.Info(logging.DefaultLogger).Log(a.LogLineMail(func() string {
+		if !a.NoAuth {
+			return "ok"
+		}
 
-			return ""
-		}(), ctx.Request.URL.Path)...)
-	}
+		return ""
+	}(), ctx.Request.URL.Path)...)
 }
 
 // increaseLoginAttempts increments the number of login attempts for the Authentication object.
@@ -791,9 +789,7 @@ func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *Authentication) loginAttemptProcessing(ctx *gin.Context) {
-	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
-		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
-	}
+	level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 
 	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
@@ -1185,7 +1181,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			Context:      a.Context,
 			FinishedChan: finished,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Debug:               config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
 				Repeating:           false,
 				UserFound:           false, // unavailable
 				Authenticated:       false, // unavailable
@@ -1310,7 +1306,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 			Context:      a.Context,
 			FinishedChan: finished,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+				Debug:             config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
 				Repeating:         false,
 				UserFound:         passDBResult.UserFound,
 				Authenticated:     passDBResult.Authenticated,
@@ -1666,7 +1662,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		Logs:                    nil,
 		Context:                 a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+			Debug:             config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
 			Repeating:         false, // unavailable
 			UserFound:         passDBResult.UserFound,
 			Authenticated:     passDBResult.Authenticated,

@@ -651,7 +651,7 @@ func HTTPApp(ctx context.Context) {
 	}
 
 	// Disable debugging
-	if !(config.EnvConfig.Verbosity.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
+	if !(config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 

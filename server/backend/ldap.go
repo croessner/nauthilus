@@ -952,9 +952,10 @@ func (l *LDAPConnection) exteranlBind(guid *string) error {
 		return err
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
+
 	return nil
 }
 
@@ -981,7 +982,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 		return err
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 

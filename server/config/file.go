@@ -1,8 +1,8 @@
 package config
 
 import (
-	"fmt"
 	"math"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,6 +13,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
 
@@ -774,8 +775,6 @@ func (f *File) validateRBLs() error {
 					"rbl", rbl.RBL)
 			}
 		}
-
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", f.RBLs))
 	}
 
 	return nil
@@ -834,8 +833,6 @@ func (f *File) validateBruteForce() error {
 		if countIPv4Rules > 1 || countIPv6Rules > 1 {
 			return errors.ErrBruteForceTooManyRules
 		}
-
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", f.BruteForce))
 	}
 
 	return nil
@@ -927,8 +924,6 @@ func (f *File) validatePassDBBackends() error {
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
 			}
-
-			level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", f.LDAP.Config))
 		case global.BackendLua:
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
@@ -973,8 +968,6 @@ func (f *File) validateOAuth2() error {
 
 			f.Oauth2.CustomScopes[customScopeIndex].Other = descriptions
 		}
-
-		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", f.Oauth2))
 	}
 
 	return nil
@@ -1008,22 +1001,6 @@ func (f *File) validate() (err error) {
 	return nil
 }
 
-// logDebug is a method on the File struct.
-// It logs debug messages based on the values of the ClearTextList, RelayDomains, and NginxMonitoring fields.
-func (f *File) logDebug() {
-	if f.ClearTextList != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", f.ClearTextList))
-	}
-
-	if f.RelayDomains != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
-	}
-
-	if f.NginxMonitoring != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", f.NginxMonitoring))
-	}
-}
-
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *File) handleFile() (err error) {
@@ -1031,7 +1008,26 @@ func (f *File) handleFile() (err error) {
 
 	defer f.Mu.Unlock()
 
-	if err = viper.UnmarshalExact(f); err != nil {
+	// We create a DecoderConfigOption that sets the Hooks field of the DecoderConfig.
+	// Our hook converts map[string]interface{} to a Verbosity object
+	decoderConfigOption := viper.DecoderConfigOption(func(config *mapstructure.DecoderConfig) {
+		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			config.DecodeHook,
+			func(from reflect.Type, to reflect.Type, data any) (any, error) {
+				// We check if we are converting a `level` string to a Verbosity.
+				if from.Kind() == reflect.String && to == reflect.TypeOf(Verbosity{}) {
+					v := Verbosity{}
+					err := v.Set(data.(string))
+
+					return v, err
+				}
+
+				return data, nil
+			},
+		)
+	})
+
+	if err = viper.UnmarshalExact(f, decoderConfigOption); err != nil {
 		return
 	}
 
@@ -1039,8 +1035,6 @@ func (f *File) handleFile() (err error) {
 	if err != nil {
 		return
 	}
-
-	f.logDebug()
 
 	// Throw away unsupported keys
 	f.Other = nil

@@ -1,7 +1,12 @@
 package config
 
 type ServerSection struct {
+	Log      `maptostructure:"log"`
 	Insights `mapstructure:"insights"`
+}
+
+type Log struct {
+	Level Verbosity `mapstructure:"level"`
 }
 
 type Insights struct {

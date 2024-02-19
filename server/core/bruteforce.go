@@ -776,7 +776,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 				Context:      a.Context,
 				FinishedChan: finished,
 				CommonRequest: &lualib.CommonRequest{
-					Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
+					Debug:               config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
 					Repeating:           alreadyTriggered,
 					UserFound:           false, // unavailable
 					Authenticated:       false, // unavailable

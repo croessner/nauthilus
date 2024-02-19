@@ -297,7 +297,7 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 func DebugModule(module global.DbgModule, keyvals ...any) {
 	var moduleName string
 
-	if config.EnvConfig.Verbosity.Level() < global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() < global.LogLevelDebug {
 		return
 	}
 
