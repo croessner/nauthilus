@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine3.18 AS builder
+FROM golang:1.22-alpine3.19 AS builder
 
 WORKDIR /build
 
@@ -7,13 +7,13 @@ COPY . ./
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 RUN apk add --no-cache build-base
-RUN cd server && go build -mod=vendor -tags="sonic avx" -ldflags="-s -w" -o nauthilus .
-RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthcheck .
-RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp .
-RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s -w" -o fakeimap .
+RUN cd server && go build -mod=vendor -tags="sonic avx" -ldflags="-s" -o nauthilus .
+RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
+RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
+RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 
-# FROM alpine:3.18
-FROM golang:1.21-alpine3.18
+FROM alpine:3.19
+#FROM golang:1.22-alpine3.19
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
@@ -27,7 +27,7 @@ RUN addgroup -S nauthilus; \
 RUN apk --no-cache --upgrade add ca-certificates
 
 # Debugging with pprof
-COPY --from=builder ["/build", "/build"]
+#COPY --from=builder ["/build", "/build"]
 
 # Copy binary to destination image
 COPY --from=builder ["/build/server/nauthilus", "./"]
