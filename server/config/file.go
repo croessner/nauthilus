@@ -748,6 +748,8 @@ func (f *File) validateBackends() error {
 	if len(f.Server.Backends) == 0 {
 		return errors.ErrNoBackendsConfigured
 	}
+
+	return nil
 }
 
 // validateRBLs is a method on the File struct.
@@ -1023,14 +1025,17 @@ func (f *File) validateDNSTimeout() error {
 // If any of the validators return an error, the validation process stops and the error is returned.
 // If all validators pass, nil is returned.
 // The validators used in this method are:
+// - validateBackends
 // - validateRBLs
 // - validateBruteForce
 // - validateSecrets
 // - validatePassDBBackends
 // - validateOAuth2
+// - validateInstanceName
+// - validateDNSTimeout
 func (f *File) validate() (err error) {
 	validators := []func() error{
-		f.vaildateBackends,
+		f.validateBackends,
 		f.validateRBLs,
 		f.validateBruteForce,
 		f.validateSecrets,

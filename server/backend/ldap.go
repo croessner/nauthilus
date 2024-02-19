@@ -1320,6 +1320,8 @@ func LDAPMainWorker(ctx context.Context) {
 	// Start background cleaner process
 	go ldapPool.houseKeeper()
 
+	ldapPool.setIdleConnections(true)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1423,6 +1425,8 @@ func LDAPAuthWorker(ctx context.Context) {
 	// Start background cleaner process
 	go ldapPool.houseKeeper()
 
+	ldapPool.setIdleConnections(false)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1433,7 +1437,7 @@ func LDAPAuthWorker(ctx context.Context) {
 			return
 		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
-			if err := ldapPool.setIdleConnections(true); err != nil {
+			if err := ldapPool.setIdleConnections(false); err != nil {
 				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
 			}
 
