@@ -370,11 +370,9 @@ func handleBackend(passDB *config.Backend) {
 }
 
 // handleLDAPBackend is a function to handle LDAP backend operations.
-// It takes three arguments - lookup and auth contextTuple pointers, and a context.
+// It takes two arguments - lookup and auth contextTuple pointers.
 // The function stops the contexts of the 'lookup' and 'auth' and waits for the backend LDAP operations to finish.
-// New cancelable contexts from the provided 'ctx' are assigned to the 'lookup' and 'auth'.
-// These updated contextTuple pointers are then returned.
-func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contextTuple, *contextTuple) {
+func handleLDAPBackend(lookup, auth *contextTuple) {
 	stopContext(lookup)
 
 	<-backend.LDAPEndChan
@@ -382,26 +380,14 @@ func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contex
 	stopContext(auth)
 
 	<-backend.LDAPAuthEndChan
-
-	lookup.ctx, lookup.cancel = context.WithCancel(ctx)
-	auth.ctx, auth.cancel = context.WithCancel(ctx)
-
-	return lookup, auth
 }
 
-// handleLuaBackend receives a contextTuple and a context as parameters.
+// handleLuaBackend receives a contextTuple as a parameter.
 // It runs stopContext on the contextTuple and waits for `LuaMainWorkerEndChan` to end.
-// After that, it sets the context and cancel function of the contextTuple using the provided context parameter,
-// creating a new context that can be cancelled.
-// The function finally returns the modified contextTuple, with the new context bound to it.
-func handleLuaBackend(lua *contextTuple, ctx context.Context) *contextTuple {
+func handleLuaBackend(lua *contextTuple) {
 	stopContext(lua)
 
 	<-backend.LuaMainWorkerEndChan
-
-	lua.ctx, lua.cancel = context.WithCancel(ctx)
-
-	return lua
 }
 
 // stopAndRestartActionWorker is a function that stops the currently running action workers and restarts them.
@@ -445,24 +431,16 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 	}
 }
 
-// It takes two parameters, "lookup" of type *contextTuple and "auth" of type *contextTuple.
-// The "lookup" parameter stores the context for the LDAP lookup worker, while the "auth" parameter stores the context for the LDAP authentication worker.
+// It takes a parameter "store" of type *contextStore.
 // The function spawns goroutines for the LDAPMainWorker and LDAPAuthWorker functions from the backend package, passing the associated context to each worker.
-func startLDAPWorkers(lookup, auth *contextTuple) {
-	go backend.LDAPMainWorker(lookup.ctx)
-	go backend.LDAPAuthWorker(auth.ctx)
+func startLDAPWorkers(store *contextStore) {
+	go backend.LDAPMainWorker(store.ldapLookup.ctx)
+	go backend.LDAPAuthWorker(store.ldapAuth.ctx)
 }
 
-// startLDAPWorkers is a function that starts two separate goroutines to handle LDAP lookups and authentication.
-// It does so by invoking LDAPMainWorker and LDAPAuthWorker functions from the backend package.
-//
-// Parameters:
-// lookup: Pointer to a contextTuple containing a required context for the LDAP lookup worker.
-// auth: Pointer to a contextTuple containing a required context for the LDAP authentication worker.
-//
-// This function doesn't return anything as the LDAP worker methods are called as goroutines and do their work separately.
-func startLuaWorker(lua *contextTuple) {
-	go backend.LuaMainWorker(lua.ctx)
+// startLuaWorker starts a goroutine that runs the backend.LuaMainWorker function
+func startLuaWorker(store *contextStore) {
+	go backend.LuaMainWorker(store.lua.ctx)
 }
 
 // handleServerRestart handles the server restart process. It stops the server, waits for the HTTP server to stop,
@@ -511,9 +489,9 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
 		case global.BackendLDAP:
-			store.ldapLookup, store.ldapAuth = handleLDAPBackend(store.ldapLookup, store.ldapAuth, ctx)
+			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
 		case global.BackendLua:
-			store.lua = handleLuaBackend(store.lua, ctx)
+			handleLuaBackend(store.lua)
 		case global.BackendCache:
 		default:
 			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
@@ -544,9 +522,14 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
 		case global.BackendLDAP:
-			startLDAPWorkers(store.ldapLookup, store.ldapAuth)
+			store.ldapLookup = newContextTuple(ctx)
+			store.ldapAuth = newContextTuple(ctx)
+
+			startLDAPWorkers(store)
 		case global.BackendLua:
-			startLuaWorker(store.lua)
+			store.lua = newContextTuple(ctx)
+
+			startLuaWorker(store)
 		case global.BackendCache:
 		default:
 			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
@@ -619,7 +602,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 	store.ldapLookup = newContextTuple(ctx)
 	store.ldapAuth = newContextTuple(ctx)
 
-	startLDAPWorkers(store.ldapLookup, store.ldapAuth)
+	startLDAPWorkers(store)
 }
 
 // setupLuaWorker initializes a Lua worker with the help of channels.
@@ -633,7 +616,7 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 
 	store.lua = newContextTuple(ctx)
 
-	startLuaWorker(store.lua)
+	startLuaWorker(store)
 }
 
 // setupRedis initializes the Redis clients for the main and replica instances.
