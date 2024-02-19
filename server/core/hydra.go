@@ -464,7 +464,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -872,7 +872,7 @@ func (a *ApiConfig) handleLoginSkip() {
 		return
 	}
 
-	acceptLoginRequest := a.apiClient.OAuth2Api.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
+	acceptLoginRequest := a.apiClient.OAuth2API.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
 		openapi.AcceptOAuth2LoginRequest{
 			Subject: a.loginRequest.GetSubject(),
 			Context: claims,
@@ -1104,7 +1104,7 @@ func loginGETHandler(ctx *gin.Context) {
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
-	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
+	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -1404,7 +1404,7 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 	var acceptRequest *openapi.OAuth2RedirectTo
 
 	rememberFor := int64(viper.GetInt("login_remember_for"))
-	acceptLoginRequest := a.apiClient.OAuth2Api.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
+	acceptLoginRequest := a.apiClient.OAuth2API.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
 		openapi.AcceptOAuth2LoginRequest{
 			Context:     claims,
 			Subject:     subject,
@@ -1487,7 +1487,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
 		util.DebugModule(
 			global.DbgHydra,
 			global.LogKeyGUID, a.guid,
@@ -1636,7 +1636,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
+	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -1714,7 +1714,7 @@ func deviceGETHandler(ctx *gin.Context) {
 	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
-	loginRequest, httpResponse, err = apiClient.OAuth2Api.GetOAuth2LoginRequest(ctx).LoginChallenge(
+	loginRequest, httpResponse, err = apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		loginChallenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -2095,7 +2095,7 @@ func (a *ApiConfig) redirectWithConsent() {
 		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext)
 	}
 
-	acceptConsentRequest := a.apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
+	acceptConsentRequest := a.apiClient.OAuth2API.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
 		openapi.AcceptOAuth2ConsentRequest{
 			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
 			GrantScope:               acceptedScopes,
@@ -2174,7 +2174,7 @@ func consentGETHandler(ctx *gin.Context) {
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
-	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
+	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -2292,7 +2292,7 @@ func (a *ApiConfig) processConsentAccept() {
 		remember = true
 	}
 
-	acceptConsentRequest := a.apiClient.OAuth2Api.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
+	acceptConsentRequest := a.apiClient.OAuth2API.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
 		openapi.AcceptOAuth2ConsentRequest{
 			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
 			GrantScope:               acceptedScopes,
@@ -2341,7 +2341,7 @@ func (a *ApiConfig) processConsentReject() {
 	errorDescription := "Access denied by user"
 	statusCode := int64(http.StatusForbidden)
 
-	rejectConsentRequest := a.apiClient.OAuth2Api.RejectOAuth2ConsentRequest(a.ctx).RejectOAuth2Request(
+	rejectConsentRequest := a.apiClient.OAuth2API.RejectOAuth2ConsentRequest(a.ctx).RejectOAuth2Request(
 		openapi.RejectOAuth2Request{
 			ErrorDescription: &errorDescription,
 			ErrorHint:        nil,
@@ -2415,7 +2415,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.challenge = consentChallenge
 
-	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
+	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -2522,7 +2522,7 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
-	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
+	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		logoutChallenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)
@@ -2587,7 +2587,7 @@ func (a *ApiConfig) acceptLogout() {
 		httpResponse  *http.Response
 	)
 
-	acceptLogoutRequest := a.apiClient.OAuth2Api.AcceptOAuth2LogoutRequest(a.ctx)
+	acceptLogoutRequest := a.apiClient.OAuth2API.AcceptOAuth2LogoutRequest(a.ctx)
 
 	acceptRequest, httpResponse, err = acceptLogoutRequest.LogoutChallenge(a.challenge).Execute()
 	if err != nil {
@@ -2601,11 +2601,11 @@ func (a *ApiConfig) acceptLogout() {
 	a.logInfoLogoutAccept(acceptRequest.GetRedirectTo())
 }
 
-// rejectLogout rejects the logout request by sending a request to the OAuth2Api endpoint of the API client.
+// rejectLogout rejects the logout request by sending a request to the OAuth2API endpoint of the API client.
 // If the request is successful, it redirects the user to the specified homepage or aborts the request with a status of 200 OK.
 // If the request encounters an error, it handles the error and returns.
 func (a *ApiConfig) rejectLogout() {
-	rejectLogoutRequest := a.apiClient.OAuth2Api.RejectOAuth2LogoutRequest(a.ctx)
+	rejectLogoutRequest := a.apiClient.OAuth2API.RejectOAuth2LogoutRequest(a.ctx)
 
 	httpResponse, err := rejectLogoutRequest.LogoutChallenge(a.challenge).Execute()
 	if err != nil {
@@ -2669,7 +2669,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.challenge = logoutChallenge
 
-	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2Api.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
+	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
 		handleHydraErr(ctx, err, httpResponse)

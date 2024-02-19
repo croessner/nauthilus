@@ -136,86 +136,13 @@ func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 
 // Request represents a request data structure with all the necessary information about a connection and SSL usage.
 type Request struct {
-	// Debug is a flag indicating whether debug mode is on.
-	Debug bool
-
-	// Session is a GUID representing a unique session identifier.
-	Session string
-
-	// ClientIP is the IP address of the client making the request.
-	ClientIP string
-
-	// ClientPort is the network port being used by the client.
-	ClientPort string
-
-	// Username refers to the username used for authentication purposes.
-	Username string
-
-	// Password is associated with the username for authentication.
-	Password string
-
-	// Protocol represents the communication protocol used for the request.
-	Protocol string
-
-	// ClientID is a unique identifier for the client.
-	ClientID string
-
-	// LocalIP is the local IP address.
-	LocalIP string
-
-	// LocalPort is the local network port.
-	LocalPort string
-
-	// UserAgent is the user agent used by the client making the request.
-	UserAgent string
-
-	// XSSL contains SSL information.
-	XSSL string
-
-	// XSSLSessionID is the SSL session identifier.
-	XSSLSessionID string
-
-	// XSSLClientVerify indicates whether SSL client is verified.
-	XSSLClientVerify string
-
-	// XSSLClientDN is the client's Distinguished Name in the SSL certificate.
-	XSSLClientDN string
-
-	// XSSLClientCN is the client's Common Name in the SSL certificate.
-	XSSLClientCN string
-
-	// XSSLIssuer is the issuer of the SSL certificate.
-	XSSLIssuer string
-
-	// XSSLClientNotBefore is the date before which the SSL certificate is not valid.
-	XSSLClientNotBefore string
-
-	// XSSLClientNotAfter is the date after which the SSL certificate is not valid.
-	XSSLClientNotAfter string
-
-	// XSSLSubjectDN is the Subject's Distinguished Name in the SSL certificate.
-	XSSLSubjectDN string
-
-	// XSSLIssuerDN is the Issuer's Distinguished Name in the SSL certificate.
-	XSSLIssuerDN string
-
-	// XSSLClientSubjectDN is the client's Subject Distinguished Name in the SSL certificate.
-	XSSLClientSubjectDN string
-
-	// XSSLClientIssuerDN is the client's Issuer Distinguished Name in the SSL certificate.
-	XSSLClientIssuerDN string
-
-	// XSSLProtocol is the SSL protocol used.
-	XSSLProtocol string
-
-	// XSSLCipher is the encryption cipher used in the SSL protocol.
-	XSSLCipher string
-
 	// Logs holds the custom log key-value pairs.
 	Logs *lualib.CustomLogKeyValue
 
 	// Context contains additional context data.
 	*lualib.Context
+
+	*lualib.CommonRequest
 }
 
 // CallFeatureLua executes Lua scripts for a given request context.
@@ -289,51 +216,17 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
 	return globals
 }
 
 // setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
-// Each property is set using the RawSet or RawSetString method of the request table. The property name is the first argument and the property value is the second argument.
-// The global constants defined in the global package are used as the property names.
 // The request table is then returned.
-// Usage example:
-//
-//	func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
-//	    ...
-//	    request := r.setRequest(L)
-//	    ...
-//	}
-//	Where L is an instance of Lua state
-//	The values of the request properties like r.Debug, r.Session, etc. are fetched from the r instance of Request
 func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))
-	request.RawSetString(global.LuaRequestSession, lua.LString(r.Session))
-	request.RawSetString(global.LuaRequestClientIP, lua.LString(r.ClientIP))
-	request.RawSetString(global.LuaRequestClientPort, lua.LString(r.ClientPort))
-	request.RawSetString(global.LuaRequestUsername, lua.LString(r.Username))
-	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
-	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
-	request.RawSetString(global.LuaRequestClientID, lua.LString(r.ClientID))
-	request.RawSetString(global.LuaRequestLocalIP, lua.LString(r.LocalIP))
-	request.RawSetString(global.LuaRequestLocalPort, lua.LString(r.LocalPort))
-	request.RawSetString(global.LuaRequestUserAgent, lua.LString(r.UserAgent))
-	request.RawSetString(global.LuaRequestXSSL, lua.LString(r.XSSL))
-	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(r.XSSLSessionID))
-	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(r.XSSLClientVerify))
-	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(r.XSSLClientDN))
-	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(r.XSSLClientCN))
-	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(r.XSSLIssuer))
-	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(r.XSSLClientNotBefore))
-	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(r.XSSLClientNotAfter))
-	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(r.XSSLSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(r.XSSLIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(r.XSSLClientSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(r.XSSLClientIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(r.XSSLProtocol))
-	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(r.XSSLCipher))
+	r.CommonRequest.SetupRequest(request)
 
 	return request
 }

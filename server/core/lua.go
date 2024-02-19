@@ -4,6 +4,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -23,37 +24,52 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		NoAuth:              auth.NoAuth,
-		Function:            global.LuaCommandPassDB,
-		Session:             auth.GUID,
-		Username:            auth.Username,
-		Password:            auth.Password,
-		ClientIP:            auth.ClientIP,
-		ClientPort:          auth.XClientPort,
-		ClientHost:          auth.ClientHost,
-		LocalIP:             auth.XLocalIP,
-		LocalPprt:           auth.XPort,
-		ClientID:            auth.XClientID,
-		XSSL:                auth.XSSL,
-		XSSLSessionID:       auth.XSSLSessionID,
-		XSSLClientVerify:    auth.XSSLClientVerify,
-		XSSLClientDN:        auth.XSSLClientDN,
-		XSSLClientCN:        auth.XSSLClientCN,
-		XSSLIssuer:          auth.XSSLIssuer,
-		XSSLClientNotBefore: auth.XSSLClientNotBefore,
-		XSSLClientNotAfter:  auth.XSSLClientNotAfter,
-		XSSLSubjectDN:       auth.XSSLSubjectDN,
-		XSSLIssuerDN:        auth.XSSLIssuerDN,
-		XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
-		XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
-		XSSLProtocol:        auth.XSSLProtocol,
-		XSSLCipher:          auth.XSSLCipher,
-		UserAgent:           *auth.UserAgent,
-		Service:             auth.Service,
-		Protocol:            auth.Protocol,
-		Context:             auth.Context,
-		LuaReplyChan:        luaReplyChan,
+		Function:     global.LuaCommandPassDB,
+		Service:      auth.Service,
+		Protocol:     auth.Protocol,
+		Context:      auth.Context,
+		LuaReplyChan: luaReplyChan,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Repeating:           false, // unavailable
+			UserFound:           false, // set by backend_result
+			Authenticated:       false, // set by backend_result
+			NoAuth:              auth.NoAuth,
+			BruteForceCounter:   0, // unavailable
+			Service:             auth.Service,
+			Session:             *auth.GUID,
+			ClientIP:            auth.ClientIP,
+			ClientPort:          auth.XClientPort,
+			ClientNet:           "", // unavailable
+			ClientHost:          auth.ClientHost,
+			ClientID:            auth.XClientID,
+			UserAgent:           *auth.UserAgent,
+			LocalIP:             auth.XLocalIP,
+			LocalPort:           auth.XPort,
+			Username:            auth.Username,
+			Account:             "", // set by backend_result
+			UniqueUserID:        "", // set by backend_result
+			DisplayName:         "", // set by backend_result
+			Password:            auth.Password,
+			Protocol:            auth.Protocol.Get(),
+			BruteForceName:      "", // unavailable
+			FeatureName:         "", // unavailable
+			StatusMessage:       &auth.StatusMessage,
+			XSSL:                auth.XSSL,
+			XSSLSessionID:       auth.XSSLSessionID,
+			XSSLClientVerify:    auth.XSSLClientVerify,
+			XSSLClientDN:        auth.XSSLClientDN,
+			XSSLClientCN:        auth.XSSLClientCN,
+			XSSLIssuer:          auth.XSSLIssuer,
+			XSSLClientNotBefore: auth.XSSLClientNotBefore,
+			XSSLClientNotAfter:  auth.XSSLClientNotAfter,
+			XSSLSubjectDN:       auth.XSSLSubjectDN,
+			XSSLIssuerDN:        auth.XSSLIssuerDN,
+			XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
+			XSSLProtocol:        auth.XSSLProtocol,
+			XSSLCipher:          auth.XSSLCipher,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest
@@ -68,6 +84,10 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		err = luaBackendResult.Err
 
 		return
+	}
+
+	if statusMessage := luaRequest.StatusMessage; *statusMessage != auth.StatusMessage {
+		auth.StatusMessage = *statusMessage
 	}
 
 	accountField := luaBackendResult.AccountField
@@ -125,15 +145,18 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		Session:      auth.GUID,
-		ClientIP:     auth.ClientIP,
-		ClientPort:   auth.XClientPort,
-		LocalIP:      auth.XLocalIP,
-		LocalPprt:    auth.XPort,
+		Function:     global.LuaCommandListAccounts,
 		Protocol:     auth.Protocol,
 		LuaReplyChan: luaReplyChan,
-		Function:     global.LuaCommandListAccounts,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Service:    auth.Service,
+			Session:    *auth.GUID,
+			ClientIP:   auth.ClientIP,
+			ClientPort: auth.XClientPort,
+			LocalIP:    auth.XLocalIP,
+			LocalPort:  auth.XPort,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest
@@ -173,17 +196,20 @@ func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Debug:        config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		Session:      auth.GUID,
-		Username:     auth.Username,
-		ClientIP:     auth.ClientIP,
-		ClientPort:   auth.XClientPort,
-		LocalIP:      auth.XLocalIP,
-		LocalPprt:    auth.XPort,
+		Function:     global.LuaCommandAddMFAValue,
 		Protocol:     auth.Protocol,
 		TOTPSecret:   totp.getValue(),
 		LuaReplyChan: luaReplyChan,
-		Function:     global.LuaCommandAddMFAValue,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Service:    auth.Service,
+			Session:    *auth.GUID,
+			Username:   auth.Username,
+			ClientIP:   auth.ClientIP,
+			ClientPort: auth.XClientPort,
+			LocalIP:    auth.XLocalIP,
+			LocalPort:  auth.XPort,
+		},
 	}
 
 	backend.LuaRequestChan <- luaRequest

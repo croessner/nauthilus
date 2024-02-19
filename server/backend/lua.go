@@ -31,89 +31,11 @@ var LuaPool = NewLuaBackendResultStatePool()
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
 type LuaRequest struct {
-	// Debug is a flag that is set, if the server is running in debug mode.
-	Debug bool
-
-	// NoAuth is a flag that when set as true, implies that the request does not require authentication.
-	NoAuth bool
-
 	// Function is the Lua command that will be executed.
 	Function global.LuaCommand
 
-	// Session is a pointer to a unique session ID for the current request.
-	Session *string
-
-	// Username is the username used for authentication.
-	Username string
-
-	// Password is the respective password for the user.
-	Password string
-
-	// ClientIP is the IP address of the client making the request.
-	ClientIP string
-
-	// ClientPort is the network port of the client making the request.
-	ClientPort string
-
-	// ClientHost is the hostname of the client making the request.
-	ClientHost string
-
-	// LocalIP is the IP address of the server handling the request.
-	LocalIP string
-
-	// LocalPprt is the network port of the server receiving the request.
-	LocalPprt string
-
-	// ClientID is the unique identifier for the client making the request.
-	ClientID string
-
 	// TOTPSecret is the secret value used in time-based one-time password (TOTP) authentication.
 	TOTPSecret string
-
-	// XSSL holds the SSL certificate of the XSSL server.
-	XSSL string
-
-	// XSSLSessionID is the unique identifier for the XSSL session.
-	XSSLSessionID string
-
-	// XSSLClientVerify verifies the client under XSSL session.
-	XSSLClientVerify string
-
-	// XSSLClientDN is the client's DN under XSSL.
-	XSSLClientDN string
-
-	// XSSLClientCN is the Client CN under XSSL.
-	XSSLClientCN string
-
-	// XSSLIssuer is the issuer of XSSL.
-	XSSLIssuer string
-
-	// XSSLClientNotBefore is the starting time before which the certificate is not valid.
-	XSSLClientNotBefore string
-
-	// XSSLClientNotAfter is the time after which the certificate is not valid.
-	XSSLClientNotAfter string
-
-	// XSSLSubjectDN denotes XSSL subject's distinguished name.
-	XSSLSubjectDN string
-
-	// XSSLIssuerDN denotes XSSL issuer's distinguished name.
-	XSSLIssuerDN string
-
-	// XSSLClientSubjectDN is the Client Subject DN under XSSL.
-	XSSLClientSubjectDN string
-
-	// XSSLClientIssuerDN is the Client Issuer DN under XSSL.
-	XSSLClientIssuerDN string
-
-	// XSSLProtocol is the protocol used under XSSL.
-	XSSLProtocol string
-
-	// XSSLCipher is the cipher used under XSSL.
-	XSSLCipher string
-
-	// UserAgent is a string representing the user agent making the request.
-	UserAgent string
 
 	// Service is the specific service requested by the client.
 	Service string
@@ -126,6 +48,8 @@ type LuaRequest struct {
 
 	// Context provides context for the Lua command request.
 	*lualib.Context
+
+	*lualib.CommonRequest
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *LuaBackendResult
@@ -466,6 +390,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
@@ -488,47 +413,21 @@ func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCo
 		luaCommand = global.LuaFnBackendVerifyPassword
 		nret = 2
 
-		request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(luaRequest.NoAuth))
-
-		request.RawSetString(global.LuaRequestUsername, lua.LString(luaRequest.Username))
-		request.RawSetString(global.LuaRequestPassword, lua.LString(luaRequest.Password))
-		request.RawSetString(global.LuaRequestClientIP, lua.LString(luaRequest.ClientIP))
-		request.RawSetString(global.LuaRequestClientPort, lua.LString(luaRequest.ClientPort))
-		request.RawSetString(global.LuaRequestClientHost, lua.LString(luaRequest.ClientHost))
-		request.RawSetString(global.LuaRequestClientID, lua.LString(luaRequest.ClientID))
-		request.RawSetString(global.LuaRequestLocalIP, lua.LString(luaRequest.LocalIP))
-		request.RawSetString(global.LuaRequestLocalPort, lua.LString(luaRequest.LocalPprt))
-		request.RawSetString(global.LuaRequestUserAgent, lua.LString(luaRequest.UserAgent))
-		request.RawSetString(global.LuaRequestService, lua.LString(luaRequest.Service))
-		request.RawSetString(global.LuaRequestProtocol, lua.LString(luaRequest.Protocol.String()))
-		request.RawSetString(global.LuaRequestXSSL, lua.LString(luaRequest.XSSL))
-		request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(luaRequest.XSSLSessionID))
-		request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(luaRequest.XSSLClientVerify))
-		request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(luaRequest.XSSLClientDN))
-		request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(luaRequest.XSSLClientCN))
-		request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(luaRequest.XSSLIssuer))
-		request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(luaRequest.XSSLClientNotBefore))
-		request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(luaRequest.XSSLClientNotAfter))
-		request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(luaRequest.XSSLSubjectDN))
-		request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(luaRequest.XSSLIssuerDN))
-		request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(luaRequest.XSSLClientSubjectDN))
-		request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(luaRequest.XSSLClientIssuerDN))
-		request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(luaRequest.XSSLProtocol))
-		request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(luaRequest.XSSLCipher))
-
+		luaRequest.SetupRequest(request)
 	case global.LuaCommandListAccounts:
 		luaCommand = global.LuaFnBackendListAccounts
 		nret = 2
 
+		request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+		request.RawSetString(global.LuaRequestSession, lua.LString(luaRequest.Session))
 	case global.LuaCommandAddMFAValue:
 		luaCommand = global.LuaFnBackendAddTOTPSecret
 		nret = 1
 
 		request.RawSetString(global.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
+		request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+		request.RawSetString(global.LuaRequestSession, lua.LString(luaRequest.Session))
 	}
-
-	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-	request.RawSetString(global.LuaRequestSession, lua.LString(*luaRequest.Session))
 
 	return luaCommand, nret
 }

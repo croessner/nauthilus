@@ -43,15 +43,15 @@ type contextTuple struct {
 }
 
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
-// The structure contains the following fields: ldapLookup, ldapAuth, lua, sql, action and nginx.
+// The structure contains the following fields: ldapLookup, ldapAuth, lua, action, nginx and server.
 // Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
 type contextStore struct {
 	ldapLookup *contextTuple
 	ldapAuth   *contextTuple
 	lua        *contextTuple
-	sql        *contextTuple
 	action     *contextTuple
 	nginx      *contextTuple
+	server     *contextTuple
 }
 
 // newContextStore creates a new instance of a contextStore.
@@ -97,26 +97,19 @@ func newContextTuple(ctx context.Context) *contextTuple {
 //		// handle error
 //	}
 func setupEnvironment() (err error) {
-	config.EnvConfig, err = config.NewConfig()
-	if err != nil {
-		return fmt.Errorf("unable to load EnvConfig: %w", err)
-	}
+	config.EnvConfig = config.NewConfig()
 
 	loadLanguageBundles()
-
-	logging.SetupLogging(config.EnvConfig.Verbosity.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
-	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
 
 	setTimeZone()
 
 	config.LoadableConfig, err = config.NewConfigFile()
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
-			global.LogKeyWarning, err,
-		)
-
-		return fmt.Errorf("unable to load ConfigFile: %w", err)
+		return fmt.Errorf("unable to load config file: %w", err)
 	}
+
+	logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
+	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
 
 	return nil
 }
@@ -172,11 +165,11 @@ func setTimeZone() {
 	}
 }
 
-// setupFeatures prepares the feature and filter for compilation and performs error checking.
+// setupFeaturesAndFilters prepares the feature and filter for compilation and performs error checking.
 // It sequentially runs the PreCompileFeatures and PreCompileFilters methods.
-// If those methods return an error, the setupFeatures method will propagated that error up the stack.
+// If those methods return an error, the setupFeaturesAndFilters method will propagated that error up the stack.
 // If the pre-compilation is successful, it will return nil.
-func setupFeatures() error {
+func setupFeaturesAndFilters() error {
 	if err := PreCompileFeatures(); err != nil {
 		return err
 	}
@@ -193,7 +186,7 @@ func setupFeatures() error {
 // If the application is configured with the Lua features, it attempts to pre-compile the Lua features.
 // If pre-compilation of the Lua features encounters any errors, it returns the error. Otherwise, it returns nil.
 func PreCompileFeatures() error {
-	if !config.EnvConfig.HasFeature(global.FeatureLua) {
+	if !config.LoadableConfig.HasFeature(global.FeatureLua) {
 		return nil
 	}
 
@@ -232,6 +225,7 @@ func PreCompileFilters() error {
 // - actionWorkers : A slice of action.Worker pointers. All workers are stopped on termination signal and restarted on reload signal.
 func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
 	go handleTerminateSignal(cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
+	go handleUsr1Signal(ctx, store)
 	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
 
@@ -262,7 +256,7 @@ func closeChannels() {
 // It logs the shutdown message along with the received signal.
 // It cancels the context to stop ongoing operations.
 // It waits for the HTTP server to terminate.
-// It handles the backend for each passDB in the configuration.
+// It handles the backend for each backendType in the configuration.
 // It waits for all action workers to complete their work.
 // It syncs some Prometheus data to Redis.
 // It logs the shutdown complete message.
@@ -285,8 +279,8 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		handleBackend(passDB)
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		handleBackend(backendType)
 	}
 
 	waitForActionWorkers(actionWorkers)
@@ -301,6 +295,27 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	statsTicker.Stop()
 	ngxMonitoringTicker.Stop()
+}
+
+// handleUsr1Signal listens for the SIGUSR1 signal and handles server restart.
+//
+// It creates a channel to receive the SIGUSR1 signal and registers it with the signal package.
+// It then enters a loop to select between receiving signals and checking if the context is done.
+// If the context is done, it returns and stops handling signals.
+// If a SIGUSR1 signal is received, it calls the handleServerRestart function with the context, store, and signal as arguments.
+func handleUsr1Signal(ctx context.Context, store *contextStore) {
+	sigsReload := make(chan os.Signal, 1)
+
+	signal.Notify(sigsReload, syscall.SIGUSR1)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig := <-sigsReload:
+			handleServerRestart(ctx, store, sig)
+		}
+	}
 }
 
 // handleReloadSignal is a function that listens for a SIGHUP (hangup signal) from the operating system.
@@ -333,7 +348,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 // Currently, supported backends are LDAP, MySQL, PostgreSQL, Lua, and Cache.
 // For each backend, the function executes its specific clean-up process.
 // It will log a warning if an unrecognized backend is given.
-func handleBackend(passDB *config.PassDB) {
+func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
 	case global.BackendLDAP:
 		<-backend.LDAPEndChan
@@ -355,11 +370,9 @@ func handleBackend(passDB *config.PassDB) {
 }
 
 // handleLDAPBackend is a function to handle LDAP backend operations.
-// It takes three arguments - lookup and auth contextTuple pointers, and a context.
+// It takes two arguments - lookup and auth contextTuple pointers.
 // The function stops the contexts of the 'lookup' and 'auth' and waits for the backend LDAP operations to finish.
-// New cancelable contexts from the provided 'ctx' are assigned to the 'lookup' and 'auth'.
-// These updated contextTuple pointers are then returned.
-func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contextTuple, *contextTuple) {
+func handleLDAPBackend(lookup, auth *contextTuple) {
 	stopContext(lookup)
 
 	<-backend.LDAPEndChan
@@ -367,26 +380,14 @@ func handleLDAPBackend(lookup, auth *contextTuple, ctx context.Context) (*contex
 	stopContext(auth)
 
 	<-backend.LDAPAuthEndChan
-
-	lookup.ctx, lookup.cancel = context.WithCancel(ctx)
-	auth.ctx, auth.cancel = context.WithCancel(ctx)
-
-	return lookup, auth
 }
 
-// handleLuaBackend receives a contextTuple and a context as parameters.
+// handleLuaBackend receives a contextTuple as a parameter.
 // It runs stopContext on the contextTuple and waits for `LuaMainWorkerEndChan` to end.
-// After that, it sets the context and cancel function of the contextTuple using the provided context parameter,
-// creating a new context that can be cancelled.
-// The function finally returns the modified contextTuple, with the new context bound to it.
-func handleLuaBackend(lua *contextTuple, ctx context.Context) *contextTuple {
+func handleLuaBackend(lua *contextTuple) {
 	stopContext(lua)
 
 	<-backend.LuaMainWorkerEndChan
-
-	lua.ctx, lua.cancel = context.WithCancel(ctx)
-
-	return lua
 }
 
 // stopAndRestartActionWorker is a function that stops the currently running action workers and restarts them.
@@ -430,28 +431,34 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 	}
 }
 
-// It takes two parameters, "lookup" of type *contextTuple and "auth" of type *contextTuple.
-// The "lookup" parameter stores the context for the LDAP lookup worker, while the "auth" parameter stores the context for the LDAP authentication worker.
+// It takes a parameter "store" of type *contextStore.
 // The function spawns goroutines for the LDAPMainWorker and LDAPAuthWorker functions from the backend package, passing the associated context to each worker.
-func startLDAPWorkers(lookup, auth *contextTuple) {
-	go backend.LDAPMainWorker(lookup.ctx)
-	go backend.LDAPAuthWorker(auth.ctx)
+func startLDAPWorkers(store *contextStore) {
+	go backend.LDAPMainWorker(store.ldapLookup.ctx)
+	go backend.LDAPAuthWorker(store.ldapAuth.ctx)
 }
 
-// startLDAPWorkers is a function that starts two separate goroutines to handle LDAP lookups and authentication.
-// It does so by invoking LDAPMainWorker and LDAPAuthWorker functions from the backend package.
-//
-// Parameters:
-// lookup: Pointer to a contextTuple containing a required context for the LDAP lookup worker.
-// auth: Pointer to a contextTuple containing a required context for the LDAP authentication worker.
-//
-// This function doesn't return anything as the LDAP worker methods are called as goroutines and do their work separately.
-func startLuaWorker(lua *contextTuple) {
-	go backend.LuaMainWorker(lua.ctx)
+// startLuaWorker starts a goroutine that runs the backend.LuaMainWorker function
+func startLuaWorker(store *contextStore) {
+	go backend.LuaMainWorker(store.lua.ctx)
+}
+
+// handleServerRestart handles the server restart process. It stops the server, waits for the HTTP server to stop,
+// and then starts the HTTP server again with the given context and contextStore.
+func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal) {
+	level.Info(logging.DefaultLogger).Log(
+		global.LogKeyMsg, "Restarting Nauthilus", "signal", sig,
+	)
+
+	stopContext(store.server)
+
+	<-core.HTTPEndChan
+
+	startHTTPServer(ctx, store)
 }
 
 // handleReload is a function that handles the reloading of Nauthilus based on a received operating signal.
-// The function works with various backends (LDAP, MySQL, Postgres, Lua, or Cache), and based on the specific
+// The function works with various backends (LDAP, Lua, or Cache), and based on the specific
 // backend, it will reload the related services. The function manages the necessary workers, stopping
 // and restarting them as appropriate.
 //
@@ -479,12 +486,12 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
-			store.ldapLookup, store.ldapAuth = handleLDAPBackend(store.ldapLookup, store.ldapAuth, ctx)
+			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
 		case global.BackendLua:
-			store.lua = handleLuaBackend(store.lua, ctx)
+			handleLuaBackend(store.lua)
 		case global.BackendCache:
 		default:
 			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
@@ -497,21 +504,32 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		level.Error(logging.DefaultErrLogger).Log(
 			global.LogKeyError, err,
 		)
+	} else {
+		logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
+
+		postEnvironmentDebug()
 	}
 
-	if err := setupFeatures(); err != nil {
+	if err := setupFeaturesAndFilters(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
 			global.LogKeyMsg, "Unable to setup the features",
 			global.LogKeyError, err,
 		)
 	}
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	enableBlockProfile()
+
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
-			startLDAPWorkers(store.ldapLookup, store.ldapAuth)
+			store.ldapLookup = newContextTuple(ctx)
+			store.ldapAuth = newContextTuple(ctx)
+
+			startLDAPWorkers(store)
 		case global.BackendLua:
-			startLuaWorker(store.lua)
+			store.lua = newContextTuple(ctx)
+
+			startLuaWorker(store)
 		case global.BackendCache:
 		default:
 			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
@@ -542,15 +560,15 @@ func initializeActionWorkers() []*action.Worker {
 // setupWorkers sets up the action workers based on the configuration and starts them in separate goroutines.
 // It takes a context, a store, and a slice of action workers as parameters.
 // It starts the action workers by calling the `startActionWorker` function with the appropriate parameters.
-// Then, for each passDB in the `config.EnvConfig.PassDBs` slice, it performs the necessary setup based on the passDB type.
+// Then, for each backendType in the `config.LoadableConfig.Server.Backends` slice, it performs the necessary setup based on the backend type.
 // The setup depends on the passDB's backend type and calls corresponding setup functions, such as `setupLDAPWorker`, `setupSQLWorker`, or `setupLuaWorker`.
 // If the passDB's backend is `global.BackendCache`, no setup is performed.
 // If the passDB's backend is unknown, a warning log is generated for an unknown backend.
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			setupLDAPWorker(store, ctx)
 		case global.BackendLua:
@@ -584,7 +602,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 	store.ldapLookup = newContextTuple(ctx)
 	store.ldapAuth = newContextTuple(ctx)
 
-	startLDAPWorkers(store.ldapLookup, store.ldapAuth)
+	startLDAPWorkers(store)
 }
 
 // setupLuaWorker initializes a Lua worker with the help of channels.
@@ -598,7 +616,7 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 
 	store.lua = newContextTuple(ctx)
 
-	startLuaWorker(store.lua)
+	startLuaWorker(store)
 }
 
 // setupRedis initializes the Redis clients for the main and replica instances.
@@ -623,15 +641,19 @@ func setupRedis() {
 // After starting the HTTP server it logs the message "Starting Nauthilus HTTP server" along with its version.
 // The server is started as a goroutine and runs asynchronously in the background.
 // Any signal sent to close the server is sent through the HTTPEndChan channel of type Done.
-func startHTTPServer(ctx context.Context) {
+func startHTTPServer(ctx context.Context, store *contextStore) {
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
 	)
 
-	core.HTTPEndChan = make(chan core.Done)
+	store.server = newContextTuple(ctx)
 
-	go core.HTTPApp(ctx)
+	if core.HTTPEndChan == nil {
+		core.HTTPEndChan = make(chan core.Done)
+	}
+
+	go core.HTTPApp(store.server.ctx)
 }
 
 // logLuaStatePoolDebug logs the statistics of different Lua state pools.
@@ -801,7 +823,7 @@ func loopNgxBackendServers(servers []*config.NginxBackendServer) {
 // If there are no backend servers or the feature is not enabled, it returns an error.
 // It returns a list with Nginx backend servers or an error.
 func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
-	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		return nil, errors2.ErrFeatureNgxDisables
 	}
 
@@ -823,12 +845,7 @@ func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
 // store is a store for context objects that can hold the specific context for Nginx monitoring.
 // ngxMonitoringTicker is a ticker that triggers the Nginx monitoring at regular intervals.
 func runNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoringTicker *time.Ticker) {
-	ngxCtx, ngxCancel := context.WithCancel(ctx)
-
-	store.nginx = &contextTuple{
-		ctx:    ngxCtx,
-		cancel: ngxCancel,
-	}
+	store.nginx = newContextTuple(ctx)
 
 	if err := startNginxMonitoring(store, ngxMonitoringTicker); err != nil {
 		handleNgxMonitoringError(err)
@@ -872,7 +889,7 @@ func startNginxMonitoring(store *contextStore, ticker *time.Ticker) error {
 // not enabled, it logs an informational message. If there are no
 // configured backend servers for Nginx monitoring, it logs an error message.
 func handleNgxMonitoringError(err error) {
-	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		if errors.Is(err, errors2.ErrFeatureNgxDisables) {
 			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Nginx monitoring feature is not enabled")
 		}
@@ -900,8 +917,40 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitorin
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
 func enableBlockProfile() {
-	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug {
+	if config.LoadableConfig.GetServerInsightsEnableBlockProfile() {
 		runtime.SetBlockProfileRate(1)
+	} else {
+		runtime.SetBlockProfileRate(-1)
+	}
+}
+
+func postEnvironmentDebug() {
+	if config.LoadableConfig.RBLs != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
+	}
+
+	if config.LoadableConfig.ClearTextList != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
+	}
+
+	if config.LoadableConfig.RelayDomains != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
+	}
+
+	if config.LoadableConfig.NginxMonitoring != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.NginxMonitoring))
+	}
+
+	if config.LoadableConfig.BruteForce != nil {
+		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
+	}
+
+	if config.LoadableConfig.Oauth2 != nil {
+		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", config.LoadableConfig.Oauth2))
+	}
+
+	if config.LoadableConfig.LDAP != nil {
+		level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", config.LoadableConfig.LDAP.Config))
 	}
 }
 
@@ -922,7 +971,9 @@ func main() {
 		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
 	}
 
-	if err := setupFeatures(); err != nil {
+	postEnvironmentDebug()
+
+	if err := setupFeaturesAndFilters(); err != nil {
 		logStdLib.Fatalln("Unable to setup the features. Error:", err)
 	}
 
@@ -940,7 +991,7 @@ func main() {
 	handleSignals(ctx, cancel, store, statsTicker, &ngxMonitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
-	startHTTPServer(ctx)
+	startHTTPServer(ctx, store)
 
 	// Nginx monitoring feature
 	go runNgxMonitoring(ctx, store, ngxMonitoringTicker)

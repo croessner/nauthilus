@@ -13,6 +13,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -632,7 +633,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.EnvConfig.BruteForce {
+	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
@@ -731,8 +732,8 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 	)
 
 	if alreadyTriggered || ruleTriggered {
-		for _, passDB := range config.EnvConfig.PassDBs {
-			if passDB.Get() == global.BackendCache {
+		for _, backendType := range config.LoadableConfig.Server.Backends {
+			if backendType.Get() == global.BackendCache {
 				useCache = true
 
 				break
@@ -771,45 +772,50 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 			finished := make(chan action.Done)
 
 			action.RequestChan <- &action.Action{
-				LuaAction:           global.LuaActionBruteForce,
-				Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-				Repeating:           alreadyTriggered,
-				UserFound:           false, // unavailable
-				Authenticated:       false, // unavailable
-				NoAuth:              a.NoAuth,
-				BruteForceCounter:   a.BruteForceCounter[rules[index].Name],
-				Session:             *a.GUID,
-				ClientIP:            a.ClientIP,
-				ClientPort:          a.XClientPort,
-				ClientNet:           network.String(),
-				ClientHost:          a.ClientHost,
-				ClientID:            a.XClientID,
-				LocalIP:             a.XLocalIP,
-				LocalPort:           a.XPort,
-				Username:            a.Username,
-				Account:             "", // unavailable
-				UniqueUserID:        "", // unavailable
-				DisplayName:         "", // unavailable
-				Password:            a.Password,
-				Protocol:            a.Protocol.Get(),
-				BruteForceName:      rules[index].Name,
-				FeatureName:         "", // unavailable
-				XSSL:                a.XSSL,
-				XSSLSessionID:       a.XSSLSessionID,
-				XSSLClientVerify:    a.XSSLClientVerify,
-				XSSLClientDN:        a.XSSLClientDN,
-				XSSLClientCN:        a.XSSLClientCN,
-				XSSLIssuer:          a.XSSLIssuer,
-				XSSLClientNotBefore: a.XSSLClientNotBefore,
-				XSSLClientNotAfter:  a.XSSLClientNotAfter,
-				XSSLSubjectDN:       a.XSSLSubjectDN,
-				XSSLIssuerDN:        a.XSSLIssuerDN,
-				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-				XSSLProtocol:        a.XSSLProtocol,
-				XSSLCipher:          a.XSSLCipher,
-				Context:             a.Context,
-				FinishedChan:        finished,
+				LuaAction:    global.LuaActionBruteForce,
+				Context:      a.Context,
+				FinishedChan: finished,
+				CommonRequest: &lualib.CommonRequest{
+					Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+					Repeating:           alreadyTriggered,
+					UserFound:           false, // unavailable
+					Authenticated:       false, // unavailable
+					NoAuth:              a.NoAuth,
+					BruteForceCounter:   a.BruteForceCounter[rules[index].Name],
+					Service:             a.Service,
+					Session:             *a.GUID,
+					ClientIP:            a.ClientIP,
+					ClientPort:          a.XClientPort,
+					ClientNet:           network.String(),
+					ClientHost:          a.ClientHost,
+					ClientID:            a.XClientID,
+					LocalIP:             a.XLocalIP,
+					LocalPort:           a.XPort,
+					UserAgent:           *a.UserAgent,
+					Username:            a.Username,
+					Account:             "", // unavailable
+					UniqueUserID:        "", // unavailable
+					DisplayName:         "", // unavailable
+					Password:            a.Password,
+					Protocol:            a.Protocol.Get(),
+					BruteForceName:      rules[index].Name,
+					FeatureName:         "", // unavailable
+					StatusMessage:       &a.StatusMessage,
+					XSSL:                a.XSSL,
+					XSSLSessionID:       a.XSSLSessionID,
+					XSSLClientVerify:    a.XSSLClientVerify,
+					XSSLClientDN:        a.XSSLClientDN,
+					XSSLClientCN:        a.XSSLClientCN,
+					XSSLIssuer:          a.XSSLIssuer,
+					XSSLClientNotBefore: a.XSSLClientNotBefore,
+					XSSLClientNotAfter:  a.XSSLClientNotAfter,
+					XSSLSubjectDN:       a.XSSLSubjectDN,
+					XSSLIssuerDN:        a.XSSLIssuerDN,
+					XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+					XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+					XSSLProtocol:        a.XSSLProtocol,
+					XSSLCipher:          a.XSSLCipher,
+				},
 			}
 
 			<-finished
@@ -861,7 +867,7 @@ func (a *Authentication) updateBruteForceBucketsCounter() {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.EnvConfig.BruteForce {
+	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}

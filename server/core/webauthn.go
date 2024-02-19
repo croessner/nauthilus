@@ -50,8 +50,8 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 
 	// No cookie (default login page), search all configured databases.
 	if passDB == global.BackendUnknown {
-		for _, passDB := range config.EnvConfig.PassDBs {
-			switch passDB.Get() {
+		for _, backendType := range config.LoadableConfig.Server.Backends {
+			switch backendType.Get() {
 			case global.BackendCache:
 				credentialDBs = append(credentialDBs, nil)
 			case global.BackendLDAP:

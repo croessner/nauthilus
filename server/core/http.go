@@ -627,7 +627,11 @@ func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 func waitForShutdown(www *http.Server, ctx context.Context) {
 	<-ctx.Done()
 
-	www.Shutdown(ctx)
+	waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
+
+	defer cancel()
+
+	www.Shutdown(waitCtx)
 
 	HTTPEndChan <- Done{}
 
@@ -647,7 +651,7 @@ func HTTPApp(ctx context.Context) {
 	}
 
 	// Disable debugging
-	if !(config.EnvConfig.Verbosity.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
+	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -655,7 +659,7 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
-	if config.EnvConfig.Verbosity.Level() == global.LogLevelDebug {
+	if config.LoadableConfig.GetServerInsightsEnablePprof() {
 		pprof.Register(router)
 	}
 

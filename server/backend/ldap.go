@@ -952,9 +952,10 @@ func (l *LDAPConnection) exteranlBind(guid *string) error {
 		return err
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
+
 	return nil
 }
 
@@ -981,7 +982,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 		return err
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 
@@ -1319,6 +1320,8 @@ func LDAPMainWorker(ctx context.Context) {
 	// Start background cleaner process
 	go ldapPool.houseKeeper()
 
+	ldapPool.setIdleConnections(true)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1422,6 +1425,8 @@ func LDAPAuthWorker(ctx context.Context) {
 	// Start background cleaner process
 	go ldapPool.houseKeeper()
 
+	ldapPool.setIdleConnections(false)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1432,7 +1437,7 @@ func LDAPAuthWorker(ctx context.Context) {
 			return
 		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
-			if err := ldapPool.setIdleConnections(true); err != nil {
+			if err := ldapPool.setIdleConnections(false); err != nil {
 				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
 			}
 

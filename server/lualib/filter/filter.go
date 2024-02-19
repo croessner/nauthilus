@@ -181,99 +181,6 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 // setRequest creates a Lua table representing the request properties.
 // executeScriptWithinContext executes a Lua script within the context of the request.
 type Request struct {
-	// Debug is a flag that is set if running in debug more.
-	Debug bool
-
-	// UserFound indicates whether a user has been found on the system.
-	UserFound bool
-
-	// Authenticated indicates whether the user has authenticated.
-	Authenticated bool
-
-	// NoAuth indicates if any authentication method has no effect.
-	NoAuth bool
-
-	// Session is a GUID representing the user's session.
-	Session string
-
-	// ClientIP is the IP address of the client making the request.
-	ClientIP string
-
-	// ClientPort is the port being used by the client making the request.
-	ClientPort string
-
-	// ClientHost is the hostname of the client making the request.
-	ClientHost string
-
-	// ClientID is a unique ID representing the client making the request.
-	ClientID string
-
-	// LocalIP is the local IP address the request is made to.
-	LocalIP string
-
-	// LocalPort is the local port the request is made to.
-	LocalPort string
-
-	// Username is the username of the authenticated user.
-	Username string
-
-	// Account is the account name of the authenticated user.
-	Account string
-
-	// UniqueUserID is the unique user identifier of the authenticated user.
-	UniqueUserID string
-
-	// DisplayName is the display name of the authenticated user.
-	DisplayName string
-
-	// Password is the password of the authenticated user. Please ensure this is handled securely.
-	Password string
-
-	// Protocol is the protocol used by the client making the request.
-	Protocol string
-
-	// XSSL contains SSL information.
-	XSSL string
-
-	// XSSLSessionID is the SSL session identifier.
-	XSSLSessionID string
-
-	// XSSLClientVerify indicates whether SSL client is verified.
-	XSSLClientVerify string
-
-	// XSSLClientDN is the client's Distinguished Name in the SSL certificate.
-	XSSLClientDN string
-
-	// XSSLClientCN is the client's Common Name in the SSL certificate.
-	XSSLClientCN string
-
-	// XSSLIssuer is the issuer of the SSL certificate.
-	XSSLIssuer string
-
-	// XSSLClientNotBefore is the date before which the SSL certificate is not valid.
-	XSSLClientNotBefore string
-
-	// XSSLClientNotAfter is the date after which the SSL certificate is not valid.
-	XSSLClientNotAfter string
-
-	// XSSLSubjectDN is the Subject's Distinguished Name in the SSL certificate.
-	XSSLSubjectDN string
-
-	// XSSLIssuerDN is the Issuer's Distinguished Name in the SSL certificate.
-	XSSLIssuerDN string
-
-	// XSSLClientSubjectDN is the client's Subject Distinguished Name in the SSL certificate.
-	XSSLClientSubjectDN string
-
-	// XSSLClientIssuerDN is the client's Issuer Distinguished Name in the SSL certificate.
-	XSSLClientIssuerDN string
-
-	// XSSLProtocol is the SSL protocol used.
-	XSSLProtocol string
-
-	// XSSLCipher is the encryption cipher used in the SSL protocol.
-	XSSLCipher string
-
 	NginxBackendServers []map[string]int
 
 	UsedNginxBackendAddress *string
@@ -285,6 +192,8 @@ type Request struct {
 
 	// Context includes context data from the caller.
 	*lualib.Context
+
+	*lualib.CommonRequest
 }
 
 // getNgxBackendServers is a function that takes an array of maps (ngxBackendServer),
@@ -382,8 +291,9 @@ func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(r.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		globals.RawSetString(global.LuaFnGetNgxBackendServers, L.NewFunction(getNgxBackendServers(r.NginxBackendServers)))
 		globals.RawSetString(global.LuaFnSelectNginxBackend, L.NewFunction(selectNginxBackend(&r.UsedNginxBackendAddress, &r.UsedNginxBackendPort)))
 	}
@@ -395,43 +305,10 @@ func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 
 // setRequest constructs a new lua.LTable and assigns fields based on the supplied Request struct 'r'.
 // Upon completion, it returns the constructed lua.LTable.
-// Fields of lua.LTable correspond to different properties of Request like Debug, NoAuth, Authenticated, UserFound, Session,
-// ClientIP, ClientPort, ClientHost, ClientID, LocalIP, LocalPort, Username, Account, UniqueUserID, DisplayName, Password, and Protocol.
 func setRequest(r *Request, L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(r.Debug))
-	request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(r.NoAuth))
-	request.RawSet(lua.LString(global.LuaRequestAuthenticated), lua.LBool(r.Authenticated))
-	request.RawSet(lua.LString(global.LuaRequestUserFound), lua.LBool(r.UserFound))
-
-	request.RawSetString(global.LuaRequestSession, lua.LString(r.Session))
-	request.RawSetString(global.LuaRequestClientIP, lua.LString(r.ClientIP))
-	request.RawSetString(global.LuaRequestClientPort, lua.LString(r.ClientPort))
-	request.RawSetString(global.LuaRequestClientHost, lua.LString(r.ClientHost))
-	request.RawSetString(global.LuaRequestClientID, lua.LString(r.ClientID))
-	request.RawSetString(global.LuaRequestLocalIP, lua.LString(r.LocalIP))
-	request.RawSetString(global.LuaRequestLocalPort, lua.LString(r.LocalPort))
-	request.RawSetString(global.LuaRequestUsername, lua.LString(r.Username))
-	request.RawSetString(global.LuaRequestAccount, lua.LString(r.Account))
-	request.RawSetString(global.LuaRequestUniqueUserID, lua.LString(r.UniqueUserID))
-	request.RawSetString(global.LuaRequestDisplayName, lua.LString(r.DisplayName))
-	request.RawSetString(global.LuaRequestPassword, lua.LString(r.Password))
-	request.RawSetString(global.LuaRequestProtocol, lua.LString(r.Protocol))
-	request.RawSetString(global.LuaRequestXSSL, lua.LString(r.XSSL))
-	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(r.XSSLSessionID))
-	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(r.XSSLClientVerify))
-	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(r.XSSLClientDN))
-	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(r.XSSLClientCN))
-	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(r.XSSLIssuer))
-	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(r.XSSLClientNotBefore))
-	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(r.XSSLClientNotAfter))
-	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(r.XSSLSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(r.XSSLIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(r.XSSLClientSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(r.XSSLClientIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(r.XSSLProtocol))
-	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(r.XSSLCipher))
+	r.CommonRequest.SetupRequest(request)
 
 	return request
 }

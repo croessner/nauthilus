@@ -2,6 +2,7 @@ package logging
 
 import (
 	"os"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/go-kit/log"
@@ -9,13 +10,22 @@ import (
 )
 
 var (
-	DefaultLogger    log.Logger //nolint:gochecknoglobals // System wide logger
-	DefaultErrLogger log.Logger //nolint:gochecknoglobals // System wide logger
+	mu sync.Mutex
+
+	// DefaultLogger is used for all non-error messages that are printed to stdout
+	DefaultLogger log.Logger
+
+	// DefaultErrLogger is used for all error messages that are printed to stderr
+	DefaultErrLogger log.Logger
 )
 
 // SetupLogging initializes the global "Logger" object.
 func SetupLogging(configLogLevel int, formatJSON bool, instance string) {
 	var logLevel level.Option
+
+	mu.Lock()
+
+	defer mu.Unlock()
 
 	if formatJSON {
 		DefaultLogger = log.NewJSONLogger(log.NewSyncWriter(os.Stdout))

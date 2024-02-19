@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
 
@@ -31,6 +33,7 @@ type GetterHandler interface {
 }
 
 type File struct {
+	Server             *ServerSection       `mapstructure:"server"`
 	RBLs               *RBLSection          `mapstructure:"realtime_blackhole_lists"`
 	ClearTextList      []string             `mapstructure:"cleartext_networks"`
 	RelayDomains       *RelayDomainsSection `mapstructure:"relay_domains"`
@@ -506,6 +509,83 @@ func (f *File) HaveLua() bool {
 }
 
 /*
+ * Dynamic server configuration
+ */
+
+// GetServerInsightsEnablePprof is a method on the File struct.
+// It checks if the File struct has a server and returns the value of EnablePprof from the ServerInsights field of the File struct.
+// If the File struct does not have a server, it returns false.
+//
+// Example usage:
+//
+//	if config.LoadableConfig.GetServerInsightsEnablePprof() {
+//	    pprof.Register(router)
+//	}
+func (f *File) GetServerInsightsEnablePprof() bool {
+	if f.HaveServer() {
+		return f.GetServerInsights().EnablePprof
+	}
+
+	return false
+}
+
+// GetServerInsightsEnableBlockProfile is a method on the File struct.
+// It returns the value of the EnableBlockProfile field from the ServerInsights field of the File struct.
+// If the HaveServer method returns false, it will return false.
+//
+// Example usage:
+//
+//	func enableBlockProfile() {
+//	    if config.LoadableConfig.GetServerInsightsEnableBlockProfile() {
+//	        runtime.SetBlockProfileRate(1)
+//	    } else {
+//	        runtime.SetBlockProfileRate(-1)
+//	    }
+//	}
+func (f *File) GetServerInsightsEnableBlockProfile() bool {
+	if f.HaveServer() {
+		return f.GetServerInsights().EnableBlockProfile
+	}
+
+	return false
+}
+
+// GetServerInsights is a method on the File struct.
+// It returns the Insights field from the Server struct, which is accessed through the GetServer() method on the File struct.
+// If the File struct does not have a Server, it returns nil.
+func (f *File) GetServerInsights() *Insights {
+	if f.HaveServer() {
+		return &f.GetServer().Insights
+	}
+
+	return nil
+}
+
+// GetServer is a method on the File struct.
+// It checks if the File struct has a ServerSection.
+// If it does, it returns the ServerSection.
+// Otherwise, it returns nil.
+// Example usage:
+//
+//	server := file.GetServer()
+//	if server != nil {
+//	    // do something with server
+//	}
+func (f *File) GetServer() *ServerSection {
+	if f.HaveServer() {
+		return f.Server
+	}
+
+	return nil
+}
+
+// HaveServer is a method on the File struct.
+// It returns true if the Server field in the File struct is not nil, indicating that a server exists.
+func (f *File) HaveServer() bool {
+	return f.Server != nil
+}
+
+/*
  * Generic EnvConfig mapping
  */
 
@@ -661,6 +741,17 @@ func GetSkipConsent(clientId string) (skip bool) {
 	return
 }
 
+// validateBackends is a method on the File struct.
+// It checks if the Server struct has any configured backends.
+// If there are no backends configured, it returns the error ErrNoBackendsConfigured.
+func (f *File) validateBackends() error {
+	if len(f.Server.Backends) == 0 {
+		return errors.ErrNoBackendsConfigured
+	}
+
+	return nil
+}
+
 // validateRBLs is a method on the File struct.
 // It validates the RBLs field in the File struct.
 // If the RBLs field is not nil, it checks if the Threshold value is greater than math.MaxInt and logs a warning if it is.
@@ -696,8 +787,6 @@ func (f *File) validateRBLs() error {
 					"rbl", rbl.RBL)
 			}
 		}
-
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", f.RBLs))
 	}
 
 	return nil
@@ -756,8 +845,6 @@ func (f *File) validateBruteForce() error {
 		if countIPv4Rules > 1 || countIPv6Rules > 1 {
 			return errors.ErrBruteForceTooManyRules
 		}
-
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", f.BruteForce))
 	}
 
 	return nil
@@ -793,18 +880,18 @@ func (f *File) validateSecrets() error {
 }
 
 // validatePassDBBackends is a method on the File struct.
-// It validates the PassDB backends defined in the EnvConfig.
+// It validates the Backend backends defined in the EnvConfig.
 // If any of the validations fail, it returns the corresponding error.
 // The method checks the specific configurations and settings for each backend.
 // It also sets default values for certain fields if they are not provided.
 //
-// The method uses the EnvConfig and PassDB structs defined in the codebase.
+// The method uses the EnvConfig and Backend structs defined in the codebase.
 // The Backend constants from the global package are also used for comparison.
 // The method logs debug information using the DefaultLogger from the logging package.
 // The errors package is used to define and return the error messages.
 func (f *File) validatePassDBBackends() error {
-	for _, passDB := range EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backend := range f.Server.Backends {
+		switch backend.Get() {
 		case global.BackendLDAP:
 			if f.LDAP == nil {
 				return errors.ErrNoLDAPSection
@@ -849,8 +936,6 @@ func (f *File) validatePassDBBackends() error {
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
 			}
-
-			level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", f.LDAP.Config))
 		case global.BackendLua:
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
@@ -895,8 +980,41 @@ func (f *File) validateOAuth2() error {
 
 			f.Oauth2.CustomScopes[customScopeIndex].Other = descriptions
 		}
+	}
 
-		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", f.Oauth2))
+	return nil
+}
+
+// validateInstanceName is a method on the File struct.
+// It checks if the Server's InstanceName field is empty.
+// If it is empty, it sets the InstanceName to the global.InstanceName constant value.
+// It returns an error if any error occurred during the validation process.
+func (f *File) validateInstanceName() error {
+	if f.Server.InstanceName == "" {
+		f.Server.InstanceName = global.InstanceName
+	}
+
+	return nil
+}
+
+// validateDNSTimeout is a method on the File struct.
+// It validates the DNS timeout value to ensure it is not less than 1 second and not more than 30 seconds.
+// If the timeout is less than 1 second, it sets it to 1 second.
+// If the timeout is more than 32 seconds, it sets it to 32 seconds.
+// This method does not return any errors.
+func (f *File) validateDNSTimeout() error {
+	if f.Server.DNS.Timeout == 0 {
+		f.Server.DNS.Timeout = global.DNSResolveTimeout
+	}
+
+	// Not less than 1 second
+	if f.Server.DNS.Timeout < 1 {
+		f.Server.DNS.Timeout = 1
+	}
+
+	// Not more than 30 seconds
+	if f.Server.DNS.Timeout > 30 {
+		f.Server.DNS.Timeout = 30
 	}
 
 	return nil
@@ -907,18 +1025,26 @@ func (f *File) validateOAuth2() error {
 // If any of the validators return an error, the validation process stops and the error is returned.
 // If all validators pass, nil is returned.
 // The validators used in this method are:
+// - validateBackends
 // - validateRBLs
 // - validateBruteForce
 // - validateSecrets
 // - validatePassDBBackends
 // - validateOAuth2
+// - validateInstanceName
+// - validateDNSTimeout
 func (f *File) validate() (err error) {
 	validators := []func() error{
+		f.validateBackends,
 		f.validateRBLs,
 		f.validateBruteForce,
 		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
+
+		// Without errors, but fixing things
+		f.validateInstanceName,
+		f.validateDNSTimeout,
 	}
 
 	for _, validator := range validators {
@@ -930,19 +1056,259 @@ func (f *File) validate() (err error) {
 	return nil
 }
 
-// logDebug is a method on the File struct.
-// It logs debug messages based on the values of the ClearTextList, RelayDomains, and NginxMonitoring fields.
-func (f *File) logDebug() {
-	if f.ClearTextList != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", f.ClearTextList))
+// HasFeature checks if the given feature exists in the LoadableConfig's Features list
+func (f *File) HasFeature(feature string) bool {
+	if f.Server.Features == nil {
+		return false
 	}
 
-	if f.RelayDomains != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", f.RelayDomains))
+	for _, item := range f.Server.Features {
+		if item.Get() == feature {
+			return true
+		}
 	}
 
-	if f.NginxMonitoring != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", f.NginxMonitoring))
+	return false
+}
+
+// processVerboseLevel sets the verbosity level based on the input value.
+// It takes an input of type `any` and returns a value of type `any` and an error.
+// The function uses the `Verbosity` struct to assign the appropriate verbosity level.
+//
+// If the input is a string, it is passed to the `Set` method of the `Verbosity` struct, which sets the verbosity level based on the input value.
+// If the input is not a string, an error is returned indicating that the input type is invalid.
+//
+// The processVerboseLevel function is used in the createDecoderOption function, where it is used as a mapstructure.DecodeHookFunc.
+//
+// Example usage:
+//
+//	verbosity, err := processVerboseLevel("debug")
+func processVerboseLevel(input any) (any, error) {
+	verbosity := Verbosity{}
+	err := verbosity.Set(input.(string))
+
+	return verbosity, err
+}
+
+// processDebugModules processes the input data and returns a slice of DbgModule pointers and an error.
+// The function accepts inputs of type string, []string, or []any.
+// If the input is a string, it creates a new DbgModule and adds it to the dbgModules slice using the addDebugModule function.
+// If the input is a []string, it iterates over each string and adds a DbgModule to the dbgModules slice for each string using the addDebugModule function.
+// If the input is a []any, it checks if each element is a string and then adds a DbgModule to the dbgModules slice for each string using the addDebugModule function.
+// If the input type is not supported, an error is returned.
+// The function returns the dbgModules slice and nil if successful, or nil and an error if an error occurred during processing.
+func processDebugModules(input any) (any, error) {
+	var dbgModules []*DbgModule
+
+	addDebugModule := func(data string) error {
+		module := &DbgModule{}
+		if err := module.Set(data); err != nil {
+			return err
+		}
+
+		dbgModules = append(dbgModules, module)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addDebugModule(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, dbgModule := range data {
+			if err := addDebugModule(dbgModule); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, dbgModule := range data {
+			str, ok := dbgModule.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", dbgModule)
+			}
+
+			if err := addDebugModule(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return dbgModules, nil
+}
+
+// processFeatures processes the input and returns a slice of Feature pointers and an error.
+// The function accepts an `any` as input, which can be either a string, a slice of strings, or a slice of `any` values.
+// If the input is a string, a single Feature is created with the input as its name and added to the features slice.
+// If the input is a slice of strings, each string is processed as a separate Feature, and all the Features are added to the features slice.
+// If the input is a slice of `any` values, each value is checked if it is a string. If it is not a string, an error is returned.
+// If the value is a string, it is processed as a Feature and added to the features slice.
+// If the input is of any other type, an error is returned.
+// The function returns the features slice and any error that occurred during processing.
+func processFeatures(input any) (any, error) {
+	var features []*Feature
+
+	addFeature := func(data string) error {
+		feature := &Feature{}
+		if err := feature.Set(data); err != nil {
+			return err
+		}
+
+		features = append(features, feature)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addFeature(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, feature := range data {
+			if err := addFeature(feature); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, feature := range data {
+			str, ok := feature.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", feature)
+			}
+
+			if err := addFeature(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return features, nil
+}
+
+// processProtocols processes the input data and returns a slice of Protocol pointers and an error.
+//
+// The function takes an input of type `any`, which can be either a string, a slice of strings, or a slice of `any`.
+// If the input is a string, it creates a new Protocol with the given data and appends it to the protocols slice.
+// If the input is a slice of strings, it iterates over each string, creates a new Protocol with the string as data, and appends it to the protocols slice.
+// If the input is a slice of `any`, it iterates over each element and checks if it is a string. If it is, it creates a new Protocol with the string as data and appends it to the protocols
+func processProtocols(input any) (any, error) {
+	var protocols []*Protocol
+
+	addProtocol := func(data string) {
+		protocol := &Protocol{}
+
+		protocol.Set(data)
+
+		protocols = append(protocols, protocol)
+	}
+
+	switch data := input.(type) {
+	case string:
+		addProtocol(data)
+	case []string:
+		for _, protocol := range data {
+			addProtocol(protocol)
+		}
+	case []any:
+		for _, protocol := range data {
+			str, ok := protocol.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", protocol)
+			}
+
+			addProtocol(str)
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return protocols, nil
+}
+
+// processBackends takes an input of any type and processes it to return an array of Backend objects.
+// The input can be a string, a slice of strings, or a slice of interface{} objects.
+// If the input is a string, a single Backend object is created from it and added to the array.
+// If the input is a slice of strings, each string is converted to a Backend object and added to the array.
+// If the input is a slice of interface{} objects, each object is checked to be of type string, and if so, converted to a Backend object and added to the array.
+// If the input is of any other type, an error is returned.
+// The function returns the array of Backend objects and an error, if any occurred during processing.
+func processBackends(input any) (any, error) {
+	var backends []*Backend
+
+	addBackend := func(data string) error {
+		backend := &Backend{}
+		if err := backend.Set(data); err != nil {
+			return err
+		}
+
+		backends = append(backends, backend)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addBackend(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, backend := range data {
+			if err := addBackend(backend); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, backend := range data {
+			str, ok := backend.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", backend)
+			}
+
+			if err := addBackend(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return backends, nil
+}
+
+// createDecoderOption returns a viper.DecoderConfigOption function that sets the DecodeHook of the input DecoderConfig.
+// The DecodeHook is set using mapstructure.ComposeDecodeHookFunc to compose multiple DecodeHook functions.
+// The DecodeHook function performs custom decoding based on the target type:
+// - If the target type is reflect.TypeOf(Verbosity{}), it calls processVerboseLevel to process the input data and return a Verbosity value.
+// - If the target type is reflect.TypeOf([]*DbgModule{}), it calls processDebugModules to process the input data and return a slice of DbgModule values.
+// - For any other target type, it returns the input data unchanged.
+// The resulting function is then used as a DecoderConfigOption in the viper.UnmarshalExact function.
+func createDecoderOption() viper.DecoderConfigOption {
+	return func(config *mapstructure.DecoderConfig) {
+		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			config.DecodeHook,
+			func(from reflect.Type, to reflect.Type, data any) (any, error) {
+				switch {
+				case to == reflect.TypeOf(Verbosity{}):
+					return processVerboseLevel(data)
+				case to == reflect.TypeOf([]*DbgModule{}):
+					return processDebugModules(data)
+				case to == reflect.TypeOf([]*Feature{}):
+					return processFeatures(data)
+				case to == reflect.TypeOf([]*Protocol{}):
+					return processProtocols(data)
+				case to == reflect.TypeOf([]*Backend{}):
+					return processBackends(data)
+				default:
+					return data, nil
+				}
+			},
+		)
 	}
 }
 
@@ -953,7 +1319,7 @@ func (f *File) handleFile() (err error) {
 
 	defer f.Mu.Unlock()
 
-	if err = viper.UnmarshalExact(f); err != nil {
+	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
 		return
 	}
 
@@ -961,8 +1327,6 @@ func (f *File) handleFile() (err error) {
 	if err != nil {
 		return
 	}
-
-	f.logDebug()
 
 	// Throw away unsupported keys
 	f.Other = nil

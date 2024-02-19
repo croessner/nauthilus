@@ -187,7 +187,6 @@ const (
 
 // Defaults.
 const (
-
 	// Localhost4 is a shorthand for IPv4 localhost address
 	Localhost4 = "127.0.0.1"
 
@@ -213,7 +212,10 @@ const (
 	TempFailCode = "451 4.3.0"
 
 	// InstanceName is the name of the server instance
-	InstanceName = "nauthilus1"
+	InstanceName = "nauthilus"
+
+	// DNSResolveTimeout is the default DNS resolver timeout.
+	DNSResolveTimeout = 5
 
 	// SMTPBackendAddress is the default SMTP backend address
 	SMTPBackendAddress = Localhost4
@@ -940,6 +942,8 @@ const (
 
 	// LuaFnSelectNginxBackend represents the constant used as the key for the Lua function "nauthilus_select_nginx_backend".
 	LuaFnSelectNginxBackend = "select_nginx_backend_server"
+
+	LuaFnSetStatusMessage = "status_message_set"
 )
 
 const (
@@ -1112,6 +1116,8 @@ const (
 
 	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
 	LuaRequestTOTPSecret = "totp_secret"
+
+	LuaRequestStatusMessage = "status_message"
 )
 
 // Exit status codes.

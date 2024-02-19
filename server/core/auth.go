@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -30,7 +29,6 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
 	"github.com/prometheus/client_golang/prometheus"
-	"gotest.tools/v3/assert"
 )
 
 // ClaimHandler represents a claim handler struct.
@@ -374,7 +372,7 @@ func (a *Authentication) String() string {
 	value := reflect.ValueOf(a)
 	typeOfValue := value.Type()
 
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		switch typeOfValue.Field(index).Name {
 		case "GUID":
 			continue
@@ -562,22 +560,15 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 		setUserInfoHeaders(ctx, a)
 	}
 
-	dontLog := false
 	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
 
 	if cachedAuth {
 		ctx.Header("X-Auth-Cache", "Hit")
-
-		if !config.EnvConfig.LocalCacheAuthLogging {
-			dontLog = true
-		}
 	} else {
 		ctx.Header("X-Auth-Cache", "Miss")
 	}
 
-	if !dontLog {
-		handleLogging(ctx, a)
-	}
+	handleLogging(ctx, a)
 
 	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
@@ -604,7 +595,7 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 // If the Protocol is global.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
 			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
 			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
@@ -719,15 +710,13 @@ func setUserInfoHeaders(ctx *gin.Context, a *Authentication) {
 // The logged information includes the result of the a.LogLineMail() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, a *Authentication) {
-	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
-		level.Info(logging.DefaultLogger).Log(a.LogLineMail(func() string {
-			if !a.NoAuth {
-				return "ok"
-			}
+	level.Info(logging.DefaultLogger).Log(a.LogLineMail(func() string {
+		if !a.NoAuth {
+			return "ok"
+		}
 
-			return ""
-		}(), ctx.Request.URL.Path)...)
-	}
+		return ""
+	}(), ctx.Request.URL.Path)...)
 }
 
 // increaseLoginAttempts increments the number of login attempts for the Authentication object.
@@ -760,10 +749,12 @@ func (a *Authentication) increaseLoginAttempts() {
 //
 // If the Service field is not equal to global.ServUserInfo, it responds with the StatusMessage of the authentication as plain text.
 func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
-	ctx.Header("Auth-Status", global.PasswordFail)
-	ctx.Header("X-Nauthilus-Session", *a.GUID)
+	if a.StatusMessage == "" {
+		a.StatusMessage = global.PasswordFail
+	}
 
-	a.StatusMessage = global.PasswordFail
+	ctx.Header("Auth-Status", a.StatusMessage)
+	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	if a.Service == global.ServUserInfo {
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
@@ -789,9 +780,7 @@ func (a *Authentication) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *Authentication) loginAttemptProcessing(ctx *gin.Context) {
-	if config.EnvConfig.Verbosity.Level() > global.LogLevelWarn {
-		level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
-	}
+	level.Info(logging.DefaultLogger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 
 	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
@@ -964,10 +953,6 @@ func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 		err          error
 	)
 
-	if !isThereAnyDatabase(passDBs) {
-		return passDBResult, errors2.ErrNoPassDBs
-	}
-
 	configErrors := make(map[global.Backend]error, len(passDBs))
 	for passDBIndex, passDB := range passDBs {
 		passDBResult, err = passDB.fn(a)
@@ -992,30 +977,6 @@ func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 	}
 
 	return passDBResult, err
-}
-
-// isThereAnyDatabase checks if there are any databases in the passDBs slice.
-// It returns true if the length of passDBs is greater than 0, otherwise false.
-// This function uses the assert.Check function from the testify/assert package to perform the assertion.
-//
-// Example Usage:
-//
-//	func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
-//	    var (
-//	        passDBResult *PassDBResult
-//	        err          error
-//	    )
-//
-//	    if !isThereAnyDatabase(passDBs) {
-//	        return passDBResult, errors2.ErrNoPassDBs
-//	    }
-//
-//	    // rest of the code
-//	}
-func isThereAnyDatabase(passDBs []*PassDBMap) bool {
-	t := &testing.T{}
-
-	return assert.Check(t, len(passDBs) > 0)
 }
 
 // logDebugModule logs debug information about the authentication process.
@@ -1179,45 +1140,50 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:           luaAction,
-			Debug:               config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:           false,
-			UserFound:           false, // unavailable
-			Authenticated:       false, // unavailable
-			NoAuth:              a.NoAuth,
-			BruteForceCounter:   0, // unavailable
-			Session:             *a.GUID,
-			ClientIP:            a.ClientIP,
-			ClientPort:          a.XClientPort,
-			ClientNet:           "", // unavailable
-			ClientHost:          a.ClientHost,
-			ClientID:            a.XClientID,
-			LocalIP:             a.XLocalIP,
-			LocalPort:           a.XPort,
-			Username:            a.UsernameOrig,
-			Account:             "", // unavailable
-			UniqueUserID:        "", // unavailable
-			DisplayName:         "", // unavailable
-			Password:            a.Password,
-			Protocol:            a.Protocol.Get(),
-			BruteForceName:      "", // unavailable
-			FeatureName:         a.FeatureName,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			Context:             a.Context,
-			FinishedChan:        finished,
+			LuaAction:    luaAction,
+			Context:      a.Context,
+			FinishedChan: finished,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Repeating:           false,
+				UserFound:           false, // unavailable
+				Authenticated:       false, // unavailable
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   0, // unavailable
+				Service:             a.Service,
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				ClientNet:           "", // unavailable
+				ClientHost:          a.ClientHost,
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				Username:            a.UsernameOrig,
+				Account:             "", // unavailable
+				UniqueUserID:        "", // unavailable
+				DisplayName:         "", // unavailable
+				Password:            a.Password,
+				Protocol:            a.Protocol.Get(),
+				BruteForceName:      "", // unavailable
+				FeatureName:         a.FeatureName,
+				StatusMessage:       &a.StatusMessage,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+			},
 		}
 
 		<-finished
@@ -1227,7 +1193,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	 * Black or whitelist features
 	 */
 
-	if config.EnvConfig.HasFeature(global.FeatureLua) {
+	if config.LoadableConfig.HasFeature(global.FeatureLua) {
 		if config.LoadableConfig.HaveLuaFeatures() {
 			if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
 				return global.AuthResultTempFail
@@ -1248,7 +1214,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	 * Blacklist features
 	 */
 
-	if config.EnvConfig.HasFeature(global.FeatureTLSEncryption) {
+	if config.LoadableConfig.HasFeature(global.FeatureTLSEncryption) {
 		if a.featureTLSEncryption() {
 			a.FeatureName = global.FeatureTLSEncryption
 
@@ -1258,7 +1224,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	if config.EnvConfig.HasFeature(global.FeatureRelayDomains) {
+	if config.LoadableConfig.HasFeature(global.FeatureRelayDomains) {
 		if a.featureRelayDomains() {
 			a.FeatureName = global.FeatureRelayDomains
 
@@ -1269,7 +1235,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	if config.EnvConfig.HasFeature(global.FeatureRBL) {
+	if config.LoadableConfig.HasFeature(global.FeatureRBL) {
 		if triggered, err := a.featureRBLs(ctx); err != nil {
 			return global.AuthResultTempFail
 		} else if triggered {
@@ -1299,51 +1265,56 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
-			LuaAction:         global.LuaActionPost,
-			Debug:             config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-			Repeating:         false,
-			UserFound:         passDBResult.UserFound,
-			Authenticated:     passDBResult.Authenticated,
-			NoAuth:            a.NoAuth,
-			BruteForceCounter: 0,
-			Session:           *a.GUID,
-			ClientIP:          a.ClientIP,
-			ClientPort:        a.XClientPort,
-			ClientNet:         "", // unavailable
-			ClientHost:        a.ClientHost,
-			ClientID:          a.XClientID,
-			LocalIP:           a.XLocalIP,
-			LocalPort:         a.XPort,
-			Username:          a.Username,
-			Account: func() string {
-				if passDBResult.UserFound {
-					return a.getAccount()
-				}
+			LuaAction:    global.LuaActionPost,
+			Context:      a.Context,
+			FinishedChan: finished,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Repeating:         false,
+				UserFound:         passDBResult.UserFound,
+				Authenticated:     passDBResult.Authenticated,
+				NoAuth:            a.NoAuth,
+				BruteForceCounter: 0,
+				Service:           a.Service,
+				Session:           *a.GUID,
+				ClientIP:          a.ClientIP,
+				ClientPort:        a.XClientPort,
+				ClientNet:         "", // unavailable
+				ClientHost:        a.ClientHost,
+				ClientID:          a.XClientID,
+				LocalIP:           a.XLocalIP,
+				LocalPort:         a.XPort,
+				UserAgent:         *a.UserAgent,
+				Username:          a.Username,
+				Account: func() string {
+					if passDBResult.UserFound {
+						return a.getAccount()
+					}
 
-				return ""
-			}(),
-			UniqueUserID:        a.getUniqueUserID(),
-			DisplayName:         a.getDisplayName(),
-			Password:            a.Password,
-			Protocol:            a.Protocol.Get(),
-			BruteForceName:      a.BruteForceName,
-			FeatureName:         a.FeatureName,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			Context:             a.Context,
-			FinishedChan:        finished,
+					return ""
+				}(),
+				UniqueUserID:        a.getUniqueUserID(),
+				DisplayName:         a.getDisplayName(),
+				Password:            a.Password,
+				Protocol:            a.Protocol.Get(),
+				BruteForceName:      a.BruteForceName,
+				FeatureName:         a.FeatureName,
+				StatusMessage:       &a.StatusMessage,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+			},
 		}
 
 		<-finished
@@ -1446,12 +1417,12 @@ func (a *Authentication) initializePassDBResult() *PassDBResult {
 // The `backendPos` map stores the position of each backend type in the configuration list.
 // The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
 // The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
-// This method loops through the `config.EnvConfig.PassDBs` slice and processes each PassDB object to determine the backend type. It populates the `backendPos` map with the backend type
+// This method loops through the `config.LoadableConfig.Server.Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
 func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[global.Backend]int)
 
-	for index, passDB := range config.EnvConfig.PassDBs {
-		db := passDB.Get()
+	for index, backendType := range config.LoadableConfig.Server.Backends {
+		db := backendType.Get()
 		switch db {
 		case global.BackendCache:
 			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
@@ -1580,9 +1551,12 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 
 	if !passDBResult.Authenticated {
 		a.updateBruteForceBucketsCounter()
+
+		authResult := a.filterLua(passDBResult, ctx)
+
 		a.postLuaAction(passDBResult)
 
-		return global.AuthResultFail
+		return authResult
 	}
 
 	// Set new username
@@ -1640,53 +1614,63 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 	backendServer := make([]map[string]int, 0)
 
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		a.prepareNginxBackendServer(NginxBackendServers, &backendServer)
 	}
 
 	filterRequest := &filter.Request{
-		Debug:         config.EnvConfig.Verbosity.Level() == global.LogLevelDebug,
-		UserFound:     passDBResult.UserFound,
-		Authenticated: passDBResult.Authenticated,
-		NoAuth:        a.NoAuth,
-		Session:       *a.GUID,
-		ClientIP:      a.ClientIP,
-		ClientPort:    a.XClientPort,
-		ClientHost:    a.ClientHost,
-		ClientID:      a.XClientID,
-		LocalIP:       a.XLocalIP,
-		LocalPort:     a.XPort,
-		Username:      a.Username,
-		Account: func() string {
-			if passDBResult.UserFound {
-				return a.getAccount()
-			}
-
-			return ""
-		}(),
-		UniqueUserID:            a.getUniqueUserID(),
-		DisplayName:             a.getDisplayName(),
-		Password:                a.Password,
-		Protocol:                a.Protocol.String(),
-		XSSL:                    a.XSSL,
-		XSSLSessionID:           a.XSSLSessionID,
-		XSSLClientVerify:        a.XSSLClientVerify,
-		XSSLClientDN:            a.XSSLClientDN,
-		XSSLClientCN:            a.XSSLClientCN,
-		XSSLIssuer:              a.XSSLIssuer,
-		XSSLClientNotBefore:     a.XSSLClientNotBefore,
-		XSSLClientNotAfter:      a.XSSLClientNotAfter,
-		XSSLSubjectDN:           a.XSSLSubjectDN,
-		XSSLIssuerDN:            a.XSSLIssuerDN,
-		XSSLClientSubjectDN:     a.XSSLClientSubjectDN,
-		XSSLClientIssuerDN:      a.XSSLClientIssuerDN,
-		XSSLProtocol:            a.XSSLProtocol,
-		XSSLCipher:              a.XSSLCipher,
 		NginxBackendServers:     backendServer,
 		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
 		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
 		Logs:                    nil,
 		Context:                 a.Context,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Repeating:         false, // unavailable
+			UserFound:         passDBResult.UserFound,
+			Authenticated:     passDBResult.Authenticated,
+			NoAuth:            a.NoAuth,
+			BruteForceCounter: 0, // unavailable
+			Service:           a.Service,
+			Session:           *a.GUID,
+			ClientIP:          a.ClientIP,
+			ClientPort:        a.XClientPort,
+			ClientNet:         "", // unavailable
+			ClientHost:        a.ClientHost,
+			ClientID:          a.XClientID,
+			UserAgent:         *a.UserAgent,
+			LocalIP:           a.XLocalIP,
+			LocalPort:         a.XPort,
+			Username:          a.Username,
+			Account: func() string {
+				if passDBResult.UserFound {
+					return a.getAccount()
+				}
+
+				return ""
+			}(),
+			UniqueUserID:        a.getUniqueUserID(),
+			DisplayName:         a.getDisplayName(),
+			Password:            a.Password,
+			Protocol:            a.Protocol.String(),
+			BruteForceName:      "", // unavailable
+			FeatureName:         "", // unavailable
+			StatusMessage:       &a.StatusMessage,
+			XSSL:                a.XSSL,
+			XSSLSessionID:       a.XSSLSessionID,
+			XSSLClientVerify:    a.XSSLClientVerify,
+			XSSLClientDN:        a.XSSLClientDN,
+			XSSLClientCN:        a.XSSLClientCN,
+			XSSLIssuer:          a.XSSLIssuer,
+			XSSLClientNotBefore: a.XSSLClientNotBefore,
+			XSSLClientNotAfter:  a.XSSLClientNotAfter,
+			XSSLSubjectDN:       a.XSSLSubjectDN,
+			XSSLIssuerDN:        a.XSSLIssuerDN,
+			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+			XSSLProtocol:        a.XSSLProtocol,
+			XSSLCipher:          a.XSSLCipher,
+		},
 	}
 
 	filterResult, err := filterRequest.CallFilterLua(ctx)
@@ -1699,6 +1683,10 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 	} else {
 		for index := range *filterRequest.Logs {
 			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+		}
+
+		if statusMessage := filterRequest.StatusMessage; *statusMessage != a.StatusMessage {
+			a.StatusMessage = *statusMessage
 		}
 
 		if filterResult {
@@ -1720,8 +1708,8 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
-	for _, accountDB := range config.EnvConfig.PassDBs {
-		switch accountDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLDAP,
@@ -1741,7 +1729,7 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	for _, accountDB := range accounts {
 		result, err := accountDB.fn(a)
 
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, "accountDB", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
 			accountList = append(accountList, result...)
@@ -1768,7 +1756,7 @@ func (p PassDBResult) String() string {
 	value := reflect.ValueOf(p)
 	typeOfValue := value.Type()
 
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 	}
 
@@ -2110,8 +2098,8 @@ func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 
 	a.ClientIP = ctx.Request.Header.Get("Client-IP")
 
-	if config.EnvConfig.ResolveIP {
-		a.ClientHost = util.ResolveIPAddress(a.ClientIP)
+	if config.LoadableConfig.Server.DNS.ResolveClientIP {
+		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
 	}
 
 	if a.ClientHost == "" {

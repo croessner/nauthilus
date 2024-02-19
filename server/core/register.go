@@ -502,7 +502,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	if config.EnvConfig.Verbosity.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
 		level.Debug(logging.DefaultLogger).Log(
 			global.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
@@ -559,8 +559,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, passDB := range config.EnvConfig.PassDBs {
-		if passDB.Get() == global.BackendCache {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		if backendType.Get() == global.BackendCache {
 			useCache = true
 
 			break
