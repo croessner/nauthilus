@@ -29,7 +29,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 		featureRequest := feature.Request{
 			Context: a.Context,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           false, // unavailable
 				UserFound:           false, // unavailable
 				Authenticated:       false, // unavailable

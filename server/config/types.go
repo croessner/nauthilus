@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -28,6 +29,8 @@ func (v *Verbosity) String() string {
 // If the value is valid, the verboseLevel and name fields are updated accordingly.
 // An error of type ErrWrongVerboseLevel is returned if the value is not valid.
 func (v *Verbosity) Set(value string) error {
+	value = strings.TrimSpace(value)
+
 	switch value {
 	case "none", "":
 		v.verboseLevel = global.LogLevelNone
@@ -75,6 +78,8 @@ func (l *LDAPScope) String() string {
 
 // Set sets the numeric LDAP search scope by its string representation.
 func (l *LDAPScope) Set(value string) error {
+	value = strings.TrimSpace(value)
+
 	switch value {
 	case "base":
 		l.scope = ldap.ScopeBaseObject
@@ -153,6 +158,8 @@ func (p *PassDB) String() string {
 // If the value is valid, the backend field of PassDB is updated accordingly.
 // An error of type ErrWrongPassDB is returned if the value is not valid.
 func (p *PassDB) Set(value string) error {
+	value = strings.TrimSpace(value)
+
 	switch value {
 	case global.BackendCacheName:
 		p.backend = global.BackendCache
@@ -230,6 +237,8 @@ func (d *DbgModule) String() string {
 // If the value is valid, the module and name fields are updated accordingly.
 // An error of type ErrWrongDebugModule is returned if the value is not valid.
 func (d *DbgModule) Set(value string) error {
+	value = strings.TrimSpace(value)
+
 	switch value {
 	case global.DbgNoneName, "":
 		d.module = global.DbgNone

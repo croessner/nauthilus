@@ -464,7 +464,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	if config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -1487,7 +1487,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.LoadableConfig.Server.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
 		util.DebugModule(
 			global.DbgHydra,
 			global.LogKeyGUID, a.guid,

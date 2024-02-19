@@ -111,7 +111,7 @@ func setupEnvironment() (err error) {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
-	logging.SetupLogging(config.LoadableConfig.Server.Level.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
+	logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
 	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
 
 	return nil
@@ -530,7 +530,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			global.LogKeyError, err,
 		)
 	} else {
-		logging.SetupLogging(config.LoadableConfig.Server.Level.Level(), config.EnvConfig.LogJSON, config.EnvConfig.InstanceName)
+		logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
 
 		postEnvironmentDebug()
 	}

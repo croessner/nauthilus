@@ -562,22 +562,15 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 		setUserInfoHeaders(ctx, a)
 	}
 
-	dontLog := false
 	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
 
 	if cachedAuth {
 		ctx.Header("X-Auth-Cache", "Hit")
-
-		if !config.EnvConfig.LocalCacheAuthLogging {
-			dontLog = true
-		}
 	} else {
 		ctx.Header("X-Auth-Cache", "Miss")
 	}
 
-	if !dontLog {
-		handleLogging(ctx, a)
-	}
+	handleLogging(ctx, a)
 
 	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
@@ -1181,7 +1174,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			Context:      a.Context,
 			FinishedChan: finished,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           false,
 				UserFound:           false, // unavailable
 				Authenticated:       false, // unavailable
@@ -1306,7 +1299,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 			Context:      a.Context,
 			FinishedChan: finished,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:             config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
+				Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:         false,
 				UserFound:         passDBResult.UserFound,
 				Authenticated:     passDBResult.Authenticated,
@@ -1662,7 +1655,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		Logs:                    nil,
 		Context:                 a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:             config.LoadableConfig.Server.Level.Level() == global.LogLevelDebug,
+			Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Repeating:         false, // unavailable
 			UserFound:         passDBResult.UserFound,
 			Authenticated:     passDBResult.Authenticated,

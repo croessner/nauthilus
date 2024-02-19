@@ -17,16 +17,9 @@ var EnvConfig *Config //nolint:gochecknoglobals // System wide configuration
 
 // Config represents overall configuration settings for the application.
 type Config struct {
-
-	// InstanceName is the name of the current application instance.
-	InstanceName string
-
 	// HTTPAddress is the address where HTTP server should listen.
 	// It should be in the format "ip:port".
 	HTTPAddress string
-
-	// LogJSON is a flag indicating whether the logs should be in JSON format.
-	LogJSON bool
 
 	// SMTPBackendAddress is the address of the SMTP backend server.
 	SMTPBackendAddress string
@@ -115,9 +108,6 @@ type Config struct {
 	// BruteForce contains configuration for brute force prevention per each protocol.
 	BruteForce []*Protocol
 
-	// DbgModule contains configurations for debugging modules.
-	DbgModule []*DbgModule
-
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
 
@@ -127,9 +117,6 @@ type Config struct {
 	// LocalCacheAuthTTL
 	LocalCacheAuthTTL time.Duration
 
-	// LocalCacheAuthLogging indicates wether to log messages for memory-cached logins.
-	LocalCacheAuthLogging bool
-
 	// HTTPOptions contains configurations related to HTTP(S) server.
 	HTTPOptions
 }
@@ -138,13 +125,6 @@ type Config struct {
 // It initializes various viper configuration variables with default values.
 // The default values are taken from the global constants and types defined in the code.
 func setCommonDefaultEnvVars() {
-	viper.SetDefault("instance_name", global.InstanceName)
-	viper.SetDefault("log_format_json", false)
-	viper.SetDefault("log_debug_modules", []*DbgModule{
-		{global.DbgAuthName, global.DbgAuth},
-		{global.DbgStatsName, global.DbgStats},
-	})
-	viper.SetDefault("local_cache_auth_logging", false)
 	viper.SetDefault("http_address", global.HTTPAddress)
 	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
 	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
@@ -363,15 +343,12 @@ func (c *Config) String() string {
 // setConfigFromEnvVars sets the configuration values from environment variables using Viper.
 // Each configuration value is retrieved from the corresponding environment variable using Viper's Get method,
 // and then assigned to the corresponding field in the Config struct.
-// The configuration fields that are set in this method include LogJSON, InstanceName, HTTPAddress, HTTPOptions,
+// The configuration fields that are set in this method include HTTPAddress, HTTPOptions,
 // SMTPBackendAddress, SMTPBackendPort, IMAPBackendAddress, IMAPBackendPort, ResolveIP, RedisAddress,
 // RedisPort, RedisDB, RedisUsername, RedisPassword, RedisAddressRO, RedisPortRO, RedisPrefix, RedisPosCacheTTL,
 // RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
 // and DevMode.
 func (c *Config) setConfigFromEnvVars() {
-	c.LogJSON = viper.GetBool("log_format_json")
-	c.LocalCacheAuthLogging = viper.GetBool("local_cache_auth_logging")
-	c.InstanceName = viper.GetString("instance_name")
 	c.HTTPAddress = viper.GetString("http_address")
 	c.HTTPOptions.UseSSL = viper.GetBool("http_use_ssl")
 	c.HTTPOptions.UseBasicAuth = viper.GetBool("http_use_basic_auth")
@@ -558,38 +535,6 @@ func (c *Config) setConfigPassDBBackends() error {
 	return nil
 }
 
-// setConfigLogDebugModules sets the debug modules for logging.
-// It retrieves the debug modules from the "log_debug_modules" configuration value.
-// If the value is a string, it splits it by spaces and creates a new DbgModule for each module.
-// If the value is already a []*DbgModule, it sets the Config's DbgModule field to the value.
-// Returns an error if there was an issue setting the debug modules.
-// Example usage:
-//
-//	c := &Config{}
-//	if err := c.setConfigLogDebugModules(); err != nil {
-//	  log.Fatal(err)
-//	}
-func (c *Config) setConfigLogDebugModules() error {
-	dbgModulesI := viper.Get("log_debug_modules")
-	switch dbgModules := dbgModulesI.(type) {
-	case string:
-		dbgModulesList := strings.Split(strings.TrimSpace(dbgModules), " ")
-		for _, dbgModule := range dbgModulesList {
-			module := &DbgModule{}
-
-			if err := module.Set(dbgModule); err != nil {
-				return err
-			}
-
-			c.DbgModule = append(c.DbgModule, module)
-		}
-	case []*DbgModule:
-		c.DbgModule = dbgModules
-	}
-
-	return nil
-}
-
 // setConfigFeatures sets the features for the Config object based on the "features" configuration option.
 // It accepts a comma-separated list of features or an array of Feature objects.
 // If the "features" configuration option is a string, it splits the string and creates a Feature object for each feature.
@@ -662,10 +607,6 @@ func (c *Config) setConfig() {
 // Otherwise, it returns nil.
 func (c *Config) setConfigWithError() error {
 	if err := c.setConfigPassDBBackends(); err != nil {
-		return err
-	}
-
-	if err := c.setConfigLogDebugModules(); err != nil {
 		return err
 	}
 

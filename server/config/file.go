@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"runtime"
@@ -973,6 +974,18 @@ func (f *File) validateOAuth2() error {
 	return nil
 }
 
+// validateInstanceName is a method on the File struct.
+// It checks if the Server's InstanceName field is empty.
+// If it is empty, it sets the InstanceName to the global.InstanceName constant value.
+// It returns an error if any error occurred during the validation process.
+func (f *File) validateInstanceName() error {
+	if f.Server.InstanceName == "" {
+		f.Server.InstanceName = global.InstanceName
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -990,6 +1003,7 @@ func (f *File) validate() (err error) {
 		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
+		f.validateInstanceName,
 	}
 
 	for _, validator := range validators {
@@ -1001,6 +1015,100 @@ func (f *File) validate() (err error) {
 	return nil
 }
 
+// processVerboseLevel sets the verbosity level based on the input value.
+// It takes an input of type `any` and returns a value of type `any` and an error.
+// The function uses the `Verbosity` struct to assign the appropriate verbosity level.
+//
+// If the input is a string, it is passed to the `Set` method of the `Verbosity` struct, which sets the verbosity level based on the input value.
+// If the input is not a string, an error is returned indicating that the input type is invalid.
+//
+// The processVerboseLevel function is used in the createDecoderOption function, where it is used as a mapstructure.DecodeHookFunc.
+//
+// Example usage:
+//
+//	verbosity, err := processVerboseLevel("debug")
+func processVerboseLevel(input any) (any, error) {
+	verbosity := Verbosity{}
+	err := verbosity.Set(input.(string))
+
+	return verbosity, err
+}
+
+// processDebugModules processes the input data and returns a slice of DbgModule pointers and an error.
+// The function accepts inputs of type string, []string, or []any.
+// If the input is a string, it creates a new DbgModule and adds it to the dbgModules slice using the addDebugModule function.
+// If the input is a []string, it iterates over each string and adds a DbgModule to the dbgModules slice for each string using the addDebugModule function.
+// If the input is a []any, it checks if each element is a string and then adds a DbgModule to the dbgModules slice for each string using the addDebugModule function.
+// If the input type is not supported, an error is returned.
+// The function returns the dbgModules slice and nil if successful, or nil and an error if an error occurred during processing.
+func processDebugModules(input any) (any, error) {
+	var dbgModules []*DbgModule
+
+	addDebugModule := func(data string) error {
+		module := &DbgModule{}
+		if err := module.Set(data); err != nil {
+			return err
+		}
+
+		dbgModules = append(dbgModules, module)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addDebugModule(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, dbgModule := range data {
+			if err := addDebugModule(dbgModule); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, dbgModule := range data {
+			str, ok := dbgModule.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", dbgModule)
+			}
+
+			if err := addDebugModule(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return dbgModules, nil
+}
+
+// createDecoderOption returns a viper.DecoderConfigOption function that sets the DecodeHook of the input DecoderConfig.
+// The DecodeHook is set using mapstructure.ComposeDecodeHookFunc to compose multiple DecodeHook functions.
+// The DecodeHook function performs custom decoding based on the target type:
+// - If the target type is reflect.TypeOf(Verbosity{}), it calls processVerboseLevel to process the input data and return a Verbosity value.
+// - If the target type is reflect.TypeOf([]*DbgModule{}), it calls processDebugModules to process the input data and return a slice of DbgModule values.
+// - For any other target type, it returns the input data unchanged.
+// The resulting function is then used as a DecoderConfigOption in the viper.UnmarshalExact function.
+func createDecoderOption() viper.DecoderConfigOption {
+	return func(config *mapstructure.DecoderConfig) {
+		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			config.DecodeHook,
+			func(from reflect.Type, to reflect.Type, data any) (any, error) {
+				switch {
+				case to == reflect.TypeOf(Verbosity{}):
+					return processVerboseLevel(data)
+				case to == reflect.TypeOf([]*DbgModule{}):
+					return processDebugModules(data)
+				default:
+					return data, nil
+				}
+			},
+		)
+	}
+}
+
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *File) handleFile() (err error) {
@@ -1008,26 +1116,7 @@ func (f *File) handleFile() (err error) {
 
 	defer f.Mu.Unlock()
 
-	// We create a DecoderConfigOption that sets the Hooks field of the DecoderConfig.
-	// Our hook converts map[string]interface{} to a Verbosity object
-	decoderConfigOption := viper.DecoderConfigOption(func(config *mapstructure.DecoderConfig) {
-		config.DecodeHook = mapstructure.ComposeDecodeHookFunc(
-			config.DecodeHook,
-			func(from reflect.Type, to reflect.Type, data any) (any, error) {
-				// We check if we are converting a `level` string to a Verbosity.
-				if from.Kind() == reflect.String && to == reflect.TypeOf(Verbosity{}) {
-					v := Verbosity{}
-					err := v.Set(data.(string))
-
-					return v, err
-				}
-
-				return data, nil
-			},
-		)
-	})
-
-	if err = viper.UnmarshalExact(f, decoderConfigOption); err != nil {
+	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
 		return
 	}
 

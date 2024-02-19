@@ -336,8 +336,8 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 		return
 	}
 
-	for index := range config.EnvConfig.DbgModule {
-		if !(config.EnvConfig.DbgModule[index].GetModule() == global.DbgAll || config.EnvConfig.DbgModule[index].GetModule() == module) {
+	for index := range config.LoadableConfig.Server.Log.DbgModules {
+		if !(config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == global.DbgAll || config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == module) {
 			continue
 		}
 
@@ -348,8 +348,9 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 			keyvals = append(keyvals, "function")
 			keyvals = append(keyvals, runtime.FuncForPC(counter).Name())
 
-			_ = level.Debug(logging.DefaultLogger).Log(keyvals...)
+			level.Debug(logging.DefaultLogger).Log(keyvals...)
 		}
+
 		break
 	}
 }

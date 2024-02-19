@@ -1,12 +1,15 @@
 package config
 
 type ServerSection struct {
-	Log      `maptostructure:"log"`
-	Insights `mapstructure:"insights"`
+	InstanceName string   `mapstructure:"instance_name"`
+	Log          Log      `maptostructure:"log"`
+	Insights     Insights `mapstructure:"insights"`
 }
 
 type Log struct {
-	Level Verbosity `mapstructure:"level"`
+	JSON       bool         `mapstructure:"json"`
+	Level      Verbosity    `mapstructure:"level"`
+	DbgModules []*DbgModule `mapstructure:"debug_modules"`
 }
 
 type Insights struct {
