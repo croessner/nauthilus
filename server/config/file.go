@@ -1142,6 +1142,40 @@ func processFeatures(input any) (any, error) {
 	return features, nil
 }
 
+func processProtocols(input any) (any, error) {
+	var protocols []*Protocol
+
+	addProtocol := func(data string) {
+		protocol := &Protocol{}
+
+		protocol.Set(data)
+
+		protocols = append(protocols, protocol)
+	}
+
+	switch data := input.(type) {
+	case string:
+		addProtocol(data)
+	case []string:
+		for _, protocol := range data {
+			addProtocol(protocol)
+		}
+	case []any:
+		for _, protocol := range data {
+			str, ok := protocol.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", protocol)
+			}
+
+			addProtocol(str)
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return protocols, nil
+}
+
 // createDecoderOption returns a viper.DecoderConfigOption function that sets the DecodeHook of the input DecoderConfig.
 // The DecodeHook is set using mapstructure.ComposeDecodeHookFunc to compose multiple DecodeHook functions.
 // The DecodeHook function performs custom decoding based on the target type:
@@ -1161,6 +1195,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processDebugModules(data)
 				case to == reflect.TypeOf([]*Feature{}):
 					return processFeatures(data)
+				case to == reflect.TypeOf([]*Protocol{}):
+					return processProtocols(data)
 				default:
 					return data, nil
 				}

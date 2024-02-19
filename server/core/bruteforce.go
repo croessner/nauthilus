@@ -633,7 +633,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.EnvConfig.BruteForce {
+	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
@@ -867,7 +867,7 @@ func (a *Authentication) updateBruteForceBucketsCounter() {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.EnvConfig.BruteForce {
+	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}

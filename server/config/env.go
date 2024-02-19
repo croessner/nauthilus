@@ -102,9 +102,6 @@ type Config struct {
 	// PassDBs is a list of password databases.
 	PassDBs []*PassDB
 
-	// BruteForce contains configuration for brute force prevention per each protocol.
-	BruteForce []*Protocol
-
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
 
@@ -174,9 +171,6 @@ func setRedisDefaultEnvVars() {
 // brute_force_protection, and trusted_proxies.
 // The default values are taken from the global constants and types defined in the code.
 func setProtectionDefaultEnvVars() {
-	viper.SetDefault("brute_force_protection", []*Protocol{
-		{global.ProtoHTTP},
-	})
 	viper.SetDefault("trusted_proxies", []string{"127.0.0.1", "::1"})
 }
 
@@ -463,35 +457,6 @@ func (c *Config) setConfigMaxActionWorkers() {
 	}
 }
 
-// setConfigBruteforceProtection sets the brute force protection configurations in the Config struct.
-// It checks the value of the "brute_force_protection" configuration from the viper instance and handles it based on its type.
-// If the value is a string, it splits it by spaces, creates a Protocol instance for each non-empty value, and appends it to the Config.BruteForce slice.
-// If the value is []*Protocol, it creates a Protocol instance for each element and appends it to the Config.BruteForce slice.
-func (c *Config) setConfigBruteforceProtection() {
-	bruteForceI := viper.Get("brute_force_protection")
-	switch bruteForceServices := bruteForceI.(type) {
-	case string:
-		bruteForceServicesList := strings.Split(strings.TrimSpace(bruteForceServices), " ")
-		for _, bruteForceService := range bruteForceServicesList {
-			if bruteForceService == "" {
-				continue
-			}
-
-			p := &Protocol{}
-			p.Set(bruteForceService)
-
-			c.BruteForce = append(c.BruteForce, p)
-		}
-	case []*Protocol:
-		for _, bruteForceService := range bruteForceServices {
-			p := &Protocol{}
-			p.Set(bruteForceService.Get())
-
-			c.BruteForce = append(c.BruteForce, p)
-		}
-	}
-}
-
 // setConfigPassDBBackends sets the passdb_backends configuration option.
 // It parses the value from the configuration using Viper and initializes
 // the Config struct's PassDBs field with the appropriate data.
@@ -551,7 +516,6 @@ func (c *Config) setConfig() {
 	c.setConfigMaxLoginAttempts()
 	c.setConfigDNSTimeout()
 	c.setConfigMaxActionWorkers()
-	c.setConfigBruteforceProtection()
 	c.setLocalCacheTTL()
 }
 
