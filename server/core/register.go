@@ -559,8 +559,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, passDB := range config.EnvConfig.PassDBs {
-		if passDB.Get() == global.BackendCache {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		if backendType.Get() == global.BackendCache {
 			useCache = true
 
 			break

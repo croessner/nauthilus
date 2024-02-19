@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -30,7 +29,6 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
 	"github.com/prometheus/client_golang/prometheus"
-	"gotest.tools/v3/assert"
 )
 
 // ClaimHandler represents a claim handler struct.
@@ -955,10 +953,6 @@ func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 		err          error
 	)
 
-	if !isThereAnyDatabase(passDBs) {
-		return passDBResult, errors2.ErrNoPassDBs
-	}
-
 	configErrors := make(map[global.Backend]error, len(passDBs))
 	for passDBIndex, passDB := range passDBs {
 		passDBResult, err = passDB.fn(a)
@@ -983,30 +977,6 @@ func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, er
 	}
 
 	return passDBResult, err
-}
-
-// isThereAnyDatabase checks if there are any databases in the passDBs slice.
-// It returns true if the length of passDBs is greater than 0, otherwise false.
-// This function uses the assert.Check function from the testify/assert package to perform the assertion.
-//
-// Example Usage:
-//
-//	func (a *Authentication) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
-//	    var (
-//	        passDBResult *PassDBResult
-//	        err          error
-//	    )
-//
-//	    if !isThereAnyDatabase(passDBs) {
-//	        return passDBResult, errors2.ErrNoPassDBs
-//	    }
-//
-//	    // rest of the code
-//	}
-func isThereAnyDatabase(passDBs []*PassDBMap) bool {
-	t := &testing.T{}
-
-	return assert.Check(t, len(passDBs) > 0)
 }
 
 // logDebugModule logs debug information about the authentication process.
@@ -1447,12 +1417,12 @@ func (a *Authentication) initializePassDBResult() *PassDBResult {
 // The `backendPos` map stores the position of each backend type in the configuration list.
 // The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
 // The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
-// This method loops through the `config.EnvConfig.PassDBs` slice and processes each PassDB object to determine the backend type. It populates the `backendPos` map with the backend type
+// This method loops through the `config.LoadableConfig.Server.Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
 func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[global.Backend]int)
 
-	for index, passDB := range config.EnvConfig.PassDBs {
-		db := passDB.Get()
+	for index, backendType := range config.LoadableConfig.Server.Backends {
+		db := backendType.Get()
 		switch db {
 		case global.BackendCache:
 			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
@@ -1738,8 +1708,8 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
-	for _, accountDB := range config.EnvConfig.PassDBs {
-		switch accountDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLDAP,
@@ -1759,7 +1729,7 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	for _, accountDB := range accounts {
 		result, err := accountDB.fn(a)
 
-		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, "accountDB", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
+		util.DebugModule(global.DbgAuth, global.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
 			accountList = append(accountList, result...)

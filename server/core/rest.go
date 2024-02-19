@@ -249,13 +249,13 @@ func flushCache(ctx *gin.Context) {
 }
 
 // processFlushCache takes a user command and a GUID and processes the cache flush.
-// It iterates through the PassDBs in the EnvConfig and checks if the backend is BackendCache.
+// It iterates through the backends in the LoadableConfig and checks if the backend is BackendCache.
 // If it is, it sets useCache to true and calls processUserCmd to process the user command.
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
 func processFlushCache(userCmd *FlushUserCmd, guid string) (cacheFlushError bool, useCache bool) {
-	for _, passDB := range config.EnvConfig.PassDBs {
-		if passDB.Get() != global.BackendCache {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		if backendType.Get() != global.BackendCache {
 			continue
 		}
 

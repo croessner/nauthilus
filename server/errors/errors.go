@@ -64,7 +64,7 @@ func NewDetailedError(err string) *DetailedError {
 // auth.
 
 var (
-	ErrNoPassDBs             = errors.New("assertion len(passDBs)>0 count=0")
+	ErrNoBackendsConfigured  = errors.New("no database backends configured")
 	ErrUnknownService        = errors.New("unknown service")
 	ErrAllBackendConfigError = errors.New("configuration errors in all Database sections")
 	ErrInvalidJSONPayload    = errors.New("invalid JSON payload")

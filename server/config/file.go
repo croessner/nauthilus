@@ -741,6 +741,15 @@ func GetSkipConsent(clientId string) (skip bool) {
 	return
 }
 
+// validateBackends is a method on the File struct.
+// It checks if the Server struct has any configured backends.
+// If there are no backends configured, it returns the error ErrNoBackendsConfigured.
+func (f *File) validateBackends() error {
+	if len(f.Server.Backends) == 0 {
+		return errors.ErrNoBackendsConfigured
+	}
+}
+
 // validateRBLs is a method on the File struct.
 // It validates the RBLs field in the File struct.
 // If the RBLs field is not nil, it checks if the Threshold value is greater than math.MaxInt and logs a warning if it is.
@@ -869,18 +878,18 @@ func (f *File) validateSecrets() error {
 }
 
 // validatePassDBBackends is a method on the File struct.
-// It validates the PassDB backends defined in the EnvConfig.
+// It validates the Backend backends defined in the EnvConfig.
 // If any of the validations fail, it returns the corresponding error.
 // The method checks the specific configurations and settings for each backend.
 // It also sets default values for certain fields if they are not provided.
 //
-// The method uses the EnvConfig and PassDB structs defined in the codebase.
+// The method uses the EnvConfig and Backend structs defined in the codebase.
 // The Backend constants from the global package are also used for comparison.
 // The method logs debug information using the DefaultLogger from the logging package.
 // The errors package is used to define and return the error messages.
 func (f *File) validatePassDBBackends() error {
-	for _, passDB := range EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backend := range f.Server.Backends {
+		switch backend.Get() {
 		case global.BackendLDAP:
 			if f.LDAP == nil {
 				return errors.ErrNoLDAPSection
@@ -1021,6 +1030,7 @@ func (f *File) validateDNSTimeout() error {
 // - validateOAuth2
 func (f *File) validate() (err error) {
 	validators := []func() error{
+		f.vaildateBackends,
 		f.validateRBLs,
 		f.validateBruteForce,
 		f.validateSecrets,
@@ -1216,6 +1226,56 @@ func processProtocols(input any) (any, error) {
 	return protocols, nil
 }
 
+// processBackends takes an input of any type and processes it to return an array of Backend objects.
+// The input can be a string, a slice of strings, or a slice of interface{} objects.
+// If the input is a string, a single Backend object is created from it and added to the array.
+// If the input is a slice of strings, each string is converted to a Backend object and added to the array.
+// If the input is a slice of interface{} objects, each object is checked to be of type string, and if so, converted to a Backend object and added to the array.
+// If the input is of any other type, an error is returned.
+// The function returns the array of Backend objects and an error, if any occurred during processing.
+func processBackends(input any) (any, error) {
+	var backends []*Backend
+
+	addBackend := func(data string) error {
+		backend := &Backend{}
+		if err := backend.Set(data); err != nil {
+			return err
+		}
+
+		backends = append(backends, backend)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addBackend(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, backend := range data {
+			if err := addBackend(backend); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, backend := range data {
+			str, ok := backend.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", backend)
+			}
+
+			if err := addBackend(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return backends, nil
+}
+
 // createDecoderOption returns a viper.DecoderConfigOption function that sets the DecodeHook of the input DecoderConfig.
 // The DecodeHook is set using mapstructure.ComposeDecodeHookFunc to compose multiple DecodeHook functions.
 // The DecodeHook function performs custom decoding based on the target type:
@@ -1237,6 +1297,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processFeatures(data)
 				case to == reflect.TypeOf([]*Protocol{}):
 					return processProtocols(data)
+				case to == reflect.TypeOf([]*Backend{}):
+					return processBackends(data)
 				default:
 					return data, nil
 				}

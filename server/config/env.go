@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
@@ -87,9 +86,6 @@ type Config struct {
 	// RedisNegCacheTTL is the negative response cache time-to-live in Redis.
 	RedisNegCacheTTL uint
 
-	// PassDBs is a list of password databases.
-	PassDBs []*PassDB
-
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
 
@@ -117,7 +113,7 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
 	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
 	viper.SetDefault("dns_timeout", uint(10))
-	viper.SetDefault("passdb_backends", []*PassDB{{global.BackendCache}, {global.BackendLDAP}})
+	viper.SetDefault("passdb_backends", []*Backend{{global.BackendCache}, {global.BackendLDAP}})
 	viper.SetDefault("developer_mode", false)
 	viper.SetDefault("max_action_workers", global.MaxActionWorkers)
 	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
@@ -426,40 +422,6 @@ func (c *Config) setConfigMaxActionWorkers() {
 	}
 }
 
-// setConfigPassDBBackends sets the passdb_backends configuration option.
-// It parses the value from the configuration using Viper and initializes
-// the Config struct's PassDBs field with the appropriate data.
-//
-// The value of passdb_backends can be either a string containing
-// space-separated backend names, or a slice of *PassDB.
-// In the case of a string, the method splits it into a list
-// of backends and creates a new *PassDB instance for each backend.
-// The method then sets the Config's PassDBs field with the created
-// instances. In the case of a slice, the method directly assigns
-// the slice to the Config's PassDBs field.
-//
-// If there is an error during parsing or initializing the PassDBs,
-// the method returns an error. Otherwise, it returns nil.
-func (c *Config) setConfigPassDBBackends() error {
-	passDBsI := viper.Get("passdb_backends")
-	switch passDBs := passDBsI.(type) {
-	case string:
-		passDBsList := strings.Split(strings.TrimSpace(passDBs), " ")
-		for _, passDB := range passDBsList {
-			p := &PassDB{}
-			if err := p.Set(passDB); err != nil {
-				return err
-			}
-
-			c.PassDBs = append(c.PassDBs, p)
-		}
-	case []*PassDB:
-		c.PassDBs = passDBs
-	}
-
-	return nil
-}
-
 // setLocalCacheTTL sets the value of the LocalCacheAuthTTL field in the Config struct based on the value retrieved from the configuration file (viper).
 // If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
 // Otherwise, the field will be assigned the value of 5 seconds.
@@ -487,23 +449,11 @@ func (c *Config) setConfig() {
 	c.setLocalCacheTTL()
 }
 
-// setConfigWithError sets the configuration with error handling.
-// It calls multiple methods to set different parts of the config.
-// If any of those methods return an error, it returns that error.
-// Otherwise, it returns nil.
-func (c *Config) setConfigWithError() error {
-	if err := c.setConfigPassDBBackends(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // NewConfig initializes a new Config struct and sets its values based on
 // environment variables. It calls various methods to set specific
 // configuration options and returns the new Config struct or an error if
 // any configuration fails.
-func NewConfig() (*Config, error) {
+func NewConfig() *Config {
 	setDefaultEnvVars()
 
 	newCfg := &Config{}
@@ -511,9 +461,5 @@ func NewConfig() (*Config, error) {
 	newCfg.setConfigFromEnvVars()
 	newCfg.setConfig()
 
-	if err := newCfg.setConfigWithError(); err != nil {
-		return nil, err
-	}
-
-	return newCfg, nil
+	return newCfg
 }

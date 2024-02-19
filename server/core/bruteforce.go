@@ -732,8 +732,8 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 	)
 
 	if alreadyTriggered || ruleTriggered {
-		for _, passDB := range config.EnvConfig.PassDBs {
-			if passDB.Get() == global.BackendCache {
+		for _, backendType := range config.LoadableConfig.Server.Backends {
+			if backendType.Get() == global.BackendCache {
 				useCache = true
 
 				break

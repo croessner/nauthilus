@@ -143,30 +143,30 @@ func NewProtocol(protocol string) *Protocol {
 	return p
 }
 
-// PassDB is a password Database container.
-type PassDB struct {
+// Backend is a password Database container.
+type Backend struct {
 	backend global.Backend
 }
 
-func (p *PassDB) String() string {
-	return p.backend.String()
+func (b *Backend) String() string {
+	return b.backend.String()
 }
 
-// Set updates the backend of the PassDB based on the provided value.
+// Set updates the backend of the Backend based on the provided value.
 // It returns an error if the value is not valid.
-// Valid values for the backend are "cache", "ldap", "mysql", "postgresql", "sql", and "lua".
-// If the value is valid, the backend field of PassDB is updated accordingly.
+// Valid values for the backend are "cache", "ldap"  and "lua".
+// If the value is valid, the backend field of Backend is updated accordingly.
 // An error of type ErrWrongPassDB is returned if the value is not valid.
-func (p *PassDB) Set(value string) error {
+func (b *Backend) Set(value string) error {
 	value = strings.TrimSpace(value)
 
 	switch value {
 	case global.BackendCacheName:
-		p.backend = global.BackendCache
+		b.backend = global.BackendCache
 	case global.BackendLDAPName:
-		p.backend = global.BackendLDAP
+		b.backend = global.BackendLDAP
 	case global.BackendLuaName:
-		p.backend = global.BackendLua
+		b.backend = global.BackendLua
 	default:
 		return errors.ErrWrongPassDB
 	}
@@ -175,13 +175,13 @@ func (p *PassDB) Set(value string) error {
 }
 
 // Type returns the name of the type.
-func (p *PassDB) Type() string {
-	return "PassDB"
+func (b *Backend) Type() string {
+	return "Backend"
 }
 
 // Get gets the name of a password Database.
-func (p *PassDB) Get() global.Backend {
-	return p.backend
+func (b *Backend) Get() global.Backend {
+	return b.backend
 }
 
 // Feature is a container for Nauthilus features.

@@ -97,10 +97,7 @@ func newContextTuple(ctx context.Context) *contextTuple {
 //		// handle error
 //	}
 func setupEnvironment() (err error) {
-	config.EnvConfig, err = config.NewConfig()
-	if err != nil {
-		return fmt.Errorf("unable to load environment config: %w", err)
-	}
+	config.EnvConfig = config.NewConfig()
 
 	loadLanguageBundles()
 
@@ -259,7 +256,7 @@ func closeChannels() {
 // It logs the shutdown message along with the received signal.
 // It cancels the context to stop ongoing operations.
 // It waits for the HTTP server to terminate.
-// It handles the backend for each passDB in the configuration.
+// It handles the backend for each backendType in the configuration.
 // It waits for all action workers to complete their work.
 // It syncs some Prometheus data to Redis.
 // It logs the shutdown complete message.
@@ -282,8 +279,8 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		handleBackend(passDB)
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		handleBackend(backendType)
 	}
 
 	waitForActionWorkers(actionWorkers)
@@ -351,7 +348,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 // Currently, supported backends are LDAP, MySQL, PostgreSQL, Lua, and Cache.
 // For each backend, the function executes its specific clean-up process.
 // It will log a warning if an unrecognized backend is given.
-func handleBackend(passDB *config.PassDB) {
+func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
 	case global.BackendLDAP:
 		<-backend.LDAPEndChan
@@ -483,7 +480,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 }
 
 // handleReload is a function that handles the reloading of Nauthilus based on a received operating signal.
-// The function works with various backends (LDAP, MySQL, Postgres, Lua, or Cache), and based on the specific
+// The function works with various backends (LDAP, Lua, or Cache), and based on the specific
 // backend, it will reload the related services. The function manages the necessary workers, stopping
 // and restarting them as appropriate.
 //
@@ -511,8 +508,8 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			store.ldapLookup, store.ldapAuth = handleLDAPBackend(store.ldapLookup, store.ldapAuth, ctx)
 		case global.BackendLua:
@@ -544,8 +541,8 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	enableBlockProfile()
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			startLDAPWorkers(store.ldapLookup, store.ldapAuth)
 		case global.BackendLua:
@@ -580,15 +577,15 @@ func initializeActionWorkers() []*action.Worker {
 // setupWorkers sets up the action workers based on the configuration and starts them in separate goroutines.
 // It takes a context, a store, and a slice of action workers as parameters.
 // It starts the action workers by calling the `startActionWorker` function with the appropriate parameters.
-// Then, for each passDB in the `config.EnvConfig.PassDBs` slice, it performs the necessary setup based on the passDB type.
+// Then, for each backendType in the `config.LoadableConfig.Server.Backends` slice, it performs the necessary setup based on the backend type.
 // The setup depends on the passDB's backend type and calls corresponding setup functions, such as `setupLDAPWorker`, `setupSQLWorker`, or `setupLuaWorker`.
 // If the passDB's backend is `global.BackendCache`, no setup is performed.
 // If the passDB's backend is unknown, a warning log is generated for an unknown backend.
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
-	for _, passDB := range config.EnvConfig.PassDBs {
-		switch passDB.Get() {
+	for _, backendType := range config.LoadableConfig.Server.Backends {
+		switch backendType.Get() {
 		case global.BackendLDAP:
 			setupLDAPWorker(store, ctx)
 		case global.BackendLua:

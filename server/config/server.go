@@ -1,14 +1,17 @@
 package config
 
-import "time"
+import (
+	"time"
+)
 
 type ServerSection struct {
 	InstanceName        string      `mapstructure:"instance_name"`
 	Log                 Log         `maptostructure:"log"`
-	Insights            Insights    `mapstructure:"insights"`
+	Backends            []*Backend  `mapstructure:"backends"`
 	Features            []*Feature  `mapstructure:"features"`
 	BruteForceProtocols []*Protocol `mapstructure:"brute_force_protocols"`
 	DNS                 DNS         `mapstructure:"dns"`
+	Insights            Insights    `mapstructure:"insights"`
 }
 
 type Log struct {
