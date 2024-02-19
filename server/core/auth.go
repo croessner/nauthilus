@@ -597,7 +597,7 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 // If the Protocol is global.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
 			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
 			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
@@ -1223,7 +1223,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	 * Black or whitelist features
 	 */
 
-	if config.EnvConfig.HasFeature(global.FeatureLua) {
+	if config.LoadableConfig.HasFeature(global.FeatureLua) {
 		if config.LoadableConfig.HaveLuaFeatures() {
 			if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
 				return global.AuthResultTempFail
@@ -1244,7 +1244,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 	 * Blacklist features
 	 */
 
-	if config.EnvConfig.HasFeature(global.FeatureTLSEncryption) {
+	if config.LoadableConfig.HasFeature(global.FeatureTLSEncryption) {
 		if a.featureTLSEncryption() {
 			a.FeatureName = global.FeatureTLSEncryption
 
@@ -1254,7 +1254,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	if config.EnvConfig.HasFeature(global.FeatureRelayDomains) {
+	if config.LoadableConfig.HasFeature(global.FeatureRelayDomains) {
 		if a.featureRelayDomains() {
 			a.FeatureName = global.FeatureRelayDomains
 
@@ -1265,7 +1265,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 		}
 	}
 
-	if config.EnvConfig.HasFeature(global.FeatureRBL) {
+	if config.LoadableConfig.HasFeature(global.FeatureRBL) {
 		if triggered, err := a.featureRBLs(ctx); err != nil {
 			return global.AuthResultTempFail
 		} else if triggered {
@@ -1644,7 +1644,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 	backendServer := make([]map[string]int, 0)
 
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		a.prepareNginxBackendServer(NginxBackendServers, &backendServer)
 	}
 

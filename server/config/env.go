@@ -102,9 +102,6 @@ type Config struct {
 	// PassDBs is a list of password databases.
 	PassDBs []*PassDB
 
-	// Features is a list of enabled application features.
-	Features []*Feature
-
 	// BruteForce contains configuration for brute force prevention per each protocol.
 	BruteForce []*Protocol
 
@@ -174,15 +171,9 @@ func setRedisDefaultEnvVars() {
 
 // setProtectionDefaultEnvVars sets the default environment variables for the application.
 // It initializes various viper configuration variables with default values for
-// features, brute_force_protection, and trusted_proxies.
+// brute_force_protection, and trusted_proxies.
 // The default values are taken from the global constants and types defined in the code.
-// Feature type represents a specific feature of the application.
 func setProtectionDefaultEnvVars() {
-	viper.SetDefault("features", []*Feature{
-		{global.FeatureTLSEncryption},
-		{global.FeatureRBL},
-		{global.FeatureRelayDomains},
-	})
 	viper.SetDefault("brute_force_protection", []*Protocol{
 		{global.ProtoHTTP},
 	})
@@ -535,43 +526,6 @@ func (c *Config) setConfigPassDBBackends() error {
 	return nil
 }
 
-// setConfigFeatures sets the features for the Config object based on the "features" configuration option.
-// It accepts a comma-separated list of features or an array of Feature objects.
-// If the "features" configuration option is a string, it splits the string and creates a Feature object for each feature.
-// If the "features" configuration option is an array of Feature objects, it creates a Feature object for each feature.
-// The created Feature objects are added to the Features slice of the Config object.
-// Returns an error if there is an issue with setting the features.
-func (c *Config) setConfigFeatures() error {
-	featuresI := viper.Get("features")
-	switch features := featuresI.(type) {
-	case string:
-		featuresList := strings.Split(strings.TrimSpace(features), " ")
-		for _, feature := range featuresList {
-			if feature == "" {
-				continue
-			}
-
-			f := &Feature{}
-			if err := f.Set(feature); err != nil {
-				return err
-			}
-
-			c.Features = append(c.Features, f)
-		}
-	case []*Feature:
-		for _, feature := range features {
-			f := &Feature{}
-			if err := f.Set(feature.Get()); err != nil {
-				return err
-			}
-
-			c.Features = append(c.Features, f)
-		}
-	}
-
-	return nil
-}
-
 // setLocalCacheTTL sets the value of the LocalCacheAuthTTL field in the Config struct based on the value retrieved from the configuration file (viper).
 // If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
 // Otherwise, the field will be assigned the value of 5 seconds.
@@ -610,26 +564,7 @@ func (c *Config) setConfigWithError() error {
 		return err
 	}
 
-	if err := c.setConfigFeatures(); err != nil {
-		return err
-	}
-
 	return nil
-}
-
-// HasFeature checks if the given feature exists in the Config's Features list
-func (c *Config) HasFeature(feature string) bool {
-	if c.Features == nil {
-		return false
-	}
-
-	for _, item := range c.Features {
-		if item.Get() == feature {
-			return true
-		}
-	}
-
-	return false
 }
 
 // NewConfig initializes a new Config struct and sets its values based on

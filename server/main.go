@@ -189,7 +189,7 @@ func setupFeaturesAndFilters() error {
 // If the application is configured with the Lua features, it attempts to pre-compile the Lua features.
 // If pre-compilation of the Lua features encounters any errors, it returns the error. Otherwise, it returns nil.
 func PreCompileFeatures() error {
-	if !config.EnvConfig.HasFeature(global.FeatureLua) {
+	if !config.LoadableConfig.HasFeature(global.FeatureLua) {
 		return nil
 	}
 
@@ -843,7 +843,7 @@ func loopNgxBackendServers(servers []*config.NginxBackendServer) {
 // If there are no backend servers or the feature is not enabled, it returns an error.
 // It returns a list with Nginx backend servers or an error.
 func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
-	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		return nil, errors2.ErrFeatureNgxDisables
 	}
 
@@ -909,7 +909,7 @@ func startNginxMonitoring(store *contextStore, ticker *time.Ticker) error {
 // not enabled, it logs an informational message. If there are no
 // configured backend servers for Nginx monitoring, it logs an error message.
 func handleNgxMonitoringError(err error) {
-	if !config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		if errors.Is(err, errors2.ErrFeatureNgxDisables) {
 			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Nginx monitoring feature is not enabled")
 		}

@@ -1,9 +1,10 @@
 package config
 
 type ServerSection struct {
-	InstanceName string   `mapstructure:"instance_name"`
-	Log          Log      `maptostructure:"log"`
-	Insights     Insights `mapstructure:"insights"`
+	InstanceName string     `mapstructure:"instance_name"`
+	Log          Log        `maptostructure:"log"`
+	Insights     Insights   `mapstructure:"insights"`
+	Features     []*Feature `mapstructure:"features"`
 }
 
 type Log struct {

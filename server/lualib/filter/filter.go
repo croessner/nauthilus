@@ -293,7 +293,7 @@ func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
-	if config.EnvConfig.HasFeature(global.FeatureNginxMonitoring) {
+	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		globals.RawSetString(global.LuaFnGetNgxBackendServers, L.NewFunction(getNgxBackendServers(r.NginxBackendServers)))
 		globals.RawSetString(global.LuaFnSelectNginxBackend, L.NewFunction(selectNginxBackend(&r.UsedNginxBackendAddress, &r.UsedNginxBackendPort)))
 	}

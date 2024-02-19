@@ -1015,6 +1015,21 @@ func (f *File) validate() (err error) {
 	return nil
 }
 
+// HasFeature checks if the given feature exists in the LoadableConfig's Features list
+func (f *File) HasFeature(feature string) bool {
+	if f.Server.Features == nil {
+		return false
+	}
+
+	for _, item := range f.Server.Features {
+		if item.Get() == feature {
+			return true
+		}
+	}
+
+	return false
+}
+
 // processVerboseLevel sets the verbosity level based on the input value.
 // It takes an input of type `any` and returns a value of type `any` and an error.
 // The function uses the `Verbosity` struct to assign the appropriate verbosity level.
@@ -1084,6 +1099,49 @@ func processDebugModules(input any) (any, error) {
 	return dbgModules, nil
 }
 
+func processFeatures(input any) (any, error) {
+	var features []*Feature
+
+	addFeature := func(data string) error {
+		feature := &Feature{}
+		if err := feature.Set(data); err != nil {
+			return err
+		}
+
+		features = append(features, feature)
+
+		return nil
+	}
+
+	switch data := input.(type) {
+	case string:
+		if err := addFeature(data); err != nil {
+			return nil, err
+		}
+	case []string:
+		for _, feature := range data {
+			if err := addFeature(feature); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, feature := range data {
+			str, ok := feature.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid value in array, expected string, got %T", feature)
+			}
+
+			if err := addFeature(str); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("invalid type %T, expected string or []string", data)
+	}
+
+	return features, nil
+}
+
 // createDecoderOption returns a viper.DecoderConfigOption function that sets the DecodeHook of the input DecoderConfig.
 // The DecodeHook is set using mapstructure.ComposeDecodeHookFunc to compose multiple DecodeHook functions.
 // The DecodeHook function performs custom decoding based on the target type:
@@ -1101,6 +1159,8 @@ func createDecoderOption() viper.DecoderConfigOption {
 					return processVerboseLevel(data)
 				case to == reflect.TypeOf([]*DbgModule{}):
 					return processDebugModules(data)
+				case to == reflect.TypeOf([]*Feature{}):
+					return processFeatures(data)
 				default:
 					return data, nil
 				}
