@@ -374,7 +374,7 @@ func (a *Authentication) String() string {
 	value := reflect.ValueOf(a)
 	typeOfValue := value.Type()
 
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		switch typeOfValue.Field(index).Name {
 		case "GUID":
 			continue
@@ -1797,7 +1797,7 @@ func (p PassDBResult) String() string {
 	value := reflect.ValueOf(p)
 	typeOfValue := value.Type()
 
-	for index := 0; index < value.NumField(); index++ {
+	for index := range value.NumField() {
 		result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 	}
 
