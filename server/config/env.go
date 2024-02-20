@@ -40,48 +40,6 @@ type Config struct {
 	// MaxLoginAttempts is the maximum number of login attempts.
 	MaxLoginAttempts uint8
 
-	// RedisAddress is the address of the Redis server for master pool.
-	RedisAddress string
-
-	// RedisPort is the port of the Redis server for master pool.
-	RedisPort int
-
-	// RedisUsername is the username for authenticating to the Redis server for master pool.
-	RedisUsername string
-
-	// RedisPassword is the password for authenticating to the Redis server for master pool.
-	RedisPassword string
-
-	// RedisAddressRO is the address of the Redis server for read replica pool.
-	RedisAddressRO string
-
-	// RedisPortRO is the port of the Redis server for read replica pool.
-	RedisPortRO int
-
-	// RedisSentinels is the list of address of the Redis sentinel servers.
-	RedisSentinels []string
-
-	// RedisSentinelMasterName is the name of the Redis sentinel master.
-	RedisSentinelMasterName string
-
-	// RedisSentinelUsername is the username for Redis sentinel authentication.
-	RedisSentinelUsername string
-
-	// RedisSentinelPassword is the password for Redis sentinel authentication.
-	RedisSentinelPassword string
-
-	// RedisPrefix is the prefix to prepend to all Redis keys.
-	RedisPrefix string
-
-	// RedisDB is the Redis database number to use.
-	RedisDB int
-
-	// RedisPosCacheTTL is the positive response cache time-to-live in Redis.
-	RedisPosCacheTTL uint
-
-	// RedisNegCacheTTL is the negative response cache time-to-live in Redis.
-	RedisNegCacheTTL uint
-
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
 
@@ -107,37 +65,6 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("developer_mode", false)
 	viper.SetDefault("max_action_workers", global.MaxActionWorkers)
 	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
-}
-
-// setRedisDefaultEnvVars sets the default environment variables for Redis configuration.
-// It initializes various viper configuration variables with default values specific to Redis.
-// The default values are taken from the global constants and types defined in the code.
-// Default values for Redis configuration variables:
-// - redis_address: Default value is the constant global.RedisAddress (localhost)
-// - redis_port: Default value is the constant global.RedisPort (6379)
-// - redis_database_number: Default value is 0
-// - redis_replica_address: Default value is the constant global.RedisAddress (localhost)
-// - redis_replica_port: Default value is the constant global.RedisPort (6379)
-// - redis_prefix: Default value is the constant global.RedisPrefix ("nt_")
-// - redis_sentinels: Default value is an empty string slice []
-// - redis_sentinel_master_name: Default value is an empty string
-// - redis_sentinel_username: Default value is an empty string
-// - redis_sentinel_password: Default value is an empty string
-// - redis_positive_cache_ttl: Default value is the constant global.RedisPosCacheTTL (3600)
-// - redis_negative_cache_ttl: Default value is the constant global.RedisNegCacheTTL (3600)
-func setRedisDefaultEnvVars() {
-	viper.SetDefault("redis_address", global.RedisAddress)
-	viper.SetDefault("redis_port", global.RedisPort)
-	viper.SetDefault("redis_database_number", 0)
-	viper.SetDefault("redis_replica_address", global.RedisAddress)
-	viper.SetDefault("redis_replica_port", global.RedisPort)
-	viper.SetDefault("redis_prefix", global.RedisPrefix)
-	viper.SetDefault("redis_sentinels", []string{})
-	viper.SetDefault("redis_sentinel_master_name", "")
-	viper.SetDefault("redis_sentinel_username", "")
-	viper.SetDefault("redis_sentinel_password", "")
-	viper.SetDefault("redis_positive_cache_ttl", global.RedisPosCacheTTL)
-	viper.SetDefault("redis_negative_cache_ttl", global.RedisNegCacheTTL)
 }
 
 // setProtectionDefaultEnvVars sets the default environment variables for the application.
@@ -260,7 +187,6 @@ func setDefaultEnvVars() {
 
 	setCommonDefaultEnvVars()
 	setLocalCacheDefaults()
-	setRedisDefaultEnvVars()
 	setProtectionDefaultEnvVars()
 	setWebDefaultEnvVars()
 
@@ -312,20 +238,6 @@ func (c *Config) setConfigFromEnvVars() {
 	c.IMAPBackendPort = viper.GetInt("imap_backend_port")
 	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
 	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
-	c.RedisAddress = viper.GetString("redis_address")
-	c.RedisPort = viper.GetInt("redis_port")
-	c.RedisDB = viper.GetInt("redis_database_number")
-	c.RedisUsername = viper.GetString("redis_username")
-	c.RedisPassword = viper.GetString("redis_password")
-	c.RedisAddressRO = viper.GetString("redis_replica_address")
-	c.RedisPortRO = viper.GetInt("redis_replica_port")
-	c.RedisPrefix = viper.GetString("redis_prefix")
-	c.RedisPosCacheTTL = viper.GetUint("redis_positive_cache_ttl")
-	c.RedisNegCacheTTL = viper.GetUint("redis_negative_cache_ttl")
-	c.RedisSentinels = viper.GetStringSlice("redis_sentinels")
-	c.RedisSentinelMasterName = viper.GetString("redis_sentinel_master_name")
-	c.RedisSentinelUsername = viper.GetString("redis-sentinel-username")
-	c.RedisSentinelPassword = viper.GetString("redis-sentinel-password")
 	c.DevMode = viper.GetBool("developer_mode")
 }
 

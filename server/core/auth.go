@@ -1010,7 +1010,7 @@ func logDebugModule(a *Authentication, passDB *PassDBMap, passDBResult *PassDBRe
 // If the error is not a configuration error, it logs the error using the DefaultErrLogger.
 // It returns the error unchanged.
 func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *Authentication, configErrors map[global.Backend]error) error {
-	if errors.Is(err, errors2.ErrSQLConfig) || errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
+	if errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
@@ -1509,7 +1509,7 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 					}
 
 					if accountName != "" {
-						redisUserKey := config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName
+						redisUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
 						ppc := &backend.PositivePasswordCache{
 							AccountField:      a.AccountField,
 							TOTPSecretField:   a.TOTPSecretField,
@@ -1527,7 +1527,7 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 						}
 
 						go func() {
-							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
+							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
 								stats.RedisWriteCounter.Inc()
 							}
 						}()
@@ -1772,7 +1772,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 		values   []any
 	)
 
-	key := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {

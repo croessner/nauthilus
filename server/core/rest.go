@@ -169,7 +169,7 @@ func listBruteforce(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 	list := &List{}
-	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
 	result, err := backend.RedisHandleReplica.HGetAll(backend.RedisHandleReplica.Context(), key).Result()
 	if err != nil {
@@ -349,14 +349,14 @@ func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
 func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 	userKeys := config.NewStringSet()
 
-	userKeys.Set(config.EnvConfig.RedisPrefix + "ucp:__default__:" + accountName)
-	userKeys.Set(config.EnvConfig.RedisPrefix + global.RedisPwHashKey + ":" + userCmd.User + ":*")
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:__default__:" + accountName)
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + userCmd.User + ":*")
 
 	protocols := config.LoadableConfig.GetAllProtocols()
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(protocols[index], global.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName)
 		}
 	}
 
@@ -372,7 +372,7 @@ func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) {
 	var err error
 
-	redisKey := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
+	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	if removeHash {
 		err = backend.RedisHandle.Del(backend.RedisHandle.Context(), redisKey).Err()

@@ -165,25 +165,17 @@ func GetHash(value string) string {
 	return hex.EncodeToString(hashValue.Sum(nil))[:8]
 }
 
-// MapBytesToString is a helper for MySQL databases that converts the values from a slice of bytes to strings.
-func MapBytesToString(data map[string]any) {
-	for key, value := range data {
-		if bytes, okay := value.([]byte); okay {
-			data[key] = string(bytes)
-		}
-	}
-}
-
 func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 	redisHandle = redis.NewFailoverClient(&redis.FailoverOptions{
-		MasterName:       config.EnvConfig.RedisSentinelMasterName,
-		SentinelAddrs:    config.EnvConfig.RedisSentinels,
+		MasterName:       config.LoadableConfig.Server.Redis.Sentinels.Master,
+		SentinelAddrs:    config.LoadableConfig.Server.Redis.Sentinels.Addresses,
 		SlaveOnly:        slavesOnly,
-		DB:               config.EnvConfig.RedisDB,
-		SentinelUsername: config.EnvConfig.RedisSentinelUsername,
-		SentinelPassword: config.EnvConfig.RedisSentinelPassword,
-		Username:         config.EnvConfig.RedisUsername,
-		Password:         config.EnvConfig.RedisPassword,
+		DB:               config.LoadableConfig.Server.Redis.DatabaseNmuber,
+		SentinelUsername: config.LoadableConfig.Server.Redis.Sentinels.Username,
+		SentinelPassword: config.LoadableConfig.Server.Redis.Sentinels.Password,
+		Username:         config.LoadableConfig.Server.Redis.Master.Username,
+		Password:         config.LoadableConfig.Server.Redis.Master.Password,
+		PoolSize:         config.LoadableConfig.Server.Redis.PoolSize,
 	})
 
 	return
@@ -192,9 +184,10 @@ func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 func newRedisClient(address string) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:     address,
-		Username: config.EnvConfig.RedisUsername,
-		Password: config.EnvConfig.RedisPassword,
-		DB:       config.EnvConfig.RedisDB,
+		Username: config.LoadableConfig.Server.Redis.Master.Username,
+		Password: config.LoadableConfig.Server.Redis.Master.Password,
+		DB:       config.LoadableConfig.Server.Redis.DatabaseNmuber,
+		PoolSize: config.LoadableConfig.Server.Redis.PoolSize,
 	})
 }
 
@@ -202,10 +195,10 @@ func newRedisClient(address string) *redis.Client {
 // Config.
 func NewRedisClient() (redisHandle redis.UniversalClient) {
 	// If two or more sentinels are defined and a master name is set, switch to a FailoverClient.
-	if len(config.EnvConfig.RedisSentinels) > 1 && config.EnvConfig.RedisSentinelMasterName != "" {
+	if len(config.LoadableConfig.Server.Redis.Sentinels.Addresses) > 1 && config.LoadableConfig.Server.Redis.Sentinels.Master != "" {
 		redisHandle = newRedisFailoverClient(false)
 	} else {
-		redisHandle = newRedisClient(fmt.Sprintf("%s:%d", config.EnvConfig.RedisAddress, config.EnvConfig.RedisPort))
+		redisHandle = newRedisClient(config.LoadableConfig.Server.Redis.Master.Address)
 	}
 
 	return
@@ -214,12 +207,12 @@ func NewRedisClient() (redisHandle redis.UniversalClient) {
 // NewRedisReplicaClient constructs a new Redis slave server if Nauthilus is not configured to use Redis sentinels and if
 // the configuration settings for RedisRO are different from the default Redis settings.
 func NewRedisReplicaClient() redis.UniversalClient {
-	if len(config.EnvConfig.RedisSentinels) > 1 && config.EnvConfig.RedisSentinelMasterName != "" {
+	if len(config.LoadableConfig.Server.Redis.Sentinels.Addresses) > 1 && config.LoadableConfig.Server.Redis.Sentinels.Master != "" {
 		return newRedisFailoverClient(true)
 	}
 
-	if config.EnvConfig.RedisAddressRO != config.EnvConfig.RedisAddress || config.EnvConfig.RedisPortRO != config.EnvConfig.RedisPort {
-		return newRedisClient(fmt.Sprintf("%s:%d", config.EnvConfig.RedisAddressRO, config.EnvConfig.RedisPortRO))
+	if config.LoadableConfig.Server.Redis.Master.Address != config.LoadableConfig.Server.Redis.Replica.Address {
+		return newRedisClient(config.LoadableConfig.Server.Redis.Replica.Address)
 	}
 
 	return nil

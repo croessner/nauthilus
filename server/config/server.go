@@ -16,6 +16,7 @@ type ServerSection struct {
 	HydraAdminUrl       string      `mapstructure:"ory_hydra_admin_url"`
 	DNS                 DNS         `mapstructure:"dns"`
 	Insights            Insights    `mapstructure:"insights"`
+	Redis               Redis       `mapstructure:"redis"`
 }
 
 type TLS struct {
@@ -46,4 +47,32 @@ type DNS struct {
 	Resolver        string        `mapstructure:"resolver"`
 	Timeout         time.Duration `mapstructure:"timeout"`
 	ResolveClientIP bool          `mapstructure:"resolve_client_ip"`
+}
+
+type Redis struct {
+	DatabaseNmuber int       `mapstructure:"database_number"`
+	Prefix         string    `mapstructure:"prefix"`
+	PoolSize       int       `mapstructure:"pool_size"`
+	PosCacheTTL    uint      `mapstructure:"positive_cache_ttl"`
+	NegCacheTTL    uint      `mapstructure:"negative_cache_ttl"`
+	Master         Master    `mapstructure:"master"`
+	Replica        Replica   `mapstructure:"replica"`
+	Sentinels      Sentinels `mapstructure:"sentinels"`
+}
+
+type Master struct {
+	Address  string `mapstructure:"address"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+}
+
+type Replica struct {
+	Address string `mapstructure:"address"`
+}
+
+type Sentinels struct {
+	Master    string   `mapstructure:"master"`
+	Addresses []string `mapstructure:"addresses"`
+	Username  string   `mapstructure:"username"`
+	Password  string   `mapstructure:"password"`
 }

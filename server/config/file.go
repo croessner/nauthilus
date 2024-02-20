@@ -988,6 +988,15 @@ func (f *File) validateOAuth2() error {
 	return nil
 }
 
+// checkAddress validates if the given address is in the correct format.
+// It checks if the address can be split into host and port using net.SplitHostPort.
+// If the address is invalid, it returns an error; otherwise, it returns nil.
+func checkAddress(address string) error {
+	_, _, err := net.SplitHostPort(address)
+
+	return err
+}
+
 // validateAddress is a method on the File struct.
 // It validates the Server.Address field, if it is empty it assigns global.HTTPAddress to it.
 // It then checks if the Server.Address is a valid address by using net.SplitHostPort function.
@@ -997,9 +1006,7 @@ func (f *File) validateAddress() error {
 		f.Server.Address = global.HTTPAddress
 	}
 
-	_, _, err := net.SplitHostPort(f.Server.Address)
-
-	return err
+	return checkAddress(f.Server.Address)
 }
 
 // validateHydraAdminURL is a method on the File struct.
@@ -1079,6 +1086,72 @@ func (f *File) validateDNSTimeout() error {
 	return nil
 }
 
+// validateRedisMasterAddress is a method on the File struct.
+// It validates the Redis master address and returns an error if it is invalid.
+// The function first checks if there are multiple sentinel addresses and a specified sentinel master.
+// If so, it assumes that the Redis master address is valid and returns nil.
+// If the Redis master address is empty, it constructs a new address using the global RedisAddress and RedisPort constants.
+// Finally, it calls the checkAddress function to validate the Redis master address and returns any errors.
+// Example usage of the validateRedisMasterAddress method can be found in the validate method of the File struct.
+// Package and other declarations are not shown here for brevity.
+func (f *File) validateRedisMasterAddress() error {
+	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
+		return nil
+	}
+
+	if f.Server.Redis.Master.Address == "" {
+		f.Server.Redis.Master.Address = fmt.Sprintf("%s:%d", global.RedisAddress, global.RedisPort)
+	}
+
+	return checkAddress(f.Server.Redis.Master.Address)
+}
+
+// validateRedisSentinels is a method on the File struct.
+// It checks if the Redis sentinels addresses are valid and if the Redis master is specified.
+// If the addresses are valid, it calls the checkAddress function for each address.
+// If any of the addresses is invalid, it returns an error.
+// If there is no error or the sentinels addresses are not specified, it returns nil.
+func (f *File) validateRedisSentinels() error {
+	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
+		for _, address := range f.Server.Redis.Sentinels.Addresses {
+			if err := checkAddress(address); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateRedisDatabaseNumber is a method on the File struct.
+// It validates the Redis database number and returns an error if the number is out of range.
+// If the number is less than 0, it returns errors.ErrRedisDatabaseNumber.
+// If the number is greater than 15, it also returns errors.ErrRedisDatabaseNumber.
+// Otherwise, it returns nil indicating no error.
+func (f *File) validateRedisDatabaseNumber() error {
+	if f.Server.Redis.DatabaseNmuber < 0 {
+		return errors.ErrRedisDatabaseNumber
+	}
+
+	if f.Server.Redis.DatabaseNmuber > 15 {
+		return errors.ErrRedisDatabaseNumber
+	}
+
+	return nil
+}
+
+// validateRedisPoolSize is a method on the File struct.
+// It validates the Redis pool size and returns an error if it is less than or equal to 0.
+// If the Redis pool size is valid, it returns nil.
+// The method uses the ErrRedisPoolSize error from the errors package.
+func (f *File) validateRedisPoolSize() error {
+	if f.Server.Redis.PoolSize <= 0 {
+		return errors.ErrRedisPoolSize
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1103,6 +1176,10 @@ func (f *File) validate() (err error) {
 		f.validateAddress,
 		f.validateHydraAdminURL,
 		f.validateTLSCertAndKey,
+		f.validateRedisMasterAddress,
+		f.validateRedisSentinels,
+		f.validateRedisDatabaseNumber,
+		f.validateRedisPoolSize,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,

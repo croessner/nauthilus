@@ -47,7 +47,7 @@ type RedisCache interface {
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(username string) (accountName string, err error) {
-	key := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	accountName, err = RedisHandleReplica.HGet(RedisHandleReplica.Context(), key, username).Result()
 	if err != nil {

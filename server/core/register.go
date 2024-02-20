@@ -584,7 +584,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			cacheNames := backend.GetCacheNames(protocols[index], global.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName)
+				userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName)
 			}
 		}
 
