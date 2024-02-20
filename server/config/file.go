@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 	"math"
+	"net"
+	"net/url"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -985,6 +988,62 @@ func (f *File) validateOAuth2() error {
 	return nil
 }
 
+// validateAddress is a method on the File struct.
+// It validates the Server.Address field, if it is empty it assigns global.HTTPAddress to it.
+// It then checks if the Server.Address is a valid address by using net.SplitHostPort function.
+// It returns any error that occurs during the validation process.
+func (f *File) validateAddress() error {
+	if f.Server.Address == "" {
+		f.Server.Address = global.HTTPAddress
+	}
+
+	_, _, err := net.SplitHostPort(f.Server.Address)
+
+	return err
+}
+
+// validateHydraAdminURL is a method on the File struct.
+// It validates the HydraAdminUrl field in the Server struct
+// and returns an error if the URL is invalid.
+// If the HydraAdminUrl field is empty, it sets a default value of "http://127.0.0.1:4445".
+func (f *File) validateHydraAdminURL() error {
+	if f.Server.HydraAdminUrl == "" {
+		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
+	}
+
+	_, err := url.ParseRequestURI(f.Server.HydraAdminUrl)
+
+	return err
+}
+
+// validateTLSCertAndKey is a method on the File struct.
+// It validates the readability of the TLS certificate and key files specified in the Server struct.
+// If any of the files are not readable, it returns an error indicating the file that is not readable.
+// Otherwise, it returns nil.
+// It uses the isFileReadable function to check the validity of each file.
+// The function takes a file path as an argument and checks if the file exists and is readable.
+// If the file is not readable, it returns an error.
+// The validateTLSCertAndKey method iterates over the Cert and Key file paths in the Server struct.
+// For each path, it calls the isFileReadable function.
+// If any of the files are not readable, it returns an error message indicating the file that is not readable.
+// The error message is formatted using the fmt.Errorf function.
+// If all files are readable, it returns nil to indicate that the validation was successful.
+func (f *File) validateTLSCertAndKey() error {
+	isFileReadable := func(file string) error {
+		_, err := os.Stat(file)
+
+		return err
+	}
+
+	for _, file := range []string{f.Server.TLS.Cert, f.Server.TLS.Key} {
+		if err := isFileReadable(file); err != nil {
+			return fmt.Errorf("TLS certificate or key file %s is not readable: %w", file, err)
+		}
+	}
+
+	return nil
+}
+
 // validateInstanceName is a method on the File struct.
 // It checks if the Server's InstanceName field is empty.
 // If it is empty, it sets the InstanceName to the global.InstanceName constant value.
@@ -1041,6 +1100,9 @@ func (f *File) validate() (err error) {
 		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
+		f.validateAddress,
+		f.validateHydraAdminURL,
+		f.validateTLSCertAndKey,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,

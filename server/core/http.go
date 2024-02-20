@@ -238,8 +238,8 @@ func basicAuthMiddleware() gin.HandlerFunc {
 		if httpBasicAuthOk {
 			usernameHash := sha256.Sum256([]byte(username))
 			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.EnvConfig.HTTPOptions.Auth.UserName))
-			expectedPasswordHash := sha256.Sum256([]byte(config.EnvConfig.HTTPOptions.Auth.Password))
+			expectedUsernameHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Username))
+			expectedPasswordHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Password))
 
 			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
 			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
@@ -445,7 +445,7 @@ func setupSessionStore() sessions.Store {
 // err := server.ListenAndServe()
 func setupHTTPServer(router *gin.Engine) *http.Server {
 	return &http.Server{
-		Addr:              config.EnvConfig.HTTPAddress,
+		Addr:              config.LoadableConfig.Server.Address,
 		Handler:           router,
 		IdleTimeout:       time.Minute,
 		ReadTimeout:       10 * time.Second, //nolint:gomnd // Ignore
@@ -592,7 +592,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
-	if config.EnvConfig.HTTPOptions.UseBasicAuth {
+	if config.LoadableConfig.Server.BasicAuth.Enabled {
 		group.Use(basicAuthMiddleware())
 	}
 
@@ -699,12 +699,12 @@ func HTTPApp(ctx context.Context) {
 
 	// www.SetKeepAlivesEnabled(false)
 
-	if config.EnvConfig.HTTPOptions.UseSSL {
+	if config.LoadableConfig.Server.TLS.Enabled {
 		www.TLSConfig = &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 			MinVersion: tls.VersionTLS12,
 		}
-		err = www.ListenAndServeTLS(config.EnvConfig.HTTPOptions.X509.Cert, config.EnvConfig.HTTPOptions.X509.Key)
+		err = www.ListenAndServeTLS(config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
 	} else {
 		err = www.ListenAndServe()
 	}

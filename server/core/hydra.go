@@ -718,7 +718,7 @@ func withLanguageMiddleware() gin.HandlerFunc {
 // Returns the created http.Client.
 func createHttpClient() *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: viper.GetBool("http_client_skip_tls_verify")}},
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify}},
 		Timeout:   30 * time.Second,
 	}
 }
@@ -729,7 +729,7 @@ func createHttpClient() *http.Client {
 func createConfiguration(httpClient *http.Client) *openapi.Configuration {
 	return &openapi.Configuration{
 		HTTPClient: httpClient,
-		Servers:    []openapi.ServerConfiguration{{URL: viper.GetString("hydra_admin_uri")}},
+		Servers:    []openapi.ServerConfiguration{{URL: config.LoadableConfig.Server.HydraAdminUrl}},
 	}
 }
 

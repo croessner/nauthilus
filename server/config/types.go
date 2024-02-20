@@ -1,8 +1,6 @@
 package config
 
 import (
-	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/errors"
@@ -309,32 +307,4 @@ func (d *DbgModule) Get() string {
 //	}
 func (d *DbgModule) GetModule() global.DbgModule {
 	return d.module
-}
-
-// HTTPOptions is a type that holds configurations related to an HTTP(S) server.
-// It contains fields for authentication credentials, X.509 certificate and key paths, and flags for enabling basic authentication and SSL.
-type HTTPOptions struct {
-	Auth struct {
-		UserName string
-		Password string
-	}
-	X509 struct {
-		Cert string
-		Key  string
-	}
-	UseBasicAuth bool
-	UseSSL       bool
-}
-
-func (h HTTPOptions) String() string {
-	var result string
-
-	v := reflect.ValueOf(h)
-	typeOfV := v.Type()
-
-	for i := 0; i < v.NumField(); i++ {
-		result += fmt.Sprintf(" %s='%v'", typeOfV.Field(i).Name, v.Field(i).Interface())
-	}
-
-	return result[1:]
 }

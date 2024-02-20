@@ -16,10 +16,6 @@ var EnvConfig *Config //nolint:gochecknoglobals // System wide configuration
 
 // Config represents overall configuration settings for the application.
 type Config struct {
-	// HTTPAddress is the address where HTTP server should listen.
-	// It should be in the format "ip:port".
-	HTTPAddress string
-
 	// SMTPBackendAddress is the address of the SMTP backend server.
 	SMTPBackendAddress string
 
@@ -94,16 +90,12 @@ type Config struct {
 
 	// LocalCacheAuthTTL
 	LocalCacheAuthTTL time.Duration
-
-	// HTTPOptions contains configurations related to HTTP(S) server.
-	HTTPOptions
 }
 
 // setCommonDefaultEnvVars sets the default environment variables for the application.
 // It initializes various viper configuration variables with default values.
 // The default values are taken from the global constants and types defined in the code.
 func setCommonDefaultEnvVars() {
-	viper.SetDefault("http_address", global.HTTPAddress)
 	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
 	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
 	viper.SetDefault("imap_backend_address", global.IMAPBackendAddress)
@@ -112,8 +104,6 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("pop3_backend_port", global.POP3BackendPort)
 	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
 	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
-	viper.SetDefault("dns_timeout", uint(10))
-	viper.SetDefault("passdb_backends", []*Backend{{global.BackendCache}, {global.BackendLDAP}})
 	viper.SetDefault("developer_mode", false)
 	viper.SetDefault("max_action_workers", global.MaxActionWorkers)
 	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
@@ -164,8 +154,6 @@ func setProtectionDefaultEnvVars() {
 func setWebDefaultEnvVars() {
 	viper.SetDefault("html_static_content_path", "/usr/app/static")
 	viper.SetDefault("default_logo_image", "/static/img/logo.png")
-	viper.SetDefault("hydra_admin_uri", "http://127.0.0.1:4445")
-	viper.SetDefault("http_client_skip_tls_verify", false)
 	viper.SetDefault("homepage", "https://nauthilus.org")
 	viper.SetDefault("language_resources", "/usr/app/resources")
 }
@@ -318,9 +306,6 @@ func (c *Config) String() string {
 // RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
 // and DevMode.
 func (c *Config) setConfigFromEnvVars() {
-	c.HTTPAddress = viper.GetString("http_address")
-	c.HTTPOptions.UseSSL = viper.GetBool("http_use_ssl")
-	c.HTTPOptions.UseBasicAuth = viper.GetBool("http_use_basic_auth")
 	c.SMTPBackendAddress = viper.GetString("smtp_backend_address")
 	c.SMTPBackendPort = viper.GetInt("smtp_backend_port")
 	c.IMAPBackendAddress = viper.GetString("imap_backend_address")
@@ -342,32 +327,6 @@ func (c *Config) setConfigFromEnvVars() {
 	c.RedisSentinelUsername = viper.GetString("redis-sentinel-username")
 	c.RedisSentinelPassword = viper.GetString("redis-sentinel-password")
 	c.DevMode = viper.GetBool("developer_mode")
-}
-
-// setConfigHTTPOptionUseSSL sets the X509 certificate and key paths for HTTPS if the UseSSL flag is true
-func (c *Config) setConfigHTTPOptionUseSSL() {
-	if c.HTTPOptions.UseSSL {
-		if val := viper.GetString("http_tls_cert"); val != "" {
-			c.HTTPOptions.X509.Cert = val
-		}
-
-		if val := viper.GetString("http_tls_key"); val != "" {
-			c.HTTPOptions.X509.Key = val
-		}
-	}
-}
-
-// setConfigHTTPOptionUseBasicAuth sets the username and password for basic authentication if enabled.
-func (c *Config) setConfigHTTPOptionUseBasicAuth() {
-	if c.HTTPOptions.UseBasicAuth {
-		if val := viper.GetString("http_basic_auth_username"); val != "" {
-			c.HTTPOptions.Auth.UserName = val
-		}
-
-		if val := viper.GetString("http_basic_auth_password"); val != "" {
-			c.HTTPOptions.Auth.Password = val
-		}
-	}
 }
 
 // setConfigWaitDelay sets the value of the WaitDelay field in the Config struct based on the value of the "wait_delay" configuration property from the config file.
@@ -441,8 +400,6 @@ func (c *Config) setLocalCacheTTL() {
 // setConfig initializes the configuration options based on the environment variables and flags.
 // It calls several helper methods to set each specific option.
 func (c *Config) setConfig() {
-	c.setConfigHTTPOptionUseSSL()
-	c.setConfigHTTPOptionUseBasicAuth()
 	c.setConfigWaitDelay()
 	c.setConfigMaxLoginAttempts()
 	c.setConfigMaxActionWorkers()

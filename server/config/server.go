@@ -5,13 +5,30 @@ import (
 )
 
 type ServerSection struct {
+	Address             string      `mapstructure:"address"`
+	TLS                 TLS         `mapstructure:"tls"`
+	BasicAuth           BasicAuth   `mapstructure:"basic_auth"`
 	InstanceName        string      `mapstructure:"instance_name"`
 	Log                 Log         `maptostructure:"log"`
 	Backends            []*Backend  `mapstructure:"backends"`
 	Features            []*Feature  `mapstructure:"features"`
 	BruteForceProtocols []*Protocol `mapstructure:"brute_force_protocols"`
+	HydraAdminUrl       string      `mapstructure:"ory_hydra_admin_url"`
 	DNS                 DNS         `mapstructure:"dns"`
 	Insights            Insights    `mapstructure:"insights"`
+}
+
+type TLS struct {
+	Enabled              bool   `mapstructure:"enabled"`
+	Cert                 string `mapstructure:"cert"`
+	Key                  string `mapstructure:"key"`
+	HTTPClientSkipVerify bool   `mapstructure:"http_client_skip_verify"`
+}
+
+type BasicAuth struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 type Log struct {
