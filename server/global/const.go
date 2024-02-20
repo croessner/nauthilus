@@ -253,9 +253,6 @@ const (
 	// RedisPort is the default Redis server port
 	RedisPort = 6379
 
-	// RedisPrefix is the prefix for keys stored in Redis
-	RedisPrefix = "nt_"
-
 	// RedisPosCacheTTL is the expiry time (in seconds) for positive cache entries in Redis
 	RedisPosCacheTTL = 3600
 

@@ -1152,6 +1152,31 @@ func (f *File) validateRedisPoolSize() error {
 	return nil
 }
 
+// validateRedisPosCacheTTL is a method on the File struct.
+// It checks if the RedisPosCacheTTL field in the Server.Redis struct is set to 0.
+// If it is, it assigns the value of global.RedisPosCacheTTL to it before returning.
+// This method ensures that a default value is set for RedisPosCacheTTL if it was not explicitly provided.
+// The function does not return any errors.
+func (f *File) validateRedisPosCacheTTL() error {
+	if f.Server.Redis.PosCacheTTL == 0 {
+		f.Server.Redis.PosCacheTTL = global.RedisPosCacheTTL
+	}
+
+	return nil
+}
+
+// validateRedisNegCacheTTL is a method on the File struct.
+// It validates the RedisNegCacheTTL field of the Server.Redis struct.
+// If the RedisNegCacheTTL field is 0, it sets it to the global.RedisNegCacheTTL constant.
+// Returns nil error.
+func (f *File) validateRedisNegCacheTTL() error {
+	if f.Server.Redis.NegCacheTTL == 0 {
+		f.Server.Redis.NegCacheTTL = global.RedisNegCacheTTL
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1184,6 +1209,8 @@ func (f *File) validate() (err error) {
 		// Without errors, but fixing things
 		f.validateInstanceName,
 		f.validateDNSTimeout,
+		f.validateRedisPosCacheTTL,
+		f.validateRedisNegCacheTTL,
 	}
 
 	for _, validator := range validators {
