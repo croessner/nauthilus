@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
@@ -184,6 +185,7 @@ func setLocalCacheDefaults() {
 // Finally, it allows empty environment variables and enables automatic environment variable detection for viper.
 func setDefaultEnvVars() {
 	viper.SetEnvPrefix("nauthilus")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	setCommonDefaultEnvVars()
 	setLocalCacheDefaults()
