@@ -69,17 +69,17 @@ var (
 		Help: "The total number of cache misses",
 	})
 
-	RedisHits = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
 	}, []string{"type"})
 
-	RedisMisses = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
 	}, []string{"type"})
 
-	RedisTimeouts = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
 	}, []string{"type"})

@@ -480,9 +480,9 @@ func prometheusMiddleware() gin.HandlerFunc {
 		}
 
 		for handleType, redisStats := range redisStatsMap {
-			stats.RedisHits.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Hits))
-			stats.RedisMisses.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Misses))
-			stats.RedisTimeouts.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Timeouts))
+			stats.RedisHits.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Hits))
+			stats.RedisMisses.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Misses))
+			stats.RedisTimeouts.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Timeouts))
 			stats.RedisTotalConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.TotalConns))
 			stats.RedisIdleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.IdleConns))
 			stats.RedisStaleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.StaleConns))
