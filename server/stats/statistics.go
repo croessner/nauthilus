@@ -69,6 +69,36 @@ var (
 		Help: "The total number of cache misses",
 	})
 
+	RedisHits = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_hits_total",
+		Help: "The total number of times a free connection was found in the pool",
+	}, []string{"type"})
+
+	RedisMisses = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_misses_total",
+		Help: "The total number of times a free connection was NOT found in the pool",
+	}, []string{"type"})
+
+	RedisTimeouts = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_timeouts_total",
+		Help: "The total number of times a wait timeout occurred",
+	}, []string{"type"})
+
+	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_conns_total",
+		Help: "The total number of connections in the pool",
+	}, []string{"type"})
+
+	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_idle_conns_total",
+		Help: "The total number of idle connections in the pool",
+	}, []string{"type"})
+
+	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_stale_conns_total",
+		Help: "The total number of stale connections removed from the pool",
+	}, []string{"type"})
+
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_user_usage_percent",

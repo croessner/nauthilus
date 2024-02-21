@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -24,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/go-redis/redis/v8"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gwatts/gin-adapter"
 	"github.com/justinas/nosurf"
@@ -468,6 +470,23 @@ func prometheusMiddleware() gin.HandlerFunc {
 		ctx.Next()
 
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
+
+		redisStatsMap := map[string]*redis.PoolStats{
+			"master": backend.RedisHandle.PoolStats(),
+		}
+
+		if backend.RedisHandle != backend.RedisHandleReplica {
+			redisStatsMap["replica"] = backend.RedisHandleReplica.PoolStats()
+		}
+
+		for handleType, redisStats := range redisStatsMap {
+			stats.RedisHits.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Hits))
+			stats.RedisMisses.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Misses))
+			stats.RedisTimeouts.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.Timeouts))
+			stats.RedisTotalConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.TotalConns))
+			stats.RedisIdleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.IdleConns))
+			stats.RedisStaleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.StaleConns))
+		}
 
 		timer.ObserveDuration()
 		timer2.ObserveDuration()
