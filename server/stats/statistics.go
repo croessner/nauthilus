@@ -70,27 +70,27 @@ var (
 	})
 
 	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_hits_total",
+		Name: "redis_pool_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
 	}, []string{"type"})
 
 	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_misses_total",
+		Name: "redis_pool_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
 	}, []string{"type"})
 
 	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_timeouts_total",
+		Name: "redis_pool_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
 	}, []string{"type"})
 
 	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_conns_total",
+		Name: "redis_pool_total_connections",
 		Help: "The total number of connections in the pool",
 	}, []string{"type"})
 
 	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_idle_conns_total",
+		Name: "redis_pool_idle_connections",
 		Help: "The total number of idle connections in the pool",
 	}, []string{"type"})
 
