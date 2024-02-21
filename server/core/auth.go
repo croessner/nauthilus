@@ -61,6 +61,14 @@ func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.nginxBackendServer = servers
 }
 
+func (n *NginxBackendServer) GetTotalServers() int {
+	n.mu.RLock()
+
+	defer n.mu.RUnlock()
+
+	return len(n.nginxBackendServer)
+}
+
 // NewNginxBackendServer creates a new instance of the NginxBackendServer struct.
 // It returns a pointer to the newly created NginxBackendServer.
 func NewNginxBackendServer() *NginxBackendServer {
@@ -596,9 +604,13 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 // If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
-			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+		if NginxBackendServers.GetTotalServers() == 0 {
+			ctx.Header("Auth-Status", "Internal failure")
+		} else {
+			if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
+				ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
+				ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+			}
 		}
 	} else {
 		switch a.Protocol.Get() {
