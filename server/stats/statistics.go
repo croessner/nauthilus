@@ -95,7 +95,7 @@ var (
 	}, []string{"type"})
 
 	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_stale_conns_total",
+		Name: "redis_pool_stale_connections",
 		Help: "The total number of stale connections removed from the pool",
 	}, []string{"type"})
 
