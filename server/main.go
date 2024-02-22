@@ -745,7 +745,7 @@ func checkNgxBackendServer(ipAddress string, port int) error {
 func logNgxBackendError(server *config.NginxBackendServer, err error) {
 	level.Error(logging.DefaultErrLogger).Log(
 		global.LogKeyError, err,
-		global.LogKeyMsg, "Server doen",
+		global.LogKeyMsg, "Server down",
 		global.LogKeyProtocol, server.Protocol,
 		global.LogKeyNgxBackendIP, server.IP,
 		global.LogKeyNgxBackendPort, server.Port,

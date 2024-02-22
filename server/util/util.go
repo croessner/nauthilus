@@ -176,6 +176,7 @@ func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 		Username:         config.LoadableConfig.Server.Redis.Master.Username,
 		Password:         config.LoadableConfig.Server.Redis.Master.Password,
 		PoolSize:         config.LoadableConfig.Server.Redis.PoolSize,
+		MinIdleConns:     config.LoadableConfig.Server.Redis.IdlePoolSize,
 	})
 
 	return
@@ -183,11 +184,12 @@ func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 
 func newRedisClient(address string) *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:     address,
-		Username: config.LoadableConfig.Server.Redis.Master.Username,
-		Password: config.LoadableConfig.Server.Redis.Master.Password,
-		DB:       config.LoadableConfig.Server.Redis.DatabaseNmuber,
-		PoolSize: config.LoadableConfig.Server.Redis.PoolSize,
+		Addr:         address,
+		Username:     config.LoadableConfig.Server.Redis.Master.Username,
+		Password:     config.LoadableConfig.Server.Redis.Master.Password,
+		DB:           config.LoadableConfig.Server.Redis.DatabaseNmuber,
+		PoolSize:     config.LoadableConfig.Server.Redis.PoolSize,
+		MinIdleConns: config.LoadableConfig.Server.Redis.IdlePoolSize,
 	})
 }
 

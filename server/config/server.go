@@ -53,6 +53,7 @@ type Redis struct {
 	DatabaseNmuber int       `mapstructure:"database_number"`
 	Prefix         string    `mapstructure:"prefix"`
 	PoolSize       int       `mapstructure:"pool_size"`
+	IdlePoolSize   int       `mapstructure:"idle_pool_size"`
 	PosCacheTTL    uint      `mapstructure:"positive_cache_ttl"`
 	NegCacheTTL    uint      `mapstructure:"negative_cache_ttl"`
 	Master         Master    `mapstructure:"master"`

@@ -1149,6 +1149,11 @@ func (f *File) validateRedisPoolSize() error {
 		return errors.ErrRedisPoolSize
 	}
 
+	// Silently ignore negative values!
+	if f.Server.Redis.IdlePoolSize < 0 {
+		f.Server.Redis.IdlePoolSize = 0
+	}
+
 	return nil
 }
 
