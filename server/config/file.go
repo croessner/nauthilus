@@ -1505,23 +1505,52 @@ func (f *File) handleFile() (err error) {
 	return
 }
 
-// bindEnvs recursively binds environment variables to the fields of a struct. It takes an instance of the struct, i, and a series of strings representing the nested field names.
-// For each field in the struct, it checks if there is a "mapstructure" tag defined. If not, it uses the field name as the tag. If the field is of struct type, the function is called
+// bindEnvs binds environment variables to the provided struct fields.
+//
+// 'i' is the struct that should have its fields populated with environment variable values.
+// The field values are determined by the value of the 'mapstructure' tag of each field. If the 'mapstructure' tag is empty,
+// the field's name will be used as the key to fetch the value from the environment variables.
+// Struct tags offer a convenient way to specify metadata associated with the struct field.
+//
+// 'parts' is optional and can be used to provide parent keys when dealing with nested struct fields.
+// This makes it easy to bind nested keys in structures.
+//
+// For each field in 'i', it checks the field's type. If the field type is pointer to a struct or
+// the field is a struct, then it recursively collects the environment variable mappings.
+//
+// If the field type is a primitive type, it attempts to bind the environment variable using the viper library's BindEnv function.
+// The environment variable key is constructed by concatenating 'parts' and 'tag' or field name as needed.
+//
+// The function returns an error when the viper's BindEnv fails to bind the environment variable. If no errors are encountered during binding,
+// it will return nil indicating a successful binding of environment variables to struct fields.
 func bindEnvs(i any, parts ...string) error {
-	valueOf := reflect.ValueOf(i)
-	typeOf := reflect.TypeOf(i)
+	ifv := reflect.ValueOf(i)
+	if ifv.Kind() == reflect.Ptr {
+		ifv = ifv.Elem()
+	}
 
-	for i := range typeOf.NumField() {
-		v := valueOf.Field(i)
-		t := typeOf.Field(i)
+	ift := ifv.Type()
+
+	for i := range ift.NumField() {
+		v := ifv.Field(i)
+		t := ift.Field(i)
 
 		tag := t.Tag.Get("mapstructure")
 		if tag == "" {
 			tag = t.Name
 		}
 
-		if v.Kind() == reflect.Struct {
+		if t.Type.Kind() == reflect.Ptr && t.Type.Elem().Kind() == reflect.Struct {
+			if v.IsNil() {
+				v.Set(reflect.New(t.Type.Elem()))
+			}
+
 			err := bindEnvs(v.Interface(), append(parts, tag)...)
+			if err != nil {
+				return err
+			}
+		} else if v.Kind() == reflect.Struct {
+			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
 			if err != nil {
 				return err
 			}
@@ -1555,7 +1584,7 @@ func NewConfigFile() (newCfg *File, err error) {
 	}
 
 	// Register all known config variables with env variables.
-	bindEnvs(File{})
+	bindEnvs(&File{})
 
 	err = newCfg.handleFile()
 
