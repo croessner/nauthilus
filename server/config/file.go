@@ -1505,6 +1505,39 @@ func (f *File) handleFile() (err error) {
 	return
 }
 
+// bindEnvs recursively binds environment variables to the fields of a struct. It takes an instance of the struct, i, and a series of strings representing the nested field names.
+// For each field in the struct, it checks if there is a "mapstructure" tag defined. If not, it uses the field name as the tag. If the field is of struct type, the function is called
+func bindEnvs(i any, parts ...string) error {
+	valueOf := reflect.ValueOf(i)
+	typeOf := reflect.TypeOf(i)
+
+	for i := range typeOf.NumField() {
+		v := valueOf.Field(i)
+		t := typeOf.Field(i)
+
+		tag := t.Tag.Get("mapstructure")
+		if tag == "" {
+			tag = t.Name
+		}
+
+		if v.Kind() == reflect.Struct {
+			err := bindEnvs(v.Interface(), append(parts, tag)...)
+			if err != nil {
+				return err
+			}
+		} else {
+			key := strings.Join(append(parts, tag), ".")
+
+			err := viper.BindEnv(key)
+			if err != nil {
+				return fmt.Errorf("failed to bind %q: %w", key, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // NewConfigFile is the constructor for a ConfigFile object.
 func NewConfigFile() (newCfg *File, err error) {
 	newCfg = &File{}
@@ -1520,6 +1553,9 @@ func NewConfigFile() (newCfg *File, err error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Register all known config variables with env variables.
+	bindEnvs(File{})
 
 	err = newCfg.handleFile()
 
