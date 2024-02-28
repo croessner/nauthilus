@@ -1036,6 +1036,10 @@ func (f *File) validateHydraAdminURL() error {
 // The error message is formatted using the fmt.Errorf function.
 // If all files are readable, it returns nil to indicate that the validation was successful.
 func (f *File) validateTLSCertAndKey() error {
+	if !f.Server.TLS.Enabled {
+		return nil
+	}
+
 	isFileReadable := func(file string) error {
 		_, err := os.Stat(file)
 
