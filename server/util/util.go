@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -165,6 +166,44 @@ func GetHash(value string) string {
 	return hex.EncodeToString(hashValue.Sum(nil))[:8]
 }
 
+// redisTLSOptions checks if Redis TLS is enabled in the configuration.
+// If TLS is enabled, it loads the X509 key pair and creates a tls.Config object.
+// The loaded certificate is added to the tls.Config object.
+// If an error occurs while loading the key pair, it logs the error and returns nil.
+// If Redis TLS is disabled, it returns nil.
+func redisTLSOptions() *tls.Config {
+	if config.LoadableConfig.Server.Redis.TLS.Enabled {
+		cert, err := tls.LoadX509KeyPair(config.LoadableConfig.Server.Redis.TLS.Cert, config.LoadableConfig.Server.Redis.TLS.Key)
+		if err != nil {
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
+
+			return nil
+		}
+
+		// Create a tls.Config object to use
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+
+		return tlsConfig
+	}
+
+	return nil
+}
+
+// newRedisFailoverClient creates a new failover client for Redis.
+// The client connects to Redis through sentinels. The option slavesOnly determines
+// whether the client reads from slaves only. If it is set to true, all reads will be
+// done from the slave. If it is set to false, read operations can be done from both
+// the master and slave. The configuration for the client (such as MasterName,
+// SentinelAddrs, DB, SentinelUsername, SentinelPassword, Username, Password,
+// PoolSize, MinIdleConns) are loaded from the config.
+//
+// It returns a redisHandle which is a pointer to a redis.Client object.
+//
+// usage:
+//
+//	client := newRedisFailoverClient(true)
 func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 	redisHandle = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:       config.LoadableConfig.Server.Redis.Sentinels.Master,
@@ -177,11 +216,16 @@ func newRedisFailoverClient(slavesOnly bool) (redisHandle *redis.Client) {
 		Password:         config.LoadableConfig.Server.Redis.Master.Password,
 		PoolSize:         config.LoadableConfig.Server.Redis.PoolSize,
 		MinIdleConns:     config.LoadableConfig.Server.Redis.IdlePoolSize,
+		TLSConfig:        redisTLSOptions(),
 	})
 
 	return
 }
 
+// newRedisClient returns a new Redis client that is configured with the provided address and authentication credentials.
+// The client is created using the redis.NewClient function from the "github.com/go-redis/redis" package.
+// The address is used to specify the network address of the Redis server.
+// The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.LoadableConfig.Server.Redis.Master" and
 func newRedisClient(address string) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:         address,
@@ -190,14 +234,34 @@ func newRedisClient(address string) *redis.Client {
 		DB:           config.LoadableConfig.Server.Redis.DatabaseNmuber,
 		PoolSize:     config.LoadableConfig.Server.Redis.PoolSize,
 		MinIdleConns: config.LoadableConfig.Server.Redis.IdlePoolSize,
+		TLSConfig:    redisTLSOptions(),
 	})
 }
 
-// NewRedisClient constructs a new Redis fail over client or a regular client depending on the configuration done in
-// Config.
+// newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
+// The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
+// It also includes the TLS configuration obtained from the redisTLSOptions function.
+// The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
+func newRedisClusterClient() *redis.ClusterClient {
+	return redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:        config.LoadableConfig.Server.Redis.Cluster.Addresses,
+		Username:     config.LoadableConfig.Server.Redis.Cluster.Username,
+		Password:     config.LoadableConfig.Server.Redis.Cluster.Password,
+		PoolSize:     config.LoadableConfig.Server.Redis.PoolSize,
+		MinIdleConns: config.LoadableConfig.Server.Redis.IdlePoolSize,
+		TLSConfig:    redisTLSOptions(),
+	})
+}
+
+// NewRedisClient creates a new Redis client based on the configuration settings.
+// It checks whether a Redis cluster is specified in the configuration and creates a cluster client if so.
+// If a Redis sentinel setup is specified in the configuration, it creates a failover client.
+// For a standalone Redis setup, it creates a regular Redis client.
+// The created Redis client is then returned as a universal client.
 func NewRedisClient() (redisHandle redis.UniversalClient) {
-	// If two or more sentinels are defined and a master name is set, switch to a FailoverClient.
-	if len(config.LoadableConfig.Server.Redis.Sentinels.Addresses) > 1 && config.LoadableConfig.Server.Redis.Sentinels.Master != "" {
+	if len(config.LoadableConfig.Server.Redis.Cluster.Addresses) > 0 {
+		redisHandle = newRedisClusterClient()
+	} else if len(config.LoadableConfig.Server.Redis.Sentinels.Addresses) > 1 && config.LoadableConfig.Server.Redis.Sentinels.Master != "" {
 		redisHandle = newRedisFailoverClient(false)
 	} else {
 		redisHandle = newRedisClient(config.LoadableConfig.Server.Redis.Master.Address)
@@ -206,9 +270,16 @@ func NewRedisClient() (redisHandle redis.UniversalClient) {
 	return
 }
 
-// NewRedisReplicaClient constructs a new Redis slave server if Nauthilus is not configured to use Redis sentinels and if
-// the configuration settings for RedisRO are different from the default Redis settings.
+// NewRedisReplicaClient is a function that returns a Redis replica client based on the configuration settings.
+// If there are cluster addresses configured, it returns nil.
+// If there are multiple sentinel addresses and a master address is configured, it returns a failover client.
+// If the replica address is different from the master address, it returns a regular client using the replica address.
+// Otherwise, it returns nil.
 func NewRedisReplicaClient() redis.UniversalClient {
+	if len(config.LoadableConfig.Server.Redis.Cluster.Addresses) > 0 {
+		return nil
+	}
+
 	if len(config.LoadableConfig.Server.Redis.Sentinels.Addresses) > 1 && config.LoadableConfig.Server.Redis.Sentinels.Master != "" {
 		return newRedisFailoverClient(true)
 	}

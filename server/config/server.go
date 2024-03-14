@@ -54,11 +54,13 @@ type Redis struct {
 	Prefix         string    `mapstructure:"prefix"`
 	PoolSize       int       `mapstructure:"pool_size"`
 	IdlePoolSize   int       `mapstructure:"idle_pool_size"`
+	TLS            TLS       `mapstructure:"tls"`
 	PosCacheTTL    uint      `mapstructure:"positive_cache_ttl"`
 	NegCacheTTL    uint      `mapstructure:"negative_cache_ttl"`
 	Master         Master    `mapstructure:"master"`
 	Replica        Replica   `mapstructure:"replica"`
 	Sentinels      Sentinels `mapstructure:"sentinels"`
+	Cluster        Cluster   `mapstructure:"cluster"`
 }
 
 type Master struct {
@@ -73,6 +75,12 @@ type Replica struct {
 
 type Sentinels struct {
 	Master    string   `mapstructure:"master"`
+	Addresses []string `mapstructure:"addresses"`
+	Username  string   `mapstructure:"username"`
+	Password  string   `mapstructure:"password"`
+}
+
+type Cluster struct {
 	Addresses []string `mapstructure:"addresses"`
 	Username  string   `mapstructure:"username"`
 	Password  string   `mapstructure:"password"`
