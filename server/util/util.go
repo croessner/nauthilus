@@ -263,7 +263,7 @@ func NewRedisClient() (redisHandle redis.UniversalClient) {
 
 	if len(redisCfg.Cluster.Addresses) > 0 {
 		redisHandle = newRedisClusterClient(redisCfg)
-	} else if len(redisCfg.Sentinels.Addresses) > 1 && redisCfg.Sentinels.Master != "" {
+	} else if len(redisCfg.Sentinels.Addresses) > 0 && redisCfg.Sentinels.Master != "" {
 		redisHandle = newRedisFailoverClient(redisCfg, false)
 	} else {
 		redisHandle = newRedisClient(redisCfg, redisCfg.Master.Address)
