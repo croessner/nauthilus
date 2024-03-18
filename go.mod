@@ -13,7 +13,6 @@ require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-kit/log v0.2.1
 	github.com/go-ldap/ldap/v3 v3.4.6
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-webauthn/webauthn v0.10.1
 	github.com/gwatts/gin-adapter v1.0.0
 	github.com/justinas/nosurf v1.1.1
@@ -25,6 +24,7 @@ require (
 	github.com/pquerna/otp v1.4.0
 	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.6.0
+	github.com/redis/go-redis/v9 v9.5.1
 	github.com/segmentio/ksuid v1.0.4
 	github.com/simia-tech/crypt v0.5.1
 	github.com/spf13/pflag v1.0.5

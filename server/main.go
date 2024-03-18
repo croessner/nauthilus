@@ -27,8 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
 )

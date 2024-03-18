@@ -1810,7 +1810,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 
 		accountName = strings.Join(accounts, ":")
 
-		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
+		err = backend.RedisHandle.HSet(context.Background(), key, a.Username, accountName).Err()
 		if err == nil {
 			stats.RedisWriteCounter.Inc()
 		}

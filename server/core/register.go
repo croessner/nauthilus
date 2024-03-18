@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,9 +15,9 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -590,7 +591,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
+			if _, err = backend.RedisHandle.Del(context.Background(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
 					stats.RedisWriteCounter.Inc()
 

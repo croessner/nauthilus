@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // For a brief documentation of this file please have a look at the Markdown document REST-API.md.
@@ -171,7 +172,7 @@ func listBruteforce(ctx *gin.Context) {
 	list := &List{}
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	result, err := backend.RedisHandleReplica.HGetAll(backend.RedisHandleReplica.Context(), key).Result()
+	result, err := backend.RedisHandleReplica.HGetAll(context.Background(), key).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -375,9 +376,9 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	if removeHash {
-		err = backend.RedisHandle.Del(backend.RedisHandle.Context(), redisKey).Err()
+		err = backend.RedisHandle.Del(context.Background(), redisKey).Err()
 	} else {
-		err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), redisKey, userCmd.User).Err()
+		err = backend.RedisHandle.HDel(context.Background(), redisKey, userCmd.User).Err()
 	}
 
 	if err != nil {
@@ -389,7 +390,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	stats.RedisWriteCounter.Inc()
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
+		if _, err = backend.RedisHandle.Del(context.Background(), userKey).Result(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			return
@@ -548,7 +549,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 				return ruleFlushError, err
 			}
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = backend.RedisHandle.Del(backend.RedisHandle.Context(), key).Err(); err != nil {
+				if err = backend.RedisHandle.Del(context.Background(), key).Err(); err != nil {
 					ruleFlushError = true
 
 					return ruleFlushError, err

@@ -22,8 +22,8 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/redis/go-redis/v9"
 	"github.com/simia-tech/crypt"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -208,7 +208,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 	redisHandle = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:       redisCfg.Sentinels.Master,
 		SentinelAddrs:    redisCfg.Sentinels.Addresses,
-		SlaveOnly:        slavesOnly,
+		ReplicaOnly:      slavesOnly,
 		DB:               redisCfg.DatabaseNmuber,
 		SentinelUsername: redisCfg.Sentinels.Username,
 		SentinelPassword: redisCfg.Sentinels.Password,
