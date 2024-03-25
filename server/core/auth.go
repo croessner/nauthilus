@@ -1594,7 +1594,9 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 	}
 
 	if passDBResult.Authenticated {
-		localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+		if !a.haveMonitoringFlag(global.MonInMemory) {
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+		}
 	}
 
 	authResult := a.filterLua(passDBResult, ctx)
