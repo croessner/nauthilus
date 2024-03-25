@@ -300,6 +300,8 @@ type Authentication struct {
 	// HTTPClientContext tracks the context for an HTTP client connection.
 	HTTPClientContext context.Context
 
+	MonitoringFlags []global.Monitoring
+
 	*backend.PasswordHistory
 	*lualib.Context
 }
@@ -1333,6 +1335,16 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
+func (a *Authentication) haveMonitoringFlag(flag global.Monitoring) bool {
+	for _, setFlag := range a.MonitoringFlags {
+		if setFlag == flag {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handlePassword handles the authentication process for the password flow.
 // It performs common validation checks and then proceeds based on the value of ctx.Value(global.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
@@ -1345,7 +1357,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		return
 	}
 
-	if ctx.GetBool(global.CtxLocalCacheAuthKey) {
+	if !a.haveMonitoringFlag(global.MonInMemory) && ctx.GetBool(global.CtxLocalCacheAuthKey) {
 		return a.handleLocalCache(ctx)
 	}
 
@@ -1437,7 +1449,10 @@ func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[glo
 		db := backendType.Get()
 		switch db {
 		case global.BackendCache:
-			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
+			if !a.haveMonitoringFlag(global.MonCache) {
+				passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
+			}
+
 			useCache = true
 		case global.BackendLDAP:
 			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
@@ -1845,6 +1860,14 @@ func (a *Authentication) setOperationMode(ctx *gin.Context) {
 		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
 
 		a.ListAccounts = true
+	}
+
+	if ctx.Query("in-memory") == "0" {
+		a.MonitoringFlags = append(a.MonitoringFlags, global.MonInMemory)
+	}
+
+	if ctx.Query("cache") == "0" {
+		a.MonitoringFlags = append(a.MonitoringFlags, global.MonCache)
 	}
 }
 
@@ -2576,6 +2599,10 @@ func (a *Authentication) generateLocalChacheKey() string {
 // It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
 // Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
 func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
+	if a.haveMonitoringFlag(global.MonInMemory) {
+		return false
+	}
+
 	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
 		guid := *a.GUID
 		restoreCtx := false

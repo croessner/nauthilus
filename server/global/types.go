@@ -44,3 +44,6 @@ type LuaCommand uint8
 
 // CacheNameBackend is a numeric identifier for a cache name backend.
 type CacheNameBackend uint8
+
+// Monitoring is a numeric identifier for various monitoring flags in the Authentication struct.
+type Monitoring uint8

@@ -1136,3 +1136,11 @@ const (
 	// CacheLua refers to the enum value for Lua cache backend
 	CacheLua
 )
+
+const (
+	// MonInMemory is a constant of type Monitoring that represents the flag for in-memory monitoring.
+	MonInMemory Monitoring = iota
+
+	// MonCache represents the flag for caching in monitoring.
+	MonCache
+)
