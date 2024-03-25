@@ -1451,9 +1451,8 @@ func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[glo
 		case global.BackendCache:
 			if !a.haveMonitoringFlag(global.MonCache) {
 				passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
+				useCache = true
 			}
-
-			useCache = true
 		case global.BackendLDAP:
 			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
 		case global.BackendLua:
