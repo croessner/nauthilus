@@ -24,7 +24,7 @@ WORKDIR /usr/app
 RUN addgroup -S nauthilus; \
     adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
 
-RUN apk --no-cache --upgrade add ca-certificates curl
+RUN apk --no-cache --upgrade add ca-certificates bash curl
 
 # Debugging with pprof
 #COPY --from=builder ["/build", "/build"]
