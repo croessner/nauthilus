@@ -17,6 +17,7 @@ type ServerSection struct {
 	DNS                 DNS         `mapstructure:"dns"`
 	Insights            Insights    `mapstructure:"insights"`
 	Redis               Redis       `mapstructure:"redis"`
+	MasterUser          MasterUser  `mapstructure:"master_user"`
 }
 
 type TLS struct {
@@ -84,4 +85,9 @@ type Cluster struct {
 	Addresses []string `mapstructure:"addresses"`
 	Username  string   `mapstructure:"username"`
 	Password  string   `mapstructure:"password"`
+}
+
+type MasterUser struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Delimiter string `mapstructure:"delimiter"`
 }

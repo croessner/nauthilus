@@ -1186,6 +1186,23 @@ func (f *File) validateRedisNegCacheTTL() error {
 	return nil
 }
 
+// validateMasterUserDelimiter is a method on the File struct.
+// It validates the MasterUser.Delimiter field.
+// If the delimiter is empty, it sets it to "+".
+// If the delimiter has more than one character, it truncates it to the first character.
+// Return nil error.
+func (f *File) validateMasterUserDelimiter() error {
+	if f.Server.MasterUser.Delimiter == "" {
+		f.Server.MasterUser.Delimiter = "*"
+	}
+
+	if len(f.Server.MasterUser.Delimiter) != 1 {
+		f.Server.MasterUser.Delimiter = f.Server.MasterUser.Delimiter[:1]
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1220,6 +1237,7 @@ func (f *File) validate() (err error) {
 		f.validateDNSTimeout,
 		f.validateRedisPosCacheTTL,
 		f.validateRedisNegCacheTTL,
+		f.validateMasterUserDelimiter,
 	}
 
 	for _, validator := range validators {

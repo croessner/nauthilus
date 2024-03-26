@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -16,6 +17,42 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// handleMasterUserMode handles the master user mode functionality for authentication.
+// If master user mode is enabled and the username contains only one occurrence of the delimiter,
+// it splits the username based on the delimiter and returns the appropriate part of the username
+// based on the master user mode flag.
+//
+// Parameters:
+// - auth: a pointer to the Authentication struct which contains the user authentication information.
+//
+// Returns:
+// - string: the username based on the master user mode flag.
+func handleMasterUserMode(auth *Authentication) string {
+	if config.LoadableConfig.Server.MasterUser.Enabled {
+		if strings.Count(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
+			parts := strings.Split(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
+
+			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
+				return auth.Username
+			}
+
+			if !auth.MasterUserMode {
+				auth.MasterUserMode = true
+
+				// Return master user
+				return parts[1]
+			} else {
+				auth.MasterUserMode = false
+
+				// Return real user
+				return parts[0]
+			}
+		}
+	}
+
+	return auth.Username
+}
 
 // ldapPassDB implements the LDAP password database backend.
 //
@@ -63,11 +100,13 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		return
 	}
 
+	username := handleMasterUserMode(auth)
+
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
 		Command: global.LDAPSearch,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
+			Username:    username,
 			XLocalIP:    auth.XLocalIP,
 			XPort:       auth.XPort,
 			ClientIP:    auth.ClientIP,
@@ -162,6 +201,13 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	}
 
 	passDBResult.Authenticated = true
+
+	// We need to do a second user lookup, to retrieve correct data from LDAP.
+	if auth.MasterUserMode {
+		auth.NoAuth = true
+
+		passDBResult, err = ldapPassDB(auth)
+	}
 
 	return
 }
