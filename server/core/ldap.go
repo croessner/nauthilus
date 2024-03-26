@@ -63,6 +63,7 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		accountField       string
 		filter             string
 		baseDN             string
+		totpSecretPre      string
 		distinguishedNames any
 		attributes         []string
 		scope              *config.LDAPScope
@@ -204,9 +205,25 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
 	if auth.MasterUserMode {
+		var masterTOTPSecret []any
+
+		// Check if the master user does have a TOTP secret.
+		if value, okay := ldapReply.Result[protocol.TOTPRecoveryField]; okay {
+			totpSecretPre = value[global.LDAPSingleValue].(string)
+			masterTOTPSecret = value
+		}
+
 		auth.NoAuth = true
 
 		passDBResult, err = ldapPassDB(auth)
+
+		if totpSecretPre != "" {
+			// Use the TOTP secret from a master user if it exists.
+			passDBResult.Attributes[protocol.TOTPRecoveryField] = masterTOTPSecret
+		} else {
+			// Ignore the user TOTP secret if it exists.
+			delete(passDBResult.Attributes, protocol.TOTPSecretField)
+		}
 	}
 
 	return
