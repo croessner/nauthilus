@@ -60,7 +60,7 @@ function nauthilus_call_filter(request)
         ts = "unknown"
     end
 
-    if request.user_found and request.authenticated and not request.no_auth then
+    if request.user_found and request.authenticated and not (request.no_auth or request.client_ip == "127.0.0.1") then
         local t = {}
 
         t.key = "client"
