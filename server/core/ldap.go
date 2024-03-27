@@ -54,6 +54,44 @@ func handleMasterUserMode(auth *Authentication) string {
 	return auth.Username
 }
 
+// saveMasterUserTOTPSecret checks if the master user has a TOTP secret and returns it if present.
+//
+// Parameters:
+// - masterUserMode: a boolean indicating if master user mode is enabled.
+// - ldapReply: a pointer to the LDAPReply struct containing the LDAP query result.
+// - totpSecretField: a string indicating the field in which the TOTP secret is stored in the LDAPReply.
+//
+// Returns:
+// - totpSecretPre: a slice of interface{} containing the TOTP secret if present, nil otherwise.
+func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *backend.LDAPReply, totpSecretField string) (totpSecretPre []any) {
+	if masterUserMode {
+		// Check if the master user does have a TOTP secret.
+		if value, okay := ldapReply.Result[totpSecretField]; okay {
+			totpSecretPre = value
+		}
+	}
+
+	return nil
+}
+
+// restoreMasterUserTOTPSecret restores the TOTP secret for a master user in the PassDBResult attributes.
+// If the totpSecretPre parameter is not empty, it sets the TOTP secret attribute in the attributes map.
+// Otherwise, it deletes the TOTP secret attribute from the attributes map.
+//
+// Parameters:
+// - passDBResult: a pointer to the PassDBResult struct which contains the PassDB result attributes.
+// - totpSecretPre: an array of any type that represents the TOTP secret from a master user.
+// - totpSecretField: a string that represents the field name for the TOTP secret in the attributes map.
+func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any, totpSecretField string) {
+	if totpSecretPre != nil && len(totpSecretPre) != 0 {
+		// Use the TOTP secret from a master user if it exists.
+		passDBResult.Attributes[totpSecretField] = totpSecretPre
+	} else {
+		// Ignore the user TOTP secret if it exists.
+		delete(passDBResult.Attributes, totpSecretField)
+	}
+}
+
 // ldapPassDB implements the LDAP password database backend.
 //
 //nolint:gocognit // Backends are complex
@@ -63,7 +101,6 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		accountField       string
 		filter             string
 		baseDN             string
-		totpSecretPre      string
 		distinguishedNames any
 		attributes         []string
 		scope              *config.LDAPScope
@@ -170,6 +207,8 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		passDBResult.Attributes = ldapReply.Result
 	}
 
+	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
+
 	if !auth.NoAuth {
 		ldapReplyChan = make(chan *backend.LDAPReply)
 
@@ -205,25 +244,11 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
 	if auth.MasterUserMode {
-		var masterTOTPSecret []any
-
-		// Check if the master user does have a TOTP secret.
-		if value, okay := ldapReply.Result[protocol.TOTPRecoveryField]; okay {
-			totpSecretPre = value[global.LDAPSingleValue].(string)
-			masterTOTPSecret = value
-		}
-
 		auth.NoAuth = true
 
 		passDBResult, err = ldapPassDB(auth)
 
-		if totpSecretPre != "" {
-			// Use the TOTP secret from a master user if it exists.
-			passDBResult.Attributes[protocol.TOTPRecoveryField] = masterTOTPSecret
-		} else {
-			// Ignore the user TOTP secret if it exists.
-			delete(passDBResult.Attributes, protocol.TOTPSecretField)
-		}
+		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
 	}
 
 	return
