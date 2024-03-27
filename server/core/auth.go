@@ -61,6 +61,14 @@ func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
 	n.nginxBackendServer = servers
 }
 
+func (n *NginxBackendServer) GetTotalServers() int {
+	n.mu.RLock()
+
+	defer n.mu.RUnlock()
+
+	return len(n.nginxBackendServer)
+}
+
 // NewNginxBackendServer creates a new instance of the NginxBackendServer struct.
 // It returns a pointer to the newly created NginxBackendServer.
 func NewNginxBackendServer() *NginxBackendServer {
@@ -104,42 +112,6 @@ type JSONRequest struct {
 }
 
 // Authentication represents a struct that holds information related to authentication process.
-// UsernameReplace is a flag that is set if a user was found in a Database.
-// NoAuth is a flag that is set if the request mode does not require authentication.
-// ListAccounts is a flag that is set if Nauthilus is requested to send a full list of available user accounts.
-// UserFound is a flag that is set if a password Database found the user.
-// PasswordsAccountSeen is a counter that is increased whenever a new failed password was detected for the current account.
-// PasswordsTotalSeen is a counter that is increased whenever a new failed password was detected.
-// LoginAttempts is a counter that is incremented for each failed login request.
-// StatusCodeOK is the HTTP status code that is set by setStatusCodes.
-// StatusCodeInternalError is the HTTP status code that is set by setStatusCodes.
-// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
-// GUID is a global unique identifier that is inherited in all functions and methods that deal with the authentication process.
-// Method is set by the "Auth-Method" HTTP request header (Nginx protocol). It is typically something like "plain" or "login".
-// AccountField is the name of either a SQL field name or an LDAP attribute that was used to retrieve a user account.
-// Username is the value that was taken from the HTTP header "Auth-User" (Nginx protocol).
-// UsernameOrig is a copy from the username that was set by the HTTP request header "Auth-User" (Nginx protocol).
-// Password is the value that was taken from the HTTP header "Auth-Pass" (Nginx protocol).
-// ClientIP is the IP of a client that is to be authenticated.
-// XClientPort adds the remote client TCP port, which is set by the HTTP request header "X-Client-Port".
-// ClientHost is the DNS A name of the remote client. It is set with the HTTP request header "Client-Host" (Nginx protocol).
-// HAProxy specific headers: XSSL, XSSLSessionID, XSSLClientVerify, XSSLClientDN, XSSLClientCN, XSSLIssuer, XSSLClientNotBefore,
-// XSSLClientNotAfter, XSSLSubjectDN, XSSLIssuerDN, XSSLClientSubjectDN, XSSLClientIssuerDN, XSSLProtocol, XSSLCipher.
-// XClientID is delivered by some mail user agents when using IMAP. This value is set by the HTTP request header "X-Client-Id".
-// XLocalIP is the TCP/IP address of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-IP".
-// XPort is the TCP port of the server that asks for authentication. Its value is set by the HTTP request header "X-Local-Port".
-// UserAgent may have been sent by a mail user agent and is set by the HTTP request header "User-Agent".
-// StatusMessage is the HTTP response payload that is sent to the remote server that asked for authentication.
-// Service is set by Nauthilus depending on the router endpoint.
-// BruteForceName is the canonical name of a brute force bucket that was triggered by a rule.
-// FeatureName is the name of a feature that has triggered a reject.
-// TOTPSecret is used to store a TOTP secret in a SQL Database.
-// TOTPSecretField is the SQL field or LDAP attribute that resolves the TOTP secret for two-factor authentication.
-// TOTPRecoveryField NYI.
-// UniqueUserIDField is a string representing a unique user identifier.
-// DisplayNameField is the display name of a user.
-// AdditionalLogging is a slice of strings that can be filled from Lua features and a Lua backend.
-// BruteForceCounter is a map
 type Authentication struct {
 	// UsernameReplace is a flag that is set, if a user was found in a Database.
 	UsernameReplace bool
@@ -291,6 +263,12 @@ type Authentication struct {
 
 	// HTTPClientContext tracks the context for an HTTP client connection.
 	HTTPClientContext context.Context
+
+	// MonitoringFlags is a slice of global.Monitoring that is used to skip certain steps while processing an authentication request.
+	MonitoringFlags []global.Monitoring
+
+	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
+	MasterUserMode bool
 
 	*backend.PasswordHistory
 	*lualib.Context
@@ -596,9 +574,13 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 // If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
 	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
-			ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+		if NginxBackendServers.GetTotalServers() == 0 {
+			ctx.Header("Auth-Status", "Internal failure")
+		} else {
+			if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
+				ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
+				ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+			}
 		}
 	} else {
 		switch a.Protocol.Get() {
@@ -875,6 +857,21 @@ func (a *Authentication) authTempFail(ctx *gin.Context, reason string) {
 	level.Info(logging.DefaultLogger).Log(a.LogLineMail("tempfail", ctx.Request.URL.Path)...)
 }
 
+// isMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
+// It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
+func (a *Authentication) isMasterUser() bool {
+	if config.LoadableConfig.Server.MasterUser.Enabled {
+		if strings.Count(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
+			parts := strings.Split(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
+			if len(parts[0]) > 0 && len(parts[1]) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // isInNetwork checks an IP address against a network and returns true if it matches.
 func (a *Authentication) isInNetwork(networkList []string) (matchIP bool) {
 	ipAddress := net.ParseIP(a.ClientIP)
@@ -1010,7 +1007,7 @@ func logDebugModule(a *Authentication, passDB *PassDBMap, passDBResult *PassDBRe
 // If the error is not a configuration error, it logs the error using the DefaultErrLogger.
 // It returns the error unchanged.
 func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *Authentication, configErrors map[global.Backend]error) error {
-	if errors.Is(err, errors2.ErrSQLConfig) || errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
+	if errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
@@ -1321,6 +1318,16 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
+func (a *Authentication) haveMonitoringFlag(flag global.Monitoring) bool {
+	for _, setFlag := range a.MonitoringFlags {
+		if setFlag == flag {
+			return true
+		}
+	}
+
+	return false
+}
+
 // handlePassword handles the authentication process for the password flow.
 // It performs common validation checks and then proceeds based on the value of ctx.Value(global.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
@@ -1333,7 +1340,7 @@ func (a *Authentication) handlePassword(ctx *gin.Context) (authResult global.Aut
 		return
 	}
 
-	if ctx.GetBool(global.CtxLocalCacheAuthKey) {
+	if !(a.haveMonitoringFlag(global.MonInMemory) || a.isMasterUser()) && ctx.GetBool(global.CtxLocalCacheAuthKey) {
 		return a.handleLocalCache(ctx)
 	}
 
@@ -1425,8 +1432,10 @@ func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[glo
 		db := backendType.Get()
 		switch db {
 		case global.BackendCache:
-			passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
-			useCache = true
+			if !(a.haveMonitoringFlag(global.MonCache) || a.isMasterUser()) {
+				passDBs = a.appendBackend(passDBs, global.BackendCache, cachePassDB)
+				useCache = true
+			}
 		case global.BackendLDAP:
 			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
 		case global.BackendLua:
@@ -1509,7 +1518,7 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 					}
 
 					if accountName != "" {
-						redisUserKey := config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName
+						redisUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
 						ppc := &backend.PositivePasswordCache{
 							AccountField:      a.AccountField,
 							TOTPSecretField:   a.TOTPSecretField,
@@ -1527,7 +1536,7 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 						}
 
 						go func() {
-							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.EnvConfig.RedisPosCacheTTL, ppc); err == nil {
+							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
 								stats.RedisWriteCounter.Inc()
 							}
 						}()
@@ -1568,7 +1577,9 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 	}
 
 	if passDBResult.Authenticated {
-		localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+		if !(a.haveMonitoringFlag(global.MonInMemory) || a.isMasterUser()) {
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+		}
 	}
 
 	authResult := a.filterLua(passDBResult, ctx)
@@ -1772,7 +1783,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 		values   []any
 	)
 
-	key := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
 	if err != nil {
@@ -1798,7 +1809,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 
 		accountName = strings.Join(accounts, ":")
 
-		err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), key, a.Username, accountName).Err()
+		err = backend.RedisHandle.HSet(context.Background(), key, a.Username, accountName).Err()
 		if err == nil {
 			stats.RedisWriteCounter.Inc()
 		}
@@ -1833,6 +1844,14 @@ func (a *Authentication) setOperationMode(ctx *gin.Context) {
 		util.DebugModule(global.DbgAuth, global.LogKeyGUID, guid, global.LogKeyMsg, "mode=list-accounts")
 
 		a.ListAccounts = true
+	}
+
+	if ctx.Query("in-memory") == "0" {
+		a.MonitoringFlags = append(a.MonitoringFlags, global.MonInMemory)
+	}
+
+	if ctx.Query("cache") == "0" {
+		a.MonitoringFlags = append(a.MonitoringFlags, global.MonCache)
 	}
 }
 
@@ -2564,6 +2583,10 @@ func (a *Authentication) generateLocalChacheKey() string {
 // It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
 // Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
 func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
+	if a.haveMonitoringFlag(global.MonInMemory) {
+		return false
+	}
+
 	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
 		guid := *a.GUID
 		restoreCtx := false

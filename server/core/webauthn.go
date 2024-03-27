@@ -98,7 +98,7 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 func putUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
-	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
+	if err := backend.SaveWebAuthnToRedis(user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
 		stats.RedisWriteCounter.Inc()
 	}
 }
@@ -106,7 +106,7 @@ func putUser(ctx *gin.Context, user *backend.User) {
 func updateUser(ctx *gin.Context, user *backend.User) {
 	_ = ctx
 
-	if err := backend.SaveWebAuthnToRedis(user, config.EnvConfig.RedisPosCacheTTL); err == nil {
+	if err := backend.SaveWebAuthnToRedis(user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
 		stats.RedisWriteCounter.Inc()
 	}
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -16,6 +17,80 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// handleMasterUserMode handles the master user mode functionality for authentication.
+// If master user mode is enabled and the username contains only one occurrence of the delimiter,
+// it splits the username based on the delimiter and returns the appropriate part of the username
+// based on the master user mode flag.
+//
+// Parameters:
+// - auth: a pointer to the Authentication struct which contains the user authentication information.
+//
+// Returns:
+// - string: the username based on the master user mode flag.
+func handleMasterUserMode(auth *Authentication) string {
+	if config.LoadableConfig.Server.MasterUser.Enabled {
+		if strings.Count(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
+			parts := strings.Split(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
+
+			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
+				return auth.Username
+			}
+
+			if !auth.MasterUserMode {
+				auth.MasterUserMode = true
+
+				// Return master user
+				return parts[1]
+			} else {
+				auth.MasterUserMode = false
+
+				// Return real user
+				return parts[0]
+			}
+		}
+	}
+
+	return auth.Username
+}
+
+// saveMasterUserTOTPSecret checks if the master user has a TOTP secret and returns it if present.
+//
+// Parameters:
+// - masterUserMode: a boolean indicating if master user mode is enabled.
+// - ldapReply: a pointer to the LDAPReply struct containing the LDAP query result.
+// - totpSecretField: a string indicating the field in which the TOTP secret is stored in the LDAPReply.
+//
+// Returns:
+// - totpSecretPre: a slice of interface{} containing the TOTP secret if present, nil otherwise.
+func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *backend.LDAPReply, totpSecretField string) (totpSecretPre []any) {
+	if masterUserMode {
+		// Check if the master user does have a TOTP secret.
+		if value, okay := ldapReply.Result[totpSecretField]; okay {
+			totpSecretPre = value
+		}
+	}
+
+	return nil
+}
+
+// restoreMasterUserTOTPSecret restores the TOTP secret for a master user in the PassDBResult attributes.
+// If the totpSecretPre parameter is not empty, it sets the TOTP secret attribute in the attributes map.
+// Otherwise, it deletes the TOTP secret attribute from the attributes map.
+//
+// Parameters:
+// - passDBResult: a pointer to the PassDBResult struct which contains the PassDB result attributes.
+// - totpSecretPre: an array of any type that represents the TOTP secret from a master user.
+// - totpSecretField: a string that represents the field name for the TOTP secret in the attributes map.
+func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any, totpSecretField string) {
+	if totpSecretPre != nil && len(totpSecretPre) != 0 {
+		// Use the TOTP secret from a master user if it exists.
+		passDBResult.Attributes[totpSecretField] = totpSecretPre
+	} else {
+		// Ignore the user TOTP secret if it exists.
+		delete(passDBResult.Attributes, totpSecretField)
+	}
+}
 
 // ldapPassDB implements the LDAP password database backend.
 //
@@ -63,11 +138,13 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		return
 	}
 
+	username := handleMasterUserMode(auth)
+
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
 		Command: global.LDAPSearch,
 		MacroSource: &util.MacroSource{
-			Username:    auth.Username,
+			Username:    username,
 			XLocalIP:    auth.XLocalIP,
 			XPort:       auth.XPort,
 			ClientIP:    auth.ClientIP,
@@ -130,6 +207,8 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		passDBResult.Attributes = ldapReply.Result
 	}
 
+	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
+
 	if !auth.NoAuth {
 		ldapReplyChan = make(chan *backend.LDAPReply)
 
@@ -162,6 +241,15 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	}
 
 	passDBResult.Authenticated = true
+
+	// We need to do a second user lookup, to retrieve correct data from LDAP.
+	if auth.MasterUserMode {
+		auth.NoAuth = true
+
+		passDBResult, err = ldapPassDB(auth)
+
+		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
+	}
 
 	return
 }

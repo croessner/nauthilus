@@ -27,8 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
 )
@@ -411,6 +411,22 @@ func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTupl
 	startActionWorker(actionWorkers, act)
 }
 
+// stopAndRestartRedis stops and restarts the Redis client.
+// It closes the RedisHandle and RedisHandleReplica connections.
+// If RedisHandleReplica is not the same as RedisHandle, it also closes the RedisHandleReplica connection.
+// Then, it calls the setupRedis function to reinitialize the Redis client.
+//
+//	stopAndRestartRedis()
+func stopAndRestartRedis() {
+	backend.RedisHandle.Close()
+
+	if backend.RedisHandleReplica != backend.RedisHandle {
+		backend.RedisHandleReplica.Close()
+	}
+
+	setupRedis()
+}
+
 // waitForActionWorkers waits for the completion of all action workers.
 // It takes in an array of action workers and waits for each worker's DoneChan to receive a value.
 func waitForActionWorkers(actionWorkers []*action.Worker) {
@@ -499,6 +515,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	}
 
 	stopAndRestartActionWorker(actionWorkers, store.action, ctx)
+	stopAndRestartRedis()
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
@@ -728,7 +745,7 @@ func checkNgxBackendServer(ipAddress string, port int) error {
 func logNgxBackendError(server *config.NginxBackendServer, err error) {
 	level.Error(logging.DefaultErrLogger).Log(
 		global.LogKeyError, err,
-		global.LogKeyMsg, "Server doen",
+		global.LogKeyMsg, "Server down",
 		global.LogKeyProtocol, server.Protocol,
 		global.LogKeyNgxBackendIP, server.IP,
 		global.LogKeyNgxBackendPort, server.Port,

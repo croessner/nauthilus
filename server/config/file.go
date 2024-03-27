@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 	"math"
+	"net"
+	"net/url"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -985,6 +988,73 @@ func (f *File) validateOAuth2() error {
 	return nil
 }
 
+// checkAddress validates if the given address is in the correct format.
+// It checks if the address can be split into host and port using net.SplitHostPort.
+// If the address is invalid, it returns an error; otherwise, it returns nil.
+func checkAddress(address string) error {
+	_, _, err := net.SplitHostPort(address)
+
+	return err
+}
+
+// validateAddress is a method on the File struct.
+// It validates the Server.Address field, if it is empty it assigns global.HTTPAddress to it.
+// It then checks if the Server.Address is a valid address by using net.SplitHostPort function.
+// It returns any error that occurs during the validation process.
+func (f *File) validateAddress() error {
+	if f.Server.Address == "" {
+		f.Server.Address = global.HTTPAddress
+	}
+
+	return checkAddress(f.Server.Address)
+}
+
+// validateHydraAdminURL is a method on the File struct.
+// It validates the HydraAdminUrl field in the Server struct
+// and returns an error if the URL is invalid.
+// If the HydraAdminUrl field is empty, it sets a default value of "http://127.0.0.1:4445".
+func (f *File) validateHydraAdminURL() error {
+	if f.Server.HydraAdminUrl == "" {
+		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
+	}
+
+	_, err := url.ParseRequestURI(f.Server.HydraAdminUrl)
+
+	return err
+}
+
+// validateTLSCertAndKey is a method on the File struct.
+// It validates the readability of the TLS certificate and key files specified in the Server struct.
+// If any of the files are not readable, it returns an error indicating the file that is not readable.
+// Otherwise, it returns nil.
+// It uses the isFileReadable function to check the validity of each file.
+// The function takes a file path as an argument and checks if the file exists and is readable.
+// If the file is not readable, it returns an error.
+// The validateTLSCertAndKey method iterates over the Cert and Key file paths in the Server struct.
+// For each path, it calls the isFileReadable function.
+// If any of the files are not readable, it returns an error message indicating the file that is not readable.
+// The error message is formatted using the fmt.Errorf function.
+// If all files are readable, it returns nil to indicate that the validation was successful.
+func (f *File) validateTLSCertAndKey() error {
+	if !f.Server.TLS.Enabled {
+		return nil
+	}
+
+	isFileReadable := func(file string) error {
+		_, err := os.Stat(file)
+
+		return err
+	}
+
+	for _, file := range []string{f.Server.TLS.Cert, f.Server.TLS.Key} {
+		if err := isFileReadable(file); err != nil {
+			return fmt.Errorf("TLS certificate or key file %s is not readable: %w", file, err)
+		}
+	}
+
+	return nil
+}
+
 // validateInstanceName is a method on the File struct.
 // It checks if the Server's InstanceName field is empty.
 // If it is empty, it sets the InstanceName to the global.InstanceName constant value.
@@ -1020,6 +1090,119 @@ func (f *File) validateDNSTimeout() error {
 	return nil
 }
 
+// validateRedisMasterAddress is a method on the File struct.
+// It validates the Redis master address and returns an error if it is invalid.
+// The function first checks if there are multiple sentinel addresses and a specified sentinel master.
+// If so, it assumes that the Redis master address is valid and returns nil.
+// If the Redis master address is empty, it constructs a new address using the global RedisAddress and RedisPort constants.
+// Finally, it calls the checkAddress function to validate the Redis master address and returns any errors.
+// Example usage of the validateRedisMasterAddress method can be found in the validate method of the File struct.
+// Package and other declarations are not shown here for brevity.
+func (f *File) validateRedisMasterAddress() error {
+	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
+		return nil
+	}
+
+	if f.Server.Redis.Master.Address == "" {
+		f.Server.Redis.Master.Address = fmt.Sprintf("%s:%d", global.RedisAddress, global.RedisPort)
+	}
+
+	return checkAddress(f.Server.Redis.Master.Address)
+}
+
+// validateRedisSentinels is a method on the File struct.
+// It checks if the Redis sentinels addresses are valid and if the Redis master is specified.
+// If the addresses are valid, it calls the checkAddress function for each address.
+// If any of the addresses is invalid, it returns an error.
+// If there is no error or the sentinels addresses are not specified, it returns nil.
+func (f *File) validateRedisSentinels() error {
+	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
+		for _, address := range f.Server.Redis.Sentinels.Addresses {
+			if err := checkAddress(address); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateRedisDatabaseNumber is a method on the File struct.
+// It validates the Redis database number and returns an error if the number is out of range.
+// If the number is less than 0, it returns errors.ErrRedisDatabaseNumber.
+// If the number is greater than 15, it also returns errors.ErrRedisDatabaseNumber.
+// Otherwise, it returns nil indicating no error.
+func (f *File) validateRedisDatabaseNumber() error {
+	if f.Server.Redis.DatabaseNmuber < 0 {
+		return errors.ErrRedisDatabaseNumber
+	}
+
+	if f.Server.Redis.DatabaseNmuber > 15 {
+		return errors.ErrRedisDatabaseNumber
+	}
+
+	return nil
+}
+
+// validateRedisPoolSize is a method on the File struct.
+// It validates the Redis pool size and returns an error if it is less than or equal to 0.
+// If the Redis pool size is valid, it returns nil.
+// The method uses the ErrRedisPoolSize error from the errors package.
+func (f *File) validateRedisPoolSize() error {
+	if f.Server.Redis.PoolSize <= 0 {
+		return errors.ErrRedisPoolSize
+	}
+
+	// Silently ignore negative values!
+	if f.Server.Redis.IdlePoolSize < 0 {
+		f.Server.Redis.IdlePoolSize = 0
+	}
+
+	return nil
+}
+
+// validateRedisPosCacheTTL is a method on the File struct.
+// It checks if the RedisPosCacheTTL field in the Server.Redis struct is set to 0.
+// If it is, it assigns the value of global.RedisPosCacheTTL to it before returning.
+// This method ensures that a default value is set for RedisPosCacheTTL if it was not explicitly provided.
+// The function does not return any errors.
+func (f *File) validateRedisPosCacheTTL() error {
+	if f.Server.Redis.PosCacheTTL == 0 {
+		f.Server.Redis.PosCacheTTL = global.RedisPosCacheTTL
+	}
+
+	return nil
+}
+
+// validateRedisNegCacheTTL is a method on the File struct.
+// It validates the RedisNegCacheTTL field of the Server.Redis struct.
+// If the RedisNegCacheTTL field is 0, it sets it to the global.RedisNegCacheTTL constant.
+// Returns nil error.
+func (f *File) validateRedisNegCacheTTL() error {
+	if f.Server.Redis.NegCacheTTL == 0 {
+		f.Server.Redis.NegCacheTTL = global.RedisNegCacheTTL
+	}
+
+	return nil
+}
+
+// validateMasterUserDelimiter is a method on the File struct.
+// It validates the MasterUser.Delimiter field.
+// If the delimiter is empty, it sets it to "+".
+// If the delimiter has more than one character, it truncates it to the first character.
+// Return nil error.
+func (f *File) validateMasterUserDelimiter() error {
+	if f.Server.MasterUser.Delimiter == "" {
+		f.Server.MasterUser.Delimiter = "*"
+	}
+
+	if len(f.Server.MasterUser.Delimiter) != 1 {
+		f.Server.MasterUser.Delimiter = f.Server.MasterUser.Delimiter[:1]
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1041,10 +1224,20 @@ func (f *File) validate() (err error) {
 		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
+		f.validateAddress,
+		f.validateHydraAdminURL,
+		f.validateTLSCertAndKey,
+		f.validateRedisMasterAddress,
+		f.validateRedisSentinels,
+		f.validateRedisDatabaseNumber,
+		f.validateRedisPoolSize,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,
 		f.validateDNSTimeout,
+		f.validateRedisPosCacheTTL,
+		f.validateRedisNegCacheTTL,
+		f.validateMasterUserDelimiter,
 	}
 
 	for _, validator := range validators {
@@ -1334,6 +1527,68 @@ func (f *File) handleFile() (err error) {
 	return
 }
 
+// bindEnvs binds environment variables to the provided struct fields.
+//
+// 'i' is the struct that should have its fields populated with environment variable values.
+// The field values are determined by the value of the 'mapstructure' tag of each field. If the 'mapstructure' tag is empty,
+// the field's name will be used as the key to fetch the value from the environment variables.
+// Struct tags offer a convenient way to specify metadata associated with the struct field.
+//
+// 'parts' is optional and can be used to provide parent keys when dealing with nested struct fields.
+// This makes it easy to bind nested keys in structures.
+//
+// For each field in 'i', it checks the field's type. If the field type is pointer to a struct or
+// the field is a struct, then it recursively collects the environment variable mappings.
+//
+// If the field type is a primitive type, it attempts to bind the environment variable using the viper library's BindEnv function.
+// The environment variable key is constructed by concatenating 'parts' and 'tag' or field name as needed.
+//
+// The function returns an error when the viper's BindEnv fails to bind the environment variable. If no errors are encountered during binding,
+// it will return nil indicating a successful binding of environment variables to struct fields.
+func bindEnvs(i any, parts ...string) error {
+	ifv := reflect.ValueOf(i)
+	if ifv.Kind() == reflect.Ptr {
+		ifv = ifv.Elem()
+	}
+
+	ift := ifv.Type()
+
+	for i := range ift.NumField() {
+		v := ifv.Field(i)
+		t := ift.Field(i)
+
+		tag := t.Tag.Get("mapstructure")
+		if tag == "" {
+			tag = t.Name
+		}
+
+		if t.Type.Kind() == reflect.Ptr && t.Type.Elem().Kind() == reflect.Struct {
+			if v.IsNil() {
+				v.Set(reflect.New(t.Type.Elem()))
+			}
+
+			err := bindEnvs(v.Interface(), append(parts, tag)...)
+			if err != nil {
+				return err
+			}
+		} else if v.Kind() == reflect.Struct {
+			err := bindEnvs(v.Addr().Interface(), append(parts, tag)...)
+			if err != nil {
+				return err
+			}
+		} else {
+			key := strings.Join(append(parts, tag), ".")
+
+			err := viper.BindEnv(key)
+			if err != nil {
+				return fmt.Errorf("failed to bind %q: %w", key, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // NewConfigFile is the constructor for a ConfigFile object.
 func NewConfigFile() (newCfg *File, err error) {
 	newCfg = &File{}
@@ -1349,6 +1604,9 @@ func NewConfigFile() (newCfg *File, err error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Register all known config variables with env variables.
+	bindEnvs(&File{})
 
 	err = newCfg.handleFile()
 

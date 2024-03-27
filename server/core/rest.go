@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // For a brief documentation of this file please have a look at the Markdown document REST-API.md.
@@ -169,9 +170,9 @@ func listBruteforce(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 	list := &List{}
-	key := config.EnvConfig.RedisPrefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	result, err := backend.RedisHandleReplica.HGetAll(backend.RedisHandleReplica.Context(), key).Result()
+	result, err := backend.RedisHandleReplica.HGetAll(context.Background(), key).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -349,14 +350,14 @@ func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
 func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 	userKeys := config.NewStringSet()
 
-	userKeys.Set(config.EnvConfig.RedisPrefix + "ucp:__default__:" + accountName)
-	userKeys.Set(config.EnvConfig.RedisPrefix + global.RedisPwHashKey + ":" + userCmd.User + ":*")
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:__default__:" + accountName)
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + userCmd.User + ":*")
 
 	protocols := config.LoadableConfig.GetAllProtocols()
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(protocols[index], global.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName)
 		}
 	}
 
@@ -372,12 +373,12 @@ func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) {
 	var err error
 
-	redisKey := config.EnvConfig.RedisPrefix + global.RedisUserHashKey
+	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	if removeHash {
-		err = backend.RedisHandle.Del(backend.RedisHandle.Context(), redisKey).Err()
+		err = backend.RedisHandle.Del(context.Background(), redisKey).Err()
 	} else {
-		err = backend.RedisHandle.HDel(backend.RedisHandle.Context(), redisKey, userCmd.User).Err()
+		err = backend.RedisHandle.HDel(context.Background(), redisKey, userCmd.User).Err()
 	}
 
 	if err != nil {
@@ -389,7 +390,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	stats.RedisWriteCounter.Inc()
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if _, err = backend.RedisHandle.Del(backend.RedisHandle.Context(), userKey).Result(); err != nil {
+		if _, err = backend.RedisHandle.Del(context.Background(), userKey).Result(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			return
@@ -548,7 +549,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 				return ruleFlushError, err
 			}
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = backend.RedisHandle.Del(backend.RedisHandle.Context(), key).Err(); err != nil {
+				if err = backend.RedisHandle.Del(context.Background(), key).Err(); err != nil {
 					ruleFlushError = true
 
 					return ruleFlushError, err

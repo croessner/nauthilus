@@ -33,7 +33,7 @@ func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		if accountName != "" {
 			var isRedisErr bool
 
-			redisPosUserKey := config.EnvConfig.RedisPrefix + "ucp:" + cacheName + ":" + accountName
+			redisPosUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
 
 			isRedisErr, err = backend.LoadCacheFromRedis(redisPosUserKey, &ppc)
 			if err != nil {

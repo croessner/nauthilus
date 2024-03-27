@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -11,9 +12,9 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
-	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/redis/go-redis/v9"
 )
 
 // Metric is a prometheus metric with a value and a label.
@@ -47,10 +48,10 @@ func LoadStatsFromRedis() {
 	stats.LoginsCounter.Reset()
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
-		if redisValue, err = backend.RedisHandleReplica.HGet(backend.RedisHandleReplica.Context(), redisLoginsCounterKey, counterType).Float64(); err != nil {
+		if redisValue, err = backend.RedisHandleReplica.HGet(context.Background(), redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
 				level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
@@ -78,10 +79,10 @@ func SaveStatsToRedis() {
 	}
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.EnvConfig.RedisPrefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for index := range metrics {
-		if err = backend.RedisHandle.HSet(backend.RedisHandle.Context(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
+		if err = backend.RedisHandle.HSet(context.Background(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return

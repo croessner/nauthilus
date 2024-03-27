@@ -253,9 +253,6 @@ const (
 	// RedisPort is the default Redis server port
 	RedisPort = 6379
 
-	// RedisPrefix is the prefix for keys stored in Redis
-	RedisPrefix = "nt_"
-
 	// RedisPosCacheTTL is the expiry time (in seconds) for positive cache entries in Redis
 	RedisPosCacheTTL = 3600
 
@@ -1138,4 +1135,12 @@ const (
 
 	// CacheLua refers to the enum value for Lua cache backend
 	CacheLua
+)
+
+const (
+	// MonInMemory is a constant of type Monitoring that represents the flag for in-memory monitoring.
+	MonInMemory Monitoring = iota
+
+	// MonCache represents the flag for caching in monitoring.
+	MonCache
 )

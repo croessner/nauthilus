@@ -88,7 +88,6 @@ var (
 var (
 	ErrNoLDAPSection          = errors.New("no 'ldap:' section found")
 	ErrNoLDAPSearchSection    = errors.New("no 'ldap::search:' section found")
-	ErrNoSQLSection           = errors.New("no 'sql:' section found")
 	ErrNoLDAPConfig           = errors.New("no 'ldap::config:' section found")
 	ErrNoLDAPServerURIs       = errors.New("no 'ldap::config::server_uri' definition")
 	ErrBruteForceTooManyRules = errors.New("too many rules in 'user'account' section")
@@ -97,6 +96,8 @@ var (
 	ErrCookieStoreEncSize     = errors.New("cookie store encryption key must exactly be 16, 24 or 32 bytes")
 	ErrNoPasswordNonce        = errors.New("no 'password_nonce' defined")
 	ErrNoLuaScriptPath        = errors.New("no 'lua::config:script_path' definition")
+	ErrRedisDatabaseNumber    = errors.New("server::redis::datavase_number must be >= 0 and < 15")
+	ErrRedisPoolSize          = errors.New("server::redis::pool_size must be > 0")
 )
 
 // ldap.
@@ -106,15 +107,6 @@ var (
 	ErrLDAPConfig         = NewDetailedError("ldap_config_error")
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
-)
-
-// sql.
-
-var (
-	ErrNoDatabaseConnection = NewDetailedError("no_database_connection")
-	ErrUnsupportedSQLDriver = NewDetailedError("unsupported_sql_driver")
-	ErrSQLConfig            = NewDetailedError("sql_config_error")
-	ErrNoSQLRowsUpdated     = NewDetailedError("no_sql_updates")
 )
 
 // lua.

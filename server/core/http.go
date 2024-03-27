@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -30,6 +31,7 @@ import (
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
@@ -238,8 +240,8 @@ func basicAuthMiddleware() gin.HandlerFunc {
 		if httpBasicAuthOk {
 			usernameHash := sha256.Sum256([]byte(username))
 			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.EnvConfig.HTTPOptions.Auth.UserName))
-			expectedPasswordHash := sha256.Sum256([]byte(config.EnvConfig.HTTPOptions.Auth.Password))
+			expectedUsernameHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Username))
+			expectedPasswordHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Password))
 
 			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
 			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
@@ -445,7 +447,7 @@ func setupSessionStore() sessions.Store {
 // err := server.ListenAndServe()
 func setupHTTPServer(router *gin.Engine) *http.Server {
 	return &http.Server{
-		Addr:              config.EnvConfig.HTTPAddress,
+		Addr:              config.LoadableConfig.Server.Address,
 		Handler:           router,
 		IdleTimeout:       time.Minute,
 		ReadTimeout:       10 * time.Second, //nolint:gomnd // Ignore
@@ -468,6 +470,23 @@ func prometheusMiddleware() gin.HandlerFunc {
 		ctx.Next()
 
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
+
+		redisStatsMap := map[string]*redis.PoolStats{
+			"master": backend.RedisHandle.PoolStats(),
+		}
+
+		if backend.RedisHandle != backend.RedisHandleReplica {
+			redisStatsMap["replica"] = backend.RedisHandleReplica.PoolStats()
+		}
+
+		for handleType, redisStats := range redisStatsMap {
+			stats.RedisHits.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Hits))
+			stats.RedisMisses.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Misses))
+			stats.RedisTimeouts.With(prometheus.Labels{"type": handleType}).Add(float64(redisStats.Timeouts))
+			stats.RedisTotalConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.TotalConns))
+			stats.RedisIdleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.IdleConns))
+			stats.RedisStaleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.StaleConns))
+		}
 
 		timer.ObserveDuration()
 		timer2.ObserveDuration()
@@ -592,7 +611,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
-	if config.EnvConfig.HTTPOptions.UseBasicAuth {
+	if config.LoadableConfig.Server.BasicAuth.Enabled {
 		group.Use(basicAuthMiddleware())
 	}
 
@@ -699,12 +718,12 @@ func HTTPApp(ctx context.Context) {
 
 	// www.SetKeepAlivesEnabled(false)
 
-	if config.EnvConfig.HTTPOptions.UseSSL {
+	if config.LoadableConfig.Server.TLS.Enabled {
 		www.TLSConfig = &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 			MinVersion: tls.VersionTLS12,
 		}
-		err = www.ListenAndServeTLS(config.EnvConfig.HTTPOptions.X509.Cert, config.EnvConfig.HTTPOptions.X509.Key)
+		err = www.ListenAndServeTLS(config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
 	} else {
 		err = www.ListenAndServe()
 	}
