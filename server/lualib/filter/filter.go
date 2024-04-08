@@ -3,6 +3,7 @@ package filter
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -277,7 +278,7 @@ func selectNginxBackend(server **string, port **int) lua.LGFunction {
 // Returns:
 //
 //	A new request table
-func setGlobals(r *Request, L *lua.LState) *lua.LTable {
+func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -292,6 +293,7 @@ func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 
 	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		globals.RawSetString(global.LuaFnGetNgxBackendServers, L.NewFunction(getNgxBackendServers(r.NginxBackendServers)))
@@ -407,7 +409,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := setGlobals(r, L)
+	globals := setGlobals(r, L, ctx.Request)
 	request := setRequest(r, L)
 
 	for _, script := range LuaFilters.LuaScripts {

@@ -775,6 +775,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 				LuaAction:    global.LuaActionBruteForce,
 				Context:      a.Context,
 				FinishedChan: finished,
+				HTTPRequest:  a.HTTPClientContext.Request,
 				CommonRequest: &lualib.CommonRequest{
 					Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 					Repeating:           alreadyTriggered,

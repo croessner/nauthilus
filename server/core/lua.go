@@ -29,6 +29,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		Protocol:     auth.Protocol,
 		Context:      auth.Context,
 		LuaReplyChan: luaReplyChan,
+		HTTPRequest:  auth.HTTPClientContext.Request,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Repeating:           false, // unavailable

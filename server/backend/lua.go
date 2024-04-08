@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -50,6 +51,9 @@ type LuaRequest struct {
 	*lualib.Context
 
 	*lualib.CommonRequest
+
+	// HTTPRequest is a pointer to an http.Request object.
+	HTTPRequest *http.Request
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *LuaBackendResult
@@ -314,7 +318,7 @@ func LuaMainWorker(ctx context.Context) {
 			return
 
 		case luaRequest := <-LuaRequestChan:
-			go handleLuaRequest(luaRequest, ctx, compiledScript)
+			go handleLuaRequest(luaRequest, ctx, compiledScript, luaRequest.HTTPRequest)
 		}
 	}
 }
@@ -329,7 +333,7 @@ func LuaMainWorker(ctx context.Context) {
 // - compiledScript: The compiled Lua script function.
 //
 // Returns: None.
-func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScript *lua.FunctionProto) {
+func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScript *lua.FunctionProto, httpRequest *http.Request) {
 	var (
 		nret       int
 		luaCommand string
@@ -348,7 +352,7 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 
 	registerLibraries(L)
 
-	globals := setupGlobals(luaRequest, L, logs)
+	globals := setupGlobals(luaRequest, L, logs, httpRequest)
 	request := L.NewTable()
 
 	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
@@ -380,7 +384,7 @@ func registerLibraries(L *lua.LState) {
 // Registers the lua function AddCustomLog with name "custom_log_add" which adds a custom log entry to the LuaRequest.Logs.
 // The registered global table is assigned to the global variable LuaDefaultTable.
 // The generated table is returned from the function.
-func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
+func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue, httpRequest *http.Request) *lua.LTable {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
@@ -391,6 +395,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

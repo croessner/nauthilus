@@ -940,7 +940,11 @@ const (
 	// LuaFnSelectNginxBackend represents the constant used as the key for the Lua function "nauthilus_select_nginx_backend".
 	LuaFnSelectNginxBackend = "select_nginx_backend_server"
 
+	// LuaFnSetStatusMessage represents the Lua function name for setting the status message of a Lua request.
 	LuaFnSetStatusMessage = "status_message_set"
+
+	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
+	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
 )
 
 const (

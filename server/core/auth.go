@@ -262,7 +262,7 @@ type Authentication struct {
 	Protocol *config.Protocol
 
 	// HTTPClientContext tracks the context for an HTTP client connection.
-	HTTPClientContext context.Context
+	HTTPClientContext *gin.Context
 
 	// MonitoringFlags is a slice of global.Monitoring that is used to skip certain steps while processing an authentication request.
 	MonitoringFlags []global.Monitoring
@@ -1140,6 +1140,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			LuaAction:    luaAction,
 			Context:      a.Context,
 			FinishedChan: finished,
+			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           false,
@@ -1265,6 +1266,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 			LuaAction:    global.LuaActionPost,
 			Context:      a.Context,
 			FinishedChan: finished,
+			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
 				Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:         false,

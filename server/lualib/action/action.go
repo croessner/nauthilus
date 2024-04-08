@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -52,6 +53,9 @@ type Action struct {
 
 	// FinishedChan is a channel signaling the completion of the action.
 	FinishedChan chan Done
+
+	// HTTPRequest is a pointer to an http.Request object. It represents an incoming HTTP request received by the server.
+	HTTPRequest *http.Request
 
 	*lualib.CommonRequest
 }
@@ -115,7 +119,7 @@ func (aw *Worker) Work(ctx context.Context) {
 
 			return
 		case aw.luaActionRequest = <-RequestChan:
-			aw.handleRequest()
+			aw.handleRequest(aw.luaActionRequest.HTTPRequest)
 		}
 	}
 }
@@ -197,7 +201,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 // it executes the script.
 // If an error occurs while executing the script, it logs the failure.
 // After executing the script, it logs the result and cancels the Lua context.
-func (aw *Worker) handleRequest() {
+func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	if len(aw.actionScripts) == 0 {
 		aw.luaActionRequest.FinishedChan <- Done{}
 
@@ -210,7 +214,7 @@ func (aw *Worker) handleRequest() {
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	logs := new(lualib.CustomLogKeyValue)
-	globals := aw.setupGlobals(L, logs)
+	globals := aw.setupGlobals(L, logs, httpRequest)
 	request := aw.setupRequest(L)
 
 	for index := range aw.actionScripts {
@@ -233,7 +237,7 @@ func (aw *Worker) handleRequest() {
 // If the DevMode flag is true in the EnvConfig, it calls the DebugModule function to log debug information.
 // It sets the global variables LString(global.LuaActionResultOk) and LString(global.LuaActionResultFail) with the corresponding values.
 // It sets the global functions LString(global.LuaFnCtxSet), LString(global.LuaFnCtxGet), LString(global.LuaFnCtxDelete), and LString(global.LuaFnAddCustomLog) to their respective Lua functions
-func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
+func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, httpRequest *http.Request) *lua.LTable {
 	globals := L.NewTable()
 
 	if config.EnvConfig.DevMode {
@@ -247,6 +251,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) *l
 	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(aw.luaActionRequest.Context)))
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(aw.luaActionRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
