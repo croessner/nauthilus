@@ -11,6 +11,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -591,7 +592,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = backend.RedisHandle.Del(context.Background(), userKey).Result(); err != nil {
+			if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
 				if errors.Is(err, redis.Nil) {
 					stats.RedisWriteCounter.Inc()
 

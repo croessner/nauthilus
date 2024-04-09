@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -1811,7 +1812,7 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 
 		accountName = strings.Join(accounts, ":")
 
-		err = backend.RedisHandle.HSet(context.Background(), key, a.Username, accountName).Err()
+		err = rediscli.WriteHandle.HSet(context.Background(), key, a.Username, accountName).Err()
 		if err == nil {
 			stats.RedisWriteCounter.Inc()
 		}

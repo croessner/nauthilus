@@ -396,6 +396,10 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
+	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
+	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

@@ -294,6 +294,10 @@ func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request) *lua.LTabl
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
+	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
+	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
 	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
 		globals.RawSetString(global.LuaFnGetNgxBackendServers, L.NewFunction(getNgxBackendServers(r.NginxBackendServers)))

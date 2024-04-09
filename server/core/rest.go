@@ -10,6 +10,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -172,7 +173,7 @@ func listBruteforce(ctx *gin.Context) {
 	list := &List{}
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	result, err := backend.RedisHandleReplica.HGetAll(context.Background(), key).Result()
+	result, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -303,7 +304,7 @@ func processUserCmd(userCmd *FlushUserCmd, guid string) bool {
 //	}
 //	accountName, removeHash, cacheFlushError := setupCacheFlush(userCmd)
 //	if cacheFlushError {
-//		// Handle cache flush error
+//		// WriteHandle cache flush error
 //	}
 //	// Continue with cache flushing logic
 //
@@ -376,9 +377,9 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	if removeHash {
-		err = backend.RedisHandle.Del(context.Background(), redisKey).Err()
+		err = rediscli.WriteHandle.Del(context.Background(), redisKey).Err()
 	} else {
-		err = backend.RedisHandle.HDel(context.Background(), redisKey, userCmd.User).Err()
+		err = rediscli.WriteHandle.HDel(context.Background(), redisKey, userCmd.User).Err()
 	}
 
 	if err != nil {
@@ -390,7 +391,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	stats.RedisWriteCounter.Inc()
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if _, err = backend.RedisHandle.Del(context.Background(), userKey).Result(); err != nil {
+		if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			return
@@ -549,7 +550,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 				return ruleFlushError, err
 			}
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = backend.RedisHandle.Del(context.Background(), key).Err(); err != nil {
+				if err = rediscli.WriteHandle.Del(context.Background(), key).Err(); err != nil {
 					ruleFlushError = true
 
 					return ruleFlushError, err

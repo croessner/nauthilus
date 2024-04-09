@@ -23,12 +23,13 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	proxyproto "github.com/pires/go-proxyproto"
+	"github.com/pires/go-proxyproto"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
@@ -413,16 +414,16 @@ func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTupl
 }
 
 // stopAndRestartRedis stops and restarts the Redis client.
-// It closes the RedisHandle and RedisHandleReplica connections.
-// If RedisHandleReplica is not the same as RedisHandle, it also closes the RedisHandleReplica connection.
+// It closes the WriteHandle and ReadHandle connections.
+// If ReadHandle is not the same as WriteHandle, it also closes the ReadHandle connection.
 // Then, it calls the setupRedis function to reinitialize the Redis client.
 //
 //	stopAndRestartRedis()
 func stopAndRestartRedis() {
-	backend.RedisHandle.Close()
+	rediscli.WriteHandle.Close()
 
-	if backend.RedisHandleReplica != backend.RedisHandle {
-		backend.RedisHandleReplica.Close()
+	if rediscli.ReadHandle != rediscli.WriteHandle {
+		rediscli.ReadHandle.Close()
 	}
 
 	setupRedis()
@@ -639,17 +640,17 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 
 // setupRedis initializes the Redis clients for the main and replica instances.
 // First, it sets the logger for redis to a new RedisLogger instance.
-// Then, it assigns a new RedisClient to RedisHandle, and a RedisReplicaClient to RedisHandleReplica.
-// If the initialization of RedisReplicaClient fails, RedisHandle is used as a fallback.
+// Then, it assigns a new RedisClient to WriteHandle, and a RedisReplicaClient to ReadHandle.
+// If the initialization of RedisReplicaClient fails, WriteHandle is used as a fallback.
 func setupRedis() {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
-	backend.RedisHandle = util.NewRedisClient()
-	backend.RedisHandleReplica = util.NewRedisReplicaClient()
+	rediscli.WriteHandle = rediscli.NewRedisClient()
+	rediscli.ReadHandle = rediscli.NewRedisReplicaClient()
 
-	if backend.RedisHandleReplica == nil {
-		backend.RedisHandleReplica = backend.RedisHandle
+	if rediscli.ReadHandle == nil {
+		rediscli.ReadHandle = rediscli.WriteHandle
 	}
 }
 
