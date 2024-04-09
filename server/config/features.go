@@ -11,9 +11,10 @@ func (r *RelayDomainsSection) String() string {
 }
 
 type NginxBackendServer struct {
-	Protocol string
-	IP       string
-	Port     int
+	Protocol  string `mapstructure:"protocol"`
+	IP        string `mapstructure:"ip"`
+	Port      int    `mapstructure:"port"`
+	HAProxyV2 bool   `mapstructure:"haproxy_v2"`
 }
 
 func (n *NginxBackendServer) String() string {

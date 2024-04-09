@@ -135,8 +135,10 @@ func (a *Authentication) featureRelayDomains() (triggered bool) {
 
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		if len(config.LoadableConfig.RelayDomains.StaticDomains) > 0 {
-			if strings.Contains(a.Username, "@") {
-				split := strings.Split(a.Username, "@")
+			username := handleMasterUserMode(a)
+
+			if strings.Contains(username, "@") {
+				split := strings.Split(username, "@")
 				//nolint:gomnd // Username may be an email address, which has two parts
 				if len(split) != 2 {
 					return
