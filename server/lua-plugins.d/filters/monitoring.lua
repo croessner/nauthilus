@@ -14,32 +14,32 @@ function nauthilus_call_filter(request)
         if backend_servers ~= nil and type(backend_servers) == "table" then
             num_of_bs = #backend_servers
 
-            for i, bs in pairs(backend_servers) do
-                if bs ~= nil and type(bs) == "table" then
-                    for _, server in pairs(bs) do
-                        local server_ip = ""
-                        local server_port = 0
+            local server_ip = ""
+            local server_port = 0
 
-                        for key, value in pairs(server) do
-                            if key == "ip" then
-                                server_ip = value
-                            end
-
-                            if key == "port" then
-                                server_port = value
-                            end
-                        end
-
-                        -- Just an example
-                        if i == 1 then
-                            nauthilus.select_backend_server(server_ip, server_port)
-
-                            nauthilus.custom_log_add("backend_server", server_ip .. ":" .. tostring(server_port))
-                        end
-
-                        break
-                    end
+            for i, server in pairs(backend_servers) do
+                --[[
+                print("Protocol: " .. server.protocol)
+                print("IP: " .. server.ip)
+                print("Port: " .. server.port)
+                if server.haproxy_v2 then
+                    print("HAProxyV2 is enabled.")
+                else
+                    print("HAProxyV2 is not enabled.")
                 end
+                ]]--
+
+                server_ip = server.ip
+                server_port = server.port
+
+                -- Just an example
+                if i == 1 then
+                    nauthilus.select_backend_server(server_ip, server_port)
+
+                    nauthilus.custom_log_add("backend_server", server_ip .. ":" .. tostring(server_port))
+                end
+
+                break
             end
         end
 

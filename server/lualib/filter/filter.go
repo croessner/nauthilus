@@ -161,50 +161,84 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
-// getBackendServers is a function that takes a config.BackendServer,
-// where each entry represents a server configuration with the server name (string) as the key
-// and the port number (int) as the value. The function returns a closure that can be
-// used as a LGFunction in the Lua VM.
-//
-// This closure creates a new Lua table (servers) and for each server in the ngxBackendServer array,
-// it creates a serverPort table and adds it to the servers table.
-// If the ngxBackendServer array is empty it returns Nil in the Lua VM.
-//
-// The returned closure when executed within the Lua VM, will either result in a single value,
-// either a servers table containing serverPort tables or Nil when the ngxBackendServer is empty.
-func getBackendServers(backendServer []*config.BackendServer) lua.LGFunction {
+type LuaBackendServer struct {
+	Protocol  string
+	IP        string
+	Port      int
+	HAProxyV2 bool
+}
+
+// The userData constellation method:
+func newLuaBackendServer(userData *lua.LUserData) *LuaBackendServer {
+	if v, ok := userData.Value.(*LuaBackendServer); ok {
+		return v
+	}
+
+	return nil
+}
+
+// The metamethod for the __index field of the metatable
+func indexMethod(L *lua.LState) int {
+	userData := L.CheckUserData(1)
+	field := L.CheckString(2)
+
+	server := newLuaBackendServer(userData)
+	if server == nil {
+		return 0
+	}
+
+	switch field {
+	case "protocol":
+		L.Push(lua.LString(server.Protocol))
+	case "ip":
+		L.Push(lua.LString(server.IP))
+	case "port":
+		L.Push(lua.LNumber(server.Port))
+	case "haproxy_v2":
+		L.Push(lua.LBool(server.HAProxyV2))
+	default:
+		return 0 // The field does not exist
+	}
+
+	return 1 // Number of return values
+}
+
+// getBackendServers is a higher-order function that returns a LGFunction.
+// The returned LGFunction creates a new Lua table and populates it with userdata objects representing backend servers.
+// Each userdata object has a metatable set, allowing Lua code to index the object and retrieve its properties.
+// The userdata objects are created based on the provided backendServers slice.
+// The userdata values are instances of the LuaBackendServer struct, with Protocol, IP, Port, and HAProxyV2 fields.
+// The metatable of the userdata objects has __index method set to the indexMethod function.
+// The indexMethod function retrieves the corresponding property value from the userdata object based on the requested field name.
+// The userdata objects are added to the created Lua table.
+// The created Lua table is pushed onto the Lua stack before returning from the LGFunction.
+func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 	return func(L *lua.LState) int {
-		if len(backendServer) == 0 {
-			L.Push(lua.LNil)
-
-			return 1
-		}
-
 		servers := L.NewTable()
 
-		for index := range backendServer {
-			if backendServer[index] == nil {
+		// Create the metatable
+		mt := L.NewTypeMetatable("backend_server")
+		L.SetField(mt, "__index", L.NewFunction(indexMethod))
+
+		for _, backendServer := range backendServers {
+			if backendServer == nil {
 				continue
 			}
 
-			serverTable := L.NewTable()
+			// Create a userdata and set its metatable
+			serverUserData := L.NewUserData()
 
-			serverProtocol := L.NewTable()
-			serverIP := L.NewTable()
-			serverPort := L.NewTable()
-			serverHAproxyV2 := L.NewTable()
+			serverUserData.Value = &LuaBackendServer{
+				Protocol:  backendServer.Protocol,
+				IP:        backendServer.IP,
+				Port:      backendServer.Port,
+				HAProxyV2: backendServer.HAProxyV2,
+			}
 
-			serverProtocol.RawSetString("protocol", lua.LString(backendServer[index].Protocol))
-			serverIP.RawSetString("ip", lua.LString(backendServer[index].IP))
-			serverPort.RawSetString("port", lua.LNumber(backendServer[index].Port))
-			serverHAproxyV2.RawSetString("haproxy_v2", lua.LBool(backendServer[index].HAProxyV2))
+			L.SetMetatable(serverUserData, L.GetTypeMetatable("backend_server"))
 
-			serverTable.RawSetString("protocol", serverProtocol)
-			serverTable.RawSetString("ip", serverIP)
-			serverTable.RawSetString("port", serverPort)
-			serverTable.RawSetString("haproxy_v2", serverHAproxyV2)
-
-			servers.Append(serverTable)
+			// Add userdata into the servers table
+			servers.Append(serverUserData)
 		}
 
 		L.Push(servers)
