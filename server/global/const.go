@@ -946,11 +946,11 @@ const (
 	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
 	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
 
-	// LuaFnRedisGet represents the function name for "redis_get" in Lua
-	LuaFnRedisGet = "redis_get"
+	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
+	LuaFnRedisGet = "redis_get_str"
 
-	// LuaFnRedisSet represents the function name for "redis_set" in Lua
-	LuaFnRedisSet = "redis_set"
+	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
+	LuaFnRedisSet = "redis_set_str"
 
 	// LuaFnRedisDel represents the function name for "redis_det" in Lua
 	LuaFnRedisDel = "redis_del"
