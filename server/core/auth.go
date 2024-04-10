@@ -44,36 +44,36 @@ type ClaimHandler struct {
 	ApplyFunc func(value any, claims map[string]any, claimKey string) bool
 }
 
-// NginxBackendServer represents a type for managing a list of Nginx Backend servers
-type NginxBackendServer struct {
-	// nginxBackendServer is a slice of pointers to config.NginxBackendServer objects
-	nginxBackendServer []*config.NginxBackendServer
+// BackendServer represents a type for managing a slive of config.BackendServer
+type BackendServer struct {
+	// backendServer is a slice of pointers to config.BackendServer objects
+	backendServer []*config.BackendServer
 
-	// mu provides a read/write mutex for thread-safe operations on the nginxBackendServer
+	// mu provides a read/write mutex for thread-safe operations on the backendServer
 	mu sync.RWMutex
 }
 
-// Update updates the nginxBackendServer field of the NginxBackendServer object with the provided servers slice.
-func (n *NginxBackendServer) Update(servers []*config.NginxBackendServer) {
+// Update updates the backendServer field of the BackendServer object with the provided servers slice.
+func (n *BackendServer) Update(servers []*config.BackendServer) {
 	n.mu.Lock()
 
 	defer n.mu.Unlock()
 
-	n.nginxBackendServer = servers
+	n.backendServer = servers
 }
 
-func (n *NginxBackendServer) GetTotalServers() int {
+func (n *BackendServer) GetTotalServers() int {
 	n.mu.RLock()
 
 	defer n.mu.RUnlock()
 
-	return len(n.nginxBackendServer)
+	return len(n.backendServer)
 }
 
-// NewNginxBackendServer creates a new instance of the NginxBackendServer struct.
-// It returns a pointer to the newly created NginxBackendServer.
-func NewNginxBackendServer() *NginxBackendServer {
-	return &NginxBackendServer{}
+// NewBackendServer creates a new instance of the BackendServer struct.
+// It returns a pointer to the newly created BackendServer.
+func NewBackendServer() *BackendServer {
+	return &BackendServer{}
 }
 
 // JSONRequest is a data structure containing the details of a client's request in JSON format.
@@ -249,11 +249,11 @@ type Authentication struct {
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
 	UsedPassDBBackend global.Backend
 
-	// UsedNginxBackendAddress is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Server'.
-	UsedNginxBackendAddress string
+	// UsedBackendIP is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Server'.
+	UsedBackendIP string
 
-	// UsedNginxBackendPort is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Port'.
-	UsedNginxBackendPort int
+	// UsedBackendPort is set by a filter Lua script for the Nginx endpoint to set the HTTP response header 'Auth-Port'.
+	UsedBackendPort int
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
 	// attribute name as key and the corresponding result as value.
@@ -342,7 +342,7 @@ type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]webauthn.Credential, 
 // AddTOTPSecretFunc is a function signature that takes a *Authentication and *TOTPSecret as arguments and returns an error.
 type AddTOTPSecretFunc func(auth *Authentication, totp *TOTPSecret) (err error)
 
-var NginxBackendServers = NewNginxBackendServer()
+var BackendServers = NewBackendServer()
 
 // String returns an Authentication object as string excluding the user password.
 func (a *Authentication) String() string {
@@ -567,20 +567,20 @@ func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 }
 
 // setNginxHeaders sets the appropriate headers for the given gin.Context and Authentication based on the configuration and feature flags.
-// If the global.FeatureNginxMonitoring feature is enabled, it checks if the Authentication's UsedNginxBackendAddress and UsedNginxBackendPort are set.
-// If they are, it sets the "Auth-Server" header to the UsedNginxBackendAddress and the "Auth-Port" header to the UsedNginxBackendPort.
-// If the global.FeatureNginxMonitoring feature is disabled, it checks the Authentication's Protocol.
+// If the global.FeatureBackendServersMonitoring feature is enabled, it checks if the Authentication's UsedBackendAddress and UsedBackendPort are set.
+// If they are, it sets the "Auth-Server" header to the UsedBackendAddress and the "Auth-Port" header to the UsedBackendPort.
+// If the global.FeatureBackendServersMonitoring feature is disabled, it checks the Authentication's Protocol.
 // If the Protocol is global.ProtoSMTP, it sets the "Auth-Server" header to the SMTPBackendAddress and the "Auth-Port" header to the SMTPBackendPort.
 // If the Protocol is global.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is global.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, a *Authentication) {
-	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		if NginxBackendServers.GetTotalServers() == 0 {
+	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
 		} else {
-			if a.UsedNginxBackendAddress != "" && a.UsedNginxBackendPort > 0 {
-				ctx.Header("Auth-Server", a.UsedNginxBackendAddress)
-				ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedNginxBackendPort))
+			if a.UsedBackendIP != "" && a.UsedBackendPort > 0 {
+				ctx.Header("Auth-Server", a.UsedBackendIP)
+				ctx.Header("Auth-Port", fmt.Sprintf("%d", a.UsedBackendPort))
 			}
 		}
 	} else {
@@ -642,12 +642,14 @@ func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 		switch {
 		case valueLen == 1:
 			headerValue = fmt.Sprintf("%v", value[global.LDAPSingleValue])
-		case valueLen > 1:
+		default:
 			stringValues := formatValues(value)
 			separator := ","
+
 			if name == global.DistinguishedName {
 				separator = ";"
 			}
+
 			headerValue = strings.Join(stringValues, separator)
 		}
 
@@ -1592,26 +1594,6 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 	return authResult
 }
 
-// prepareNginxBackendServer prepares a map of Nginx backend servers based on the given Authentication protocol.
-// It iterates over the nginxBackendServer slice of NginxBackendServers, locks it for reading, filters the servers based on the protocol match,
-// and constructs a map with the server IP as the key and port as the value.
-// The function returns the constructed map.
-// The method does not modify the servers slice.
-func (a *Authentication) prepareNginxBackendServer(servers *NginxBackendServer, backendServers *[]map[string]int) {
-	servers.mu.RLock()
-
-	defer servers.mu.RUnlock()
-
-	for index := range servers.nginxBackendServer {
-		if servers.nginxBackendServer[index].Protocol == a.Protocol.Get() {
-			server := make(map[string]int)
-
-			server[servers.nginxBackendServer[index].IP] = servers.nginxBackendServer[index].Port
-			*backendServers = append(*backendServers, server)
-		}
-	}
-}
-
 // filterLua calls Lua filters which can change the backend result.
 func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context) global.AuthResult {
 	if !config.LoadableConfig.HaveLuaFilters() {
@@ -1626,18 +1608,18 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 	defer timer.ObserveDuration()
 
-	backendServer := make([]map[string]int, 0)
+	BackendServers.mu.RLock()
 
-	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		a.prepareNginxBackendServer(NginxBackendServers, &backendServer)
-	}
+	backendServers := BackendServers.backendServer
+
+	BackendServers.mu.RUnlock()
 
 	filterRequest := &filter.Request{
-		NginxBackendServers:     backendServer,
-		UsedNginxBackendAddress: &a.UsedNginxBackendAddress,
-		UsedNginxBackendPort:    &a.UsedNginxBackendPort,
-		Logs:                    nil,
-		Context:                 a.Context,
+		BackendServers:     backendServers,
+		UsedBackendAddress: &a.UsedBackendIP,
+		UsedBackendPort:    &a.UsedBackendPort,
+		Logs:               nil,
+		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Repeating:         false, // unavailable
@@ -1707,8 +1689,8 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 			return global.AuthResultFail
 		}
 
-		a.UsedNginxBackendAddress = *filterRequest.UsedNginxBackendAddress
-		a.UsedNginxBackendPort = *filterRequest.UsedNginxBackendPort
+		a.UsedBackendIP = *filterRequest.UsedBackendAddress
+		a.UsedBackendPort = *filterRequest.UsedBackendPort
 	}
 
 	if passDBResult.Authenticated {
@@ -2387,12 +2369,10 @@ func (a *Authentication) processGroupsClaim(index int, claims map[string]any) {
 		}
 
 		if !valueApplied {
-			if !valueApplied {
-				level.Warn(logging.DefaultLogger).Log(
-					global.LogKeyGUID, a.GUID,
-					global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
-				)
-			}
+			level.Warn(logging.DefaultLogger).Log(
+				global.LogKeyGUID, a.GUID,
+				global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
+			)
 		}
 	}
 }

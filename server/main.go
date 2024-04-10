@@ -45,15 +45,15 @@ type contextTuple struct {
 }
 
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
-// The structure contains the following fields: ldapLookup, ldapAuth, lua, action, nginx and server.
+// The structure contains the following fields: ldapLookup, ldapAuth, lua, action, backendServerMonitoring and server.
 // Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
 type contextStore struct {
-	ldapLookup *contextTuple
-	ldapAuth   *contextTuple
-	lua        *contextTuple
-	action     *contextTuple
-	nginx      *contextTuple
-	server     *contextTuple
+	ldapLookup              *contextTuple
+	ldapAuth                *contextTuple
+	lua                     *contextTuple
+	action                  *contextTuple
+	backendServerMonitoring *contextTuple
+	server                  *contextTuple
 }
 
 // newContextStore creates a new instance of a contextStore.
@@ -769,70 +769,70 @@ func handleHAproxyV2Error(err error) {
 		global.LogKeyError, "HAProxy v2 error", "error", err)
 }
 
-// logNgxBackendError logs an error originating from Nginx Backend Server,
+// logBackendServerError logs an error originating from Backend Server,
 // detailing the server configuration at the time of the error.
 // The logged details include error message, protocol used by the server,
-// and the IP address and Port used by the Nginx Backend Server.
+// and the IP address and Port used by the Backend Server.
 //
 // Parameters:
 //
-//	server: a pointer to the configuration of the Nginx Backend Server at the time of the error
+//	server: a pointer to the configuration of the Backend Server at the time of the error
 //	err: the error that has occurred
-func logNgxBackendError(server *config.NginxBackendServer, err error) {
+func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(logging.DefaultErrLogger).Log(
 		global.LogKeyError, err,
 		global.LogKeyMsg, "Server down",
 		global.LogKeyProtocol, server.Protocol,
-		global.LogKeyNgxBackendIP, server.IP,
-		global.LogKeyNgxBackendPort, server.Port,
+		global.LogKeyBackendServerIP, server.IP,
+		global.LogKeyBackendServerPort, server.Port,
 	)
 }
 
-// logNgxBackendDebug logs debug information for an Nginx backend server. It uses the util.DebugModule function to log the debug message and key-value pairs.
+// logBackendServerDebug logs debug information for a backend server. It uses the util.DebugModule function to log the debug message and key-value pairs.
 // Parameters:
-// - server: a pointer to the NginxBackendServer struct that contains the server information.
+// - server: a pointer to the BackendServer struct that contains the server information.
 // Example usage:
 //
-//	logNgxBackendDebug(server)
-func logNgxBackendDebug(server *config.NginxBackendServer) {
+//	logBackendServerDebug(server)
+func logBackendServerDebug(server *config.BackendServer) {
 	util.DebugModule(
 		global.DbgFeature,
 		global.LogKeyMsg, "Server alive",
 		global.LogKeyProtocol, server.Protocol,
-		global.LogKeyNgxBackendIP, server.IP,
-		global.LogKeyNgxBackendPort, server.Port,
+		global.LogKeyBackendServerIP, server.IP,
+		global.LogKeyBackendServerPort, server.Port,
 	)
 }
 
-// loopNgxBackendServers iterates over a slice of NginxBackendServer objects, checks the availability of each server,
-// and updates the NginxBackendServers collection if necessary.
+// loopBackendServersHealthCheck iterates over a slice of BackendServer objects, checks the availability of each server,
+// and updates the BackendServers collection if necessary.
 //
 // Parameters:
-// - servers: A slice of NginxBackendServer objects representing the backend servers to be monitored.
+// - servers: A slice of BackendServer objects representing the backend servers to be monitored.
 //
-// type nginxServers: A struct that holds information related to the monitoring process.
+// type backendServersAlive: A struct that holds information related to the monitoring process.
 // - update: A boolean flag indicating whether any backend server failed to respond.
-// - servers: A slice of NginxBackendServer objects representing the available backend servers.
-// - mu: A mutex used for synchronizing access to the nginxServers struct fields.
+// - servers: A slice of BackendServer objects representing the available backend servers.
+// - mu: A mutex used for synchronizing access to the backendServersAlive struct fields.
 //
 // var wg: A WaitGroup used to wait for all goroutines to finish.
 //
-// ngxAlive: An instance of the nginxServers struct.
+// ngxAlive: An instance of the backendServersAlive struct.
 //
 // Iterates over each server in the servers slice using a goroutine.
 // - For each server, it checks the connectivity using the checkNgxBackendServer function.
 // - Acquires a lock on ngxAlive.mu to prevent concurrent writes.
-// - If an error occurs, sets ngxAlive.update to true and logs the error using the logNgxBackendError function.
+// - If an error occurs, sets ngxAlive.update to true and logs the error using the logBackendServerError function.
 // - If no error occurs, appends the server to ngxAlive.servers.
 // - Decrements the WaitGroup counter by calling wg.Done().
 //
 // Waits for all goroutines to finish by calling wg.Wait().
 //
-// If ngxAlive.update is true, it updates the NginxBackendServers collection using the core.NginxBackendServers.Update method.
-func loopNgxBackendServers(servers []*config.NginxBackendServer) {
-	type nginxServers struct {
+// If ngxAlive.update is true, it updates the BackendServers collection using the core.BackendServers.Update method.
+func loopBackendServersHealthCheck(servers []*config.BackendServer) {
+	type backendServersAlive struct {
 		update  bool
-		servers []*config.NginxBackendServer
+		servers []*config.BackendServer
 		mu      sync.Mutex
 	}
 
@@ -840,24 +840,24 @@ func loopNgxBackendServers(servers []*config.NginxBackendServer) {
 
 	wg.Add(len(servers))
 
-	ngxAlive := &nginxServers{}
+	backendServersLiveness := &backendServersAlive{}
 
 	for _, server := range servers {
-		go func(server *config.NginxBackendServer) {
+		go func(server *config.BackendServer) {
 			err := checkNgxBackendServer(server.IP, server.Port, server.HAProxyV2)
 
-			ngxAlive.mu.Lock()
+			backendServersLiveness.mu.Lock()
 
-			defer ngxAlive.mu.Unlock()
+			defer backendServersLiveness.mu.Unlock()
 
 			if err != nil {
-				ngxAlive.update = true
+				backendServersLiveness.update = true
 
-				logNgxBackendError(server, err)
+				logBackendServerError(server, err)
 			} else {
-				ngxAlive.servers = append(ngxAlive.servers, server)
+				backendServersLiveness.servers = append(backendServersLiveness.servers, server)
 
-				logNgxBackendDebug(server)
+				logBackendServerDebug(server)
 			}
 
 			wg.Done()
@@ -866,106 +866,106 @@ func loopNgxBackendServers(servers []*config.NginxBackendServer) {
 
 	wg.Wait()
 
-	if ngxAlive.update {
-		core.NginxBackendServers.Update(ngxAlive.servers)
+	if backendServersLiveness.update {
+		core.BackendServers.Update(backendServersLiveness.servers)
 	}
 }
 
-// verifyNginxMonitoringConfig checks if the nginx monitoring feature is enabled.
+// monitoringConfig checks if the backendServerMonitoring monitoring feature is enabled.
 // If enabled, it gets the backend servers from the LoadableConfig.
 // If there are no backend servers or the feature is not enabled, it returns an error.
-// It returns a list with Nginx backend servers or an error.
-func verifyNginxMonitoringConfig() ([]*config.NginxBackendServer, error) {
-	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		return nil, errors2.ErrFeatureNgxDisables
+// It returns a list with backend servers or an error.
+func monitoringConfig() ([]*config.BackendServer, error) {
+	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+		return nil, errors2.ErrFeatureBackendServersMonitoringDisabled
 	}
 
-	nginxBackendServers := config.LoadableConfig.GetNginxBackendServers()
-	if len(nginxBackendServers) == 0 {
-		return nil, errors2.ErrNgxMonitoringEmpty
+	backendServers := config.LoadableConfig.GetBackendServers()
+	if len(backendServers) == 0 {
+		return nil, errors2.ErrMonitoringBackendServersEmpty
 	}
 
-	return nginxBackendServers, nil
+	return backendServers, nil
 }
 
-// runNgxMonitoring sets a new context for Nginx monitoring and initiates the monitoring.
-// The function requires three parameters: a base context ctx, a store of context objects, and a ticker for Nginx monitoring.
-// It creates a new context specifically for Nginx with its own cancellation function and stores these in the context store.
-// It then attempts to start Nginx monitoring using the startNginxMonitoring function.
-// If an error occurs during the start of monitoring, it is handled by the handleNgxMonitoringError function.
+// runBackendServerMonitoring sets a new context for monitoring and initiates the monitoring.
+// The function requires three parameters: a base context ctx, a store of context objects, and a ticker for monitoring.
+// It creates a new context specifically for monitoring with its own cancellation function and stores these in the context store.
+// It then attempts to start monitoring using the startBackendServerMonitoring function.
+// If an error occurs during the start of monitoring, it is handled by the handleMonitoringError function.
 //
-// ctx is the base context from which the Nginx-specific context is derived.
-// store is a store for context objects that can hold the specific context for Nginx monitoring.
-// ngxMonitoringTicker is a ticker that triggers the Nginx monitoring at regular intervals.
-func runNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoringTicker *time.Ticker) {
-	store.nginx = newContextTuple(ctx)
+// ctx is the base context from which the monitoring-specific context is derived.
+// store is a store for context objects that can hold the specific context for monitoring.
+// monitoringTicker is a ticker that triggers the monitoring at regular intervals.
+func runBackendServerMonitoring(ctx context.Context, store *contextStore, monitoringTicker *time.Ticker) {
+	store.backendServerMonitoring = newContextTuple(ctx)
 
-	if err := startNginxMonitoring(store, ngxMonitoringTicker); err != nil {
-		handleNgxMonitoringError(err)
+	if err := startBackendServerMonitoring(store, monitoringTicker); err != nil {
+		handleMonitoringError(err)
 	}
 }
 
-// startNginxMonitoring initiates the monitoring of Nginx servers. It takes a contextStore
+// startBackendServerMonitoring initiates the monitoring of backend servers. It takes a contextStore
 // and a ticker as arguments. The contextStore is used to manage context-specific values across API boundaries
-// and between processes, and the ticker is used to trigger Nginx server assessment at regular intervals.
-// The function first validates the Nginx monitoring configuration and updates the NginxBackendServers in the
-// core package as necessary. It then enters a loop which repeatedly evaluates the status of the Nginx backend servers
+// and between processes, and the ticker is used to trigger backend server assessment at regular intervals.
+// The function first validates the backend server monitoring configuration and updates the BackendServers in the
+// core package as necessary. It then enters a loop which repeatedly evaluates the status of the backend servers
 // at intervals defined by the ticker. The loop continues until the context is cancelled.
 //
 // Arguments:
 // - store: A pointer to a contextStore instance. Used to manage context-specific values.
-// - ticker: A pointer to a time.Ticker instance. Used to trigger Nginx server assessments at regular intervals.
+// - ticker: A pointer to a time.Ticker instance. Used to trigger backend server assessments at regular intervals.
 //
 // Returns:
-// Returns an error if the Nginx monitoring configuration verification fails or if the context is cancelled.
-func startNginxMonitoring(store *contextStore, ticker *time.Ticker) error {
-	nginxBackendServers, err := verifyNginxMonitoringConfig()
+// Returns an error if the backend server monitoring configuration verification fails or if the context is cancelled.
+func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) error {
+	backendServers, err := monitoringConfig()
 	if err != nil {
 		return err
 	}
 
-	core.NginxBackendServers.Update(nginxBackendServers)
-	loopNgxBackendServers(nginxBackendServers)
+	core.BackendServers.Update(backendServers)
+	loopBackendServersHealthCheck(backendServers)
 
 	for {
 		select {
 		case <-ticker.C:
-			loopNgxBackendServers(nginxBackendServers)
-		case <-store.nginx.ctx.Done():
-			return store.nginx.ctx.Err()
+			loopBackendServersHealthCheck(backendServers)
+		case <-store.backendServerMonitoring.ctx.Done():
+			return store.backendServerMonitoring.ctx.Err()
 		}
 	}
 }
 
-// handleNgxMonitoringError is a function that handles errors related
-// to the Nginx monitoring feature. If the Nginx monitoring feature is
+// handleMonitoringError is a function that handles errors related
+// to the backend server monitoring feature. If the backend server monitoring feature is
 // not enabled, it logs an informational message. If there are no
-// configured backend servers for Nginx monitoring, it logs an error message.
-func handleNgxMonitoringError(err error) {
-	if !config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		if errors.Is(err, errors2.ErrFeatureNgxDisables) {
-			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Nginx monitoring feature is not enabled")
+// configured backend servers for monitoring, it logs an error message.
+func handleMonitoringError(err error) {
+	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+		if errors.Is(err, errors2.ErrFeatureBackendServersMonitoringDisabled) {
+			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
 		}
-	} else if errors.Is(err, errors2.ErrNgxMonitoringEmpty) {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, "Nginx monitoring backend servers are not configured")
+	} else if errors.Is(err, errors2.ErrMonitoringBackendServersEmpty) {
+		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, "Monitoring backend servers are not configured")
 	}
 }
 
-// restartNgxMonitoring stops the current monitoring ticker, cancels the nginx context from the store,
-// then starts a new monitoring ticker and begins monitoring nginx again in a new goroutine.
-// This function is useful when you need to restart the nginx monitoring process for any reason, like configuration changes.
+// restartNgxMonitoring stops the current monitoring ticker, cancels the backendServerMonitoring context from the store,
+// then starts a new monitoring ticker and begins monitoring backendServerMonitoring again in a new goroutine.
+// This function is useful when you need to restart the backendServerMonitoring monitoring process for any reason, like configuration changes.
 //
 // Params:
 // - ctx: The context in which we run monitoring. Can be used to stop monitoring externally.
-// - store: A reference to the contextStore, which holds the cancel function for the nginx context.
+// - store: A reference to the contextStore, which holds the cancel function for the backendServerMonitoring context.
 // - ngxMonitoring: A double pointer to a time Ticker, which we stop and replace with a new Ticker.
 func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoring **time.Ticker) {
 	(*ngxMonitoring).Stop()
-	store.nginx.cancel()
+	store.backendServerMonitoring.cancel()
 
-	*ngxMonitoring = time.NewTicker(global.NginxMonitoringDelay * time.Second)
+	*ngxMonitoring = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 
-	go runNgxMonitoring(ctx, store, *ngxMonitoring)
+	go runBackendServerMonitoring(ctx, store, *ngxMonitoring)
 }
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
@@ -990,8 +990,8 @@ func postEnvironmentDebug() {
 		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
 	}
 
-	if config.LoadableConfig.NginxMonitoring != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureNginxMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.NginxMonitoring))
+	if config.LoadableConfig.BackendServerMonitoring != nil {
+		level.Debug(logging.DefaultLogger).Log(global.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
 	}
 
 	if config.LoadableConfig.BruteForce != nil {
@@ -1033,7 +1033,7 @@ func main() {
 	enableBlockProfile()
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
-	ngxMonitoringTicker := time.NewTicker(global.NginxMonitoringDelay * time.Second)
+	ngxMonitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
@@ -1046,8 +1046,8 @@ func main() {
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
 
-	// Nginx monitoring feature
-	go runNgxMonitoring(ctx, store, ngxMonitoringTicker)
+	// Backend server monitoring feature
+	go runBackendServerMonitoring(ctx, store, ngxMonitoringTicker)
 
 	startStatsLoop(ctx, statsTicker)
 
