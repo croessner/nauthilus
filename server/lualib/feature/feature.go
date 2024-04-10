@@ -287,9 +287,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		triggered = L.ToBool(-1)
 		L.Pop(1)
 
-		if err == nil {
-			r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
-		}
+		r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 
 		timer.ObserveDuration()
 		luaCancel()

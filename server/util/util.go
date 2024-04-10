@@ -118,7 +118,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	c.PasswordOption = pwOption
 
 	// {SSHA256} or {SSHA512}
-	if len(passwordPrefix) == 7 { //nolint:gomnd // Ignore
+	if len(passwordPrefix) == 7 {
 		pwOption = global.B64
 	}
 
