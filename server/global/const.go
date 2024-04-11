@@ -175,11 +175,11 @@ const (
 	// LogKeyLuaScripttimeout represents timeout setting for lua scripts
 	LogKeyLuaScripttimeout = "lua_script_timeout"
 
-	// LogKeyNgxBackendIP represents the IP address of the nginx backend server.
-	LogKeyNgxBackendIP = "nginx_backend_ip"
+	// LogKeyBackendServerIP represents the IP address of the backend server.
+	LogKeyBackendServerIP = "backend_server_ip"
 
-	// LogKeyNgxBackendPort represents the port of the nginx backend server.
-	LogKeyNgxBackendPort = "nginx_backend_port"
+	// LogKeyBackendServerPort represents the port of the backend server.
+	LogKeyBackendServerPort = "backend_server_port"
 
 	// NotAvailable is used when data for a particular field is not available.
 	NotAvailable = "N/A"
@@ -262,8 +262,8 @@ const (
 	// StatsDelay is the delay (in seconds) between collecting statistical data
 	StatsDelay = 60
 
-	// NginxMonitoringDelay is the delay (in seconds) between keep-alive checks
-	NginxMonitoringDelay = 60
+	// BackendServerMonitoringDelay is the delay (in seconds) between keep-alive checks
+	BackendServerMonitoringDelay = 60
 
 	// LDAPConnectTimeout is the connection timeout (in seconds) for the LDAP server
 	LDAPConnectTimeout = 30
@@ -345,8 +345,8 @@ const (
 	// FeatureLua is a constant for the string "lua"
 	FeatureLua = "lua"
 
-	// FeatureNginxMonitoring enables custom a Nginx backend list with fail-state monitoring
-	FeatureNginxMonitoring = "nginx_monitoring"
+	// FeatureBackendServersMonitoring enables a custom backend list with fail-state monitoring
+	FeatureBackendServersMonitoring = "backend_server_monitoring"
 )
 
 // Statistics label for the loin counter.
@@ -934,13 +934,29 @@ const (
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
 
-	// LuaFnGetNgxBackendServers represents the Lua function name "nauthilus_get_nginx_backend_servers" that retrieves the nginx backend servers.
-	LuaFnGetNgxBackendServers = "get_nginx_backend_servers"
+	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
+	LuaFnGetBackendServers = "get_backend_servers"
 
-	// LuaFnSelectNginxBackend represents the constant used as the key for the Lua function "nauthilus_select_nginx_backend".
-	LuaFnSelectNginxBackend = "select_nginx_backend_server"
+	// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
+	LuaFnSelectBackendServer = "select_backend_server"
 
+	// LuaFnSetStatusMessage represents the Lua function name for setting the status message of a Lua request.
 	LuaFnSetStatusMessage = "status_message_set"
+
+	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
+	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
+
+	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
+	LuaFnRedisGet = "redis_get_str"
+
+	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
+	LuaFnRedisSet = "redis_set_str"
+
+	// LuaFnRedisDel represents the function name for "redis_det" in Lua
+	LuaFnRedisDel = "redis_del"
+
+	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
+	LuaFnRedisExpire = "redis_expire"
 )
 
 const (

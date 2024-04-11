@@ -5,10 +5,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -51,7 +51,7 @@ func LoadStatsFromRedis() {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
-		if redisValue, err = backend.RedisHandleReplica.HGet(context.Background(), redisLoginsCounterKey, counterType).Float64(); err != nil {
+		if redisValue, err = rediscli.ReadHandle.HGet(context.Background(), redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
 				level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
@@ -82,7 +82,7 @@ func SaveStatsToRedis() {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for index := range metrics {
-		if err = backend.RedisHandle.HSet(context.Background(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
+		if err = rediscli.WriteHandle.HSet(context.Background(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 			return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -166,7 +167,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := r.setGlobals(L)
+	globals := r.setGlobals(L, ctx.Request)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
@@ -201,7 +202,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 // - `custom_log_add`: A function that adds a key-value pair to the request's Logs.
 //
 // The method returns the initialized table.
-func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
+func (r *Request) setGlobals(L *lua.LState, httpRequest *http.Request) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
 
@@ -217,6 +218,11 @@ func (r *Request) setGlobals(L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
+	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
+	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
 	return globals
 }
@@ -281,9 +287,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		triggered = L.ToBool(-1)
 		L.Pop(1)
 
-		if err == nil {
-			r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
-		}
+		r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 
 		timer.ObserveDuration()
 		luaCancel()

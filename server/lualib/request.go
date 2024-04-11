@@ -1,6 +1,9 @@
 package lualib
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/croessner/nauthilus/server/global"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -217,5 +220,42 @@ func SetStatusMessage(status **string) lua.LGFunction {
 		*status = &newStatus
 
 		return 0
+	}
+}
+
+// GetAllHTTPRequestHeaders returns a LGFunction that creates a Lua table containing all headers from the http.Request object
+// The table is indexed by the lowercase header name and each header's value is a list of strings
+// The function expects a *http.Request object as its parameter
+//
+// Example usage:
+//
+//	headers := getAllHeaders(request)
+//	L.SetGlobal("getAllHeaders", L.NewClosure(headers))
+//	result := L.DoString(`
+//	  local headers = getAllHeaders()
+//	  print(headers["content-type"][1]) -- print the first value of the "content-type" header
+//	`)
+//	if result != nil {
+//	  fmt.Println("Error:", result)
+//	}
+func GetAllHTTPRequestHeaders(httpRequest *http.Request) lua.LGFunction {
+	return func(L *lua.LState) int {
+		headerTable := L.NewTable()
+
+		for name, headers := range httpRequest.Header {
+			name = strings.ToLower(name)
+
+			headerList := L.NewTable()
+
+			for _, h := range headers {
+				headerList.Append(lua.LString(h))
+			}
+
+			headerTable.RawSetString(name, headerList)
+		}
+
+		L.Push(headerTable)
+
+		return 1
 	}
 }

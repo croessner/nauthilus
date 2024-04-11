@@ -10,14 +10,10 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
-)
-
-var (
-	RedisHandle        redis.UniversalClient //nolint:gochecknoglobals // System wide redis pool
-	RedisHandleReplica redis.UniversalClient //nolint:gochecknoglobals // System wide redis pool
 )
 
 // BruteForceBucketCache is a Redis cache. It is a union member of RedisCache.
@@ -50,7 +46,7 @@ type RedisCache interface {
 func LookupUserAccountFromRedis(username string) (accountName string, err error) {
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
-	accountName, err = RedisHandleReplica.HGet(context.Background(), key, username).Result()
+	accountName, err = rediscli.ReadHandle.HGet(context.Background(), key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return
@@ -70,7 +66,7 @@ func LookupUserAccountFromRedis(username string) (accountName string, err error)
 func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
 
-	if redisValue, err = RedisHandleReplica.Get(context.Background(), key).Bytes(); err != nil {
+	if redisValue, err = rediscli.ReadHandle.Get(context.Background(), key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
 		}
@@ -117,7 +113,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 	}
 
 	//nolint:lll // Ignore
-	if result, err = RedisHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
@@ -196,7 +192,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 
 	key := "as_webauthn:user:" + uniqueUserId
 
-	if redisValue, err = RedisHandleReplica.Get(context.Background(), key).Bytes(); err != nil {
+	if redisValue, err = rediscli.ReadHandle.Get(context.Background(), key).Bytes(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 
 		return nil, err
@@ -230,7 +226,7 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 	key := "as_webauthn:user:" + user.Id
 
 	//nolint:lll // Ignore
-	if result, err = RedisHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
 	}
 

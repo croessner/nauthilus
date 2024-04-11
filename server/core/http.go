@@ -11,12 +11,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/pprof"
@@ -472,11 +472,11 @@ func prometheusMiddleware() gin.HandlerFunc {
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
 
 		redisStatsMap := map[string]*redis.PoolStats{
-			"master": backend.RedisHandle.PoolStats(),
+			"master": rediscli.WriteHandle.PoolStats(),
 		}
 
-		if backend.RedisHandle != backend.RedisHandleReplica {
-			redisStatsMap["replica"] = backend.RedisHandleReplica.PoolStats()
+		if rediscli.WriteHandle != rediscli.ReadHandle {
+			redisStatsMap["replica"] = rediscli.ReadHandle.PoolStats()
 		}
 
 		for handleType, redisStats := range redisStatsMap {

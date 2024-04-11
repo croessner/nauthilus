@@ -199,7 +199,7 @@ func (f *Feature) String() string {
 func (f *Feature) Set(value string) error {
 	switch value {
 	case "":
-	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureNginxMonitoring:
+	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureBackendServersMonitoring:
 		f.name = value
 	default:
 		return errors.ErrWrongFeature

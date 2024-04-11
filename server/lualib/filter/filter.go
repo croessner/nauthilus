@@ -3,6 +3,7 @@ package filter
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -144,48 +145,12 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 	}, nil
 }
 
-// Request represents a request made to the system.
-// It contains various properties related to the request.
-// The properties include debug mode, user information, authentication status,
-// client information, local information, logging, and context data.
-// The type also contains methods for executing Lua scripts within the context of the request.
-// Debug is a flag that is set if running in debug mode.
-// UserFound indicates whether a user has been found on the system.
-// Authenticated indicates whether the user has authenticated.
-// NoAuth indicates if any authentication method has no effect.
-// Session is a GUID representing the user's session.
-// ClientIP is the IP address of the client making the request.
-// ClientPort is the port being used by the client making the request.
-// ClientHost is the hostname of the client making the request.
-// ClientID is a unique ID representing the client making the request.
-// LocalIP is the local IP address the request is made to.
-// LocalPort is the local port the request is made to.
-// Username is the username of the authenticated user.
-// Account is the account name of the authenticated user.
-// UniqueUserID is the unique user identifier of the authenticated user.
-// DisplayName is the display name of the authenticated user.
-// Password is the password of the authenticated user.
-// Please ensure this is handled securely.
-// Protocol is the protocol used by the client making the request.
-// NginxBackendServers is a list of Nginx backend servers used for monitoring.
-// UsedNginxBackendAddress is the address of the Nginx backend server currently being used.
-// UsedNginxBackendPort is the port of the Nginx backend server currently being used.
-// Logs is used to capture logging information.
-// Context includes context data from the caller.
-// CallFilterLua executes Lua scripts within the context of the request.
-// It returns the action flag indicating whether a script took action,
-// and any errors encountered during script execution.
-// logError logs the error encountered during Lua script execution.
-// logResult logs the result of a Lua script execution.
-// setGlobals sets the global variables for the Lua state.
-// setRequest creates a Lua table representing the request properties.
-// executeScriptWithinContext executes a Lua script within the context of the request.
 type Request struct {
-	NginxBackendServers []map[string]int
+	BackendServers []*config.BackendServer
 
-	UsedNginxBackendAddress *string
+	UsedBackendAddress *string
 
-	UsedNginxBackendPort *int
+	UsedBackendPort *int
 
 	// Log is used to capture logging information.
 	Logs *lualib.CustomLogKeyValue
@@ -196,34 +161,84 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
-// getNgxBackendServers is a function that takes an array of maps (ngxBackendServer),
-// where each map represents a server configuration with the server name (string) as the key
-// and the port number (int) as the value. The function returns a closure that can be
-// used as a LGFunction in the Lua VM.
-//
-// This closure creates a new Lua table (servers) and for each server in the ngxBackendServer array,
-// it creates a serverPort table and adds it to the servers table.
-// If the ngxBackendServer array is empty it returns Nil in the Lua VM.
-//
-// The returned closure when executed within the Lua VM, will either result in a single value,
-// either a servers table containing serverPort tables or Nil when the ngxBackendServer is empty.
-func getNgxBackendServers(ngxBackendServer []map[string]int) lua.LGFunction {
+type LuaBackendServer struct {
+	Protocol  string
+	IP        string
+	Port      int
+	HAProxyV2 bool
+}
+
+// The userData constellation method:
+func newLuaBackendServer(userData *lua.LUserData) *LuaBackendServer {
+	if v, ok := userData.Value.(*LuaBackendServer); ok {
+		return v
+	}
+
+	return nil
+}
+
+// The metamethod for the __index field of the metatable
+func indexMethod(L *lua.LState) int {
+	userData := L.CheckUserData(1)
+	field := L.CheckString(2)
+
+	server := newLuaBackendServer(userData)
+	if server == nil {
+		return 0
+	}
+
+	switch field {
+	case "protocol":
+		L.Push(lua.LString(server.Protocol))
+	case "ip":
+		L.Push(lua.LString(server.IP))
+	case "port":
+		L.Push(lua.LNumber(server.Port))
+	case "haproxy_v2":
+		L.Push(lua.LBool(server.HAProxyV2))
+	default:
+		return 0 // The field does not exist
+	}
+
+	return 1 // Number of return values
+}
+
+// getBackendServers is a higher-order function that returns a LGFunction.
+// The returned LGFunction creates a new Lua table and populates it with userdata objects representing backend servers.
+// Each userdata object has a metatable set, allowing Lua code to index the object and retrieve its properties.
+// The userdata objects are created based on the provided backendServers slice.
+// The userdata values are instances of the LuaBackendServer struct, with Protocol, IP, Port, and HAProxyV2 fields.
+// The metatable of the userdata objects has __index method set to the indexMethod function.
+// The indexMethod function retrieves the corresponding property value from the userdata object based on the requested field name.
+// The userdata objects are added to the created Lua table.
+// The created Lua table is pushed onto the Lua stack before returning from the LGFunction.
+func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 	return func(L *lua.LState) int {
-		if len(ngxBackendServer) == 0 {
-			L.Push(lua.LNil)
-
-			return 1
-		}
-
 		servers := L.NewTable()
 
-		for index := range ngxBackendServer {
-			for server, port := range ngxBackendServer[index] {
-				serverPort := L.NewTable()
+		// Create the metatable
+		mt := L.NewTypeMetatable("backend_server")
+		L.SetField(mt, "__index", L.NewFunction(indexMethod))
 
-				serverPort.RawSet(lua.LString(server), lua.LNumber(port))
-				servers.Append(serverPort)
+		for _, backendServer := range backendServers {
+			if backendServer == nil {
+				continue
 			}
+
+			// Create a userdata and set its metatable
+			serverUserData := L.NewUserData()
+
+			serverUserData.Value = &LuaBackendServer{
+				Protocol:  backendServer.Protocol,
+				IP:        backendServer.IP,
+				Port:      backendServer.Port,
+				HAProxyV2: backendServer.HAProxyV2,
+			}
+
+			L.SetMetatable(serverUserData, L.GetTypeMetatable("backend_server"))
+
+			// Add userdata into the servers table
+			servers.Append(serverUserData)
 		}
 
 		L.Push(servers)
@@ -232,7 +247,7 @@ func getNgxBackendServers(ngxBackendServer []map[string]int) lua.LGFunction {
 	}
 }
 
-// selectNginxBackend is a function that takes a server pointer (expected to be a string) and a port
+// selectBackendServer is a function that takes a server pointer (expected to be a string) and a port
 // pointer (expected to be an integer) as parameters. It returns a Lua function. This Lua function
 // wraps the functionality of checking the count of passed arguments and assigning the values of
 // server and port based on Lua's stack. The Lua function throws an error if the count of passed
@@ -241,7 +256,7 @@ func getNgxBackendServers(ngxBackendServer []map[string]int) lua.LGFunction {
 //
 // It's important to note that this function doesn't perform any kind of connection or communication
 // with a server or port. It only assigns values based on Lua stack positions.
-func selectNginxBackend(server **string, port **int) lua.LGFunction {
+func selectBackendServer(server **string, port **int) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() != 2 {
 			L.ArgError(2, "expected server (string) and port (number)")
@@ -277,7 +292,7 @@ func selectNginxBackend(server **string, port **int) lua.LGFunction {
 // Returns:
 //
 //	A new request table
-func setGlobals(r *Request, L *lua.LState) *lua.LTable {
+func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -292,10 +307,15 @@ func setGlobals(r *Request, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
+	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
+	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
-	if config.LoadableConfig.HasFeature(global.FeatureNginxMonitoring) {
-		globals.RawSetString(global.LuaFnGetNgxBackendServers, L.NewFunction(getNgxBackendServers(r.NginxBackendServers)))
-		globals.RawSetString(global.LuaFnSelectNginxBackend, L.NewFunction(selectNginxBackend(&r.UsedNginxBackendAddress, &r.UsedNginxBackendPort)))
+	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
+		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
@@ -407,7 +427,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, err error) {
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := setGlobals(r, L)
+	globals := setGlobals(r, L, ctx.Request)
 	request := setRequest(r, L)
 
 	for _, script := range LuaFilters.LuaScripts {

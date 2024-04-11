@@ -36,51 +36,51 @@ type GetterHandler interface {
 }
 
 type File struct {
-	Server             *ServerSection       `mapstructure:"server"`
-	RBLs               *RBLSection          `mapstructure:"realtime_blackhole_lists"`
-	ClearTextList      []string             `mapstructure:"cleartext_networks"`
-	RelayDomains       *RelayDomainsSection `mapstructure:"relay_domains"`
-	NginxMonitoring    *NginxMonitoring     `mapstructure:"nginx_monitoring"`
-	BruteForce         *BruteForceSection   `mapstructure:"brute_force"`
-	CSRFSecret         string               `mapstructure:"csrf_secret"`
-	CookieStoreAuthKey string               `mapstructure:"cookie_store_auth_key"`
-	CookieStoreEncKey  string               `mapstructure:"cookie_store_encryption_key"`
-	PasswordNonce      string               `mapstructure:"password_nonce"`
-	Lua                *LuaSection
-	Oauth2             *Oauth2Section
-	LDAP               *LDAPSection
-	Other              map[string]any `mapstructure:",remain"`
-	Mu                 sync.Mutex
+	Server                  *ServerSection           `mapstructure:"server"`
+	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists"`
+	ClearTextList           []string                 `mapstructure:"cleartext_networks"`
+	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains"`
+	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring"`
+	BruteForce              *BruteForceSection       `mapstructure:"brute_force"`
+	CSRFSecret              string                   `mapstructure:"csrf_secret"`
+	CookieStoreAuthKey      string                   `mapstructure:"cookie_store_auth_key"`
+	CookieStoreEncKey       string                   `mapstructure:"cookie_store_encryption_key"`
+	PasswordNonce           string                   `mapstructure:"password_nonce"`
+	Lua                     *LuaSection
+	Oauth2                  *Oauth2Section
+	LDAP                    *LDAPSection
+	Other                   map[string]any `mapstructure:",remain"`
+	Mu                      sync.Mutex
 }
 
 /*
- * Nginx monitoring
+ * Backend server monitoring
  */
 
-// GetNginxMonitoring is a method on the File struct.
-// It returns the NginxMonitoring field from the File struct.
-func (f *File) GetNginxMonitoring() *NginxMonitoring {
-	return f.NginxMonitoring
+// GetBackendServerMonitoring is a method on the File struct.
+// It returns the BackendServerMonitoring field from the File struct.
+func (f *File) GetBackendServerMonitoring() *BackendServerMonitoring {
+	return f.BackendServerMonitoring
 }
 
-// GetNginxBackendServers method operates on a File receiver 'f'.
-// It checks if the NginxMonitoring property is not null, it returns a pointer to an array of NginxBackendServers,
-// otherwise, it returns an empty array of NginxBackendServer pointers.
-// This method could be used when trying to get all backend servers of an Nginx configuration file.
-func (f *File) GetNginxBackendServers() []*NginxBackendServer {
-	if f.GetNginxMonitoring() != nil {
-		return f.NginxMonitoring.NginxBackendServer
+// GetBackendServers method operates on a File receiver 'f'.
+// It checks if the BackendServerMonitoring property is not null, it returns a pointer to an array of BackendServers,
+// otherwise, it returns an empty array of BackendServer pointers.
+// This method could be used when trying to get all backend servers of a configuration file.
+func (f *File) GetBackendServers() []*BackendServer {
+	if f.GetBackendServerMonitoring() != nil {
+		return f.BackendServerMonitoring.BackendServers
 	}
 
-	return []*NginxBackendServer{}
+	return []*BackendServer{}
 }
 
-// GetNginxBackendServer is a method of the File struct.
-// It takes a protocol as an argument and returns a pointer to a NginxBackendServer.
+// GetBackendServer is a method of the File struct.
+// It takes a protocol as an argument and returns a BackendServer.
 // The method iterates over the Backend Servers of the File instance and returns the first server that matches the provided protocol.
-// If no such server is found, nil is returned.
-func (f *File) GetNginxBackendServer(protocol string) *NginxBackendServer {
-	for _, server := range f.GetNginxBackendServers() {
+// If no such server is found, an emtpy instance of BackendServer is returned.
+func (f *File) GetBackendServer(protocol string) *BackendServer {
+	for _, server := range f.GetBackendServers() {
 		if server.Protocol == protocol {
 			return server
 		}
@@ -89,10 +89,10 @@ func (f *File) GetNginxBackendServer(protocol string) *NginxBackendServer {
 	return nil
 }
 
-// GetNginxBackendServerIP is a method for the File struct which
-// attempts to get the IP address of an Nginx backend server
+// GetBackendServerIP is a method for the File struct which
+// attempts to get the IP address of a backend server
 // for a specified protocol. The method first calls
-// GetNginxBackendServer with the given protocol and checks
+// GetBackendServer with the given protocol and checks
 // if it returns a non-nil value. If the value is not nil,
 // it retrieves the IP attribute of the backend server.
 // If the returned value is nil, indicating that there is
@@ -112,20 +112,20 @@ func (f *File) GetNginxBackendServer(protocol string) *NginxBackendServer {
 //	server for the given protocol. If there is no backend
 //	server for the specified protocol, the method returns
 //	an empty string.
-func (f *File) GetNginxBackendServerIP(protocol string) string {
-	if f.GetNginxBackendServer(protocol) != nil {
-		return f.GetNginxBackendServer(protocol).IP
+func (f *File) GetBackendServerIP(protocol string) string {
+	if f.GetBackendServer(protocol) != nil {
+		return f.GetBackendServer(protocol).IP
 	}
 
 	return ""
 }
 
-// GetNginxBackendServerPort checks the specific protocol's backend server in the File structure.
+// GetBackendServerPort checks the specific protocol's backend server in the File structure.
 // If the server exists, it returns the port of the server.
 // If the server does not exist, it returns 0.
-func (f *File) GetNginxBackendServerPort(protocol string) int {
-	if f.GetNginxBackendServer(protocol) != nil {
-		return f.GetNginxBackendServer(protocol).Port
+func (f *File) GetBackendServerPort(protocol string) int {
+	if f.GetBackendServer(protocol) != nil {
+		return f.GetBackendServer(protocol).Port
 	}
 
 	return 0
