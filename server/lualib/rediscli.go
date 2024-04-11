@@ -51,6 +51,27 @@ func RedisSet(L *lua.LState) int {
 	return 1
 }
 
+// RedisIncr increments the value associated with the given key in the Redis server.
+// It returns the incremented value as a Lua number. If an error occurs, it returns nil
+// and the error message as a Lua string.
+// The function expects one argument: the key to increment.
+// Example usage: val = redis_incr("counter")
+func RedisIncr(L *lua.LState) int {
+	key := L.CheckString(1)
+	val, err := rediscli.WriteHandle.Incr(ctx, key).Result()
+
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+
+		return 2
+	}
+
+	L.Push(lua.LNumber(val))
+
+	return 1
+}
+
 // RedisDel deletes the value associated with the given key from the Redis server.
 // It returns "OK" as a Lua string if the delete operation is successful.
 // If an error occurs, it returns nil and the error message as a Lua string.

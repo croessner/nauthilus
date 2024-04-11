@@ -952,6 +952,8 @@ const (
 	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
 	LuaFnRedisSet = "redis_set_str"
 
+	LuaFnRedisIncr = "redis_incr"
+
 	// LuaFnRedisDel represents the function name for "redis_det" in Lua
 	LuaFnRedisDel = "redis_del"
 
