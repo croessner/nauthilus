@@ -13,7 +13,7 @@ var ctx = context.Background()
 // RedisGet retrieves the value associated with the given key from the Redis server.
 // It returns the value as a Lua string. If an error occurs, it returns nil and the error message as a Lua string.
 // The function expects one argument: the key to retrieve.
-// Example usage: val = redis_get("mykey")
+// Example usage: val = redis_get_str("mykey")
 func RedisGet(L *lua.LState) int {
 	key := L.CheckString(1)
 
