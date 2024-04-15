@@ -1483,10 +1483,17 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 		var detailedError *errors2.DetailedError
 
 		if errors.As(err, &detailedError) {
-			level.Error(logging.DefaultErrLogger).Log(
+			logs := []any{
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyError, detailedError.Error(),
-				global.LogKeyErrorDetails, detailedError.GetDetails())
+				global.LogKeyErrorDetails, detailedError.GetDetails(),
+			}
+
+			if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
+				logs = append(logs, a.AdditionalLogs...)
+			}
+
+			level.Error(logging.DefaultErrLogger).Log(logs...)
 		} else {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
@@ -2096,11 +2103,25 @@ func (a *Authentication) withLocalInfo(ctx *gin.Context) *Authentication {
 
 // withClientInfo adds the client IP, -port and -ID headers to the Authentication structure.
 func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
+	var err error
+
 	if a == nil {
 		return nil
 	}
 
 	a.ClientIP = ctx.Request.Header.Get("Client-IP")
+	a.XClientPort = ctx.Request.Header.Get("X-Client-Port")
+	a.XClientID = ctx.Request.Header.Get("X-Client-Id")
+
+	if a.ClientIP == "" {
+		// This might be valid, if HAproxy v2 support is enabled
+		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
+		if err != nil {
+			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+		}
+
+		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, a.ClientIP, a.XClientPort)
+	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
@@ -2110,9 +2131,6 @@ func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 		// Fallback to environment variable
 		a.ClientHost = ctx.Request.Header.Get("Client-Host")
 	}
-
-	a.XClientPort = ctx.Request.Header.Get("X-Client-Port")
-	a.XClientID = ctx.Request.Header.Get("X-Client-Id")
 
 	return a
 }

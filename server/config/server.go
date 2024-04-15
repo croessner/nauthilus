@@ -6,6 +6,7 @@ import (
 
 type ServerSection struct {
 	Address             string      `mapstructure:"address"`
+	HAproxyV2           bool        `mapstructure:"haproxy_v2"`
 	TLS                 TLS         `mapstructure:"tls"`
 	BasicAuth           BasicAuth   `mapstructure:"basic_auth"`
 	InstanceName        string      `mapstructure:"instance_name"`

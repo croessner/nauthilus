@@ -29,6 +29,7 @@ import (
 	"github.com/gwatts/gin-adapter"
 	"github.com/justinas/nosurf"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/pires/go-proxyproto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
@@ -657,6 +658,32 @@ func waitForShutdown(www *http.Server, ctx context.Context) {
 	return
 }
 
+func prepareHAproxyV2() *proxyproto.Listener {
+	var (
+		listener      net.Listener
+		proxyListener *proxyproto.Listener
+		err           error
+	)
+
+	if config.LoadableConfig.Server.HAproxyV2 {
+		listener, err = net.Listen("tcp", config.LoadableConfig.Server.Address)
+		if err != nil {
+			panic(err)
+		}
+
+		policyFunc := func(upstream net.Addr) (proxyproto.Policy, error) {
+			return proxyproto.REQUIRE, nil
+		}
+
+		proxyListener = &proxyproto.Listener{
+			Listener: listener,
+			Policy:   policyFunc,
+		}
+	}
+
+	return proxyListener
+}
+
 // HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
 // It takes a context.Context parameter.
 func HTTPApp(ctx context.Context) {
@@ -718,14 +745,25 @@ func HTTPApp(ctx context.Context) {
 
 	// www.SetKeepAlivesEnabled(false)
 
+	proxyListener := prepareHAproxyV2()
+
 	if config.LoadableConfig.Server.TLS.Enabled {
 		www.TLSConfig = &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 			MinVersion: tls.VersionTLS12,
 		}
-		err = www.ListenAndServeTLS(config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
+
+		if proxyListener != nil {
+			err = www.ServeTLS(proxyListener, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
+		} else {
+			err = www.ListenAndServeTLS(config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
+		}
 	} else {
-		err = www.ListenAndServe()
+		if proxyListener != nil {
+			err = www.Serve(proxyListener)
+		} else {
+			err = www.ListenAndServe()
+		}
 	}
 
 	if !errors.Is(err, http.ErrServerClosed) {

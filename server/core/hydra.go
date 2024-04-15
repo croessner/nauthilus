@@ -1262,7 +1262,7 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult global.A
 		return err
 	}
 
-	a.logInfoLoginAccept(subject, redirectTo)
+	a.logInfoLoginAccept(subject, redirectTo, auth)
 
 	return nil
 }
@@ -1425,8 +1425,8 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 }
 
 // logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
-func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *Authentication) {
+	logs := []any{
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
@@ -1434,9 +1434,15 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string) {
 		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyUsername, a.ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
-		global.LogKeyUriPath, viper.GetString("login_page")+"/post",
+		global.LogKeyUriPath, viper.GetString("login_page") + "/post",
 		global.LogKeyRedirectTo, redirectTo,
-	)
+	}
+
+	if len(auth.AdditionalLogs) > 0 && len(auth.AdditionalLogs)%2 == 0 {
+		logs = append(logs, auth.AdditionalLogs...)
+	}
+
+	level.Info(logging.DefaultLogger).Log(logs...)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
@@ -1588,15 +1594,21 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *Authentication) {
 		viper.GetString("login_page")+"?login_challenge="+loginChallenge+"&_error="+global.PasswordFail,
 	)
 
-	level.Info(logging.DefaultLogger).Log(
+	logs := []any{
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthChallenge, loginChallenge,
 		global.LogKeyUsername, a.ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
-		global.LogKeyUriPath, viper.GetString("login_page")+"/post",
-	)
+		global.LogKeyUriPath, viper.GetString("login_page") + "/post",
+	}
+
+	if len(auth.AdditionalLogs) > 0 && len(auth.AdditionalLogs)%2 == 0 {
+		logs = append(logs, auth.AdditionalLogs...)
+	}
+
+	level.Info(logging.DefaultLogger).Log(logs...)
 }
 
 // Page '/login/post'
