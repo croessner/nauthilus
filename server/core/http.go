@@ -658,6 +658,11 @@ func waitForShutdown(www *http.Server, ctx context.Context) {
 	return
 }
 
+// prepareHAproxyV2 returns a *proxyproto.Listener which is used to prepare HAProxy V2 version by:
+// 1. Creating a listener on the specified address using `net.Listen` with "tcp" network and the address from `config.LoadableConfig.Server.Address`.
+// 2. Setting the policyFunc to `proxyproto.REQUIRE` using `proxyproto.Listener` to ensure HAProxy V2 requirement.
+// The function returns a pointer to `proxyproto.Listener` if `config.LoadableConfig.Server.HAproxyV2` is true, otherwise returns nil.
+// It panics if an error occurs while creating the listener.
 func prepareHAproxyV2() *proxyproto.Listener {
 	var (
 		listener      net.Listener
