@@ -371,6 +371,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 	L.Pop(1)
 
 	logResult(r, script, action, result)
+
 	if action {
 		return true, nil
 	}
@@ -392,6 +393,21 @@ func logError(r *Request, script *LuaFilter, err error) {
 // The outcome (ok or fail) and whether an action was taken is logged along with the session ID and script name.
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	resultMap := map[int]string{global.ResultOk: "ok", global.ResultFail: "fail"}
+
+	if ret != 0 {
+		logs := []any{
+			global.LogKeyGUID, r.Session,
+			"name", script.Name,
+		}
+
+		if r.Logs != nil {
+			for index := range *r.Logs {
+				logs = append(logs, (*r.Logs)[index])
+			}
+		}
+
+		level.Info(logging.DefaultErrLogger).Log(logs...)
+	}
 
 	util.DebugModule(
 		global.DbgFilter,

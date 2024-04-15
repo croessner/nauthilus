@@ -341,7 +341,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 //
 // Returns: none
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
-	level.Info(logging.DefaultLogger).Log(
+	logs := []any{
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyMsg, "Lua feature finished",
@@ -350,7 +350,15 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		"result", func() string {
 			return r.formatResult(ret)
 		}(),
-	)
+	}
+
+	if r.Logs != nil {
+		for index := range *r.Logs {
+			logs = append(logs, (*r.Logs)[index])
+		}
+	}
+
+	level.Info(logging.DefaultLogger).Log(logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.
