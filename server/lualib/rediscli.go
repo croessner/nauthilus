@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/stats"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -23,6 +24,8 @@ func RedisGet(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
+	} else {
+		stats.RedisReadCounter.Inc()
 	}
 
 	L.Push(lua.LString(val))
@@ -44,6 +47,8 @@ func RedisSet(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
 	}
 
 	L.Push(lua.LString("OK"))
@@ -65,6 +70,8 @@ func RedisIncr(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
 	}
 
 	L.Push(lua.LNumber(val))
@@ -85,6 +92,8 @@ func RedisDel(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
 	}
 
 	L.Push(lua.LString("OK"))
@@ -107,6 +116,8 @@ func RedisExpire(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
 	}
 
 	L.Push(lua.LString("OK"))
