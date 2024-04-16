@@ -292,6 +292,8 @@ func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction 
 
 		if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
 			*backendResult = luaBackendResult
+		} else {
+			L.ArgError(1, "expected lua backend_result")
 		}
 
 		return 0
