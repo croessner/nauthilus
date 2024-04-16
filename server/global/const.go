@@ -959,6 +959,9 @@ const (
 
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
+
+	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
+	LuaFnApplyBackendResult = "apply_backend_result"
 )
 
 const (
@@ -1133,6 +1136,24 @@ const (
 	LuaRequestTOTPSecret = "totp_secret"
 
 	LuaRequestStatusMessage = "status_message"
+)
+
+const (
+	LuaBackendResultAuthenticated = "authenticated"
+
+	LuaBackendResultUserFound = "user_found"
+
+	LuaBackendResultAccountField = "account_field"
+
+	LuaBackendResultTOTPSecretField = "totp_secret_field"
+
+	LuaBackendResultTOTPRecoveryField = "totp_recovery_field"
+
+	LuaBAckendResultUniqueUserIDField = "unique_user_id_field"
+
+	LuaBackendResultDisplayNameField = "display_name_field"
+
+	LuaBackendResultAttributes = "attributes"
 )
 
 // Exit status codes.

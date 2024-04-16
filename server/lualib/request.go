@@ -9,44 +9,6 @@ import (
 )
 
 // CommonRequest represents a common request object with various properties used in different functionalities.
-// It contains the following fields:
-// - Debug: a flag indicating if the action is executed in debug mode.
-// - Repeating: a flag indicating if the action would be repeated.
-// - UserFound: a flag indicating if the user executing the action was found in the system.
-// - Authenticated: a flag indicating if the user is authenticated.
-// - NoAuth: a flag indicating if the action requires no authentication.
-// - BruteForceCounter: an unsigned integer that keeps track of unsuccessful login attempts for the user.
-// - Session: a string that stores the unique session identifier.
-// - ClientIP: a string that stores the IP address of the client.
-// - ClientPort: a string that stores the port number used by the client.
-// - ClientNet: a string that stores the network used by the client.
-// - ClientHost: a string that stores the hostname of the client.
-// - ClientID: a string that stores the unique identifier for the client.
-// - UserAgent: a string that stores the user agent.
-// - LocalIP: a string that stores the IP address of the local machine.
-// - LocalPort: a string that stores the port number used by the local machine.
-// - Username: a string that stores the username of the user that was used to authenticate.
-// - Account: a string that stores the user's account information.
-// - UniqueUserID: a string that stores the unique user identifier.
-// - DisplayName: a string that stores the user's display name.
-// - Password: a string that stores the user's password.
-// - Protocol: a string that stores the protocol that the user used
-// - BruteForceName: a string that stores the name of the brute force protection mechanism.
-// - FeatureName: a string that stores the feature that triggered the action.
-// - XSSL: a string that contains SSL information.
-// - XSSLSessionID: a string that stores the SSL session identifier.
-// - XSSLClientVerify: a string that indicates whether the SSL client is verified.
-// - XSSLClientDN: a string that stores the client's Distinguished Name in the SSL certificate.
-// - XSSLClientCN: a string that stores the client's Common Name in the SSL certificate.
-// - XSSLIssuer: a string that stores the issuer of the SSL certificate.
-// - XSSLClientNotBefore: a string that stores the date before which the SSL certificate is not valid.
-// - XSSLClientNotAfter: a string that stores the date after which the SSL certificate is not valid.
-// - XSSLSubjectDN: a string that stores the Subject's Distinguished Name in the SSL certificate.
-// - XSSLIssuerDN: a string that stores the Issuer's Distinguished Name in the SSL certificate.
-// - XSSLClientSubjectDN: a string that stores the client's Subject Distinguished Name in the SSL certificate.
-// - XSSLClientIssuerDN: a string that stores the client's Issuer Distinguished Name in the SSL certificate.
-// - XSSLProtocol: a string that stores the SSL protocol used.
-// - XSSLCipher: a string that stores the encryption cipher used in the SSL protocol.
 type CommonRequest struct {
 	// Debug is a flag indicating if the action is executed in debug mode.
 	Debug bool

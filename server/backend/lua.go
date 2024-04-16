@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -27,7 +26,16 @@ var LuaRequestChan chan *LuaRequest
 var LuaMainWorkerEndChan chan Done
 
 // LuaPool is a pool of Lua state instances.
-var LuaPool = NewLuaBackendResultStatePool()
+var LuaPool = lualib.NewLuaBackendResultStatePool(
+	global.LuaBackendResultAuthenticated,
+	global.LuaBackendResultUserFound,
+	global.LuaBackendResultAccountField,
+	global.LuaBackendResultTOTPSecretField,
+	global.LuaBackendResultTOTPRecoveryField,
+	global.LuaBAckendResultUniqueUserIDField,
+	global.LuaBackendResultDisplayNameField,
+	global.LuaBackendResultAttributes,
+)
 
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
@@ -56,245 +64,7 @@ type LuaRequest struct {
 	HTTPRequest *http.Request
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
-	LuaReplyChan chan *LuaBackendResult
-}
-
-// LuaBackendResult holds the response returned by the Lua backend. Information about user authentication, user account,
-// and error details are encapsulated in this data structure.
-type LuaBackendResult struct {
-	// Authenticated represents whether the user is authenticated or not
-	Authenticated bool
-
-	// UserFound indicates whether the user was found in the system or not
-	UserFound bool
-
-	// AccountField is the field associated with the user's account
-	AccountField string
-
-	// TOTPSecretField is the field that holds the user's TOTP Secret
-	TOTPSecretField string
-
-	// TOTPRecoveryField is the field for the user's TOTP recovery code
-	TOTPRecoveryField string
-
-	// UniqueUserIDField is the unique user id field
-	UniqueUserIDField string
-
-	// DisplayNameField is the display name associated with the user's account
-	DisplayNameField string
-
-	// Err captures any error that occurred during the backend process
-	Err error
-
-	// Attributes holds any other attributes related to the user's account
-	Attributes map[any]any
-
-	// Logs is a pointer to a custom log key-value pair associated with the Lua script.
-	Logs *lualib.CustomLogKeyValue
-}
-
-// LuaBackendResultStatePool embeds the LuaStatePool type.
-// It provides methods for retrieving, returning, and shutting down Lua states.
-type LuaBackendResultStatePool struct {
-	*lualib.LuaStatePool
-}
-
-// NewLuaBackendResultStatePool creates a new instance of LuaBackendResultStatePool that implements the LuaBaseStatePool
-// interface. It initializes a LuaStatePool with a New function
-func NewLuaBackendResultStatePool() lualib.LuaBaseStatePool {
-	lp := &lualib.LuaStatePool{
-		New: func() *lua.LState {
-			L := lualib.NewLStateWithDefaultLibraries()
-
-			registerBackendResultType(L)
-
-			return L
-		},
-		MaxStates: global.MaxLuaStatePoolSize,
-	}
-
-	lp.Cond = sync.Cond{L: &lp.Mu}
-
-	return &LuaBackendResultStatePool{lp.InitializeStatePool()}
-}
-
-// registerBackendResultType registers the Lua type "backend_result" in the given Lua state.
-// It sets the type metatable with the given name and creates the necessary static attributes and methods.
-func registerBackendResultType(L *lua.LState) {
-	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
-
-	L.SetGlobal("backend_result", mt)
-
-	// Static attributes
-	L.SetField(mt, "new", L.NewFunction(newBackendResult))
-
-	// Methods
-	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), backendResultMethods))
-}
-
-// newBackendResult is a function for creating a new instance of LuaBackendResult
-// and returning it as a userdata type in Lua. This function is designed to be
-// callable from a Lua context, hence the L *lua.LState input parameter, which
-// provides the necessary Lua environment for the function execution.
-// The int return value is standard for functions to be called from Lua,
-// indicating the number of results that the function is returning to the Lua stack.
-func newBackendResult(L *lua.LState) int {
-	backendResult := &LuaBackendResult{}
-	userData := L.NewUserData()
-
-	userData.Value = backendResult
-
-	L.SetMetatable(userData, L.GetTypeMetatable(global.LuaBackendResultTypeName))
-	L.Push(userData)
-
-	return 1
-}
-
-// checkBackendResult checks if the argument at index 1 in the Lua state is of a type *LuaBackendResult,
-// if it is, returns its value; otherwise, it raises an error indicating that "backend_result" was expected, and returns nil.
-func checkBackendResult(L *lua.LState) *LuaBackendResult {
-	userData := L.CheckUserData(1)
-
-	if value, ok := userData.Value.(*LuaBackendResult); ok {
-		return value
-	}
-
-	L.ArgError(1, "backend_result expected")
-
-	return nil
-}
-
-// backendResultMethods is a map that holds the names of backend result methods and their corresponding functions.
-var backendResultMethods = map[string]lua.LGFunction{
-	"authenticated":        backendResultGetSetAuthenticated,
-	"user_found":           backendResultGetSetUserFound,
-	"account_field":        backendResultGetSetAccountField,
-	"totp_secret_field":    backendResultGetSetTOTPSecretField,
-	"totp_recovery_field":  backendResultGetSetTOTPRecoveryField,
-	"unique_user_id_field": backendResultGetSetUniqueUserIDField,
-	"display_name_field":   backendResultGetSetDisplayNameField,
-	"attributes":           backendResultGetSetAttributes,
-}
-
-// GetterHandler and setter for the BackendResult#Authenticated field
-func backendResultGetSetAuthenticated(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.Authenticated = L.CheckBool(2)
-
-		return 0
-	}
-
-	L.Push(lua.LBool(backendResult.Authenticated))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#UserFound field
-func backendResultGetSetUserFound(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.UserFound = L.CheckBool(2)
-
-		return 0
-	}
-
-	L.Push(lua.LBool(backendResult.UserFound))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#AcountField field
-func backendResultGetSetAccountField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.AccountField = L.CheckString(2)
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.AccountField))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#TOTPSecretField field
-func backendResultGetSetTOTPSecretField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.TOTPSecretField = L.CheckString(2)
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.TOTPSecretField))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#TOTPRecoveryField field
-func backendResultGetSetTOTPRecoveryField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.TOTPRecoveryField = L.CheckString(2)
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.TOTPRecoveryField))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#UniqueUserIDField field
-func backendResultGetSetUniqueUserIDField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.UniqueUserIDField = L.CheckString(2)
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.UniqueUserIDField))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#DisplayNameField field
-func backendResultGetSetDisplayNameField(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		backendResult.DisplayNameField = L.CheckString(2)
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.DisplayNameField))
-
-	return 1
-}
-
-// GetterHandler and setter for the BackendResult#Attributes field
-func backendResultGetSetAttributes(L *lua.LState) int {
-	backendResult := checkBackendResult(L)
-
-	if L.GetTop() == 2 {
-		// XXX: We expect keys to be strings!
-		backendResult.Attributes = lualib.LuaTableToMap(L.CheckTable(2))
-
-		return 0
-	}
-
-	L.Push(lua.LString(backendResult.DisplayNameField))
-
-	return 1
+	LuaReplyChan chan *lualib.LuaBackendResult
 }
 
 // LuaMainWorker is responsible for executing Lua scripts using the provided context.
@@ -501,7 +271,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
 	ret := L.ToInt(-nret)
 	if ret != 0 {
-		luaRequest.LuaReplyChan <- &LuaBackendResult{
+		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 			Err:  errors.ErrBackendLua.WithDetail("Lua script finished with an error"),
 			Logs: logs,
 		}
@@ -513,7 +283,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 	case global.LuaCommandPassDB:
 		userData := L.ToUserData(-1)
 
-		if luaBackendResult, assertOk := userData.Value.(*LuaBackendResult); assertOk {
+		if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
 			luaBackendResult.Logs = logs
 
 			util.DebugModule(
@@ -524,20 +294,20 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 			luaRequest.LuaReplyChan <- luaBackendResult
 		} else {
-			luaRequest.LuaReplyChan <- &LuaBackendResult{
+			luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 				Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned a wrong user data object"),
 				Logs: logs,
 			}
 		}
 
 	case global.LuaCommandListAccounts:
-		luaRequest.LuaReplyChan <- &LuaBackendResult{
+		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
 			Logs:       logs,
 		}
 
 	default:
-		luaRequest.LuaReplyChan <- &LuaBackendResult{
+		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 			Logs: logs,
 		}
 	}
@@ -555,7 +325,7 @@ func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyVa
 		global.LogKeyError, err,
 	)
 
-	luaRequest.LuaReplyChan <- &LuaBackendResult{
+	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 		Err:  err,
 		Logs: logs,
 	}

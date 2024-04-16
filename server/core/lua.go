@@ -11,7 +11,7 @@ import (
 
 // luaPassDB implements the Lua password database backend.
 func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
-	var luaBackendResult *backend.LuaBackendResult
+	var luaBackendResult *lualib.LuaBackendResult
 
 	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "luaPassDB"))
 
@@ -19,7 +19,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 	passDBResult = &PassDBResult{}
 
-	luaReplyChan := make(chan *backend.LuaBackendResult)
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	defer close(luaReplyChan)
 
@@ -135,13 +135,13 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 
 // luaAccountDB implements the list-account mode and returns all known users from a Lua backend logic.
 func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
-	var luaBackendResult *backend.LuaBackendResult
+	var luaBackendResult *lualib.LuaBackendResult
 
 	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Account", "luaAccountDB"))
 
 	defer timer.ObserveDuration()
 
-	luaReplyChan := make(chan *backend.LuaBackendResult)
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	defer close(luaReplyChan)
 
@@ -186,13 +186,13 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 
 // luaAddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
 func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
-	var luaBackendResult *backend.LuaBackendResult
+	var luaBackendResult *lualib.LuaBackendResult
 
 	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("StoreTOTP", "luaAddTOTPSecret"))
 
 	defer timer.ObserveDuration()
 
-	luaReplyChan := make(chan *backend.LuaBackendResult)
+	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	defer close(luaReplyChan)
 

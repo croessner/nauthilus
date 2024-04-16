@@ -1676,7 +1676,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		},
 	}
 
-	filterResult, err := filterRequest.CallFilterLua(ctx)
+	filterResult, luaBackendResult, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
@@ -1694,6 +1694,19 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 		if filterResult {
 			return global.AuthResultFail
+		}
+
+		if luaBackendResult != nil {
+			// XXX: We currently only support changing attributes from the Authentication object.
+			if (*luaBackendResult).Attributes != nil {
+				for key, value := range (*luaBackendResult).Attributes {
+					if keyName, assertOk := key.(string); assertOk {
+						if _, okay := a.Attributes[keyName]; !okay {
+							a.Attributes[keyName] = []any{value}
+						}
+					}
+				}
+			}
 		}
 
 		a.UsedBackendIP = *filterRequest.UsedBackendAddress
