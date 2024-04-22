@@ -733,6 +733,12 @@ func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool, useTLS bo
 
 	defer conn.Close()
 
+	if haproxyV2 {
+		if err = checkHAproxyV2(conn, ipAddress, port); err != nil {
+			return err
+		}
+	}
+
 	if useTLS {
 		// Securing the connection
 		tlsConfig := &tls.Config{
@@ -749,12 +755,6 @@ func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool, useTLS bo
 
 		// Replace the plain 'conn' with the tlsConn - everything written/read to/from this connection is encrypted/decrypted
 		conn = net.Conn(tlsConn)
-	}
-
-	if haproxyV2 {
-		if err = checkHAproxyV2(conn, ipAddress, port); err != nil {
-			return err
-		}
 	}
 
 	return nil

@@ -1619,7 +1619,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 	backendServers := BackendServers.backendServer
 
-	util.DebugModule(global.DbgFeature, global.LogKeyMsg, fmt.Sprintf("Active servers: %d", len(backendServers)))
+	util.DebugModule(global.DbgFeature, global.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
 
 	BackendServers.mu.RUnlock()
 
