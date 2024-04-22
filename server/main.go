@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -722,7 +723,7 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 // checkNgxBackendServer checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
 // It returns an error if the connection cannot be established within the timeout period.
 // The function does not retry the connection and closes the connection before returning.
-func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool) error {
+func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool, useTLS bool) error {
 	timeout := 5 * time.Second
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port)), timeout)
@@ -731,6 +732,24 @@ func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool) error {
 	}
 
 	defer conn.Close()
+
+	if useTLS {
+		// Securing the connection
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+
+		tlsConn := tls.Client(conn, tlsConfig)
+
+		// Handshake to establish the secure connection
+		err = tlsConn.Handshake()
+		if err != nil {
+			return err
+		}
+
+		// Replace the plain 'conn' with the tlsConn - everything written/read to/from this connection is encrypted/decrypted
+		conn = net.Conn(tlsConn)
+	}
 
 	if haproxyV2 {
 		if err = checkHAproxyV2(conn, ipAddress, port); err != nil {
@@ -844,7 +863,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := checkNgxBackendServer(server.IP, server.Port, server.HAProxyV2)
+			err := checkNgxBackendServer(server.IP, server.Port, server.HAProxyV2, server.TLS)
 
 			backendServersLiveness.mu.Lock()
 

@@ -168,6 +168,7 @@ type LuaBackendServer struct {
 	IP        string
 	Port      int
 	HAProxyV2 bool
+	TLS       bool
 }
 
 // The userData constellation method:
@@ -198,6 +199,8 @@ func indexMethod(L *lua.LState) int {
 		L.Push(lua.LNumber(server.Port))
 	case "haproxy_v2":
 		L.Push(lua.LBool(server.HAProxyV2))
+	case "tls":
+		L.Push(lua.LBool(server.TLS))
 	default:
 		return 0 // The field does not exist
 	}
@@ -235,6 +238,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 				IP:        backendServer.IP,
 				Port:      backendServer.Port,
 				HAProxyV2: backendServer.HAProxyV2,
+				TLS:       backendServer.TLS,
 			}
 
 			L.SetMetatable(serverUserData, L.GetTypeMetatable("backend_server"))

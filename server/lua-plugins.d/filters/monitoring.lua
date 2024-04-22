@@ -43,8 +43,6 @@ function nauthilus_call_filter(request)
             end
         end
 
-        print(json.encode(result))
-
         if num_of_bs == 0 then
             nauthilus.custom_log_add("backend_server_monitoring", "failed")
             nauthilus.context_set("backend_server_monitoring", "fail")
@@ -52,7 +50,6 @@ function nauthilus_call_filter(request)
             nauthilus.custom_log_add("backend_server_monitoring", "success")
             nauthilus.context_set("backend_server_monitoring", "ok")
         end
-
 
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
