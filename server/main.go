@@ -850,7 +850,6 @@ func logBackendServerDebug(server *config.BackendServer) {
 // If ngxAlive.update is true, it updates the BackendServers collection using the core.BackendServers.Update method.
 func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 	type backendServersAlive struct {
-		update  bool
 		servers []*config.BackendServer
 		mu      sync.Mutex
 	}
@@ -870,8 +869,6 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 			defer backendServersLiveness.mu.Unlock()
 
 			if err != nil {
-				backendServersLiveness.update = true
-
 				logBackendServerError(server, err)
 			} else {
 				backendServersLiveness.servers = append(backendServersLiveness.servers, server)
@@ -885,9 +882,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 
 	wg.Wait()
 
-	if backendServersLiveness.update {
-		core.BackendServers.Update(backendServersLiveness.servers)
-	}
+	core.BackendServers.Update(backendServersLiveness.servers)
 }
 
 // monitoringConfig checks if the backendServerMonitoring monitoring feature is enabled.
