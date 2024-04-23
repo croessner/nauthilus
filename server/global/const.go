@@ -263,7 +263,7 @@ const (
 	StatsDelay = 60
 
 	// BackendServerMonitoringDelay is the delay (in seconds) between keep-alive checks
-	BackendServerMonitoringDelay = 60
+	BackendServerMonitoringDelay = 10
 
 	// LDAPConnectTimeout is the connection timeout (in seconds) for the LDAP server
 	LDAPConnectTimeout = 30

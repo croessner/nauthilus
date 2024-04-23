@@ -1011,13 +1011,13 @@ func handleMonitoringError(err error) {
 // - ctx: The context in which we run monitoring. Can be used to stop monitoring externally.
 // - store: A reference to the contextStore, which holds the cancel function for the backendServerMonitoring context.
 // - ngxMonitoring: A double pointer to a time Ticker, which we stop and replace with a new Ticker.
-func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoring **time.Ticker) {
-	(*ngxMonitoring).Stop()
+func restartNgxMonitoring(ctx context.Context, store *contextStore, monitoringTicker **time.Ticker) {
+	(*monitoringTicker).Stop()
 	store.backendServerMonitoring.cancel()
 
-	*ngxMonitoring = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	*monitoringTicker = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 
-	go runBackendServerMonitoring(ctx, store, *ngxMonitoring)
+	go runBackendServerMonitoring(ctx, store, *monitoringTicker)
 }
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
@@ -1085,7 +1085,7 @@ func main() {
 	enableBlockProfile()
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
-	ngxMonitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	monitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
@@ -1093,13 +1093,13 @@ func main() {
 	actionWorkers := initializeActionWorkers()
 
 	setupWorkers(ctx, store, actionWorkers)
-	handleSignals(ctx, cancel, store, statsTicker, &ngxMonitoringTicker, actionWorkers)
+	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
 
 	// Backend server monitoring feature
-	go runBackendServerMonitoring(ctx, store, ngxMonitoringTicker)
+	go runBackendServerMonitoring(ctx, store, monitoringTicker)
 
 	startStatsLoop(ctx, statsTicker)
 
