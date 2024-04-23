@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	logStdLib "log"
-	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -24,13 +22,13 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"github.com/pires/go-proxyproto"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
@@ -725,74 +723,6 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 	}
 }
 
-// checkNgxBackendServer checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
-// It returns an error if the connection cannot be established within the timeout period.
-// The function does not retry the connection and closes the connection before returning.
-func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool, useTLS bool) error {
-	timeout := 5 * time.Second
-
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port)), timeout)
-	if err != nil {
-		return err
-	}
-
-	defer conn.Close()
-
-	if haproxyV2 {
-		if err = checkHAproxyV2(conn, ipAddress, port); err != nil {
-			return err
-		}
-	}
-
-	if useTLS {
-		// Securing the connection
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-
-		tlsConn := tls.Client(conn, tlsConfig)
-
-		// Handshake to establish the secure connection
-		err = tlsConn.Handshake()
-		if err != nil {
-			return err
-		}
-
-		// Replace the plain 'conn' with the tlsConn - everything written/read to/from this connection is encrypted/decrypted
-		conn = net.Conn(tlsConn)
-	}
-
-	return nil
-}
-
-func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
-	header := &proxyproto.Header{
-		Command: proxyproto.LOCAL,
-		Version: 2,
-		SourceAddr: &net.TCPAddr{
-			IP:   net.IPv4(127, 0, 0, 1),
-			Port: 0,
-		},
-		DestinationAddr: &net.TCPAddr{
-			IP:   net.ParseIP(ipAddress),
-			Port: port,
-		},
-	}
-
-	_, err := header.WriteTo(conn)
-	if err != nil {
-		handleHAproxyV2Error(err)
-	}
-
-	return err
-}
-
-func handleHAproxyV2Error(err error) {
-	level.Error(logging.DefaultErrLogger).Log(
-		global.LogKeyInstance, global.InstanceName,
-		global.LogKeyError, "HAProxy v2 error", "error", err)
-}
-
 // logBackendServerError logs an error originating from Backend Server,
 // detailing the server configuration at the time of the error.
 // The logged details include error message, protocol used by the server,
@@ -844,7 +774,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 // ngxAlive: An instance of the backendServersAlive struct.
 //
 // Iterates over each server in the servers slice using a goroutine.
-// - For each server, it checks the connectivity using the checkNgxBackendServer function.
+// - For each server, it checks the connectivity using the CheckBackendConnection function.
 // - Acquires a lock on ngxAlive.mu to prevent concurrent writes.
 // - If an error occurs, sets ngxAlive.update to true and logs the error using the logBackendServerError function.
 // - If no error occurs, appends the server to ngxAlive.servers.
@@ -862,7 +792,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := checkNgxBackendServer(server.IP, server.Port, server.HAProxyV2, server.TLS)
+			err := monitoring.CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
 
 			backendServersLiveness.mu.Lock()
 

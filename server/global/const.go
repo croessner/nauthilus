@@ -962,6 +962,8 @@ const (
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
+
+	LuaFnCheckBackendConnection = "check_backend_connection"
 )
 
 const (

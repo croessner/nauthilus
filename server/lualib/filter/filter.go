@@ -350,6 +350,7 @@ func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request, backendRes
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
 		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
+		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection()))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
