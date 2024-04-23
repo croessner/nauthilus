@@ -45,6 +45,11 @@ type contextTuple struct {
 	cancel context.CancelFunc
 }
 
+type backendServersAlive struct {
+	servers []*config.BackendServer
+	mu      sync.Mutex
+}
+
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
 // The structure contains the following fields: ldapLookup, ldapAuth, lua, action, backendServerMonitoring and server.
 // Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
@@ -848,12 +853,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 // Waits for all goroutines to finish by calling wg.Wait().
 //
 // If ngxAlive.update is true, it updates the BackendServers collection using the core.BackendServers.Update method.
-func loopBackendServersHealthCheck(servers []*config.BackendServer) {
-	type backendServersAlive struct {
-		servers []*config.BackendServer
-		mu      sync.Mutex
-	}
-
+func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendServers *backendServersAlive) *backendServersAlive {
 	var wg sync.WaitGroup
 
 	wg.Add(len(servers))
@@ -882,7 +882,43 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 
 	wg.Wait()
 
-	core.BackendServers.Update(backendServersLiveness.servers)
+	if !compareBackendServers(backendServersLiveness.servers, oldBackendServers.servers) {
+		core.BackendServers.Update(backendServersLiveness.servers)
+
+		oldBackendServers.servers = backendServersLiveness.servers
+	}
+
+	return oldBackendServers
+}
+
+// compareBackendServers compares two slices of BackendServer objects and returns true if all the corresponding elements are equal in both slices. Otherwise, it returns false.
+//
+// Parameters:
+// - servers: A slice of BackendServer objects.
+// - servers2: Another slice of BackendServer objects.
+//
+// Returns true if all elements are equal in both slices.
+func compareBackendServers(servers []*config.BackendServer, servers2 []*config.BackendServer) bool {
+	if len(servers) != len(servers2) {
+		return false
+	}
+
+	foundServer := 0
+	for _, server := range servers {
+		for _, server2 := range servers2 {
+			if server == server2 {
+				foundServer++
+
+				continue
+			}
+		}
+	}
+
+	if len(servers) != foundServer {
+		return false
+	}
+
+	return true
 }
 
 // monitoringConfig checks if the backendServerMonitoring monitoring feature is enabled.
@@ -938,13 +974,15 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 		return err
 	}
 
+	oldBackendServers := &backendServersAlive{servers: backendServers}
+
 	core.BackendServers.Update(backendServers)
-	loopBackendServersHealthCheck(backendServers)
+	oldBackendServers = loopBackendServersHealthCheck(backendServers, oldBackendServers)
 
 	for {
 		select {
 		case <-ticker.C:
-			loopBackendServersHealthCheck(backendServers)
+			oldBackendServers = loopBackendServersHealthCheck(backendServers, oldBackendServers)
 		case <-store.backendServerMonitoring.ctx.Done():
 			return store.backendServerMonitoring.ctx.Err()
 		}
