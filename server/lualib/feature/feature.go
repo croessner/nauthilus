@@ -266,7 +266,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		if err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript); err != nil {
 			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
-			continue
+			break
 		}
 
 		if err = L.CallByParam(lua.P{
@@ -276,7 +276,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		}, request); err != nil {
 			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
-			continue
+			break
 		}
 
 		ret := L.ToInt(-1)

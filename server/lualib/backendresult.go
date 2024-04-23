@@ -266,7 +266,7 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 		return 0
 	}
 
-	L.Push(lua.LString(backendResult.DisplayNameField))
+	L.Push(MapToLuaTable(L, backendResult.Attributes))
 
 	return 1
 }

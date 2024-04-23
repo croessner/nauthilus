@@ -486,9 +486,11 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			return
 		}
 
-		result, err := executeScriptWithinContext(request, script, r, ctx, L)
-		if err != nil {
-			continue
+		result, errLua := executeScriptWithinContext(request, script, r, ctx, L)
+		if errLua != nil {
+			err = errLua
+
+			break
 		}
 
 		if result {
