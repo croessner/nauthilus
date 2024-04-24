@@ -67,7 +67,8 @@ func (l *LuaFilter) String() string {
 }
 
 type LuaConf struct {
-	ScriptPath string `mapstructure:"script_path"`
+	PackagePath string `mapstructure:"package_path"`
+	ScriptPath  string `mapstructure:"script_path"`
 }
 
 func (l *LuaConf) String() string {

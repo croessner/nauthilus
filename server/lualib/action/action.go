@@ -342,6 +342,10 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 // It takes in an LState, an index representing the script to execute, and a request table.
 // It returns an error if there was a problem executing the script.
 func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) error {
+	if err := lualib.PackagePath(L); err != nil {
+		return err
+	}
+
 	if err := lualib.DoCompiledFile(L, aw.actionScripts[index].ScriptCompiled); err != nil {
 		return err
 	}

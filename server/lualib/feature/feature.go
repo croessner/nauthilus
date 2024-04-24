@@ -263,6 +263,12 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 		L.SetContext(luaCtx)
 
+		if err = lualib.PackagePath(L); err != nil {
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
+
+			break
+		}
+
 		if err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript); err != nil {
 			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 

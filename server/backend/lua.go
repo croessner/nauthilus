@@ -231,6 +231,10 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 
 	defer timer.ObserveDuration()
 
+	if err = lualib.PackagePath(L); err != nil {
+		processError(err, luaRequest, logs)
+	}
+
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
 		processError(err, luaRequest, logs)
 	}

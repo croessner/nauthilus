@@ -889,6 +889,9 @@ const LuaMaxExecutionTime = 120
 // LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
 const LuaBackendResultTypeName = "backend_result"
 
+// LuaPackagePath represents the path to search for Lua modules.
+const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
+
 const (
 	// LuaCommandPassDB represents the command for passing database in Lua
 	LuaCommandPassDB LuaCommand = iota

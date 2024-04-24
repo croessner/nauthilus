@@ -384,6 +384,13 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 
 	L.SetContext(luaCtx)
 
+	packagePathErr := lualib.PackagePath(L)
+	if packagePathErr != nil {
+		logError(r, script, packagePathErr)
+
+		return false, packagePathErr
+	}
+
 	scriptErr := lualib.DoCompiledFile(L, script.CompiledScript)
 	if scriptErr != nil {
 		logError(r, script, scriptErr)
