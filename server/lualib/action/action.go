@@ -307,17 +307,15 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	if err = aw.executeScript(L, index, request); err != nil {
 		aw.logScriptFailure(index, err, logs)
 		luaCancel()
-	}
+	} else {
+		ret := L.ToInt(-1)
 
-	ret := L.ToInt(-1)
+		L.Pop(1)
+		util.DebugModule(
+			global.DbgAction,
+			"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
+		)
 
-	L.Pop(1)
-	util.DebugModule(
-		global.DbgAction,
-		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
-	)
-
-	if err == nil {
 		level.Info(logging.DefaultLogger).Log(
 			append([]any{
 				global.LogKeyGUID, aw.luaActionRequest.Session,
