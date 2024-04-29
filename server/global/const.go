@@ -263,7 +263,7 @@ const (
 	StatsDelay = 60
 
 	// BackendServerMonitoringDelay is the delay (in seconds) between keep-alive checks
-	BackendServerMonitoringDelay = 60
+	BackendServerMonitoringDelay = 10
 
 	// LDAPConnectTimeout is the connection timeout (in seconds) for the LDAP server
 	LDAPConnectTimeout = 30
@@ -889,6 +889,9 @@ const LuaMaxExecutionTime = 120
 // LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
 const LuaBackendResultTypeName = "backend_result"
 
+// LuaPackagePath represents the path to search for Lua modules.
+const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
+
 const (
 	// LuaCommandPassDB represents the command for passing database in Lua
 	LuaCommandPassDB LuaCommand = iota
@@ -952,11 +955,18 @@ const (
 	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
 	LuaFnRedisSet = "redis_set_str"
 
+	LuaFnRedisIncr = "redis_incr"
+
 	// LuaFnRedisDel represents the function name for "redis_det" in Lua
 	LuaFnRedisDel = "redis_del"
 
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
+
+	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
+	LuaFnApplyBackendResult = "apply_backend_result"
+
+	LuaFnCheckBackendConnection = "check_backend_connection"
 )
 
 const (
@@ -1131,6 +1141,24 @@ const (
 	LuaRequestTOTPSecret = "totp_secret"
 
 	LuaRequestStatusMessage = "status_message"
+)
+
+const (
+	LuaBackendResultAuthenticated = "authenticated"
+
+	LuaBackendResultUserFound = "user_found"
+
+	LuaBackendResultAccountField = "account_field"
+
+	LuaBackendResultTOTPSecretField = "totp_secret_field"
+
+	LuaBackendResultTOTPRecoveryField = "totp_recovery_field"
+
+	LuaBAckendResultUniqueUserIDField = "unique_user_id_field"
+
+	LuaBackendResultDisplayNameField = "display_name_field"
+
+	LuaBackendResultAttributes = "attributes"
 )
 
 // Exit status codes.

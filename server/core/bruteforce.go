@@ -619,6 +619,16 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		"list-accounts", a.ListAccounts,
 	)
 
+	if a.ClientIP == "" {
+		level.Warn(logging.DefaultLogger).Log(
+			global.LogKeyGUID, a.GUID,
+			global.LogKeyBruteForce, "No valid IP address found",
+			global.LogKeyClientIP, a.ClientIP,
+		)
+
+		return false
+	}
+
 	if a.NoAuth || a.ListAccounts {
 		return false
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	logStdLib "log"
-	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -23,13 +22,13 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"github.com/pires/go-proxyproto"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
@@ -42,6 +41,11 @@ const version = "@@gittag@@-@@gitcommit@@"
 type contextTuple struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type backendServersAlive struct {
+	servers []*config.BackendServer
+	mu      sync.Mutex
 }
 
 // contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
@@ -719,56 +723,6 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 	}
 }
 
-// checkNgxBackendServer checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
-// It returns an error if the connection cannot be established within the timeout period.
-// The function does not retry the connection and closes the connection before returning.
-func checkNgxBackendServer(ipAddress string, port int, haproxyV2 bool) error {
-	timeout := 5 * time.Second
-
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port)), timeout)
-	if err != nil {
-		return err
-	}
-
-	defer conn.Close()
-
-	if haproxyV2 {
-		if err = checkHAproxyV2(conn, ipAddress, port); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
-	header := &proxyproto.Header{
-		Command: proxyproto.LOCAL,
-		Version: 2,
-		SourceAddr: &net.TCPAddr{
-			IP:   net.IPv4(127, 0, 0, 1),
-			Port: 0,
-		},
-		DestinationAddr: &net.TCPAddr{
-			IP:   net.ParseIP(ipAddress),
-			Port: port,
-		},
-	}
-
-	_, err := header.WriteTo(conn)
-	if err != nil {
-		handleHAproxyV2Error(err)
-	}
-
-	return err
-}
-
-func handleHAproxyV2Error(err error) {
-	level.Error(logging.DefaultErrLogger).Log(
-		global.LogKeyInstance, global.InstanceName,
-		global.LogKeyError, "HAProxy v2 error", "error", err)
-}
-
 // logBackendServerError logs an error originating from Backend Server,
 // detailing the server configuration at the time of the error.
 // The logged details include error message, protocol used by the server,
@@ -820,7 +774,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 // ngxAlive: An instance of the backendServersAlive struct.
 //
 // Iterates over each server in the servers slice using a goroutine.
-// - For each server, it checks the connectivity using the checkNgxBackendServer function.
+// - For each server, it checks the connectivity using the CheckBackendConnection function.
 // - Acquires a lock on ngxAlive.mu to prevent concurrent writes.
 // - If an error occurs, sets ngxAlive.update to true and logs the error using the logBackendServerError function.
 // - If no error occurs, appends the server to ngxAlive.servers.
@@ -829,13 +783,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 // Waits for all goroutines to finish by calling wg.Wait().
 //
 // If ngxAlive.update is true, it updates the BackendServers collection using the core.BackendServers.Update method.
-func loopBackendServersHealthCheck(servers []*config.BackendServer) {
-	type backendServersAlive struct {
-		update  bool
-		servers []*config.BackendServer
-		mu      sync.Mutex
-	}
-
+func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendServers *backendServersAlive) *backendServersAlive {
 	var wg sync.WaitGroup
 
 	wg.Add(len(servers))
@@ -844,15 +792,13 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := checkNgxBackendServer(server.IP, server.Port, server.HAProxyV2)
+			err := monitoring.CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
 
 			backendServersLiveness.mu.Lock()
 
 			defer backendServersLiveness.mu.Unlock()
 
 			if err != nil {
-				backendServersLiveness.update = true
-
 				logBackendServerError(server, err)
 			} else {
 				backendServersLiveness.servers = append(backendServersLiveness.servers, server)
@@ -866,9 +812,43 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer) {
 
 	wg.Wait()
 
-	if backendServersLiveness.update {
+	if !compareBackendServers(backendServersLiveness.servers, oldBackendServers.servers) {
 		core.BackendServers.Update(backendServersLiveness.servers)
+
+		oldBackendServers.servers = backendServersLiveness.servers
 	}
+
+	return oldBackendServers
+}
+
+// compareBackendServers compares two slices of BackendServer objects and returns true if all the corresponding elements are equal in both slices. Otherwise, it returns false.
+//
+// Parameters:
+// - servers: A slice of BackendServer objects.
+// - servers2: Another slice of BackendServer objects.
+//
+// Returns true if all elements are equal in both slices.
+func compareBackendServers(servers []*config.BackendServer, servers2 []*config.BackendServer) bool {
+	if len(servers) != len(servers2) {
+		return false
+	}
+
+	foundServer := 0
+	for _, server := range servers {
+		for _, server2 := range servers2 {
+			if server == server2 {
+				foundServer++
+
+				continue
+			}
+		}
+	}
+
+	if len(servers) != foundServer {
+		return false
+	}
+
+	return true
 }
 
 // monitoringConfig checks if the backendServerMonitoring monitoring feature is enabled.
@@ -924,13 +904,15 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 		return err
 	}
 
+	oldBackendServers := &backendServersAlive{servers: backendServers}
+
 	core.BackendServers.Update(backendServers)
-	loopBackendServersHealthCheck(backendServers)
+	oldBackendServers = loopBackendServersHealthCheck(backendServers, oldBackendServers)
 
 	for {
 		select {
 		case <-ticker.C:
-			loopBackendServersHealthCheck(backendServers)
+			oldBackendServers = loopBackendServersHealthCheck(backendServers, oldBackendServers)
 		case <-store.backendServerMonitoring.ctx.Done():
 			return store.backendServerMonitoring.ctx.Err()
 		}
@@ -959,13 +941,13 @@ func handleMonitoringError(err error) {
 // - ctx: The context in which we run monitoring. Can be used to stop monitoring externally.
 // - store: A reference to the contextStore, which holds the cancel function for the backendServerMonitoring context.
 // - ngxMonitoring: A double pointer to a time Ticker, which we stop and replace with a new Ticker.
-func restartNgxMonitoring(ctx context.Context, store *contextStore, ngxMonitoring **time.Ticker) {
-	(*ngxMonitoring).Stop()
+func restartNgxMonitoring(ctx context.Context, store *contextStore, monitoringTicker **time.Ticker) {
+	(*monitoringTicker).Stop()
 	store.backendServerMonitoring.cancel()
 
-	*ngxMonitoring = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	*monitoringTicker = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 
-	go runBackendServerMonitoring(ctx, store, *ngxMonitoring)
+	go runBackendServerMonitoring(ctx, store, *monitoringTicker)
 }
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
@@ -1033,7 +1015,7 @@ func main() {
 	enableBlockProfile()
 
 	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
-	ngxMonitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	monitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)
@@ -1041,13 +1023,13 @@ func main() {
 	actionWorkers := initializeActionWorkers()
 
 	setupWorkers(ctx, store, actionWorkers)
-	handleSignals(ctx, cancel, store, statsTicker, &ngxMonitoringTicker, actionWorkers)
+	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
 
 	// Backend server monitoring feature
-	go runBackendServerMonitoring(ctx, store, ngxMonitoringTicker)
+	go runBackendServerMonitoring(ctx, store, monitoringTicker)
 
 	startStatsLoop(ctx, statsTicker)
 

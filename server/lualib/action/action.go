@@ -254,6 +254,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
 	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
 	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
 	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
@@ -306,17 +307,15 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	if err = aw.executeScript(L, index, request); err != nil {
 		aw.logScriptFailure(index, err, logs)
 		luaCancel()
-	}
+	} else {
+		ret := L.ToInt(-1)
 
-	ret := L.ToInt(-1)
+		L.Pop(1)
+		util.DebugModule(
+			global.DbgAction,
+			"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
+		)
 
-	L.Pop(1)
-	util.DebugModule(
-		global.DbgAction,
-		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
-	)
-
-	if err == nil {
 		level.Info(logging.DefaultLogger).Log(
 			append([]any{
 				global.LogKeyGUID, aw.luaActionRequest.Session,
@@ -341,6 +340,10 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 // It takes in an LState, an index representing the script to execute, and a request table.
 // It returns an error if there was a problem executing the script.
 func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) error {
+	if err := lualib.PackagePath(L); err != nil {
+		return err
+	}
+
 	if err := lualib.DoCompiledFile(L, aw.actionScripts[index].ScriptCompiled); err != nil {
 		return err
 	}

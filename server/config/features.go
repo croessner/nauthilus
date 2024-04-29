@@ -14,6 +14,7 @@ type BackendServer struct {
 	Protocol  string `mapstructure:"protocol"`
 	IP        string `mapstructure:"ip"`
 	Port      int    `mapstructure:"port"`
+	TLS       bool   `mapstructure:"tls"`
 	HAProxyV2 bool   `mapstructure:"haproxy_v2"`
 }
 

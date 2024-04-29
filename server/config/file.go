@@ -442,6 +442,24 @@ func (f *File) GetLuaScriptPath() string {
 	return ""
 }
 
+// GetLuaPackagePath is a method on the File struct.
+// It retrieves the Lua package path based on the configuration.
+// If the Lua backend configuration is not found, it returns the global Lua package path.
+// If the Lua backend configuration is found, it returns the package path from the LuaConf struct.
+// If the LuaConf struct is not of type *LuaConf, it also returns the global Lua package path.
+func (f *File) GetLuaPackagePath() string {
+	getConfig := f.GetConfig(global.BackendLua)
+	if getConfig == nil {
+		return global.LuaPackagePath
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.PackagePath
+	}
+
+	return global.LuaPackagePath
+}
+
 // GetLuaSearchProtocol is a method on the File struct.
 // It takes a protocol string as input and returns a pointer to a LuaSearchProtocol struct and an error.
 // This method searches for the specified protocol in the search::protocol sections of the Lua configuration.

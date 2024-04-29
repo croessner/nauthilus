@@ -221,6 +221,7 @@ func (r *Request) setGlobals(L *lua.LState, httpRequest *http.Request) *lua.LTab
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
 	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
+	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
 	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
 	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 
@@ -262,10 +263,16 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 		L.SetContext(luaCtx)
 
+		if err = lualib.PackagePath(L); err != nil {
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
+
+			break
+		}
+
 		if err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript); err != nil {
 			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
-			continue
+			break
 		}
 
 		if err = L.CallByParam(lua.P{
@@ -275,7 +282,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		}, request); err != nil {
 			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, timer)
 
-			continue
+			break
 		}
 
 		ret := L.ToInt(-1)
@@ -340,7 +347,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 //
 // Returns: none
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
-	level.Info(logging.DefaultLogger).Log(
+	logs := []any{
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyMsg, "Lua feature finished",
@@ -349,7 +356,15 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		"result", func() string {
 			return r.formatResult(ret)
 		}(),
-	)
+	}
+
+	if r.Logs != nil {
+		for index := range *r.Logs {
+			logs = append(logs, (*r.Logs)[index])
+		}
+	}
+
+	level.Info(logging.DefaultLogger).Log(logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.

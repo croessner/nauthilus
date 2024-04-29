@@ -91,14 +91,13 @@ func (pl *LuaStatePool) Get() *lua.LState {
 		if len(pl.saved) < pl.MaxStates {
 			return pl.New()
 		} else {
-			println(len(pl.saved))
-			println(pl.MaxStates)
 			pl.Cond.Wait()
 		}
 	}
 
 	n := len(pl.saved)
 	x := pl.saved[n-1]
+
 	pl.saved = pl.saved[0 : n-1]
 
 	return x
