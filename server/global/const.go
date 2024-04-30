@@ -966,7 +966,14 @@ const (
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
+	// LuaFnCheckBackendConnection represents the Lua function name for checking the backend connection.
 	LuaFnCheckBackendConnection = "check_backend_connection"
+
+	// LuaFnSendLDAPRequest represents the name of the Lua function used to send an LDAP request.
+	LuaFnSendLDAPRequest = "send_ldap_request"
+
+	// LuaFnGetLDAPReply represents the constant for the name of the function to get an LDAP reply.
+	LuaFnGetLDAPReply = "get_ldap_reply"
 )
 
 const (
@@ -1140,24 +1147,36 @@ const (
 	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
 	LuaRequestTOTPSecret = "totp_secret"
 
+	// LuaRequestStatusMessage represents the status message of a request.
 	LuaRequestStatusMessage = "status_message"
 )
 
 const (
+
+	// LuaBackendResultAuthenticated represents the result of an authentication operation.
+	// It is a constant string with the value "authenticated".
 	LuaBackendResultAuthenticated = "authenticated"
 
+	// LuaBackendResultUserFound represents the result of finding a user in a Lua backend operation.
+	// It is a constant string with the value "user_found".
 	LuaBackendResultUserFound = "user_found"
 
+	// LuaBackendResultAccountField represents the account field in a Lua backend result.
 	LuaBackendResultAccountField = "account_field"
 
+	// LuaBackendResultTOTPSecretField represents the field name for the TOTP secret in a Lua backend result.
 	LuaBackendResultTOTPSecretField = "totp_secret_field"
 
+	// LuaBackendResultTOTPRecoveryField represents the field name for the TOTP recovery field in a Lua backend result.
 	LuaBackendResultTOTPRecoveryField = "totp_recovery_field"
 
+	// LuaBAckendResultUniqueUserIDField represents the field name for the unique user ID in a Lua backend result.
 	LuaBAckendResultUniqueUserIDField = "unique_user_id_field"
 
+	// LuaBackendResultDisplayNameField represents the field name for the display name in a Lua backend result.
 	LuaBackendResultDisplayNameField = "display_name_field"
 
+	// LuaBackendResultAttributes represents the field name for the attributes in a Lua backend result.
 	LuaBackendResultAttributes = "attributes"
 )
 

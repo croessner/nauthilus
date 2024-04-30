@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -167,7 +167,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := r.setGlobals(L, ctx.Request)
+	globals := r.setGlobals(ctx, L)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
@@ -202,7 +202,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 // - `custom_log_add`: A function that adds a key-value pair to the request's Logs.
 //
 // The method returns the initialized table.
-func (r *Request) setGlobals(L *lua.LState, httpRequest *http.Request) *lua.LTable {
+func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
 
@@ -218,12 +218,17 @@ func (r *Request) setGlobals(L *lua.LState, httpRequest *http.Request) *lua.LTab
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(r.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
 	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
 	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
 	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
 	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(backend.GlobalLDAPBridge.SendRequest(ctx)))
+		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.GetReply))
+	}
 
 	return globals
 }

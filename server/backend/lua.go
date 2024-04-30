@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -13,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
@@ -60,8 +60,8 @@ type LuaRequest struct {
 
 	*lualib.CommonRequest
 
-	// HTTPRequest is a pointer to an http.Request object.
-	HTTPRequest *http.Request
+	// HTTPClientContext is the client request context from a remote party.
+	HTTPClientContext *gin.Context
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *lualib.LuaBackendResult
@@ -88,7 +88,7 @@ func LuaMainWorker(ctx context.Context) {
 			return
 
 		case luaRequest := <-LuaRequestChan:
-			go handleLuaRequest(luaRequest, ctx, compiledScript, luaRequest.HTTPRequest)
+			go handleLuaRequest(ctx, luaRequest, compiledScript)
 		}
 	}
 }
@@ -103,7 +103,7 @@ func LuaMainWorker(ctx context.Context) {
 // - compiledScript: The compiled Lua script function.
 //
 // Returns: None.
-func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScript *lua.FunctionProto, httpRequest *http.Request) {
+func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScript *lua.FunctionProto) {
 	var (
 		nret       int
 		luaCommand string
@@ -122,7 +122,7 @@ func handleLuaRequest(luaRequest *LuaRequest, ctx context.Context, compiledScrip
 
 	registerLibraries(L)
 
-	globals := setupGlobals(luaRequest, L, logs, httpRequest)
+	globals := setupGlobals(luaRequest, L, logs)
 	request := L.NewTable()
 
 	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
@@ -154,7 +154,7 @@ func registerLibraries(L *lua.LState) {
 // Registers the lua function AddCustomLog with name "custom_log_add" which adds a custom log entry to the LuaRequest.Logs.
 // The registered global table is assigned to the global variable LuaDefaultTable.
 // The generated table is returned from the function.
-func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue, httpRequest *http.Request) *lua.LTable {
+func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
@@ -165,12 +165,17 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
 	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
 	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
 	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
 	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
 	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(GlobalLDAPBridge.SendRequest(luaRequest.HTTPClientContext)))
+		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(GlobalLDAPBridge.GetReply))
+	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

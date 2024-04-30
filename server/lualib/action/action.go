@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
@@ -257,6 +258,11 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
 	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
 	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(backend.GlobalLDAPBridge.SendRequest(context.Background())))
+		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.GetReply))
+	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

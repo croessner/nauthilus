@@ -87,6 +87,8 @@ func MapToLuaTable(L *lua.LState, table map[any]any) *lua.LTable {
 			value = lua.LNumber(mapValue)
 		case string:
 			value = lua.LString(mapValue)
+		case []any:
+			value = SliceToLuaTable(L, mapValue) // convert []any to *lua.LTable
 		case map[any]any:
 			value = MapToLuaTable(L, mapValue)
 		default:
@@ -99,6 +101,40 @@ func MapToLuaTable(L *lua.LState, table map[any]any) *lua.LTable {
 	return lTable
 }
 
+// SliceToLuaTable converts a slice into a Lua table using the provided Lua state.
+// It accepts two parameters:
+//   - L: a pointer to the Lua state
+//   - slice: a slice of type `any`
+//
+// For each value in the slice, the function checks the type of the value.
+// If the value is a boolean, it sets the Lua table's element at index `i+1` to a Lua boolean with the same value.
+// If the value is a float64, it sets the Lua table's element at index `i+1` to a Lua number with the same value.
+// If the value is a string, it sets the Lua table's element at the index `i+1` to a Lua string with the same value.
+//
+// If the value is of any other type, the function returns nil.
+//
+// Finally, the function returns a pointer to a Lua table that contains all valid values from the slice.
+func SliceToLuaTable(L *lua.LState, slice []any) *lua.LTable {
+	lTable := L.NewTable()
+	for i, v := range slice {
+		switch sliceValue := v.(type) {
+		case bool:
+			L.RawSetInt(lTable, i+1, lua.LBool(sliceValue))
+		case float64:
+			L.RawSetInt(lTable, i+1, lua.LNumber(sliceValue))
+		case string:
+			L.RawSetInt(lTable, i+1, lua.LString(sliceValue))
+		default:
+			return nil
+		}
+	}
+
+	return lTable
+}
+
+// Loader takes a *lua.LState as input and initializes a new module by setting the functions from `exports`
+// into a new lua.LTable. The module table is then pushed onto the top of the stack.
+// Finally, it returns 1 to indicate that one value has been returned to Lua.
 func Loader(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), exports)
 
@@ -111,6 +147,12 @@ var exports = map[string]lua.LGFunction{
 	"compare_passwords": comparePasswords,
 }
 
+// comparePasswords takes two strings, `hashPassword` and `plainPassword`, as input parameters.
+// It checks if the number of arguments passed is equal to 2. If not, it returns false and an error message.
+// It then uses the `util.ComparePasswords` function to compare the hashed and plain passwords.
+// The result of the comparison is pushed onto the Lua stack as a boolean value.
+// If there is an error during the comparison, the error message is pushed onto the Lua stack.
+// The function returns 2 to indicate that it has pushed 2 values onto the Lua stack.
 func comparePasswords(L *lua.LState) int {
 	if L.GetTop() != 2 {
 		L.Push(lua.LBool(false))
