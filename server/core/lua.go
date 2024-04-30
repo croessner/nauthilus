@@ -24,12 +24,12 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Function:     global.LuaCommandPassDB,
-		Service:      auth.Service,
-		Protocol:     auth.Protocol,
-		Context:      auth.Context,
-		LuaReplyChan: luaReplyChan,
-		HTTPRequest:  auth.HTTPClientContext.Request,
+		Function:          global.LuaCommandPassDB,
+		Service:           auth.Service,
+		Protocol:          auth.Protocol,
+		Context:           auth.Context,
+		LuaReplyChan:      luaReplyChan,
+		HTTPClientContext: auth.HTTPClientContext,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Repeating:           false, // unavailable
@@ -146,9 +146,10 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Function:     global.LuaCommandListAccounts,
-		Protocol:     auth.Protocol,
-		LuaReplyChan: luaReplyChan,
+		Function:          global.LuaCommandListAccounts,
+		Protocol:          auth.Protocol,
+		HTTPClientContext: auth.HTTPClientContext,
+		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Service:    auth.Service,
@@ -197,10 +198,11 @@ func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
-		Function:     global.LuaCommandAddMFAValue,
-		Protocol:     auth.Protocol,
-		TOTPSecret:   totp.getValue(),
-		LuaReplyChan: luaReplyChan,
+		Function:          global.LuaCommandAddMFAValue,
+		Protocol:          auth.Protocol,
+		TOTPSecret:        totp.getValue(),
+		HTTPClientContext: auth.HTTPClientContext,
+		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Service:    auth.Service,

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +18,14 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/yuin/gopher-lua"
 )
 
 var (
@@ -36,6 +40,14 @@ var (
 
 	// LDAPAuthRequestChan is a channel for sending LDAP authentication requests.
 	LDAPAuthRequestChan chan *LDAPAuthRequest //nolint:gochecknoglobals // Needed for LDAP pooling
+)
+
+var (
+	// GlobalLDAPBridge represents a global variable of type *LDAPBridge used for sending LDAP requests and receiving LDAP replies.
+	GlobalLDAPBridge *LDAPBridge
+
+	// bridgeMutex is a sync.RWMutex used for thread-safe access to the *LDAPBridge shared variable.
+	bridgeMutex sync.RWMutex
 )
 
 // PoolRequest is an interface that represents a request made to a connection pool.
@@ -88,6 +100,9 @@ type LDAPModifyAttributes map[string][]string
 type LDAPRequest struct {
 	// GUID is the globally unique identifier for this LDAP request, optional.
 	GUID *string
+
+	// RequestID represents the globally unique identifier for an LDAP request. It is a pointer to a string.
+	RequestID *string
 
 	// Filter is the criteria that the LDAP request uses to filter during the search.
 	Filter string
@@ -173,6 +188,24 @@ type ldapConnectionState struct {
 	// state indicates the current LDAP connection state.
 	// The value is a constant from the global.LDAPState set.
 	state global.LDAPState
+}
+
+// LDAPBridge represents a bridge for sending LDAP requests and receiving LDAP replies.
+// It has a Request channel for sending LDAP requests and a Replies map for storing the corresponding reply channels.
+type LDAPBridge struct {
+	// Request represents a channel for sending LDAP requests.
+	Request chan *LDAPRequest
+
+	// Replies is a map that stores the reply channels for LDAP requests. The keys are strings representing the request IDs, and the values are channels of type *LDAPReply.
+	Replies map[string]chan *LDAPReply
+}
+
+// NewLDAPBridge creates a new LDAPBridge object.
+func NewLDAPBridge() *LDAPBridge {
+	return &LDAPBridge{
+		Request: make(chan *LDAPRequest),
+		Replies: make(map[string]chan *LDAPReply),
+	}
 }
 
 // NewPool creates a new LDAPPool object based on the provided context and poolType.
@@ -1050,8 +1083,11 @@ func (l *LDAPConnection) unbind() (err error) {
 func (l *LDAPConnection) search(ldapRequest *LDAPRequest) (result DatabaseResult, rawResult []*ldap.Entry, err error) {
 	var searchResult *ldap.SearchResult
 
-	ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", ldapRequest.MacroSource.Username)
-	ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
+	if ldapRequest.MacroSource != nil {
+		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", ldapRequest.MacroSource.Username)
+		ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
+	}
+
 	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
 
 	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
@@ -1194,31 +1230,29 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 	)
 
 	if result, rawResult, err = l.conn[index].search(ldapRequest); err != nil {
-		if err != nil {
-			var (
-				ldapError *ldap.Error
-				doLog     bool
-			)
+		var (
+			ldapError *ldap.Error
+			doLog     bool
+		)
 
-			if errors.As(err, &ldapError) {
-				if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
-					doLog = true
-					ldapReply.Err = ldapError.Err
-				}
-
-				// Unknown user!
-			} else {
+		if errors.As(err, &ldapError) {
+			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
 				doLog = true
-				ldapReply.Err = err
+				ldapReply.Err = ldapError.Err
 			}
 
-			if doLog {
-				level.Error(logging.DefaultErrLogger).Log(
-					global.LogKeyLDAPPoolName, l.name,
-					global.LogKeyGUID, *ldapRequest.GUID,
-					global.LogKeyError, ldapError.Error(),
-				)
-			}
+			// Unknown user!
+		} else {
+			doLog = true
+			ldapReply.Err = err
+		}
+
+		if doLog {
+			level.Error(logging.DefaultErrLogger).Log(
+				global.LogKeyLDAPPoolName, l.name,
+				global.LogKeyGUID, *ldapRequest.GUID,
+				global.LogKeyError, ldapError.Error(),
+			)
 		}
 	}
 
@@ -1322,6 +1356,8 @@ func LDAPMainWorker(ctx context.Context) {
 
 	ldapPool.setIdleConnections(true)
 
+	GlobalLDAPBridge = NewLDAPBridge()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1338,6 +1374,14 @@ func LDAPMainWorker(ctx context.Context) {
 			}
 
 			ldapPool.handleLookupRequest(ldapRequest, &ldapWaitGroup)
+
+		case bridgeRequest := <-GlobalLDAPBridge.Request:
+			// Check that we have enough idle connections.
+			if err := ldapPool.setIdleConnections(true); err != nil {
+				GlobalLDAPBridge.Replies[*bridgeRequest.RequestID] <- &LDAPReply{Err: err}
+			}
+
+			ldapPool.handleLookupRequest(bridgeRequest, &ldapWaitGroup)
 		}
 	}
 }
@@ -1444,4 +1488,168 @@ func LDAPAuthWorker(ctx context.Context) {
 			ldapPool.handleAuthRequest(ldapAuthRequest, &ldapWaitGroup)
 		}
 	}
+}
+
+// convertMapToSliceOfString converts a map[any]any to a slice of strings.
+// If attributesMap is nil, it returns an empty slice.
+// It iterates through the map and checks if each key is of type float64 and each value is of type string.
+// If the conditions are met, it appends the value to the result slice.
+// Finally, it returns the result slice.
+func convertMapToSliceOfString(attributesMap map[any]any) (result []string) {
+	if attributesMap == nil {
+		return
+	}
+
+	for key, value := range attributesMap {
+		if reflect.TypeOf(key).Kind() == reflect.Float64 && reflect.TypeOf(value).Kind() == reflect.String {
+			result = append(result, value.(string))
+		}
+	}
+
+	return
+}
+
+// convertScopeStringToLDAP converts a string representation of an LDAP search scope to a *config.LDAPScope object.
+// It takes the toString string as input.
+// If toString is empty, it sets the scope to "sub".
+// Otherwise, it calls the Set method on the scope object using the toString value.
+// If an error occurs during the Set method call, it returns an errors.New object with a formatted message.
+// Finally, it returns the scope object and nil error.
+func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
+	var err error
+
+	scope := &config.LDAPScope{}
+	if toString == "" {
+		scope.Set("sub")
+	} else {
+		if err = scope.Set(toString); err != nil {
+			return nil, errors.New(fmt.Sprintf("LDAP scope not detected: %s", toString))
+		}
+	}
+
+	return scope, nil
+}
+
+// SendRequest sends an LDAP request to the LDAP server.
+// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
+// The method checks if the number of arguments passed to the Lua state is equal to 5.
+// If not, it raises an error with the message "guid, basedn, filter, and attributes are required" and returns 1.
+// The method acquires a lock on the bridgeMutex to ensure thread safety.
+// It generates a new request ID using the uuid.New() function and converts it to a string.
+// It retrieves the values of guid, basedn, filter, attributes, and scope from the Lua state.
+// It converts the attributes map from the Lua state to a slice of strings using the convertMapToSliceOfString() function.
+// It converts the scope string to an LDAPScope using the convertScopeStringToLDAP() function, and raises an error if conversion fails.
+// It creates a new channel in the Replies map with the request ID as the key.
+// It constructs an LDAPRequest object with the acquired values and assigns the channel to the LDAPReplyChan field.
+// It pushes the request ID as a Lua string to the Lua stack.
+// It sends the LDAP request to the LDAPBridge's Request channel.
+// Finally, it returns 1 to indicate that 1 value has been pushed to the Lua stack.
+func (b *LDAPBridge) SendRequest(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		if L.GetTop() != 5 {
+			L.RaiseError("guid, basedn,filter and attributes are required")
+
+			return 1
+		}
+
+		bridgeMutex.Lock()
+
+		defer bridgeMutex.Unlock()
+
+		requestID := uuid.New().String()
+
+		guid := L.ToString(1)
+		basedn := L.ToString(2)
+		filter := L.ToString(3)
+		attributes := convertMapToSliceOfString(lualib.LuaTableToMap(L.ToTable(4)))
+		scope, scopeErr := convertScopeStringToLDAP(L.ToString(5))
+
+		if scopeErr != nil {
+			L.RaiseError(scopeErr.Error())
+
+			return 1
+		}
+
+		b.Replies[requestID] = make(chan *LDAPReply)
+
+		ldapRequest := &LDAPRequest{
+			GUID:              &guid,
+			RequestID:         &requestID,
+			Filter:            filter,
+			BaseDN:            basedn,
+			SearchAttributes:  attributes,
+			Scope:             *scope,
+			Command:           global.LDAPSearch,
+			LDAPReplyChan:     b.Replies[requestID],
+			HTTPClientContext: ctx,
+		}
+
+		L.Push(lua.LString(requestID))
+
+		b.Request <- ldapRequest
+
+		return 1
+	}
+}
+
+// GetReply retrieves the reply data based on a request ID from Lua.
+// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
+// The request ID is retrieved from the first argument of the Lua state.
+// The method acquires a read lock on the bridgeMutex to access the shared replies map.
+// It looks up the reply channel corresponding to the request ID in the replies map.
+// If the reply channel is not found, it pushes `nil` to the Lua stack and returns 1.
+// If the reply channel is found, it waits for a reply to be sent on the channel.
+// If the reply contains an error, it pushes the error message to the Lua stack as a string and returns 1.
+// It converts the result map from the reply into a map with `any` keys and `any` values.
+// Each value in the result map is converted to a Lua table by calling `lualib.MapToLuaTable`.
+// If the conversion fails, it pushes `nil` to the Lua stack and returns 1.
+// Otherwise, it pushes the result table to the Lua stack and returns 1.
+func (b *LDAPBridge) GetReply(L *lua.LState) int {
+	bridgeMutex.RLock()
+
+	defer bridgeMutex.RUnlock()
+
+	// Holt die Reply-Daten basierend auf einer Anforderungs-ID aus Lua
+	requestID := L.ToString(1)
+
+	replyChan, ok := b.Replies[requestID]
+	if !ok {
+		L.Push(lua.LNil)
+
+		return 1
+	}
+
+	reply := <-replyChan
+
+	// Check if there is an error. If so, return it.
+	if reply.Err != nil {
+		L.Push(lua.LString(reply.Err.Error()))
+
+		return 1
+	}
+
+	// Converting DatabaseResult (map[string][]any) to map[any]any
+	// which can be used in util.MapToLuaTable function
+	convertedMap := make(map[any]any)
+	for key, values := range reply.Result {
+		list := make([]any, len(values))
+
+		for i, val := range values {
+			list[i] = val
+		}
+
+		convertedMap[key] = list
+	}
+
+	resultTable := lualib.MapToLuaTable(L, convertedMap)
+
+	if resultTable == nil {
+		L.Push(lua.LNil)
+
+		return 1
+	}
+
+	L.Push(resultTable)
+
+	return 1
 }

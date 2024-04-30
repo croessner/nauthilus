@@ -3,10 +3,10 @@ package filter
 import (
 	"context"
 	"errors"
-	"net/http"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
@@ -324,7 +324,7 @@ func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction 
 // Returns:
 //
 //	A new request table
-func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request, backendResult **lualib.LuaBackendResult) *lua.LTable {
+func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lualib.LuaBackendResult) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -340,7 +340,7 @@ func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request, backendRes
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnApplyBackendResult, L.NewFunction(applyBackendResult(backendResult)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
 	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
 	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
@@ -351,6 +351,11 @@ func setGlobals(r *Request, L *lua.LState, httpRequest *http.Request, backendRes
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
 		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
 		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection()))
+	}
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(backend.GlobalLDAPBridge.SendRequest(ctx)))
+		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.GetReply))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
@@ -485,7 +490,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := setGlobals(r, L, ctx.Request, &backendResult)
+	globals := setGlobals(ctx, r, L, &backendResult)
 	request := setRequest(r, L)
 
 	for _, script := range LuaFilters.LuaScripts {

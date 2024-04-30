@@ -529,6 +529,16 @@ func (f *File) HaveLua() bool {
 	return f.Lua != nil
 }
 
+func (f *File) HaveLDAPBackend() bool {
+	for _, backendType := range f.Server.Backends {
+		if backendType.Get() == global.BackendLDAP {
+			return true
+		}
+	}
+
+	return false
+}
+
 /*
  * Dynamic server configuration
  */
