@@ -356,6 +356,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(backend.GlobalLDAPBridge.SendRequest(ctx)))
 		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.GetReply))
+		globals.RawSetString(global.LuaFnCleanupLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.CleanupReply))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)

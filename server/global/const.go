@@ -974,6 +974,9 @@ const (
 
 	// LuaFnGetLDAPReply represents the constant for the name of the function to get an LDAP reply.
 	LuaFnGetLDAPReply = "get_ldap_reply"
+
+	// LuaFnCleanupLDAPReply represents the function name used to perform cleanup on LDAP reply data.
+	LuaFnCleanupLDAPReply = "cleanup_ldap_reply"
 )
 
 const (

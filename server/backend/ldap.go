@@ -1653,3 +1653,27 @@ func (b *LDAPBridge) GetReply(L *lua.LState) int {
 
 	return 1
 }
+
+// CleanupReply closes the reply channel associated with the given request ID and deletes it from the Replies map.
+// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
+// The request ID is retrieved from the first argument of the Lua state.
+// The method acquires a lock on the bridgeMutex to ensure thread safety.
+// It checks if the reply channel exists in the Replies map.
+// If it exists, it closes the channel to signal that no more replies will be sent.
+// Finally, it deletes the reply channel from the Replies map and returns 0 to indicate no values pushed to the Lua stack.
+func (b *LDAPBridge) CleanupReply(L *lua.LState) int {
+	requestID := L.CheckString(1)
+
+	bridgeMutex.Lock()
+
+	defer bridgeMutex.Unlock()
+
+	replyChan, ok := b.Replies[requestID]
+	if ok {
+		close(replyChan)
+	}
+
+	delete(b.Replies, requestID)
+
+	return 0
+}

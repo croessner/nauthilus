@@ -262,6 +262,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(backend.GlobalLDAPBridge.SendRequest(context.Background())))
 		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.GetReply))
+		globals.RawSetString(global.LuaFnCleanupLDAPReply, L.NewFunction(backend.GlobalLDAPBridge.CleanupReply))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)

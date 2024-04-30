@@ -175,6 +175,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnSendLDAPRequest, L.NewFunction(GlobalLDAPBridge.SendRequest(luaRequest.HTTPClientContext)))
 		globals.RawSetString(global.LuaFnGetLDAPReply, L.NewFunction(GlobalLDAPBridge.GetReply))
+		globals.RawSetString(global.LuaFnCleanupLDAPReply, L.NewFunction(GlobalLDAPBridge.CleanupReply))
 	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
