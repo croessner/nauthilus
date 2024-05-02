@@ -23,7 +23,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
-	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/yuin/gopher-lua"
 )
@@ -40,14 +39,6 @@ var (
 
 	// LDAPAuthRequestChan is a channel for sending LDAP authentication requests.
 	LDAPAuthRequestChan chan *LDAPAuthRequest //nolint:gochecknoglobals // Needed for LDAP pooling
-)
-
-var (
-	// GlobalLDAPBridge represents a global variable of type *LDAPBridge used for sending LDAP requests and receiving LDAP replies.
-	GlobalLDAPBridge *LDAPBridge
-
-	// bridgeMutex is a sync.RWMutex used for thread-safe access to the *LDAPBridge shared variable.
-	bridgeMutex sync.RWMutex
 )
 
 // PoolRequest is an interface that represents a request made to a connection pool.
@@ -188,24 +179,6 @@ type ldapConnectionState struct {
 	// state indicates the current LDAP connection state.
 	// The value is a constant from the global.LDAPState set.
 	state global.LDAPState
-}
-
-// LDAPBridge represents a bridge for sending LDAP requests and receiving LDAP replies.
-// It has a Request channel for sending LDAP requests and a Replies map for storing the corresponding reply channels.
-type LDAPBridge struct {
-	// Request represents a channel for sending LDAP requests.
-	Request chan *LDAPRequest
-
-	// Replies is a map that stores the reply channels for LDAP requests. The keys are strings representing the request IDs, and the values are channels of type *LDAPReply.
-	Replies map[string]chan *LDAPReply
-}
-
-// NewLDAPBridge creates a new LDAPBridge object.
-func NewLDAPBridge() *LDAPBridge {
-	return &LDAPBridge{
-		Request: make(chan *LDAPRequest),
-		Replies: make(map[string]chan *LDAPReply),
-	}
 }
 
 // NewPool creates a new LDAPPool object based on the provided context and poolType.
@@ -391,6 +364,7 @@ func (l *LDAPPool) closeIdleConnections(openConnections, idlePoolSize, poolSize 
 
 	util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
 
+	//goland:noinspection GoDfaConstantCondition
 	for index := 0; index < poolSize && needClosing > 0; index++ {
 		if l.closeSingleIdleConnection(index) {
 			needClosing--
@@ -1356,8 +1330,6 @@ func LDAPMainWorker(ctx context.Context) {
 
 	ldapPool.setIdleConnections(true)
 
-	GlobalLDAPBridge = NewLDAPBridge()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -1374,14 +1346,6 @@ func LDAPMainWorker(ctx context.Context) {
 			}
 
 			ldapPool.handleLookupRequest(ldapRequest, &ldapWaitGroup)
-
-		case bridgeRequest := <-GlobalLDAPBridge.Request:
-			// Check that we have enough idle connections.
-			if err := ldapPool.setIdleConnections(true); err != nil {
-				GlobalLDAPBridge.Replies[*bridgeRequest.RequestID] <- &LDAPReply{Err: err}
-			}
-
-			ldapPool.handleLookupRequest(bridgeRequest, &ldapWaitGroup)
 		}
 	}
 }
@@ -1530,33 +1494,19 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 	return scope, nil
 }
 
-// SendRequest sends an LDAP request to the LDAP server.
-// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
-// The method checks if the number of arguments passed to the Lua state is equal to 5.
-// If not, it raises an error with the message "guid, basedn, filter, and attributes are required" and returns 1.
-// The method acquires a lock on the bridgeMutex to ensure thread safety.
-// It generates a new request ID using the uuid.New() function and converts it to a string.
-// It retrieves the values of guid, basedn, filter, attributes, and scope from the Lua state.
-// It converts the attributes map from the Lua state to a slice of strings using the convertMapToSliceOfString() function.
-// It converts the scope string to an LDAPScope using the convertScopeStringToLDAP() function, and raises an error if conversion fails.
-// It creates a new channel in the Replies map with the request ID as the key.
-// It constructs an LDAPRequest object with the acquired values and assigns the channel to the LDAPReplyChan field.
-// It pushes the request ID as a Lua string to the Lua stack.
-// It sends the LDAP request to the LDAPBridge's Request channel.
-// Finally, it returns 1 to indicate that 1 value has been pushed to the Lua stack.
-func (b *LDAPBridge) SendRequest(ctx context.Context) lua.LGFunction {
+// LuaLDAPSearch creates a LuaLGFunction that performs an LDAP search.
+// It expects five arguments: guid, basedn, filter, attributes, and scope.
+// It converts the input arguments to their corresponding Go types,
+// validates the scope, creates a channel for the LDAP reply,
+// constructs an LDAPRequest object, sends it to the LDAPRequestChan channel,
+// and returns the result of processing the LDAP reply using the processReply function.
+func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() != 5 {
 			L.RaiseError("guid, basedn,filter and attributes are required")
 
 			return 1
 		}
-
-		bridgeMutex.Lock()
-
-		defer bridgeMutex.Unlock()
-
-		requestID := uuid.New().String()
 
 		guid := L.ToString(1)
 		basedn := L.ToString(2)
@@ -1570,68 +1520,48 @@ func (b *LDAPBridge) SendRequest(ctx context.Context) lua.LGFunction {
 			return 1
 		}
 
-		b.Replies[requestID] = make(chan *LDAPReply)
+		ldapReplyChan := make(chan *LDAPReply)
+
+		defer close(ldapReplyChan)
 
 		ldapRequest := &LDAPRequest{
 			GUID:              &guid,
-			RequestID:         &requestID,
 			Filter:            filter,
 			BaseDN:            basedn,
 			SearchAttributes:  attributes,
 			Scope:             *scope,
 			Command:           global.LDAPSearch,
-			LDAPReplyChan:     b.Replies[requestID],
+			LDAPReplyChan:     ldapReplyChan,
 			HTTPClientContext: ctx,
 		}
 
-		L.Push(lua.LString(requestID))
+		LDAPRequestChan <- ldapRequest
 
-		b.Request <- ldapRequest
-
-		return 1
+		return processReply(L, ldapReplyChan)
 	}
 }
 
-// GetReply retrieves the reply data based on a request ID from Lua.
-// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
-// The request ID is retrieved from the first argument of the Lua state.
-// The method acquires a read lock on the bridgeMutex to access the shared replies map.
-// It looks up the reply channel corresponding to the request ID in the replies map.
-// If the reply channel is not found, it pushes `nil` to the Lua stack and returns 1.
-// If the reply channel is found, it waits for a reply to be sent on the channel.
-// If the reply contains an error, it pushes the error message to the Lua stack as a string and returns 1.
-// It converts the result map from the reply into a map with `any` keys and `any` values.
-// Each value in the result map is converted to a Lua table by calling `lualib.MapToLuaTable`.
-// If the conversion fails, it pushes `nil` to the Lua stack and returns 1.
-// Otherwise, it pushes the result table to the Lua stack and returns 1.
-func (b *LDAPBridge) GetReply(L *lua.LState) int {
-	bridgeMutex.RLock()
-
-	defer bridgeMutex.RUnlock()
-
-	// Holt die Reply-Daten basierend auf einer Anforderungs-ID aus Lua
-	requestID := L.ToString(1)
-
-	replyChan, ok := b.Replies[requestID]
-	if !ok {
-		L.Push(lua.LNil)
-
-		return 1
-	}
-
-	reply := <-replyChan
+// processReply receives an LDAPReply from the provided ldapReplyChan channel.
+// If there is an error in the reply, it pushes the error message to the Lua stack and returns 1.
+// If there is no error, it converts the DatabaseResult to a map[any]any and then
+// converts the map to a Lua table using lualib.MapToLuaTable.
+// If the conversion is successful, it pushes the Lua table to the stack and returns 1.
+// If the conversion fails, it pushes nil to the stack and returns 1.
+func processReply(L *lua.LState, ldapReplyChan chan *LDAPReply) int {
+	ldapReply := <-ldapReplyChan
 
 	// Check if there is an error. If so, return it.
-	if reply.Err != nil {
-		L.Push(lua.LString(reply.Err.Error()))
+	if ldapReply.Err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(ldapReply.Err.Error()))
 
-		return 1
+		return 2
 	}
 
 	// Converting DatabaseResult (map[string][]any) to map[any]any
 	// which can be used in util.MapToLuaTable function
 	convertedMap := make(map[any]any)
-	for key, values := range reply.Result {
+	for key, values := range ldapReply.Result {
 		list := make([]any, len(values))
 
 		for i, val := range values {
@@ -1644,36 +1574,13 @@ func (b *LDAPBridge) GetReply(L *lua.LState) int {
 	resultTable := lualib.MapToLuaTable(L, convertedMap)
 
 	if resultTable == nil {
+		L.Push(lua.LString("no result"))
 		L.Push(lua.LNil)
 
-		return 1
+		return 2
 	}
 
 	L.Push(resultTable)
 
 	return 1
-}
-
-// CleanupReply closes the reply channel associated with the given request ID and deletes it from the Replies map.
-// It takes a Lua state as input and returns an integer indicating the number of values pushed to the Lua stack.
-// The request ID is retrieved from the first argument of the Lua state.
-// The method acquires a lock on the bridgeMutex to ensure thread safety.
-// It checks if the reply channel exists in the Replies map.
-// If it exists, it closes the channel to signal that no more replies will be sent.
-// Finally, it deletes the reply channel from the Replies map and returns 0 to indicate no values pushed to the Lua stack.
-func (b *LDAPBridge) CleanupReply(L *lua.LState) int {
-	requestID := L.CheckString(1)
-
-	bridgeMutex.Lock()
-
-	defer bridgeMutex.Unlock()
-
-	replyChan, ok := b.Replies[requestID]
-	if ok {
-		close(replyChan)
-	}
-
-	delete(b.Replies, requestID)
-
-	return 0
 }
