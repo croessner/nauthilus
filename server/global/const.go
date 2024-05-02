@@ -969,14 +969,8 @@ const (
 	// LuaFnCheckBackendConnection represents the Lua function name for checking the backend connection.
 	LuaFnCheckBackendConnection = "check_backend_connection"
 
-	// LuaFnSendLDAPRequest represents the name of the Lua function used to send an LDAP request.
-	LuaFnSendLDAPRequest = "send_ldap_request"
-
-	// LuaFnGetLDAPReply represents the constant for the name of the function to get an LDAP reply.
-	LuaFnGetLDAPReply = "get_ldap_reply"
-
-	// LuaFnCleanupLDAPReply represents the function name used to perform cleanup on LDAP reply data.
-	LuaFnCleanupLDAPReply = "cleanup_ldap_reply"
+	// LuaFnLDAPSearch represents the name of the Lua function used to do an LDAP search request.
+	LuaFnLDAPSearch = "ldap_search"
 )
 
 const (
