@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -1884,6 +1885,11 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 
 	encoded := ctx.GetHeader("X-Auth-Password-Encoded")
 	if encoded == "1" {
+		padding := len(auth.Password) % 4
+		if padding > 0 {
+			auth.Password += string(bytes.Repeat([]byte("="), 4-padding))
+		}
+
 		if password, err := base64.URLEncoding.DecodeString(auth.Password); err != nil {
 			auth.Password = ""
 
