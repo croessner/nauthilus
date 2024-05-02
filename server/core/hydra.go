@@ -671,7 +671,7 @@ func withLanguageMiddleware() gin.HandlerFunc {
 		}
 
 		lang, needCookie, needRedirect := setLanguageDetails(langFromURL, langFromCookie)
-		accept := ctx.Request.Header.Get("Accept-Language")
+		accept := ctx.GetHeader("Accept-Language")
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
 

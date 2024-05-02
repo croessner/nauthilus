@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -1877,14 +1878,25 @@ func (a *Authentication) setOperationMode(ctx *gin.Context) {
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	auth.Username = ctx.Request.Header.Get("Auth-User")
+	auth.Username = ctx.GetHeader("Auth-User")
 	auth.UsernameOrig = auth.Username
-	auth.Password = ctx.Request.Header.Get("Auth-Pass")
+	auth.Password = ctx.GetHeader("Auth-Pass")
 
-	auth.Protocol.Set(ctx.Request.Header.Get("Auth-Protocol"))
+	encoded := ctx.GetHeader("X-Auth-Password-Encoded")
+	if encoded == "1" {
+		if password, err := base64.URLEncoding.DecodeString(auth.Password); err != nil {
+			auth.Password = ""
+
+			ctx.Error(errors2.ErrPasswordEncoding)
+		} else {
+			auth.Password = string(password)
+		}
+	}
+
+	auth.Protocol.Set(ctx.GetHeader("Auth-Protocol"))
 
 	auth.LoginAttempts = func() uint {
-		loginAttempts, err := strconv.Atoi(ctx.Request.Header.Get("Auth-Login-Attempt"))
+		loginAttempts, err := strconv.Atoi(ctx.GetHeader("Auth-Login-Attempt"))
 		if err != nil {
 			return 0
 		}
@@ -1896,7 +1908,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 		return uint(loginAttempts)
 	}()
 
-	method := ctx.Request.Header.Get("Auth-Method")
+	method := ctx.GetHeader("Auth-Method")
 
 	auth.Method = &method
 
@@ -1931,6 +1943,11 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *Authentication
 	auth.XSSL = ctx.PostForm("tls")
 	auth.XSSLProtocol = ctx.PostForm("security")
 
+	if !util.ValidateUsername(auth.Username) {
+		auth.Username = ""
+
+		ctx.Error(errors2.ErrInvalidUsername)
+	}
 }
 
 // processApplicationJSON takes a gin Context and an Authentication object.
@@ -2052,7 +2069,9 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 	}
 
 	if !util.ValidateUsername(auth.Username) {
-		ctx.Error(fmt.Errorf("invalid username"))
+		auth.Username = ""
+
+		ctx.Error(errors2.ErrInvalidUsername)
 	}
 
 	auth.withDefaults(ctx)
@@ -2114,8 +2133,8 @@ func (a *Authentication) withLocalInfo(ctx *gin.Context) *Authentication {
 		return nil
 	}
 
-	a.XLocalIP = ctx.Request.Header.Get("X-Local-IP")
-	a.XPort = ctx.Request.Header.Get("X-Auth-Port")
+	a.XLocalIP = ctx.GetHeader("X-Local-IP")
+	a.XPort = ctx.GetHeader("X-Auth-Port")
 
 	return a
 }
@@ -2128,9 +2147,9 @@ func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 		return nil
 	}
 
-	a.ClientIP = ctx.Request.Header.Get("Client-IP")
-	a.XClientPort = ctx.Request.Header.Get("X-Client-Port")
-	a.XClientID = ctx.Request.Header.Get("X-Client-Id")
+	a.ClientIP = ctx.GetHeader("Client-IP")
+	a.XClientPort = ctx.GetHeader("X-Client-Port")
+	a.XClientID = ctx.GetHeader("X-Client-Id")
 
 	if a.ClientIP == "" {
 		// This might be valid, if HAproxy v2 support is enabled
@@ -2148,7 +2167,7 @@ func (a *Authentication) withClientInfo(ctx *gin.Context) *Authentication {
 
 	if a.ClientHost == "" {
 		// Fallback to environment variable
-		a.ClientHost = ctx.Request.Header.Get("Client-Host")
+		a.ClientHost = ctx.GetHeader("Client-Host")
 	}
 
 	return a
@@ -2174,25 +2193,25 @@ func (a *Authentication) withXSSL(ctx *gin.Context) *Authentication {
 	}
 
 	a.XSSL = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL"), ctx.Request.Header.Get("X-SSL"))
-	a.XSSLSessionID = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Session-ID"))
+		ctx.GetHeader("Auth-SSL"), ctx.GetHeader("X-SSL"))
+	a.XSSLSessionID = util.CheckStrings(ctx.GetHeader("X-SSL-Session-ID"))
 	a.XSSLClientVerify = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL-Verify"), ctx.Request.Header.Get("X-SSL-Client-Verify"))
+		ctx.GetHeader("Auth-SSL-Verify"), ctx.GetHeader("X-SSL-Client-Verify"))
 	a.XSSLClientDN = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL-Subject"), ctx.Request.Header.Get("X-SSL-Client-DN"))
-	a.XSSLClientCN = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Client-CN"))
-	a.XSSLIssuer = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Issuer"))
-	a.XSSLClientNotBefore = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Client-NotBefore"))
-	a.XSSLClientNotAfter = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Client-NotAfter"))
-	a.XSSLSubjectDN = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Subject-DN"))
+		ctx.GetHeader("Auth-SSL-Subject"), ctx.GetHeader("X-SSL-Client-DN"))
+	a.XSSLClientCN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-CN"))
+	a.XSSLIssuer = util.CheckStrings(ctx.GetHeader("X-SSL-Issuer"))
+	a.XSSLClientNotBefore = util.CheckStrings(ctx.GetHeader("X-SSL-Client-NotBefore"))
+	a.XSSLClientNotAfter = util.CheckStrings(ctx.GetHeader("X-SSL-Client-NotAfter"))
+	a.XSSLSubjectDN = util.CheckStrings(ctx.GetHeader("X-SSL-Subject-DN"))
 	a.XSSLIssuerDN = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL-Issuer"), ctx.Request.Header.Get("X-SSL-Issuer-DN"))
-	a.XSSLClientSubjectDN = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Client-Subject-DN"))
-	a.XSSLClientIssuerDN = util.CheckStrings(ctx.Request.Header.Get("X-SSL-Client-Issuer-DN"))
+		ctx.GetHeader("Auth-SSL-Issuer"), ctx.GetHeader("X-SSL-Issuer-DN"))
+	a.XSSLClientSubjectDN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-Subject-DN"))
+	a.XSSLClientIssuerDN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-Issuer-DN"))
 	a.XSSLCipher = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL-Cipher"), ctx.Request.Header.Get("X-SSL-Cipher"))
+		ctx.GetHeader("Auth-SSL-Cipher"), ctx.GetHeader("X-SSL-Cipher"))
 	a.XSSLProtocol = util.CheckStrings(
-		ctx.Request.Header.Get("Auth-SSL-Protocol"), ctx.Request.Header.Get("X-SSL-Protocol"))
+		ctx.GetHeader("Auth-SSL-Protocol"), ctx.GetHeader("X-SSL-Protocol"))
 
 	// TODO: Nginx: Auth-SSL-Serial, Auth-SSL-Fingerprint
 

@@ -28,8 +28,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Legal characters for IMAP username based on RFC 3501: Any character except "(", ")", "{", SP, CTL, "%", "*", """, "\"
-var usernamePattern = regexp.MustCompile(`^[^(){}%*"\\]+$`)
+// Legal characters for IMAP username based on RFC 3501: Any character except "(", ")", "{", SP, CTL, "%", """, "\". The "*" might be used as master separator.
+var usernamePattern = regexp.MustCompile(`^[^(){}%"\\]+$`)
 
 // RedisLogger implements the interface redis.Logging
 type RedisLogger struct{}
