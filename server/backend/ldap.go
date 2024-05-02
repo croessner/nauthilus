@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/segmentio/ksuid"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -1454,25 +1454,6 @@ func LDAPAuthWorker(ctx context.Context) {
 	}
 }
 
-// convertMapToSliceOfString converts a map[any]any to a slice of strings.
-// If attributesMap is nil, it returns an empty slice.
-// It iterates through the map and checks if each key is of type float64 and each value is of type string.
-// If the conditions are met, it appends the value to the result slice.
-// Finally, it returns the result slice.
-func convertMapToSliceOfString(attributesMap map[any]any) (result []string) {
-	if attributesMap == nil {
-		return
-	}
-
-	for key, value := range attributesMap {
-		if reflect.TypeOf(key).Kind() == reflect.Float64 && reflect.TypeOf(value).Kind() == reflect.String {
-			result = append(result, value.(string))
-		}
-	}
-
-	return
-}
-
 // convertScopeStringToLDAP converts a string representation of an LDAP search scope to a *config.LDAPScope object.
 // It takes the toString string as input.
 // If toString is empty, it sets the scope to "sub".
@@ -1494,51 +1475,131 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 	return scope, nil
 }
 
-// LuaLDAPSearch creates a LuaLGFunction that performs an LDAP search.
-// It expects five arguments: guid, basedn, filter, attributes, and scope.
-// It converts the input arguments to their corresponding Go types,
-// validates the scope, creates a channel for the LDAP reply,
-// constructs an LDAPRequest object, sends it to the LDAPRequestChan channel,
-// and returns the result of processing the LDAP reply using the processReply function.
+// LuaLDAPSearch searches for entries in an LDAP directory based on the provided context.
+// It expects a Lua table as input, validates the fields, and converts them to the appropriate types.
+// It converts the scope string to a *config.LDAPScope object and creates an LDAPRequest object with the field values.
+// It sends the LDAPRequest to the LDAPRequestChan channel and processes the LDAPReply using the processReply function.
+// It returns the result from processReply.
 func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		if L.GetTop() != 5 {
-			L.RaiseError("guid, basedn,filter and attributes are required")
+		table := L.CheckTable(1)
 
+		fieldValues := prepareAndValidateFields(L, table)
+		if fieldValues == nil {
 			return 1
 		}
 
-		guid := L.ToString(1)
-		basedn := L.ToString(2)
-		filter := L.ToString(3)
-		attributes := convertMapToSliceOfString(lualib.LuaTableToMap(L.ToTable(4)))
-		scope, scopeErr := convertScopeStringToLDAP(L.ToString(5))
-
+		scope, scopeErr := convertScopeStringToLDAP(fieldValues["scope"].String())
 		if scopeErr != nil {
 			L.RaiseError(scopeErr.Error())
 
 			return 1
 		}
 
-		ldapReplyChan := make(chan *LDAPReply)
-
-		defer close(ldapReplyChan)
-
-		ldapRequest := &LDAPRequest{
-			GUID:              &guid,
-			Filter:            filter,
-			BaseDN:            basedn,
-			SearchAttributes:  attributes,
-			Scope:             *scope,
-			Command:           global.LDAPSearch,
-			LDAPReplyChan:     ldapReplyChan,
-			HTTPClientContext: ctx,
-		}
+		ldapRequest := createLDAPRequest(fieldValues, scope, ctx)
 
 		LDAPRequestChan <- ldapRequest
 
-		return processReply(L, ldapReplyChan)
+		return processReply(L, ldapRequest.GetLDAPReplyChan())
 	}
+}
+
+// prepareAndValidateFields takes an LState object and a Lua table and validates the fields in the table
+// against the expected fields and their types. It returns a map of field names to their corresponding values
+// if all fields are valid. Otherwise, it returns nil.
+func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
+	expectedFields := map[string]string{
+		"session":    global.LuaLiteralString,
+		"basedn":     global.LuaLiteralString,
+		"filter":     global.LuaLiteralString,
+		"scope":      global.LuaLiteralString,
+		"attributes": global.LuaLiteralTable,
+	}
+
+	fieldValues := make(map[string]lua.LValue)
+	for field, typeExpected := range expectedFields {
+		if !validateField(L, table, field, typeExpected) {
+			return nil
+		}
+
+		fieldValues[field] = L.GetField(table, field)
+	}
+
+	return fieldValues
+}
+
+// validateField validates a field in a Lua table by checking if it exists and has the expected type.
+// It takes an LState object, a Lua table, the field name, and the expected field type as arguments.
+// It returns true if the field is valid, and false otherwise.
+func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType string) bool {
+	lv := L.GetField(table, fieldName)
+	if lua.LVIsFalse(lv) {
+		L.RaiseError("%s is required", fieldName)
+
+		return false
+	}
+
+	switch fieldType {
+	case global.LuaLiteralString:
+		if _, ok := lv.(lua.LString); !ok {
+			L.RaiseError("%s should be a string", fieldName)
+		}
+	case global.LuaLiteralTable:
+		if _, ok := lv.(*lua.LTable); !ok {
+			L.RaiseError("%s should be a table", fieldName)
+		}
+	default:
+		return false
+	}
+
+	return true
+}
+
+// createLDAPRequest creates a new LDAPRequest object based on the provided field values, scope, and context.
+// It extracts the "session", "basedn", "filter", and "attributes" field values from the given map.
+// If the "session" value is empty, it generates a new GUID using ksuid.New().
+// It creates a channel called ldapReplyChan for receiving the LDAPReply.
+// It initializes an LDAPRequest object with the extracted field values, scope, command, and context.
+// Finally, it returns the created LDAPRequest object.
+func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context) *LDAPRequest {
+	guid := fieldValues["session"].String()
+	basedn := fieldValues["basedn"].String()
+	filter := fieldValues["filter"].String()
+	attrTable := fieldValues["attributes"].(*lua.LTable)
+	attributes := extractAttributes(attrTable)
+
+	if guid == "" {
+		guid = ksuid.New().String()
+	}
+
+	ldapReplyChan := make(chan *LDAPReply)
+
+	ldapRequest := &LDAPRequest{
+		GUID:              &guid,
+		Filter:            filter,
+		BaseDN:            basedn,
+		SearchAttributes:  attributes,
+		Scope:             *scope,
+		Command:           global.LDAPSearch,
+		LDAPReplyChan:     ldapReplyChan,
+		HTTPClientContext: ctx,
+	}
+
+	return ldapRequest
+}
+
+// extractAttributes extracts the attribute values from the given lua.LTable.
+// It creates a string slice called attributes with the same length as the lua.LTable.
+// Then it iterates through each pair of index and value in the lua.LTable using the ForEach method.
+// For each pair, it appends the value as a string to the attributes slice.
+// Finally, it returns the attributes slice.
+func extractAttributes(attrTable *lua.LTable) []string {
+	attributes := make([]string, attrTable.Len())
+	attrTable.ForEach(func(index lua.LValue, value lua.LValue) {
+		attributes = append(attributes, value.String())
+	})
+
+	return attributes
 }
 
 // processReply receives an LDAPReply from the provided ldapReplyChan channel.
