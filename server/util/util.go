@@ -28,6 +28,9 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Legal characters for IMAP username based on RFC 3501: Any character except "(", ")", "{", SP, CTL, "%", "*", """, "\"
+var usernamePattern = regexp.MustCompile(`^[^(){}%*"\\]+$`)
+
 // RedisLogger implements the interface redis.Logging
 type RedisLogger struct{}
 
@@ -124,6 +127,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 
 	c.Password = cryptedPassword[strings.Index(cryptedPassword, "}")+1:]
 
+	//goland:noinspection GoDfaConstantCondition
 	switch pwOption {
 	case global.B64:
 		decodedPwSasltSalt, err = base64.StdEncoding.DecodeString(c.Password)
@@ -135,6 +139,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 		return salt, alg, pwOption, err
 	}
 
+	//goland:noinspection GoDfaConstantCondition
 	switch alg {
 	case global.SSHA512:
 		salt = decodedPwSasltSalt[64:]
@@ -408,4 +413,12 @@ func ByteSize(bytes uint64) string {
 	}
 
 	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// ValidateUsername validates the given username against the usernamePattern regular expression.
+// It takes a string username as input and returns a boolean value representing whether the username is valid or not.
+// The usernamePattern regular expression allows any character except "(", ")", "{", SP, CTL, "%", "*", "\", except empty string.
+// The function returns true if the username matches the pattern, and false otherwise.
+func ValidateUsername(username string) bool {
+	return usernamePattern.MatchString(username)
 }

@@ -2051,6 +2051,10 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 		setupHTTPBasiAuth(ctx, auth)
 	}
 
+	if !util.ValidateUsername(auth.Username) {
+		ctx.Error(fmt.Errorf("invalid username"))
+	}
+
 	auth.withDefaults(ctx)
 
 	auth.setOperationMode(ctx)
