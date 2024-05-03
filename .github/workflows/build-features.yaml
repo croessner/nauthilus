@@ -29,9 +29,8 @@ jobs:
 
       - name: Build project
         run: |
-          CC=gcc CGO_ENABLED=1 \
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -tags="sonic avx" -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-dev ./server
+          go build -mod=vendor -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-dev ./server
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
