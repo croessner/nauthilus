@@ -1,28 +1,38 @@
 name: Development Build
+
 on:
   push:
     branches:
       - features
+
 jobs:
   build:
     name: Dev Build on ${{ matrix.goos }} / ${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [darwin, linux, netbsd, openbsd, windows]
+        goos: [linux]
         goarch: [amd64, arm64]
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: 1.22.x
+
+      - name: Replace values in main.go
+        run: |
+          sed -i "s/@@gittag@@-@@gitcommit@@/$(echo ${GITHUB_REF#refs/heads/})-${GITHUB_SHA:0:8}/" server/main.go
+
       - name: Build project
         run: |
+          cd server && \
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            cd server && \
-            go build -mod=vendor -tags="sonic avx" -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-dev .
+          go build -mod=vendor -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-dev .
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

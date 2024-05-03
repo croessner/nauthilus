@@ -5,7 +5,7 @@ variables:
   RELEASE_CLI_VERSION: "v0.16.0"
   DEVELOPER_BRANCH: "features"
   PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}/${CI_COMMIT_TAG}/"
-  PLATFORMS: "darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 netbsd/amd64 netbsd/arm64 openbsd/amd64 openbsd/arm64 windows/amd64 windows/arm64"
+  PLATFORMS: "linux/amd64 linux/arm64"
 
 stages:
   - test
@@ -49,13 +49,8 @@ build:
           FILEPATH="${CI_PROJECT_DIR}/bin/${GOOS}-${GOARCH}"
           mkdir -p ${FILEPATH}
           BIN_FILE_NAME="${FILEPATH}/${CI_PROJECT_NAME}-${GOOS}-${GOARCH}-${tag}"
-
-          if [[ "${GOOS}" == "windows" ]]; then
-              BIN_FILE_NAME="${BIN_FILE_NAME}.exe"
-          fi
-
           echo "Building ${BIN_FILE_NAME}"
-          GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -tags="sonic avx" -ldflags="-s" -o ${BIN_FILE_NAME} ./server
+          GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -ldflags="-s" -o ${BIN_FILE_NAME} ./server
       done
   artifacts:
     paths:
