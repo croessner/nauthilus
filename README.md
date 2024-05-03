@@ -1,3 +1,7 @@
+[![Development Build](https://github.com/croessner/nauthilus/actions/workflows/build-features.yaml/badge.svg?branch=features)](https://github.com/croessner/nauthilus/actions/workflows/build-features.yaml)
+[![Development Docker Build](https://github.com/croessner/nauthilus/actions/workflows/docker-features.yaml/badge.svg?branch=features)](https://github.com/croessner/nauthilus/actions/workflows/docker-features.yaml)
+[![Release Build](https://github.com/croessner/nauthilus/actions/workflows/build-stable.yaml/badge.svg)](https://github.com/croessner/nauthilus/actions/workflows/build-stable.yaml)
+[![Production Docker Build](https://github.com/croessner/nauthilus/actions/workflows/docker-stable.yaml/badge.svg)](https://github.com/croessner/nauthilus/actions/workflows/docker-stable.yaml)
 # Nauthilus
 
 Nauthilus is a general purpose authentication service written in Go. It is designed to work as a central place where all kinds of 
