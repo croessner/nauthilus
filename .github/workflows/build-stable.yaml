@@ -1,0 +1,34 @@
+name: Release Build
+on:
+  push:
+    tags:
+      - '*'
+jobs:
+  build:
+    name: Release Build on ${{ matrix.goos }} / ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [darwin, linux, netbsd, openbsd, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.22.x
+      - name: Build project
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            cd server && \
+            go build -mod=vendor -tags="sonic avx" -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }} .
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-binary
+          path: server/nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: server/nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}
