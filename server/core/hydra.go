@@ -1137,7 +1137,8 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	if !util.ValidateUsername(auth.Username) {
+	// It might be the second call after 2FA! In this case, there does not exist any username or password.
+	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
 		return nil, errors2.ErrInvalidUsername
 	}
 
