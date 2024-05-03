@@ -29,8 +29,9 @@ jobs:
 
       - name: Build project
         run: |
+          cd server && \
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }} ./server
+          go build -mod=vendor -ldflags="-s" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
