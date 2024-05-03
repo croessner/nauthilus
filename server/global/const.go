@@ -1027,6 +1027,12 @@ const (
 )
 
 const (
+	LuaLiteralString = "string"
+
+	LuaLiteralTable = "table"
+)
+
+const (
 	// LuaRequestDebug is for debugging purposes.
 	LuaRequestDebug = "debug"
 

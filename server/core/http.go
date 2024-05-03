@@ -143,8 +143,8 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		protocol := &config.Protocol{}
 		protocol.Set(global.ProtoHTTP)
 
-		clientIP := ctx.Request.Header.Get("Client-IP")
-		clientPort := util.WithNotAvailable(ctx.Request.Header.Get("X-Client-Port"))
+		clientIP := ctx.GetHeader("Client-IP")
+		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 		method := "plain"
 
 		auth := &Authentication{

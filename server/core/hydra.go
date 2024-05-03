@@ -616,6 +616,8 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 // 4. If there is a language from both the URL and the cookie, and they differ, set lang to langFromURL and needCookie to true.
 //
 // The function returns lang, needCookie, and needRedirect.
+//
+//goland:noinspection GoDfaConstantCondition
 func setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
 	if langFromURL == "" && langFromCookie == "" {
 		// 1. No language from URL and no cookie is set
@@ -669,7 +671,7 @@ func withLanguageMiddleware() gin.HandlerFunc {
 		}
 
 		lang, needCookie, needRedirect := setLanguageDetails(langFromURL, langFromCookie)
-		accept := ctx.Request.Header.Get("Accept-Language")
+		accept := ctx.GetHeader("Accept-Language")
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
 
@@ -1135,6 +1137,11 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
+	// It might be the second call after 2FA! In this case, there does not exist any username or password.
+	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
+		return nil, errors2.ErrInvalidUsername
+	}
+
 	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
 		return nil, err
 	}
@@ -1571,7 +1578,7 @@ func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global
 				session.Set(global.CookieAuthResult, uint8(authResult))
 				session.Set(global.CookieUsername, a.ctx.Request.Form.Get("username"))
 
-				session.Save()
+				err = session.Save()
 				if err != nil {
 					return
 				}

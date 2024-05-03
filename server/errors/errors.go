@@ -71,6 +71,8 @@ var (
 	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
 	ErrMonitoringBackendServersEmpty           = errors.New("no monitoring backend servers configured")
+	ErrInvalidUsername                         = errors.New("invalid username")
+	ErrPasswordEncoding                        = errors.New("password encoding error")
 )
 
 // env.
