@@ -1325,6 +1325,8 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
+// haveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the Authentication object.
+// It iterates over the MonitoringFlags slice and returns true if the flag is found, otherwise it returns false.
 func (a *Authentication) haveMonitoringFlag(flag global.Monitoring) bool {
 	for _, setFlag := range a.MonitoringFlags {
 		if setFlag == flag {

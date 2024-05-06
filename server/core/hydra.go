@@ -69,6 +69,9 @@ type LoginPageData struct {
 	// Determines if the About information should be displayed
 	WantAbout bool
 
+	// WantRemember is a flag for the regular login page.
+	WantRemember bool
+
 	// Indicates if there was an error
 	HaveError bool
 
@@ -539,7 +542,7 @@ func notifyGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(ctx, viper.GetString("notify_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	notifyData := NotifyPageData{
 		Title: statusTitle,
@@ -768,7 +771,7 @@ func createUserdata(session sessions.Session, keys ...string) map[string]any {
 // The Language struct has two fields: LanguageLink and LanguageName.
 // The function appends each created Language struct to the languagePassive slice, and finally returns
 // the languagePassive slice.
-func createLanguagePassive(ctx *gin.Context, languageTags []language.Tag, currentName string) []Language {
+func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []language.Tag, currentName string) []Language {
 	var languagePassive []Language
 
 	for _, languageTag := range languageTags {
@@ -778,7 +781,7 @@ func createLanguagePassive(ctx *gin.Context, languageTags []language.Tag, curren
 			languagePassive = append(
 				languagePassive,
 				Language{
-					LanguageLink: viper.GetString("login_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
+					LanguageLink: destPage + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
 					LanguageName: languageName,
 				},
 			)
@@ -955,7 +958,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(a.ctx, viper.GetString("login_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	userData := createUserdata(session, global.CookieUsername, global.CookieAuthResult)
 
@@ -1055,6 +1058,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		LanguagePassive:     languagePassive,
 		CSRFToken:           a.csrfToken,
 		LoginChallenge:      a.challenge,
+		WantRemember:        true,
 		InDevelopment:       tags.IsDevelopment,
 	}
 
@@ -1781,7 +1785,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(ctx, viper.GetString("device_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	loginData := &LoginPageData{
 		Title: getLocalized(ctx, "Login"),
@@ -2023,7 +2027,7 @@ func (a *ApiConfig) processConsent() {
 
 	languageCurrentTag := language.MustParse(session.Get(global.CookieLang).(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(a.ctx, viper.GetString("consent_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	consentData := &ConsentPageData{
 		Title: getLocalized(a.ctx, "Consent"),
@@ -2475,7 +2479,7 @@ func (a *ApiConfig) handleLogout() {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(a.ctx, viper.GetString("logout_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	logoutData := &LogoutPageData{
 		Title: getLocalized(a.ctx, "Logout"),
