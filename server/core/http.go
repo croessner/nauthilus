@@ -18,6 +18,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
@@ -552,15 +553,17 @@ func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 //
 //	setup2FAEndpoints(router, sessionStore)
 func setup2FAEndpoints(router *gin.Engine, sessionStore sessions.Store) {
-	group := router.Group(global.TwoFAv1Root)
+	if tags.Register2FA {
+		group := router.Group(global.TwoFAv1Root)
 
-	// This page handles the user login request to do a two-factor authentication
-	twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, loginGET2FAHandler, loginPOST2FAHandler)
-	twoFactorGroup.GET("/home", register2FAHomeHandler)
-	twoFactorGroup.GET("/home/:languageTag", register2FAHomeHandler)
+		// This page handles the user login request to do a two-factor authentication
+		twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, loginGET2FAHandler, loginPOST2FAHandler)
+		twoFactorGroup.GET("/home", register2FAHomeHandler)
+		twoFactorGroup.GET("/home/:languageTag", register2FAHomeHandler)
 
-	// This page handles the TOTP registration
-	routerGroup(viper.GetString("totp_page"), group, sessionStore, registerTotpGETHandler, registerTotpPOSTHandler)
+		// This page handles the TOTP registration
+		routerGroup(viper.GetString("totp_page"), group, sessionStore, registerTotpGETHandler, registerTotpPOSTHandler)
+	}
 }
 
 // setupStaticContent is a function that sets up the static content endpoints in the given Gin router.
@@ -632,12 +635,14 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 // - A GET endpoint at the path "/register/begin" which is handled by the beginRegistration function.
 // - A POST endpoint at the path "/register/finish" which is handled by the finishRegistration function.
 func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
-	group := router.Group(global.TwoFAv1Root)
+	if tags.IsDevelopment {
+		group := router.Group(global.TwoFAv1Root)
 
-	regGroup := group.Group(viper.GetString("webauthn_page"))
-	regGroup.Use(sessions.Sessions(global.SessionName, sessionStore))
-	regGroup.GET("/register/begin", beginRegistration)
-	regGroup.POST("/register/finish", finishRegistration)
+		regGroup := group.Group(viper.GetString("webauthn_page"))
+		regGroup.Use(sessions.Sessions(global.SessionName, sessionStore))
+		regGroup.GET("/register/begin", beginRegistration)
+		regGroup.POST("/register/finish", finishRegistration)
+	}
 }
 
 // waitForShutdown is a function that waits for the context to be done, then shuts down the provided http.Server.

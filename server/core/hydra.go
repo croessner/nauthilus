@@ -16,6 +16,7 @@ import (
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -53,6 +54,9 @@ type Language struct {
 }
 
 type LoginPageData struct {
+	// InDevelopment is a flag that is true, if the build-tag dev is used.
+	InDevelopment bool
+
 	// Determines if the Welcome message should be displayed
 	WantWelcome bool
 
@@ -1051,6 +1055,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		LanguagePassive:     languagePassive,
 		CSRFToken:           a.csrfToken,
 		LoginChallenge:      a.challenge,
+		InDevelopment:       tags.IsDevelopment,
 	}
 
 	a.ctx.HTML(http.StatusOK, "login.html", loginData)

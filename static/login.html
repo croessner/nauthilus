@@ -49,11 +49,15 @@
                     <button type="submit" id="submit" name="submit" value="{{ .Submit }}" data-loginurl="{{ .PostLoginEndpoint }}/post">
                         {{ .Submit }}
                     </button>
+                    {{ if .InDevelopment }}
                     <p class="text center vs-5">{{ .Or }}</p>
                     <div class="vs-15"></div>
                     <button class="device" type="submit" id="device" name="device" value="{{ .Device }}" data-deviceurl="{{ .DeviceLoginEndpoint }}">
                         {{ .Device }}
                     </button>
+                    {{ else }}
+                    <div id="device" style="display: none;"></div>
+                    {{ end }}
                     <div class="vs-5"></div>
                     <input type="checkbox" id="remember" name="remember" value="on"/>
                     <label for="remember">{{ .Remember }}</label>
