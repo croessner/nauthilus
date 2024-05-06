@@ -624,6 +624,9 @@ const (
 	// CookieTOTPSecret constant indicates whether a user does have a TOTP secret
 	CookieTOTPSecret = "totp_secret"
 
+	// CookieHome constant indicates a logged-in user
+	CookieHome = "home"
+
 	// SessionName constant is for the name of the session
 	SessionName = "Nauthilus_session"
 )

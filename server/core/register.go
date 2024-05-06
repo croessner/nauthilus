@@ -90,16 +90,27 @@ func sessionCleaner(ctx *gin.Context) {
 // Page '/2fa/v1/register'
 func loginGET2FAHandler(ctx *gin.Context) {
 	session := sessions.Default(ctx)
+
 	cookieValue := session.Get(global.CookieLang)
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
 	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+
 	totpSecret, _, _ := getSessionTOTPSecret(ctx)
 
 	if totpSecret == "" {
 		sessionCleaner(ctx)
 		displayLoginpage(ctx, languageCurrentName, languagePassive)
 	} else {
+		cookieValue = session.Get(global.CookieHome)
+		if cookieValue != nil {
+			if loggedIn, assertOk := cookieValue.(bool); assertOk && loggedIn {
+				processTwoFARedirect(ctx, true)
+
+				return
+			}
+		}
+
 		displayTOTPpage(ctx, languageCurrentName, languagePassive)
 	}
 }
@@ -350,10 +361,7 @@ func processTwoFARedirect(ctx *gin.Context, authCompleteOK bool) {
 		targetURI = global.TwoFAv1Root + viper.GetString("login_2fa_page")
 	}
 
-	ctx.Redirect(
-		http.StatusFound,
-		targetURI,
-	)
+	ctx.Redirect(http.StatusFound, targetURI)
 
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyGUID, guid,
@@ -463,10 +471,7 @@ func totpValidation(guid string, code string, account string, totpSecret string)
 
 // Page '/2fa/v1/register/home'
 func register2FAHomeHandler(ctx *gin.Context) {
-	var (
-		haveTOTP        bool
-		languagePassive []Language
-	)
+	var haveTOTP bool
 
 	session := sessions.Default(ctx)
 
@@ -489,28 +494,14 @@ func register2FAHomeHandler(ctx *gin.Context) {
 		return
 	}
 
+	session.Set(global.CookieHome, true)
+	session.Save()
+
 	cookieValue = session.Get(global.CookieLang)
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: global.TwoFAv1Root + viper.GetString("totp_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
-	}
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 	homeData := &HomePageData{
 		Title: getLocalized(ctx, "Home"),
@@ -534,8 +525,6 @@ func register2FAHomeHandler(ctx *gin.Context) {
 		LanguageTag:         session.Get(global.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
-		WantTos:             false,
-		WantPolicy:          false,
 	}
 
 	ctx.HTML(http.StatusOK, "home.html", homeData)
@@ -544,10 +533,9 @@ func register2FAHomeHandler(ctx *gin.Context) {
 // Page '/2fa/v1/totp'
 func registerTotpGETHandler(ctx *gin.Context) {
 	var (
-		haveError       bool
-		errorMessage    string
-		languagePassive []Language
-		csrfToken       = ctx.GetString(global.CtxCSRFTokenKey)
+		haveError    bool
+		errorMessage string
+		csrfToken    = ctx.GetString(global.CtxCSRFTokenKey)
 	)
 
 	session := sessions.Default(ctx)
@@ -606,24 +594,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: global.TwoFAv1Root + viper.GetString("totp_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
-	}
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == global.PasswordFail {
@@ -793,6 +764,10 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	// POST cleanup
 	sessionCleaner(ctx)
+
+	// Log out user
+	session.Delete(global.CookieHome)
+	session.Save()
 
 	ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=OTP code is valid. Registration completed successfully")
 
