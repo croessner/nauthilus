@@ -309,9 +309,6 @@ func processTOTPSecret(ctx *gin.Context) global.AuthResult {
 			cookieValue := session.Get(global.CookieAuthResult)
 			if cookieValue != nil {
 				authResult = global.AuthResult(cookieValue.(uint8))
-
-				session.Delete(global.CookieAuthResult)
-				session.Save()
 			}
 		}
 	}
@@ -326,26 +323,26 @@ func processTOTPSecret(ctx *gin.Context) global.AuthResult {
 func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication, authCompleteOK bool) {
 	if authResult == global.AuthResultOK {
 		if !authCompleteOK {
-			if err := handleAuthResultOk(ctx, authResult, auth); err != nil {
+			if err := saveSessionData(ctx, authResult, auth); err != nil {
 				handleErr(ctx, err)
 
 				return
 			}
 		}
 
-		redirectLogin(ctx, authCompleteOK)
+		processTwoFARedirect(ctx, authCompleteOK)
 	} else {
-		handleAuthResultFail(ctx, auth)
+		handleAuthFailureAndRedirect(ctx, auth)
 	}
 }
 
-// redirectLogin redirects the context to the 2FA login page with the appropriate target URI.
+// processTwoFARedirect redirects the context to the 2FA login page with the appropriate target URI.
 // It takes the Gin context and a boolean indicating whether the authentication was completed successfully as inputs.
 // It initializes the `guid` variable with the context's GUID.
 // It sets the `targetURI` to the appropriate URL based on the authentication complete status.
 // It redirects the context to the `targetURI` with the HTTP status of `http.StatusFound`.
 // It logs the redirect information with the `guid`, username, authentication status, and URI path.
-func redirectLogin(ctx *gin.Context, authCompleteOK bool) {
+func processTwoFARedirect(ctx *gin.Context, authCompleteOK bool) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 
 	targetURI := global.TwoFAv1Root + viper.GetString("login_2fa_post_page")
@@ -366,7 +363,7 @@ func redirectLogin(ctx *gin.Context, authCompleteOK bool) {
 	)
 }
 
-// handleAuthResultOk handles the authentication result by setting session variables and redirecting to the 2FA page.
+// saveSessionData handles the authentication result by setting session variables and redirecting to the 2FA page.
 // It takes the Gin context, the authentication result, and the Authentication object as inputs.
 // It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `totpSecret`.
 // It retrieves the default session from the Gin context.
@@ -381,7 +378,7 @@ func redirectLogin(ctx *gin.Context, authCompleteOK bool) {
 // ctx: The Gin context.
 // authResult: The result of the authentication.
 // auth: The Authentication object.
-func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) error {
+func saveSessionData(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) error {
 	var (
 		found        bool
 		account      string
@@ -421,13 +418,13 @@ func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Au
 	return nil
 }
 
-// handleAuthResultFail handles the authentication failure result by updating the brute force counter, redirecting
+// handleAuthFailureAndRedirect handles the authentication failure result by updating the brute force counter, redirecting
 // the context to the 2FA page with the error message, and logging the authentication rejection information.
 // It takes the Gin context and the Authentication object as inputs.
 //
 // ctx: The Gin context.
 // auth: The Authentication object.
-func handleAuthResultFail(ctx *gin.Context, auth *Authentication) {
+func handleAuthFailureAndRedirect(ctx *gin.Context, auth *Authentication) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 
 	auth.ClientIP = ctx.GetString(global.CtxClientIPKey)
