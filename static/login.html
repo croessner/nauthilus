@@ -58,9 +58,11 @@
                     {{ else }}
                     <div id="device" style="display: none;"></div>
                     {{ end }}
+                    {{ if .WantRemember }}
                     <div class="vs-5"></div>
                     <input type="checkbox" id="remember" name="remember" value="on"/>
                     <label for="remember">{{ .Remember }}</label>
+                    {{ end }}
                 </form>
 
                 {{ if .WantAbout }}

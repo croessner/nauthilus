@@ -69,6 +69,9 @@ type LoginPageData struct {
 	// Determines if the About information should be displayed
 	WantAbout bool
 
+	// WantRemember is a flag for the regular login page.
+	WantRemember bool
+
 	// Indicates if there was an error
 	HaveError bool
 
@@ -1055,6 +1058,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		LanguagePassive:     languagePassive,
 		CSRFToken:           a.csrfToken,
 		LoginChallenge:      a.challenge,
+		WantRemember:        true,
 		InDevelopment:       tags.IsDevelopment,
 	}
 

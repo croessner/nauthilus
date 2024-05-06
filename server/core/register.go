@@ -13,6 +13,7 @@ import (
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/tags"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -153,14 +154,18 @@ func loginGET2FAHandler(ctx *gin.Context) {
 		WantPolicy:          false,
 		WantTos:             false,
 		Submit:              getLocalized(ctx, "Submit"),
+		Or:                  getLocalized(ctx, "or"),
+		Device:              getLocalized(ctx, "Login with WebAuthn"),
 		PostLoginEndpoint:   global.TwoFAv1Root + viper.GetString("login_2fa_page"),
 		LanguageTag:         session.Get(global.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
 		CSRFToken:           csrfToken,
+		WantRemember:        false,
+		InDevelopment:       tags.IsDevelopment,
 	}
 
-	ctx.HTML(http.StatusOK, "register.html", loginData)
+	ctx.HTML(http.StatusOK, "login.html", loginData)
 
 	level.Info(logging.DefaultLogger).Log(
 		global.LogKeyGUID, guid,
@@ -192,8 +197,6 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		return
 	}
 
-	session := sessions.Default(ctx)
-
 	auth.UsernameOrig = auth.Username
 
 	if found, reject := auth.preproccessAuthRequest(ctx); reject {
@@ -206,58 +209,101 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	authResult = auth.handlePassword(ctx)
 
+	// TODO: We must check, if the user has already enabled TOTP (or WebAuthn)!
+
+	processAuthResult(ctx, authResult, auth)
+}
+
+// processAuthResult handles the authentication result by calling the respective handler functions based on the authResult value
+//
+// ctx: The Gin context.
+// authResult: The result of the authentication.
+// auth: The Authentication object.
+func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) {
 	if authResult == global.AuthResultOK {
-		var (
-			found        bool
-			account      string
-			uniqueUserID string
-			displayName  string
-		)
+		handleAuthResultOk(ctx, authResult, auth)
+	} else {
+		handleAuthResultFail(ctx, auth)
+	}
+}
 
-		if account, found = auth.getAccountOk(); !found {
-			handleErr(ctx, errors2.ErrNoAccount)
+// handleAuthResultOk handles the authentication result by setting session variables and redirecting to the 2FA page.
+// It takes the Gin context, the authentication result, and the Authentication object as inputs.
+// It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `guid`.
+// It retrieves the default session from the Gin context.
+// It checks if the `account` is found and, if not, calls the `handleErr` function with the `ErrNoAccount` error and returns.
+// If the TOTP secret is found, it sets the `CookieHaveTOTP` value in the session as true.
+// If the `uniqueUserID` is found, it sets the `CookieUniqueUserID` value in the session.
+// If the `displayName` is found, it sets the `CookieDisplayName` value in the session.
+// It sets the `CookieAuthResult`, `CookieUsername`, `CookieAccount`, and `CookieUserBackend` values in the session based on the inputs.
+// It saves the session and, if there is an error, calls the `handleErr` function with the error and returns.
+// It redirects the context to the 2FA page and logs the authentication result, GUID, username, and URI path.
+//
+// ctx: The Gin context.
+// authResult: The result of the authentication.
+// auth: The Authentication object.
+func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) {
+	var (
+		found        bool
+		account      string
+		uniqueUserID string
+		displayName  string
+		guid         = ctx.GetString(global.CtxGUIDKey)
+	)
 
-			return
-		}
+	session := sessions.Default(ctx)
 
-		if _, found = auth.getTOTPSecretOk(); found {
-			session.Set(global.CookieHaveTOTP, true)
-		}
-
-		if uniqueUserID, found = auth.GetUniqueUserIDOk(); found {
-			session.Set(global.CookieUniqueUserID, uniqueUserID)
-		}
-
-		if displayName, found = auth.GetDisplayNameOk(); found {
-			session.Set(global.CookieDisplayName, displayName)
-		}
-
-		session.Set(global.CookieAuthResult, uint8(authResult))
-		session.Set(global.CookieUsername, ctx.PostForm("username"))
-		session.Set(global.CookieAccount, account)
-		session.Set(global.CookieUserBackend, uint8(auth.SourcePassDBBackend))
-
-		err = session.Save()
-		if err != nil {
-			handleErr(ctx, err)
-
-			return
-		}
-
-		ctx.Redirect(
-			http.StatusFound,
-			global.TwoFAv1Root+viper.GetString("login_2fa_post_page"),
-		)
-
-		level.Info(logging.DefaultLogger).Log(
-			global.LogKeyGUID, guid,
-			global.LogKeyUsername, ctx.PostForm("username"),
-			global.LogKeyAuthStatus, global.LogKeyAuthAccept,
-			global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page")+"/post",
-		)
+	if account, found = auth.getAccountOk(); !found {
+		handleErr(ctx, errors2.ErrNoAccount)
 
 		return
 	}
+
+	if _, found = auth.getTOTPSecretOk(); found {
+		session.Set(global.CookieHaveTOTP, true)
+	}
+
+	if uniqueUserID, found = auth.GetUniqueUserIDOk(); found {
+		session.Set(global.CookieUniqueUserID, uniqueUserID)
+	}
+
+	if displayName, found = auth.GetDisplayNameOk(); found {
+		session.Set(global.CookieDisplayName, displayName)
+	}
+
+	session.Set(global.CookieAuthResult, uint8(authResult))
+	session.Set(global.CookieUsername, ctx.PostForm("username"))
+	session.Set(global.CookieAccount, account)
+	session.Set(global.CookieUserBackend, uint8(auth.SourcePassDBBackend))
+
+	err := session.Save()
+	if err != nil {
+		handleErr(ctx, err)
+
+		return
+	}
+
+	ctx.Redirect(
+		http.StatusFound,
+		global.TwoFAv1Root+viper.GetString("login_2fa_post_page"),
+	)
+
+	level.Info(logging.DefaultLogger).Log(
+		global.LogKeyGUID, guid,
+		global.LogKeyUsername, ctx.PostForm("username"),
+		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
+		global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page")+"/post",
+	)
+}
+
+// handleAuthResultFail handles the authentication failure result by updating the brute force counter, redirecting
+// the context to the 2FA page with the error message, and logging the authentication rejection information.
+// It takes the Gin context and the Authentication object as inputs.
+//
+// ctx: The Gin context.
+// auth: The Authentication object.
+func handleAuthResultFail(ctx *gin.Context, auth *Authentication) {
+	guid := ctx.GetString(global.CtxGUIDKey)
 
 	auth.ClientIP = ctx.GetString(global.CtxClientIPKey)
 
