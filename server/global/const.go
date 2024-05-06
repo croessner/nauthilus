@@ -621,6 +621,9 @@ const (
 	// CookieRegistration constant could be used during the web authentication registration process
 	CookieRegistration = "webauthn_registration"
 
+	// CookieTOTPSecret constant indicates whether a user does have a TOTP secret
+	CookieTOTPSecret = "totp_secret"
+
 	// SessionName constant is for the name of the session
 	SessionName = "Nauthilus_session"
 )

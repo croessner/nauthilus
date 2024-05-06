@@ -26,13 +26,19 @@
                 <h1 class="center">{{ .Welcome }}</h1>
                 {{ end }}
 
+                {{ if ne .LogoImage "" }}
                 <img src="{{ .LogoImage }}" class="logo" alt="{{ .LogoImageAlt }}"/>
+                {{ end }}
 
+                {{ if ne .ApplicationName "" }}
                 <h2 class="center">{{ .ApplicationName }}</h2>
+                {{ end }}
 
                 <form id="totp-form" action="{{ .PostLoginEndpoint }}/post" method="POST">
                     <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"/>
+                    {{ if ne .LoginChallenge "" }}
                     <input type="hidden" name="ory.hydra.login_challenge" value="{{ .LoginChallenge }}"/>
+                    {{ end }}
 
                     <h3 class="text center">{{ .Code }}</h3>
                     <div id="totp-code">

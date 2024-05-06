@@ -14,6 +14,7 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -88,40 +89,31 @@ func sessionCleaner(ctx *gin.Context) {
 
 // Page '/2fa/v1/register'
 func loginGET2FAHandler(ctx *gin.Context) {
-	var (
-		haveError       bool
-		errorMessage    string
-		languagePassive []Language
-		guid            = ctx.GetString(global.CtxGUIDKey)
-		csrfToken       = ctx.GetString(global.CtxCSRFTokenKey)
-	)
-
-	sessionCleaner(ctx)
-
 	session := sessions.Default(ctx)
-
 	cookieValue := session.Get(global.CookieLang)
-
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
+	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	totpSecret, _, _ := getSessionTOTPSecret(ctx)
 
-	for _, languageTag := range config.DefaultLanguageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-
-		if languageName == languageCurrentName {
-			continue
-		}
-
-		baseName, _ := languageTag.Base()
-
-		languagePassive = append(
-			languagePassive,
-			Language{
-				LanguageLink: global.TwoFAv1Root + viper.GetString("login_2fa_page") + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-				LanguageName: languageName,
-			},
-		)
+	if totpSecret == "" {
+		sessionCleaner(ctx)
+		displayLoginpage(ctx, languageCurrentName, languagePassive)
+	} else {
+		displayTOTPpage(ctx, languageCurrentName, languagePassive)
 	}
+}
+
+// displayLoginpage is a function that displays the login page.
+func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePassive []Language) {
+	var (
+		haveError    bool
+		errorMessage string
+		guid         = ctx.GetString(global.CtxGUIDKey)
+		csrfToken    = ctx.GetString(global.CtxCSRFTokenKey)
+	)
+
+	session := sessions.Default(ctx)
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == global.PasswordFail {
@@ -151,8 +143,6 @@ func loginGET2FAHandler(ctx *gin.Context) {
 		LoginPlaceholder:    getLocalized(ctx, "Please enter your username or email address"),
 		Password:            getLocalized(ctx, "Password"),
 		PasswordPlaceholder: getLocalized(ctx, "Please enter your password"),
-		WantPolicy:          false,
-		WantTos:             false,
 		Submit:              getLocalized(ctx, "Submit"),
 		Or:                  getLocalized(ctx, "or"),
 		Device:              getLocalized(ctx, "Login with WebAuthn"),
@@ -161,7 +151,6 @@ func loginGET2FAHandler(ctx *gin.Context) {
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
 		CSRFToken:           csrfToken,
-		WantRemember:        false,
 		InDevelopment:       tags.IsDevelopment,
 	}
 
@@ -173,13 +162,81 @@ func loginGET2FAHandler(ctx *gin.Context) {
 	)
 }
 
+// displayTOTPpage displays the TOTP authentication page.
+// It takes a Gin context, the current language name, and a slice of passive languages as input.
+// It retrieves the CSRF token, session, and localized messages from the context.
+// It constructs a TwoFactorData struct with the necessary parameters for the TOTP page.
+// Finally, it renders the TOTP page template with the TwoFactorData struct.
+func displayTOTPpage(ctx *gin.Context, languageCurrentName string, languagePassive []Language) {
+	csrfToken := ctx.GetString(global.CtxCSRFTokenKey)
+	session := sessions.Default(ctx)
+
+	twoFactorData := &TwoFactorData{
+		Title: getLocalized(ctx, "Login"),
+		WantWelcome: func() bool {
+			if viper.GetString("login_page_welcome") != "" {
+				return true
+			}
+
+			return false
+		}(),
+		Welcome:             viper.GetString("login_page_welcome"),
+		LogoImage:           viper.GetString("default_logo_image"),
+		LogoImageAlt:        viper.GetString("totp_page_logo_image_alt"),
+		Code:                getLocalized(ctx, "OTP-Code"),
+		Tos:                 getLocalized(ctx, "Terms of service"),
+		Submit:              getLocalized(ctx, "Submit"),
+		PostLoginEndpoint:   global.TwoFAv1Root + viper.GetString("login_2fa_page"),
+		LanguageTag:         session.Get(global.CookieLang).(string),
+		LanguageCurrentName: languageCurrentName,
+		LanguagePassive:     languagePassive,
+		CSRFToken:           csrfToken,
+	}
+
+	ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
+}
+
+// getSessionTOTPSecret retrieves the TOTP secret and code from the session and the POST form, respectively.
+// It takes a Gin context as input, and returns the TOTP secret and code as strings.
+// The function initializes the variables totpSecret, totpCode, and account as empty strings.
+// It retrieves the TOTP secret from the session using sessions.Default(ctx) and session.Get(global.CookieTOTPSecret).
+// The TOTP secret is then type asserted to a string using the assertOk pattern.
+// The function retrieves the TOTP code from the POST form using ctx.PostForm("code").
+// Finally, it returns the variables totpSecret and totpCode as strings.
+func getSessionTOTPSecret(ctx *gin.Context) (string, string, string) {
+	var (
+		totpSecret string
+		totpCode   string
+		account    string
+	)
+
+	session := sessions.Default(ctx)
+
+	if value, assertOk := session.Get(global.CookieTOTPSecret).(string); assertOk {
+		totpSecret = value
+	}
+
+	if value, assertOk := session.Get(global.CookieAccount).(string); assertOk {
+		account = value
+	}
+
+	totpCode = ctx.PostForm("code")
+
+	return totpSecret, totpCode, account
+}
+
 // Page '/2fa/v1/register/post'
 func loginPOST2FAHandler(ctx *gin.Context) {
 	var (
-		err        error
-		authResult = global.AuthResultUnset
-		guid       = ctx.GetString(global.CtxGUIDKey)
+		authCompleteOK bool
+		err            error
+		guid           = ctx.GetString(global.CtxGUIDKey)
 	)
+
+	authResult := processTOTPSecret(ctx)
+	if authResult == global.AuthResultOK {
+		authCompleteOK = true
+	}
 
 	auth := &Authentication{
 		HTTPClientContext: ctx.Copy(),
@@ -189,13 +246,20 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
+	// It might be the second call after 2FA! In this case, there does not exist any username or password.
+	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
+		handleErr(ctx, errors2.ErrInvalidUsername)
+
+		return
+	}
 
 	if err = auth.setStatusCodes(global.ServOryHydra); err != nil {
 		handleErr(ctx, err)
 
 		return
 	}
+
+	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
 	auth.UsernameOrig = auth.Username
 
@@ -207,31 +271,106 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 	}
 
-	authResult = auth.handlePassword(ctx)
+	if authResult == global.AuthResultUnset {
+		authResult = auth.handlePassword(ctx)
+	}
 
-	// TODO: We must check, if the user has already enabled TOTP (or WebAuthn)!
+	processAuthResult(ctx, authResult, auth, authCompleteOK)
+}
 
-	processAuthResult(ctx, authResult, auth)
+// processTOTPSecret retrieves the TOTP secret and code from the session and the POST form, respectively.
+// It takes a Gin context as input, and returns the authentication result as global.AuthResult.
+// The function initializes the authentication result as global.AuthResultUnset.
+// It retrieves the GUID from the Gin context using ctx.GetString(global.CtxGUIDKey).
+// It retrieves the session using sessions.Default(ctx).
+// It calls getSessionTOTPSecret(ctx) to get the TOTP secret, TOTP code, and account.
+// If the TOTP secret, TOTP code, and account are not empty, it calls totpValidation(guid, totpCode, account, totpSecret)
+//
+//	to validate the TOTP code.
+//
+// If the validation fails (i.e., errFail is not nil), it sets the authentication result as global.AuthResultFail.
+// Otherwise, it retrieves the authentication result from the session using session.Get(global.CookieAuthResult).
+// If the authentication result is not nil (i.e., cookieValue is not nil), it sets the authentication result as the value
+//
+//	of cookieValue (type casted to uint8), deletes the authentication result from the session using session.Delete(global.CookieAuthResult),
+//	and saves the session.
+//
+// Finally, it returns the authentication result.
+func processTOTPSecret(ctx *gin.Context) global.AuthResult {
+	authResult := global.AuthResultUnset
+	guid := ctx.GetString(global.CtxGUIDKey)
+	session := sessions.Default(ctx)
+
+	totpSecret, totpCode, account := getSessionTOTPSecret(ctx)
+	if totpSecret != "" && totpCode != "" && account != "" {
+		if errFail := totpValidation(guid, totpCode, account, totpSecret); errFail != nil {
+			authResult = global.AuthResultFail
+		} else {
+			cookieValue := session.Get(global.CookieAuthResult)
+			if cookieValue != nil {
+				authResult = global.AuthResult(cookieValue.(uint8))
+
+				session.Delete(global.CookieAuthResult)
+				session.Save()
+			}
+		}
+	}
+
+	return authResult
 }
 
 // processAuthResult handles the authentication result by calling the respective handler functions based on the authResult value
-//
 // ctx: The Gin context.
 // authResult: The result of the authentication.
 // auth: The Authentication object.
-func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) {
+func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication, authCompleteOK bool) {
 	if authResult == global.AuthResultOK {
-		handleAuthResultOk(ctx, authResult, auth)
+		if !authCompleteOK {
+			if err := handleAuthResultOk(ctx, authResult, auth); err != nil {
+				handleErr(ctx, err)
+
+				return
+			}
+		}
+
+		redirectLogin(ctx, authCompleteOK)
 	} else {
 		handleAuthResultFail(ctx, auth)
 	}
 }
 
+// redirectLogin redirects the context to the 2FA login page with the appropriate target URI.
+// It takes the Gin context and a boolean indicating whether the authentication was completed successfully as inputs.
+// It initializes the `guid` variable with the context's GUID.
+// It sets the `targetURI` to the appropriate URL based on the authentication complete status.
+// It redirects the context to the `targetURI` with the HTTP status of `http.StatusFound`.
+// It logs the redirect information with the `guid`, username, authentication status, and URI path.
+func redirectLogin(ctx *gin.Context, authCompleteOK bool) {
+	guid := ctx.GetString(global.CtxGUIDKey)
+
+	targetURI := global.TwoFAv1Root + viper.GetString("login_2fa_post_page")
+	if !authCompleteOK {
+		targetURI = global.TwoFAv1Root + viper.GetString("login_2fa_page")
+	}
+
+	ctx.Redirect(
+		http.StatusFound,
+		targetURI,
+	)
+
+	level.Info(logging.DefaultLogger).Log(
+		global.LogKeyGUID, guid,
+		global.LogKeyUsername, ctx.PostForm("username"),
+		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
+		global.LogKeyUriPath, targetURI,
+	)
+}
+
 // handleAuthResultOk handles the authentication result by setting session variables and redirecting to the 2FA page.
 // It takes the Gin context, the authentication result, and the Authentication object as inputs.
-// It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `guid`.
+// It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `totpSecret`.
 // It retrieves the default session from the Gin context.
-// It checks if the `account` is found and, if not, calls the `handleErr` function with the `ErrNoAccount` error and returns.
+// It checks if the `account` is found and if not, calls the `handleErr` function with the `ErrNoAccount` error and returns.
 // If the TOTP secret is found, it sets the `CookieHaveTOTP` value in the session as true.
 // If the `uniqueUserID` is found, it sets the `CookieUniqueUserID` value in the session.
 // If the `displayName` is found, it sets the `CookieDisplayName` value in the session.
@@ -242,25 +381,24 @@ func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Aut
 // ctx: The Gin context.
 // authResult: The result of the authentication.
 // auth: The Authentication object.
-func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) {
+func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) error {
 	var (
 		found        bool
 		account      string
 		uniqueUserID string
 		displayName  string
-		guid         = ctx.GetString(global.CtxGUIDKey)
+		totpSecret   string
 	)
 
 	session := sessions.Default(ctx)
 
 	if account, found = auth.getAccountOk(); !found {
-		handleErr(ctx, errors2.ErrNoAccount)
-
-		return
+		return errors2.ErrNoAccount
 	}
 
-	if _, found = auth.getTOTPSecretOk(); found {
+	if totpSecret, found = auth.getTOTPSecretOk(); found {
 		session.Set(global.CookieHaveTOTP, true)
+		session.Set(global.CookieTOTPSecret, totpSecret)
 	}
 
 	if uniqueUserID, found = auth.GetUniqueUserIDOk(); found {
@@ -276,24 +414,11 @@ func handleAuthResultOk(ctx *gin.Context, authResult global.AuthResult, auth *Au
 	session.Set(global.CookieAccount, account)
 	session.Set(global.CookieUserBackend, uint8(auth.SourcePassDBBackend))
 
-	err := session.Save()
-	if err != nil {
-		handleErr(ctx, err)
-
-		return
+	if err := session.Save(); err != nil {
+		return err
 	}
 
-	ctx.Redirect(
-		http.StatusFound,
-		global.TwoFAv1Root+viper.GetString("login_2fa_post_page"),
-	)
-
-	level.Info(logging.DefaultLogger).Log(
-		global.LogKeyGUID, guid,
-		global.LogKeyUsername, ctx.PostForm("username"),
-		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
-		global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page")+"/post",
-	)
+	return nil
 }
 
 // handleAuthResultFail handles the authentication failure result by updating the brute force counter, redirecting
@@ -309,6 +434,8 @@ func handleAuthResultFail(ctx *gin.Context, auth *Authentication) {
 
 	auth.updateBruteForceBucketsCounter()
 
+	sessionCleanupTOTP(ctx)
+
 	ctx.Redirect(
 		http.StatusFound,
 		global.TwoFAv1Root+viper.GetString("login_2fa_page")+"?_error="+global.PasswordFail,
@@ -320,6 +447,21 @@ func handleAuthResultFail(ctx *gin.Context, auth *Authentication) {
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
 		global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page")+"/post",
 	)
+}
+
+// sessionCleanupTOTP removes the TOTP secret and code from the current session.
+func sessionCleanupTOTP(ctx *gin.Context) {
+	session := sessions.Default(ctx)
+
+	session.Delete(global.CookieTOTPSecret)
+	session.Save()
+}
+
+// totpValidation calls the totpValidation method of the ApiConfig struct to validate a TOTP code for a given account.
+func totpValidation(guid string, code string, account string, totpSecret string) error {
+	a := ApiConfig{guid: guid}
+
+	return a.totpValidation(code, account, totpSecret)
 }
 
 // Page '/2fa/v1/register/home'
