@@ -94,7 +94,7 @@ func loginGET2FAHandler(ctx *gin.Context) {
 	cookieValue := session.Get(global.CookieLang)
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(ctx, global.TwoFAv1Root+viper.GetString("login_2fa_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	totpSecret, _, _ := getSessionTOTPSecret(ctx)
 
@@ -501,7 +501,7 @@ func register2FAHomeHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(ctx, global.TwoFAv1Root+viper.GetString("login_2fa_post_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	homeData := &HomePageData{
 		Title: getLocalized(ctx, "Home"),
@@ -594,7 +594,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := createLanguagePassive(ctx, global.TwoFAv1Root+viper.GetString("totp_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == global.PasswordFail {
