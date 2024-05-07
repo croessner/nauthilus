@@ -35,11 +35,17 @@
                 <button type="submit" id="register_totp" name="totp" value="totp" data-endpointtotp="{{ .EndpointTOTP }}" data-havetotp="{{ .HaveTOTP }}">
                     {{ .RegisterTOTP }}
                 </button>
+                {{ if .InDevelopment }}
                 <p class="text center vs-5">{{ .Or }}</p>
                 <div class="vs-15"></div>
+                <!--suppress XmlDuplicatedId -->
                 <button type="submit" id="register_device" name="device" value="device">
                     {{ .RegisterWebAuthn }}
                 </button>
+                {{ else }}
+                <!--suppress XmlDuplicatedId -->
+                <div id="register_device" style="display: none;"></div>
+                {{ end }}
             </article>
         </section>
     </main>

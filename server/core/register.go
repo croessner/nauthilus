@@ -50,6 +50,7 @@ type TOTPPageData struct {
 }
 
 type HomePageData struct {
+	InDevelopment       bool
 	WantWelcome         bool
 	WantPolicy          bool
 	WantTos             bool
@@ -97,7 +98,6 @@ func loginGET2FAHandler(ctx *gin.Context) {
 	languagePassive := createLanguagePassive(ctx, global.TwoFAv1Root+viper.GetString("login_2fa_page"), config.DefaultLanguageTags, languageCurrentName)
 
 	totpSecret, _, _ := getSessionTOTPSecret(ctx)
-
 	if totpSecret == "" {
 		sessionCleaner(ctx)
 		displayLoginpage(ctx, languageCurrentName, languagePassive)
@@ -239,14 +239,20 @@ func getSessionTOTPSecret(ctx *gin.Context) (string, string, string) {
 // Page '/2fa/v1/register/post'
 func loginPOST2FAHandler(ctx *gin.Context) {
 	var (
-		authCompleteOK bool
-		err            error
-		guid           = ctx.GetString(global.CtxGUIDKey)
+		authCompleteWithOK   bool
+		authCompleteWithFail bool
+		err                  error
+		guid                 = ctx.GetString(global.CtxGUIDKey)
 	)
 
 	authResult := processTOTPSecret(ctx)
+
 	if authResult == global.AuthResultOK {
-		authCompleteOK = true
+		authCompleteWithOK = true
+	}
+
+	if authResult == global.AuthResultFail {
+		authCompleteWithFail = true
 	}
 
 	auth := &Authentication{
@@ -284,9 +290,20 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	if authResult == global.AuthResultUnset {
 		authResult = auth.handlePassword(ctx)
+
+		// User does not have a TOTP secret
+		if _, found := auth.getTOTPSecretOk(); !found {
+			if authResult == global.AuthResultOK {
+				authCompleteWithOK = true
+			}
+
+			if authResult == global.AuthResultFail {
+				authCompleteWithFail = true
+			}
+		}
 	}
 
-	processAuthResult(ctx, authResult, auth, authCompleteOK)
+	processAuthResult(ctx, authResult, auth, authCompleteWithOK, authCompleteWithFail)
 }
 
 // processTOTPSecret retrieves the TOTP secret and code from the session and the POST form, respectively.
@@ -331,9 +348,9 @@ func processTOTPSecret(ctx *gin.Context) global.AuthResult {
 // ctx: The Gin context.
 // authResult: The result of the authentication.
 // auth: The Authentication object.
-func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication, authCompleteOK bool) {
+func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication, authCompleteWithOK bool, authCompleteWithFail bool) {
 	if authResult == global.AuthResultOK {
-		if !authCompleteOK {
+		if !authCompleteWithOK {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
 				handleErr(ctx, err)
 
@@ -341,7 +358,21 @@ func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Aut
 			}
 		}
 
-		processTwoFARedirect(ctx, authCompleteOK)
+		processTwoFARedirect(ctx, authCompleteWithOK)
+	} else if authResult == global.AuthResultFail {
+		if !authCompleteWithFail {
+			if err := saveSessionData(ctx, authResult, auth); err != nil {
+				handleErr(ctx, err)
+
+				return
+			}
+
+			processTwoFARedirect(ctx, authCompleteWithFail)
+
+			return
+		}
+
+		handleAuthFailureAndRedirect(ctx, auth)
 	} else {
 		handleAuthFailureAndRedirect(ctx, auth)
 	}
@@ -353,11 +384,11 @@ func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Aut
 // It sets the `targetURI` to the appropriate URL based on the authentication complete status.
 // It redirects the context to the `targetURI` with the HTTP status of `http.StatusFound`.
 // It logs the redirect information with the `guid`, username, authentication status, and URI path.
-func processTwoFARedirect(ctx *gin.Context, authCompleteOK bool) {
+func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 
 	targetURI := global.TwoFAv1Root + viper.GetString("login_2fa_post_page")
-	if !authCompleteOK {
+	if !authComplete {
 		targetURI = global.TwoFAv1Root + viper.GetString("login_2fa_page")
 	}
 
@@ -525,6 +556,7 @@ func register2FAHomeHandler(ctx *gin.Context) {
 		LanguageTag:         session.Get(global.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
+		InDevelopment:       tags.IsDevelopment,
 	}
 
 	ctx.HTML(http.StatusOK, "home.html", homeData)

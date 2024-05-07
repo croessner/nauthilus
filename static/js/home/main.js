@@ -25,7 +25,7 @@ if (have_totp === "true") {
 
 const device = document.getElementById("register_device");
 if (device === null) {
-    throw new Error("Missing element 'device'");
+    throw new Error("Missing element 'register_device'");
 }
 
 const register_totp = (event) => {
