@@ -2,6 +2,11 @@
  * Home page
  */
 
+setTimeout(function() {
+    document.cookie = 'Nauthilus_session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+
+    location.href = "/2fa/v1/register";
+}, 300000);
 
 /**
  * Register TOTP
