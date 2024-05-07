@@ -50,6 +50,7 @@ type TOTPPageData struct {
 }
 
 type HomePageData struct {
+	InDevelopment       bool
 	WantWelcome         bool
 	WantPolicy          bool
 	WantTos             bool
@@ -555,6 +556,7 @@ func register2FAHomeHandler(ctx *gin.Context) {
 		LanguageTag:         session.Get(global.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
+		InDevelopment:       tags.IsDevelopment,
 	}
 
 	ctx.HTML(http.StatusOK, "home.html", homeData)

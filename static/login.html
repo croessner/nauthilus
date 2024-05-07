@@ -58,10 +58,12 @@
                     {{ if .InDevelopment }}
                     <p class="text center vs-5">{{ .Or }}</p>
                     <div class="vs-15"></div>
+                    <!--suppress XmlDuplicatedId -->
                     <button class="device" type="submit" id="device" name="device" value="{{ .Device }}" data-deviceurl="{{ .DeviceLoginEndpoint }}">
                         {{ .Device }}
                     </button>
                     {{ else }}
+                    <!--suppress XmlDuplicatedId -->
                     <div id="device" style="display: none;"></div>
                     {{ end }}
                     {{ if .WantRemember }}
