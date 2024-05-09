@@ -274,8 +274,6 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	request.RawSet(lua.LString(global.LuaRequestRepeating), lua.LBool(aw.luaActionRequest.Repeating))
-
 	aw.luaActionRequest.CommonRequest.SetupRequest(request)
 
 	return request
