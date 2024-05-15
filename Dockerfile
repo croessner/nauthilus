@@ -5,9 +5,9 @@ WORKDIR /build
 COPY . ./
 
 # Set necessarry environment vairables and compile the app
-ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
+ENV CGO_ENABLED=0
 RUN apk add --no-cache build-base
-RUN cd server && go build -mod=vendor -tags="sonic avx register2fa" -ldflags="-s" -o nauthilus .
+RUN cd server && go build -mod=vendor -tags="register2fa" -ldflags="-s" -o nauthilus .
 RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
