@@ -25,7 +25,7 @@ jobs:
 
       - name: Replace values in main.go
         run: |
-          sed -i "s/@@gittag@@-@@gitcommit@@/$(echo ${GITHUB_REF#refs/heads/})-${GITHUB_SHA:0:8}/" server/main.go
+          sed -i "s|@@gittag@@-@@gitcommit@@|$(echo ${GITHUB_REF#refs/heads/})-${GITHUB_SHA:0:8}|" server/main.go
 
       - name: Build project
         run: |
