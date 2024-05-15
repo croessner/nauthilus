@@ -33,6 +33,7 @@ func (l *LDAPSection) GetProtocols() any {
 }
 
 type LDAPConf struct {
+	PoolOnly      bool `mapstructure:"pool_only"`
 	StartTLS      bool
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 	SASLExternal  bool `mapstructure:"sasl_external"`

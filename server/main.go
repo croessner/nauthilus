@@ -358,12 +358,16 @@ func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
 	case global.BackendLDAP:
 		<-backend.LDAPEndChan
-		<-backend.LDAPAuthEndChan
 
 		close(backend.LDAPEndChan)
-		close(backend.LDAPAuthEndChan)
 		close(backend.LDAPRequestChan)
-		close(backend.LDAPAuthRequestChan)
+
+		if !config.LoadableConfig.LDAPHavePoolOnly() {
+			<-backend.LDAPAuthEndChan
+
+			close(backend.LDAPAuthEndChan)
+			close(backend.LDAPAuthRequestChan)
+		}
 	case global.BackendLua:
 		<-backend.LuaMainWorkerEndChan
 
@@ -383,9 +387,11 @@ func handleLDAPBackend(lookup, auth *contextTuple) {
 
 	<-backend.LDAPEndChan
 
-	stopContext(auth)
+	if !config.LoadableConfig.LDAPHavePoolOnly() {
+		stopContext(auth)
 
-	<-backend.LDAPAuthEndChan
+		<-backend.LDAPAuthEndChan
+	}
 }
 
 // handleLuaBackend receives a contextTuple as a parameter.
@@ -457,7 +463,10 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 // The function spawns goroutines for the LDAPMainWorker and LDAPAuthWorker functions from the backend package, passing the associated context to each worker.
 func startLDAPWorkers(store *contextStore) {
 	go backend.LDAPMainWorker(store.ldapLookup.ctx)
-	go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+
+	if !config.LoadableConfig.LDAPHavePoolOnly() {
+		go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+	}
 }
 
 // startLuaWorker starts a goroutine that runs the backend.LuaMainWorker function
@@ -546,7 +555,9 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		switch backendType.Get() {
 		case global.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
-			store.ldapAuth = newContextTuple(ctx)
+			if !config.LoadableConfig.LDAPHavePoolOnly() {
+				store.ldapAuth = newContextTuple(ctx)
+			}
 
 			startLDAPWorkers(store)
 		case global.BackendLua:
@@ -615,15 +626,18 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 // - `ctx`: The context under which the LDAP workers should operate
 func setupLDAPWorker(store *contextStore, ctx context.Context) {
 	lookupPoolSize := config.LoadableConfig.LDAP.Config.LookupPoolSize
-	authPoolSize := config.LoadableConfig.LDAP.Config.AuthPoolSize
 
 	backend.LDAPRequestChan = make(chan *backend.LDAPRequest, lookupPoolSize)
-	backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
 	backend.LDAPEndChan = make(chan backend.Done)
-	backend.LDAPAuthEndChan = make(chan backend.Done)
-
 	store.ldapLookup = newContextTuple(ctx)
-	store.ldapAuth = newContextTuple(ctx)
+
+	if !config.LoadableConfig.LDAPHavePoolOnly() {
+		authPoolSize := config.LoadableConfig.LDAP.Config.AuthPoolSize
+
+		backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
+		backend.LDAPAuthEndChan = make(chan backend.Done)
+		store.ldapAuth = newContextTuple(ctx)
+	}
 
 	startLDAPWorkers(store)
 }

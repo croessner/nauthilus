@@ -910,6 +910,18 @@ func (f *File) validateSecrets() error {
 	return nil
 }
 
+// LDAPHavePoolOnly is a method on the File struct.
+// It checks if the LDAP field and LDAP.Config field are not nil,
+// and returns the value of LDAP.Config.PoolOnly.
+// Otherwise, it returns false.
+func (f *File) LDAPHavePoolOnly() bool {
+	if f.LDAP != nil && f.LDAP.Config != nil {
+		return f.LDAP.Config.PoolOnly
+	}
+
+	return false
+}
+
 // validatePassDBBackends is a method on the File struct.
 // It validates the Backend backends defined in the EnvConfig.
 // If any of the validations fail, it returns the corresponding error.
@@ -932,7 +944,7 @@ func (f *File) validatePassDBBackends() error {
 				return errors.ErrNoLDAPConfig
 			}
 
-			if len(f.LDAP.Search) == 0 {
+			if !f.LDAP.Config.PoolOnly && len(f.LDAP.Search) == 0 {
 				return errors.ErrNoLDAPSearchSection
 			}
 
