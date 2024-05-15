@@ -1446,7 +1446,9 @@ func (a *Authentication) handleBackendTypes() (useCache bool, backendPos map[glo
 				useCache = true
 			}
 		case global.BackendLDAP:
-			passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
+			if !config.LoadableConfig.LDAPHavePoolOnly() {
+				passDBs = a.appendBackend(passDBs, global.BackendLDAP, ldapPassDB)
+			}
 		case global.BackendLua:
 			passDBs = a.appendBackend(passDBs, global.BackendLua, luaPassDB)
 		case global.BackendUnknown:
@@ -1733,10 +1735,12 @@ func (a *Authentication) listUserAccounts() (accountList AccountList) {
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
 		case global.BackendLDAP:
-			accounts = append(accounts, &AccountListMap{
-				global.BackendLDAP,
-				ldapAccountDB,
-			})
+			if !config.LoadableConfig.LDAPHavePoolOnly() {
+				accounts = append(accounts, &AccountListMap{
+					global.BackendLDAP,
+					ldapAccountDB,
+				})
+			}
 		case global.BackendLua:
 			accounts = append(accounts, &AccountListMap{
 				global.BackendLua,
