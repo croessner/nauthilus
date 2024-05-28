@@ -67,7 +67,7 @@ func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *backend.LDAPReply,
 	if masterUserMode {
 		// Check if the master user does have a TOTP secret.
 		if value, okay := ldapReply.Result[totpSecretField]; okay {
-			totpSecretPre = value
+			return value
 		}
 	}
 

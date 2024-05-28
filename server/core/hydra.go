@@ -1157,10 +1157,8 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
-	if found, reject := auth.preproccessAuthRequest(ctx); reject {
+	if _, reject := auth.preproccessAuthRequest(ctx); reject {
 		return nil, errors2.ErrBruteForceAttack
-	} else if found {
-		auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 	}
 
 	return auth, nil
