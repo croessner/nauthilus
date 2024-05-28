@@ -2080,10 +2080,12 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 		setupHTTPBasiAuth(ctx, auth)
 	}
 
-	if !util.ValidateUsername(auth.Username) {
-		auth.Username = ""
+	if ctx.Query("mode") != "list-accounts" {
+		if !util.ValidateUsername(auth.Username) {
+			auth.Username = ""
 
-		ctx.Error(errors2.ErrInvalidUsername)
+			ctx.Error(errors2.ErrInvalidUsername)
+		}
 	}
 
 	auth.withDefaults(ctx)
