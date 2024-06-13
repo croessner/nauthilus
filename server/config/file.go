@@ -42,10 +42,6 @@ type File struct {
 	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains"`
 	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring"`
 	BruteForce              *BruteForceSection       `mapstructure:"brute_force"`
-	CSRFSecret              string                   `mapstructure:"csrf_secret"`
-	CookieStoreAuthKey      string                   `mapstructure:"cookie_store_auth_key"`
-	CookieStoreEncKey       string                   `mapstructure:"cookie_store_encryption_key"`
-	PasswordNonce           string                   `mapstructure:"password_nonce"`
 	Lua                     *LuaSection
 	Oauth2                  *Oauth2Section
 	LDAP                    *LDAPSection
@@ -891,19 +887,21 @@ func (f *File) validateBruteForce() error {
 // - ErrNoPasswordNonce: returned if the PasswordNonce is empty.
 // It returns nil if all secrets are valid.
 func (f *File) validateSecrets() error {
-	if len(f.CSRFSecret) != 32 {
-		return errors.ErrCSRFSecretWrongSize
+	if f.Server.Frontend.Enabled {
+		if len(f.Server.Frontend.CSRFSecret) != 32 {
+			return errors.ErrCSRFSecretWrongSize
+		}
+
+		if len(f.Server.Frontend.CookieStoreAuthKey) != 32 {
+			return errors.ErrCookieStoreAuthSize
+		}
+
+		if !(len(f.Server.Frontend.CookieStoreEncKey) == 16 || len(f.Server.Frontend.CookieStoreEncKey) == 24 || len(f.Server.Frontend.CookieStoreEncKey) == 32) {
+			return errors.ErrCookieStoreEncSize
+		}
 	}
 
-	if len(f.CookieStoreAuthKey) != 32 {
-		return errors.ErrCookieStoreAuthSize
-	}
-
-	if !(len(f.CookieStoreEncKey) == 16 || len(f.CookieStoreEncKey) == 24 || len(f.CookieStoreEncKey) == 32) {
-		return errors.ErrCookieStoreEncSize
-	}
-
-	if f.PasswordNonce == "" {
+	if f.Server.Redis.PasswordNonce == "" {
 		return errors.ErrNoPasswordNonce
 	}
 
