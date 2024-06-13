@@ -19,6 +19,7 @@ type ServerSection struct {
 	Insights            Insights    `mapstructure:"insights"`
 	Redis               Redis       `mapstructure:"redis"`
 	MasterUser          MasterUser  `mapstructure:"master_user"`
+	Frontend            Frontend    `mapstructure:"frontend"`
 }
 
 type TLS struct {
@@ -54,6 +55,7 @@ type DNS struct {
 type Redis struct {
 	DatabaseNmuber int       `mapstructure:"database_number"`
 	Prefix         string    `mapstructure:"prefix"`
+	PasswordNonce  string    `mapstructure:"password_nonce"`
 	PoolSize       int       `mapstructure:"pool_size"`
 	IdlePoolSize   int       `mapstructure:"idle_pool_size"`
 	TLS            TLS       `mapstructure:"tls"`
@@ -91,4 +93,11 @@ type Cluster struct {
 type MasterUser struct {
 	Enabled   bool   `mapstructure:"enabled"`
 	Delimiter string `mapstructure:"delimiter"`
+}
+
+type Frontend struct {
+	Enabled            bool   `mapstructure:"enabled"`
+	CSRFSecret         string `mapstructure:"csrf_secret"`
+	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key"`
+	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key"`
 }

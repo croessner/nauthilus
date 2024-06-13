@@ -429,7 +429,7 @@ func setupWebAuthn() (*webauthn.WebAuthn, error) {
 // The function also sets the session options including the path, secure flag, and SameSite mode.
 // The configured session store is then returned.
 func setupSessionStore() sessions.Store {
-	sessionStore := cookie.NewStore([]byte(config.LoadableConfig.CookieStoreAuthKey), []byte(config.LoadableConfig.CookieStoreEncKey))
+	sessionStore := cookie.NewStore([]byte(config.LoadableConfig.Server.Frontend.CookieStoreAuthKey), []byte(config.LoadableConfig.Server.Frontend.CookieStoreEncKey))
 	sessionStore.Options(sessions.Options{
 		Path:     "/",
 		Secure:   true,
@@ -744,13 +744,16 @@ func HTTPApp(ctx context.Context) {
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
-	store := setupSessionStore()
+	if config.LoadableConfig.Server.Frontend.Enabled {
+		store := setupSessionStore()
 
-	setupHydraEndpoints(router, store)
-	setup2FAEndpoints(router, store)
-	setupWebAuthnEndpoints(router, store)
+		setupHydraEndpoints(router, store)
+		setup2FAEndpoints(router, store)
+		setupWebAuthnEndpoints(router, store)
+		setupNotifyEndpoint(router, store)
+	}
+
 	setupStaticContent(router)
-	setupNotifyEndpoint(router, store)
 	setupBackChannelEndpoints(router)
 
 	// www.SetKeepAlivesEnabled(false)

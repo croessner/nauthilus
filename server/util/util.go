@@ -153,7 +153,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 }
 
 func PreparePassword(password string) string {
-	return fmt.Sprintf("%s\x00%s", config.LoadableConfig.PasswordNonce, password)
+	return fmt.Sprintf("%s\x00%s", config.LoadableConfig.Server.Redis.PasswordNonce, password)
 }
 
 // GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
