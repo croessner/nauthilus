@@ -136,8 +136,10 @@ func NewRedisReplicaClient() redis.UniversalClient {
 		return newRedisFailoverClient(redisCfg, true)
 	}
 
-	if redisCfg.Master.Address != redisCfg.Replica.Address {
-		return newRedisClient(redisCfg, redisCfg.Replica.Address)
+	if redisCfg.Replica.Address != "" {
+		if redisCfg.Master.Address != redisCfg.Replica.Address {
+			return newRedisClient(redisCfg, redisCfg.Replica.Address)
+		}
 	}
 
 	return nil
