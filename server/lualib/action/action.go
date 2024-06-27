@@ -299,7 +299,7 @@ func getTaskName(action *LuaScriptAction) string {
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) {
 	var err error
 
-	stopTimer := stats.PrometheusTimer(global.PromAction, stats.FunctionDuration.WithLabelValues(global.PromAction, getTaskName(aw.actionScripts[index])))
+	stopTimer := stats.PrometheusTimer(global.PromAction, getTaskName(aw.actionScripts[index]))
 
 	defer stopTimer()
 

@@ -20,7 +20,7 @@ import (
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
-	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureLua))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureLua)
 
 	defer stopTimer()
 
@@ -90,7 +90,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *Authentication) featureTLSEncryption() (triggered bool) {
-	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureTLSEncryption))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureTLSEncryption)
 
 	defer stopTimer()
 
@@ -124,7 +124,7 @@ func (a *Authentication) featureTLSEncryption() (triggered bool) {
 // featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *Authentication) featureRelayDomains() (triggered bool) {
-	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureRelayDomains))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRelayDomains)
 
 	defer stopTimer()
 
@@ -170,7 +170,7 @@ func (a *Authentication) featureRBLs(ctx *gin.Context) (triggered bool, err erro
 		totalRBLScore int
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureRBL))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRBL)
 
 	defer stopTimer()
 

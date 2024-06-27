@@ -593,7 +593,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		network          *net.IPNet
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromBruteForce, stats.FunctionDuration.WithLabelValues(global.PromBruteForce, "check_brute_force_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromBruteForce, "brute_force_check_request_total")
 
 	defer stopTimer()
 

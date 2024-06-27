@@ -1134,7 +1134,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			return
 		}
 
-		stopTimer := stats.PrometheusTimer(global.PromAction, stats.FunctionDuration.WithLabelValues(global.PromAction, luaActionName))
+		stopTimer := stats.PrometheusTimer(global.PromAction, luaActionName)
 
 		defer stopTimer()
 
@@ -1260,7 +1260,7 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}
 
 	go func() {
-		stopTimer := stats.PrometheusTimer(global.PromPostAction, stats.FunctionDuration.WithLabelValues(global.PromPostAction, "lua_post_action_request_total"))
+		stopTimer := stats.PrometheusTimer(global.PromPostAction, "lua_post_action_request_total")
 
 		defer stopTimer()
 
@@ -1616,7 +1616,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		return global.AuthResultFail
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromFilter, stats.FunctionDuration.WithLabelValues(global.PromFilter, "lua_filter_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromFilter, "lua_filter_request_total")
 
 	defer stopTimer()
 

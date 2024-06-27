@@ -265,7 +265,7 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromAccount, stats.FunctionDuration.WithLabelValues(global.PromAccount, "ldap_account_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromAccount, "ldap_account_request_total")
 
 	defer stopTimer()
 
@@ -355,7 +355,7 @@ func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, stats.FunctionDuration.WithLabelValues(global.PromStoreTOTP, "ldap_store_totp_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "ldap_store_totp_request_total")
 
 	defer stopTimer()
 

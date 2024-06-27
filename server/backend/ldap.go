@@ -1269,7 +1269,7 @@ func (l *LDAPPool) processLookupModifyAddRequest(index int, ldapRequest *LDAPReq
 // It sets the connection state to global.LDAPStateFree.
 // It unlocks the connection.
 func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
-	stopTimer := stats.PrometheusTimer(global.PromBackend, stats.FunctionDuration.WithLabelValues(global.PromBackend, "ldap_backend_lookup_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
 		stopTimer()
@@ -1380,7 +1380,7 @@ func (l *LDAPPool) processAuthBindRequest(index int, ldapAuthRequest *LDAPAuthRe
 // The function sends the LDAPReply object (which may contain the result, the raw result, or an error) to the LDAPAuthRequest channel.
 // It locks the connection's mutex, sets the connection state to LDAPStateFree, and unlocks the mutex.
 func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
-	stopTimer := stats.PrometheusTimer(global.PromBackend, stats.FunctionDuration.WithLabelValues(global.PromBackend, "ldap_backend_auth_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
 		stopTimer()

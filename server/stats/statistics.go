@@ -228,17 +228,20 @@ func PrintStats() {
 // with the given prometheus observer and returns a function that observes the duration of the timer when called.
 // If there is no match, it returns an empty function.
 // This function is used to measure the time duration using Prometheus, a powerful time-series monitoring service.
-func PrometheusTimer(promLabel string, prometheusObserver prometheus.Observer) func() {
+func PrometheusTimer(serviceName string, taskName string) func() {
 	if !config.LoadableConfig.Server.PrometheusTimer.Enabled {
 		return func() {}
 	}
 
 	for _, label := range config.LoadableConfig.Server.PrometheusTimer.Labels {
-		if label == promLabel {
-			timer := prometheus.NewTimer(prometheusObserver)
-			return func() {
-				timer.ObserveDuration()
-			}
+		if label != serviceName {
+			continue
+		}
+
+		timer := prometheus.NewTimer(FunctionDuration.WithLabelValues(serviceName, taskName))
+
+		return func() {
+			timer.ObserveDuration()
 		}
 	}
 

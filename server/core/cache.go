@@ -15,7 +15,7 @@ func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ppc         *backend.PositivePasswordCache
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromBackend, stats.FunctionDuration.WithLabelValues(global.PromBackend, "cache_backend_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "cache_backend_request_total")
 
 	defer stopTimer()
 

@@ -466,7 +466,7 @@ func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
-		stopTimer := stats.PrometheusTimer(global.PromRequest, stats.FunctionDuration.WithLabelValues(global.PromRequest, "request_total"))
+		stopTimer := stats.PrometheusTimer(global.PromRequest, "request_total")
 		path := ctx.FullPath()
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {

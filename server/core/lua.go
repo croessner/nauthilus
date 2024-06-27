@@ -12,7 +12,7 @@ import (
 func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromBackend, stats.FunctionDuration.WithLabelValues(global.PromBackend, "lua_backend_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "lua_backend_request_total")
 
 	defer stopTimer()
 
@@ -136,7 +136,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromAccount, stats.FunctionDuration.WithLabelValues(global.PromAccount, "lua_account_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromAccount, "lua_account_request_total")
 
 	defer stopTimer()
 
@@ -188,7 +188,7 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, stats.FunctionDuration.WithLabelValues(global.PromStoreTOTP, "lua_store_totp_request_total"))
+	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "lua_store_totp_request_total")
 
 	defer stopTimer()
 

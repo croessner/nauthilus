@@ -377,7 +377,7 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 // It also calls the Lua function with the given parameters and logs the result.
 // The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
-	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, script.Name))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, script.Name)
 
 	defer stopTimer()
 
