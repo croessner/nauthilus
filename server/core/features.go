@@ -16,14 +16,13 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", global.FeatureLua))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureLua))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		featureRequest := feature.Request{
@@ -91,9 +90,9 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *Authentication) featureTLSEncryption() (triggered bool) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", global.FeatureTLSEncryption))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureTLSEncryption))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	if !(a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == "") {
 		if a.XSSL == global.NotAvailable {
@@ -125,9 +124,9 @@ func (a *Authentication) featureTLSEncryption() (triggered bool) {
 // featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *Authentication) featureRelayDomains() (triggered bool) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", global.FeatureRelayDomains))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureRelayDomains))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	if config.LoadableConfig.RelayDomains == nil {
 		return
@@ -171,9 +170,9 @@ func (a *Authentication) featureRBLs(ctx *gin.Context) (triggered bool, err erro
 		totalRBLScore int
 	)
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", global.FeatureRBL))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, global.FeatureRBL))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	if config.LoadableConfig.RBLs == nil {
 		return

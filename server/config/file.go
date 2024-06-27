@@ -908,6 +908,34 @@ func (f *File) validateSecrets() error {
 	return nil
 }
 
+// validatePrometheusLabels is a method on the File struct that validates the Prometheus labels used in the server's Prometheus timer configuration.
+// If the Prometheus timer is enabled, it checks that each label is one of the predefined constants:
+// - global.PromAction
+// - global.PromAccount
+// - global.PromBackend
+// - global.PromBruteForce
+// - global.PromFeature
+// - global.PromFilter
+// - global.PromPostAction
+// - global.PromRequest
+// - global.PromStoreTOTP
+// If any label is unknown, it returns an error with a message indicating the unknown label.
+// If the Prometheus timer is not enabled, it returns nil.
+func (f *File) validatePrometheusLabels() error {
+	if f.Server.PrometheusTimer.Enabled {
+		for _, label := range f.Server.PrometheusTimer.Labels {
+			switch label {
+			case global.PromAction, global.PromAccount, global.PromBackend, global.PromBruteForce, global.PromFeature, global.PromFilter, global.PromPostAction, global.PromRequest, global.PromStoreTOTP:
+				continue
+			}
+
+			return fmt.Errorf("the prometheus_timer::label name '%s' is unknown", label)
+		}
+	}
+
+	return nil
+}
+
 // LDAPHavePoolOnly is a method on the File struct.
 // It checks if the LDAP field and LDAP.Config field are not nil,
 // and returns the value of LDAP.Config.PoolOnly.
@@ -1269,6 +1297,7 @@ func (f *File) validate() (err error) {
 		f.validateRedisSentinels,
 		f.validateRedisDatabaseNumber,
 		f.validateRedisPoolSize,
+		f.validatePrometheusLabels,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,

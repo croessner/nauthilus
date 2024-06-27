@@ -31,7 +31,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ClaimHandler represents a claim handler struct.
@@ -1135,9 +1134,9 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			return
 		}
 
-		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", luaActionName))
+		stopTimer := stats.PrometheusTimer(global.PromAction, stats.FunctionDuration.WithLabelValues(global.PromAction, luaActionName))
 
-		defer timer.ObserveDuration()
+		defer stopTimer()
 
 		finished := make(chan action.Done)
 
@@ -1261,9 +1260,9 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}
 
 	go func() {
-		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
+		stopTimer := stats.PrometheusTimer(global.PromPostAction, stats.FunctionDuration.WithLabelValues(global.PromPostAction, "lua_post_action_request_total"))
 
-		defer timer.ObserveDuration()
+		defer stopTimer()
 
 		finished := make(chan action.Done)
 
@@ -1617,9 +1616,9 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		return global.AuthResultFail
 	}
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Filter", "filterLua"))
+	stopTimer := stats.PrometheusTimer(global.PromFilter, stats.FunctionDuration.WithLabelValues(global.PromFilter, "lua_filter_request_total"))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	BackendServers.mu.RLock()
 

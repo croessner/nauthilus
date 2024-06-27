@@ -5,21 +5,22 @@ import (
 )
 
 type ServerSection struct {
-	Address             string      `mapstructure:"address"`
-	HAproxyV2           bool        `mapstructure:"haproxy_v2"`
-	TLS                 TLS         `mapstructure:"tls"`
-	BasicAuth           BasicAuth   `mapstructure:"basic_auth"`
-	InstanceName        string      `mapstructure:"instance_name"`
-	Log                 Log         `maptostructure:"log"`
-	Backends            []*Backend  `mapstructure:"backends"`
-	Features            []*Feature  `mapstructure:"features"`
-	BruteForceProtocols []*Protocol `mapstructure:"brute_force_protocols"`
-	HydraAdminUrl       string      `mapstructure:"ory_hydra_admin_url"`
-	DNS                 DNS         `mapstructure:"dns"`
-	Insights            Insights    `mapstructure:"insights"`
-	Redis               Redis       `mapstructure:"redis"`
-	MasterUser          MasterUser  `mapstructure:"master_user"`
-	Frontend            Frontend    `mapstructure:"frontend"`
+	Address             string          `mapstructure:"address"`
+	HAproxyV2           bool            `mapstructure:"haproxy_v2"`
+	TLS                 TLS             `mapstructure:"tls"`
+	BasicAuth           BasicAuth       `mapstructure:"basic_auth"`
+	InstanceName        string          `mapstructure:"instance_name"`
+	Log                 Log             `maptostructure:"log"`
+	Backends            []*Backend      `mapstructure:"backends"`
+	Features            []*Feature      `mapstructure:"features"`
+	BruteForceProtocols []*Protocol     `mapstructure:"brute_force_protocols"`
+	HydraAdminUrl       string          `mapstructure:"ory_hydra_admin_url"`
+	DNS                 DNS             `mapstructure:"dns"`
+	Insights            Insights        `mapstructure:"insights"`
+	Redis               Redis           `mapstructure:"redis"`
+	MasterUser          MasterUser      `mapstructure:"master_user"`
+	Frontend            Frontend        `mapstructure:"frontend"`
+	PrometheusTimer     PrometheusTimer `mapstructure:"prometheus_timer"`
 }
 
 type TLS struct {
@@ -100,4 +101,9 @@ type Frontend struct {
 	CSRFSecret         string `mapstructure:"csrf_secret"`
 	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key"`
 	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key"`
+}
+
+type PrometheusTimer struct {
+	Enabled bool     `mapstructure:"enabled"`
+	Labels  []string `mapstructure:"labels"`
 }

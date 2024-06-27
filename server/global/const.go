@@ -1216,3 +1216,32 @@ const (
 	// MonCache represents the flag for caching in monitoring.
 	MonCache
 )
+
+const (
+	// PromAccount represents the label used for Prometheus metrics related to user accounts.
+	PromAccount = "account"
+
+	// PromAction is a string constant representing the action Prometheus label value.
+	PromAction = "action"
+
+	// PromBackend is a constant string representing the Prometheus backend label.
+	PromBackend = "backend"
+
+	// PromBruteForce is a constant representing the "brute_force" metric in a Prometheus monitoring system.
+	PromBruteForce = "brute_force"
+
+	// PromFeature is a constant representing the feature metric used in Prometheus monitoring.
+	PromFeature = "feature"
+
+	// PromFilter is a constant string representing the label used for Prometheus metrics related to filtering.
+	PromFilter = "filter"
+
+	// PromRequest is a constant string that represents the label for Prometheus metrics related to HTTP requests.
+	PromRequest = "request"
+
+	// PromStoreTOTP is a constant representing the label used for storing TOTP secrets in the Prometheus metrics.
+	PromStoreTOTP = "store_totp"
+
+	// PromPostAction represents the constant value "post_action".
+	PromPostAction = "post_action"
+)

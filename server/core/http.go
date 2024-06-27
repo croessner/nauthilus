@@ -464,10 +464,14 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 // This middleware function should be used in the setup of routing to collect metrics for each HTTP request.
 func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		var timer *prometheus.Timer
+
+		stopTimer := stats.PrometheusTimer(global.PromRequest, stats.FunctionDuration.WithLabelValues(global.PromRequest, "request_total"))
 		path := ctx.FullPath()
 
-		timer := prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
-		timer2 := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Request", "prometheusMiddleware"))
+		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
+			timer = prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
+		}
 
 		ctx.Next()
 
@@ -490,8 +494,11 @@ func prometheusMiddleware() gin.HandlerFunc {
 			stats.RedisStaleConns.With(prometheus.Labels{"type": handleType}).Set(float64(redisStats.StaleConns))
 		}
 
-		timer.ObserveDuration()
-		timer2.ObserveDuration()
+		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
+			timer.ObserveDuration()
+		}
+
+		stopTimer()
 	}
 }
 

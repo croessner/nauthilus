@@ -16,7 +16,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -378,9 +377,9 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 // It also calls the Lua function with the given parameters and logs the result.
 // The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Feature", script.Name))
+	stopTimer := stats.PrometheusTimer(global.PromFeature, stats.FunctionDuration.WithLabelValues(global.PromFeature, script.Name))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(global.LogKeyLuaScripttimeout)*time.Second)
 

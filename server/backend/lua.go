@@ -10,11 +10,9 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -231,10 +229,6 @@ func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCo
 //
 //	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
 func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "executeLua"))
-
-	defer timer.ObserveDuration()
-
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err, luaRequest, logs)
 	}

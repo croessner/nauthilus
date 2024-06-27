@@ -6,7 +6,6 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // cachePassDB implements the redis password database backend.
@@ -16,9 +15,9 @@ func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 		ppc         *backend.PositivePasswordCache
 	)
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "cachePassDB"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, stats.FunctionDuration.WithLabelValues(global.PromBackend, "cache_backend_request_total"))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	passDBResult = &PassDBResult{}
 
