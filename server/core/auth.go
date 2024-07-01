@@ -1114,7 +1114,7 @@ func (a *Authentication) setStatusCodes(service string) error {
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON:
+	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON, global.ServCallback:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -2077,6 +2077,10 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 		setupBodyBasedAuth(ctx, auth)
 	case global.ServBasicAuth:
 		setupHTTPBasiAuth(ctx, auth)
+	case global.ServCallback:
+		auth.withDefaults(ctx)
+
+		return
 	}
 
 	if ctx.Query("mode") != "list-accounts" {
@@ -2670,6 +2674,10 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
+	if a.Service == global.ServCallback {
+		return
+	}
+
 	if found = a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 

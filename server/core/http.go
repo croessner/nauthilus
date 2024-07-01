@@ -76,6 +76,8 @@ func httpQueryHandler(ctx *gin.Context) {
 				auth.generic(ctx)
 			case global.ServSaslauthd:
 				auth.saslAuthd(ctx)
+			case global.ServCallback:
+				auth.callback(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}

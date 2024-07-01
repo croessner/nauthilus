@@ -476,6 +476,9 @@ const (
 	// ServDovecot is a constant for the "dovecot" service.
 	ServDovecot = "dovecot"
 
+	// ServCallback is a generic callback to call Lua
+	ServCallback = "callback"
+
 	// ServBasicAuth is a constant for the "basicauth" service.
 	ServBasicAuth = "basicauth"
 

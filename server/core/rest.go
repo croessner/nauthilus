@@ -150,6 +150,10 @@ func (a *Authentication) saslAuthd(ctx *gin.Context) {
 	}
 }
 
+func (a *Authentication) callback(ctx *gin.Context) {
+	a.authOK(ctx) // TODO: Call Lua callback script
+}
+
 // healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
 func healthCheck(ctx *gin.Context) {
 	level.Info(logging.DefaultLogger).Log(global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey), global.LogKeyMsg, "Health check")
