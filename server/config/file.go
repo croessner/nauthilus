@@ -438,6 +438,19 @@ func (f *File) GetLuaScriptPath() string {
 	return ""
 }
 
+func (f *File) GetLuaCallbackScriptPath() string {
+	getConfig := f.GetConfig(global.BackendLua)
+	if getConfig == nil {
+		return ""
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.CallbackScriptPath
+	}
+
+	return ""
+}
+
 // GetLuaPackagePath is a method on the File struct.
 // It retrieves the Lua package path based on the configuration.
 // If the Lua backend configuration is not found, it returns the global Lua package path.
@@ -513,6 +526,14 @@ func (f *File) HaveLuaFeatures() bool {
 func (f *File) HaveLuaActions() bool {
 	if f.HaveLua() {
 		return len(f.Lua.Actions) > 0
+	}
+
+	return false
+}
+
+func (f *File) HaveLuaCallback() bool {
+	if f.HaveLua() {
+		return f.Lua.Config.CallbackScriptPath != ""
 	}
 
 	return false

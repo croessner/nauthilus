@@ -946,6 +946,9 @@ const (
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
 
+	// LuaFnRunCallback represents the constant string "nauthilus_run_callback".
+	LuaFnRunCallback = "nauthilus_run_callback"
+
 	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
 	LuaFnGetBackendServers = "get_backend_servers"
 
@@ -957,6 +960,9 @@ const (
 
 	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
 	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
+
+	// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
+	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
 	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
 	LuaFnRedisGet = "redis_get_str"
