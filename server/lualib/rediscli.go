@@ -28,6 +28,8 @@ func convertLuaValue(lValue lua.LValue) (any, error) {
 		return float64(lua.LVAsNumber(lValue)), nil
 	case lua.LTBool:
 		return lua.LVAsBool(lValue), nil
+	case lua.LTNil:
+		return nil, nil
 	default:
 		err := fmt.Errorf("unable to convert Lua value of type %s", lValue.Type())
 
@@ -72,6 +74,8 @@ func convertStringCmd(value *redis.StringCmd, valType string, L *lua.LState) err
 		} else {
 			return err
 		}
+	case global.TypeNil:
+		L.Push(lua.LNil)
 	default:
 		return fmt.Errorf("unable to convert string command of type %s", valType)
 	}

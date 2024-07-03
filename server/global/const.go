@@ -1077,6 +1077,9 @@ const (
 
 	// TypeBoolean represents a boolean type
 	TypeBoolean = "bool"
+
+	// TypeNil represents the nil value type
+	TypeNil = "nil"
 )
 
 const (
