@@ -218,11 +218,7 @@ func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
-	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
-	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
-	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
-	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
-	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
+	lualib.SetUPRedisFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(ctx)))

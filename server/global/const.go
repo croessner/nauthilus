@@ -979,16 +979,22 @@ const (
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
 
+	// LuaFnRedisHGet represents the function name for "redis_hget" in Lua.
 	LuaFnRedisHGet = "redis_hget"
 
+	// LuaFnRedisHSet represents the function name for "redis_hset" in Lua
 	LuaFnRedisHSet = "redis_hset"
 
+	// LuaFnRedisHDel represents the function name for "redis_hdel" in Lua
 	LuaFnRedisHDel = "redis_hdel"
 
+	// LuaFnRedisHLen represents the function name for "redis_hlen" in Lua.
 	LuaFnRedisHLen = "redis_hlen"
 
+	// LuaFnRedisHGetAll represents the function name for "redis_hgetall" in Lua
 	LuaFnRedisHGetAll = "redis_hgetall"
 
+	// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
 	LuaFNRedisHIncrBy = "redis_hincrby"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.

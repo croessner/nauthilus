@@ -235,13 +235,9 @@ func getHTTPRequestBody(httpRequest *http.Request) lua.LGFunction {
 func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals := L.NewTable()
 
-	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
-	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
-	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
-	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
-	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
+	lualib.SetUPRedisFunctions(globals, L)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
