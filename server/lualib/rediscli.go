@@ -2,6 +2,7 @@ package lualib
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -38,10 +39,15 @@ func RedisGet(L *lua.LState) int {
 // If an error occurs, it returns nil and the error message as a Lua string.
 // The function expects two arguments: the key and the value to set.
 func RedisSet(L *lua.LState) int {
+	expiration := time.Duration(0)
 	key := L.CheckString(1)
 	value := L.CheckString(2)
 
-	err := rediscli.WriteHandle.Set(ctx, key, value, 0).Err()
+	if L.GetTop() == 3 {
+		expiration, _ = time.ParseDuration(strconv.Itoa(L.CheckInt(3)))
+	}
+
+	err := rediscli.WriteHandle.Set(ctx, key, value, expiration*time.Second).Err()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
