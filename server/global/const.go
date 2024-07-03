@@ -965,10 +965,10 @@ const (
 	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
 	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
-	LuaFnRedisGet = "redis_get_str"
+	LuaFnRedisGet = "redis_get"
 
 	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
-	LuaFnRedisSet = "redis_set_str"
+	LuaFnRedisSet = "redis_set"
 
 	// LuaFnRedisIncr represents a constant string identifier for the Lua function redis_incr.
 	LuaFnRedisIncr = "redis_incr"
@@ -978,6 +978,18 @@ const (
 
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
+
+	LuaFnRedisHGet = "redis_hget"
+
+	LuaFnRedisHSet = "redis_hset"
+
+	LuaFnRedisHDel = "redis_hdel"
+
+	LuaFnRedisHLen = "redis_hlen"
+
+	LuaFnRedisHGetAll = "redis_hgetall"
+
+	LuaFNRedisHIncrBy = "redis_hincrby"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
@@ -1043,9 +1055,22 @@ const (
 )
 
 const (
+	//LuaLiteralString is a Lua "string" type
 	LuaLiteralString = "string"
 
+	// LuaLiteralTable is a Lua "table" type
 	LuaLiteralTable = "table"
+)
+
+const (
+	// TypeString represents a string type
+	TypeString = "string"
+
+	// TypeNumber represents a number type (float64)
+	TypeNumber = "number"
+
+	// TypeBoolean represents a boolean type
+	TypeBoolean = "bool"
 )
 
 const (
