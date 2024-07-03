@@ -436,6 +436,42 @@ func RedisHIncrBy(L *lua.LState) int {
 	return 1
 }
 
+// RedisHExists is a function which checks if the given field exists in the Redis hash stored at key.
+// It accepts two flags, 'key' and 'field' to define the location of the data.
+// This function interacts with the Redis instance through the ReadHandle.
+// If an error occurs during the operation, the Lua state is pushed with 'nil' and the error message.
+// If the operation is successful, the Lua state is pushed with either LTrue or LFalse, indicating the existence of the given field.
+//
+// Parameters:
+//
+//	L *lua.LState: The lua state
+//
+// Returns:
+//
+//	int: The status of the operation. If an error occurs, 2 is returned, otherwise 1.
+func RedisHExists(L *lua.LState) int {
+	key := L.CheckString(1)
+	field := L.CheckString(2)
+
+	exists, err := rediscli.ReadHandle.HExists(ctx, key, field).Result()
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+
+		return 2
+	} else {
+		stats.RedisReadCounter.Inc()
+	}
+
+	if exists {
+		L.Push(lua.LTrue)
+	} else {
+		L.Push(lua.LFalse)
+	}
+
+	return 1
+}
+
 // SetUPRedisFunctions is a function that associates a set of Redis-related functions to a Lua table.
 // Each function is linked to a string that corresponds to its name in the global Lua functions namespace.
 // The provided Lua state `L` and the Lua table `table` are used to facilitate this setting up process.
@@ -463,4 +499,5 @@ func SetUPRedisFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnRedisHLen, L.NewFunction(RedisHLen))
 	table.RawSetString(global.LuaFnRedisHGetAll, L.NewFunction(RedisHGetAll))
 	table.RawSetString(global.LuaFNRedisHIncrBy, L.NewFunction(RedisHIncrBy))
+	table.RawSetString(global.LuaFnRedisHExists, L.NewFunction(RedisHExists))
 }

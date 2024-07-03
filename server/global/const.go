@@ -997,6 +997,9 @@ const (
 	// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
 	LuaFNRedisHIncrBy = "redis_hincrby"
 
+	// LuaFnRedisHExists represents the Lua function name for checking if a field exists in a Redis hash.
+	LuaFnRedisHExists = "redis_hexists"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
