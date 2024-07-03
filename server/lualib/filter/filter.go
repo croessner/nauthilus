@@ -340,11 +340,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnApplyBackendResult, L.NewFunction(applyBackendResult(backendResult)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
-	globals.RawSetString(global.LuaFnRedisGet, L.NewFunction(lualib.RedisGet))
-	globals.RawSetString(global.LuaFnRedisSet, L.NewFunction(lualib.RedisSet))
-	globals.RawSetString(global.LuaFnRedisIncr, L.NewFunction(lualib.RedisIncr))
-	globals.RawSetString(global.LuaFnRedisDel, L.NewFunction(lualib.RedisDel))
-	globals.RawSetString(global.LuaFnRedisExpire, L.NewFunction(lualib.RedisExpire))
+	lualib.SetUPRedisFunctions(globals, L)
 
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))

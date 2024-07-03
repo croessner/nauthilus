@@ -965,11 +965,12 @@ const (
 	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
 	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
-	LuaFnRedisGet = "redis_get_str"
+	LuaFnRedisGet = "redis_get"
 
 	// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
-	LuaFnRedisSet = "redis_set_str"
+	LuaFnRedisSet = "redis_set"
 
+	// LuaFnRedisIncr represents a constant string identifier for the Lua function redis_incr.
 	LuaFnRedisIncr = "redis_incr"
 
 	// LuaFnRedisDel represents the function name for "redis_det" in Lua
@@ -977,6 +978,30 @@ const (
 
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
+
+	// LuaFnRedisHGet represents the function name for "redis_hget" in Lua.
+	LuaFnRedisHGet = "redis_hget"
+
+	// LuaFnRedisHSet represents the function name for "redis_hset" in Lua
+	LuaFnRedisHSet = "redis_hset"
+
+	// LuaFnRedisHDel represents the function name for "redis_hdel" in Lua
+	LuaFnRedisHDel = "redis_hdel"
+
+	// LuaFnRedisHLen represents the function name for "redis_hlen" in Lua.
+	LuaFnRedisHLen = "redis_hlen"
+
+	// LuaFnRedisHGetAll represents the function name for "redis_hgetall" in Lua
+	LuaFnRedisHGetAll = "redis_hgetall"
+
+	// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
+	LuaFNRedisHIncrBy = "redis_hincrby"
+
+	// LuaFNRedisHIncrByFloat represents the function name for "redis_hincrbyfloat" in Lua.
+	LuaFNRedisHIncrByFloat = "redis_hincrbyfloat"
+
+	// LuaFnRedisHExists represents the Lua function name for checking if a field exists in a Redis hash.
+	LuaFnRedisHExists = "redis_hexists"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
@@ -1042,9 +1067,25 @@ const (
 )
 
 const (
+	//LuaLiteralString is a Lua "string" type
 	LuaLiteralString = "string"
 
+	// LuaLiteralTable is a Lua "table" type
 	LuaLiteralTable = "table"
+)
+
+const (
+	// TypeString represents a string type
+	TypeString = "string"
+
+	// TypeNumber represents a number type (float64)
+	TypeNumber = "number"
+
+	// TypeBoolean represents a boolean type
+	TypeBoolean = "bool"
+
+	// TypeNil represents the nil value type
+	TypeNil = "nil"
 )
 
 const (
