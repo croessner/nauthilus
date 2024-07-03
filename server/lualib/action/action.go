@@ -15,7 +15,6 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 	"github.com/yuin/gopher-lua"
 )
@@ -300,9 +299,9 @@ func getTaskName(action *LuaScriptAction) string {
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) {
 	var err error
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", getTaskName(aw.actionScripts[index])))
+	stopTimer := stats.PrometheusTimer(global.PromAction, getTaskName(aw.actionScripts[index]))
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	luaCtx, luaCancel := context.WithTimeout(*(aw.ctx), viper.GetDuration("lua_script_timeout")*time.Second)
 	L.SetContext(luaCtx)

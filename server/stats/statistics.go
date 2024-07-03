@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/util"
@@ -217,4 +218,32 @@ func PrintStats() {
 		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
 		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
 	)
+}
+
+// PrometheusTimer is a function that takes a prometheus label (promLabel) and a prometheus observer (prometheusObserver) as arguments.
+// The function first checks if the Prometheus Timer is enabled in the server configuration (config.LoadableConfig.Server.PrometheusTimer.Enabled).
+// If the Prometheus Timer is not enabled, it returns an empty function.
+// If enabled, it iterates over the labels of the Prometheus Timer specified in the server configuration (config.LoadableConfig.Server.PrometheusTimer.Labels).
+// For each label, it checks if it matches with the provided promLabel. If there is a match, it creates a new timer (timer)
+// with the given prometheus observer and returns a function that observes the duration of the timer when called.
+// If there is no match, it returns an empty function.
+// This function is used to measure the time duration using Prometheus, a powerful time-series monitoring service.
+func PrometheusTimer(serviceName string, taskName string) func() {
+	if !config.LoadableConfig.Server.PrometheusTimer.Enabled {
+		return func() {}
+	}
+
+	for _, label := range config.LoadableConfig.Server.PrometheusTimer.Labels {
+		if label != serviceName {
+			continue
+		}
+
+		timer := prometheus.NewTimer(FunctionDuration.WithLabelValues(serviceName, taskName))
+
+		return func() {
+			timer.ObserveDuration()
+		}
+	}
+
+	return func() {}
 }

@@ -438,6 +438,19 @@ func (f *File) GetLuaScriptPath() string {
 	return ""
 }
 
+func (f *File) GetLuaCallbackScriptPath() string {
+	getConfig := f.GetConfig(global.BackendLua)
+	if getConfig == nil {
+		return ""
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.CallbackScriptPath
+	}
+
+	return ""
+}
+
 // GetLuaPackagePath is a method on the File struct.
 // It retrieves the Lua package path based on the configuration.
 // If the Lua backend configuration is not found, it returns the global Lua package path.
@@ -513,6 +526,14 @@ func (f *File) HaveLuaFeatures() bool {
 func (f *File) HaveLuaActions() bool {
 	if f.HaveLua() {
 		return len(f.Lua.Actions) > 0
+	}
+
+	return false
+}
+
+func (f *File) HaveLuaCallback() bool {
+	if f.HaveLua() {
+		return f.Lua.Config.CallbackScriptPath != ""
 	}
 
 	return false
@@ -908,6 +929,34 @@ func (f *File) validateSecrets() error {
 	return nil
 }
 
+// validatePrometheusLabels is a method on the File struct that validates the Prometheus labels used in the server's Prometheus timer configuration.
+// If the Prometheus timer is enabled, it checks that each label is one of the predefined constants:
+// - global.PromAction
+// - global.PromAccount
+// - global.PromBackend
+// - global.PromBruteForce
+// - global.PromFeature
+// - global.PromFilter
+// - global.PromPostAction
+// - global.PromRequest
+// - global.PromStoreTOTP
+// If any label is unknown, it returns an error with a message indicating the unknown label.
+// If the Prometheus timer is not enabled, it returns nil.
+func (f *File) validatePrometheusLabels() error {
+	if f.Server.PrometheusTimer.Enabled {
+		for _, label := range f.Server.PrometheusTimer.Labels {
+			switch label {
+			case global.PromAction, global.PromAccount, global.PromBackend, global.PromBruteForce, global.PromFeature, global.PromFilter, global.PromPostAction, global.PromRequest, global.PromStoreTOTP:
+				continue
+			}
+
+			return fmt.Errorf("the prometheus_timer::label name '%s' is unknown", label)
+		}
+	}
+
+	return nil
+}
+
 // LDAPHavePoolOnly is a method on the File struct.
 // It checks if the LDAP field and LDAP.Config field are not nil,
 // and returns the value of LDAP.Config.PoolOnly.
@@ -1269,6 +1318,7 @@ func (f *File) validate() (err error) {
 		f.validateRedisSentinels,
 		f.validateRedisDatabaseNumber,
 		f.validateRedisPoolSize,
+		f.validatePrometheusLabels,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,

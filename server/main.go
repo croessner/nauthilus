@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/logging"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/lualib/callback"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -171,16 +172,20 @@ func setTimeZone() {
 	}
 }
 
-// setupFeaturesAndFilters prepares the feature and filter for compilation and performs error checking.
-// It sequentially runs the PreCompileFeatures and PreCompileFilters methods.
-// If those methods return an error, the setupFeaturesAndFilters method will propagated that error up the stack.
+// setupLuaScripts prepares features, filters and the callback for compilation and performs error checking.
+// It sequentially runs the PreCompileFeatures, PreCompileFilters and PreCompileCallback methods.
+// If those methods return an error, the setupLuaScripts method will propagate that error up the stack.
 // If the pre-compilation is successful, it will return nil.
-func setupFeaturesAndFilters() error {
+func setupLuaScripts() error {
 	if err := PreCompileFeatures(); err != nil {
 		return err
 	}
 
 	if err := PreCompileFilters(); err != nil {
+		return err
+	}
+
+	if err := PreCompileCallback(); err != nil {
 		return err
 	}
 
@@ -208,11 +213,23 @@ func PreCompileFeatures() error {
 // the function will not do anything and will return nil. If there is an error during
 // the compilation of any Lua filter, the function will return that error.
 func PreCompileFilters() error {
-	if config.LoadableConfig.Lua == nil {
+	if !config.LoadableConfig.HaveLuaFilters() {
 		return nil
 	}
 
 	if err := filter.PreCompileLuaFilters(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func PreCompileCallback() error {
+	if !config.LoadableConfig.HaveLuaCallback() {
+		return nil
+	}
+
+	if err := callback.PreCompileLuaCallback(); err != nil {
 		return err
 	}
 
@@ -542,9 +559,9 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		postEnvironmentDebug()
 	}
 
-	if err := setupFeaturesAndFilters(); err != nil {
+	if err := setupLuaScripts(); err != nil {
 		level.Error(logging.DefaultErrLogger).Log(
-			global.LogKeyMsg, "Unable to setup the features",
+			global.LogKeyMsg, "Unable to setup Lua scripts",
 			global.LogKeyError, err,
 		)
 	}
@@ -1022,8 +1039,8 @@ func main() {
 
 	postEnvironmentDebug()
 
-	if err := setupFeaturesAndFilters(); err != nil {
-		logStdLib.Fatalln("Unable to setup the features. Error:", err)
+	if err := setupLuaScripts(); err != nil {
+		logStdLib.Fatalln("Unable to setup Lua scripts. Error:", err)
 	}
 
 	enableBlockProfile()

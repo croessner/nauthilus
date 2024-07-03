@@ -31,7 +31,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ClaimHandler represents a claim handler struct.
@@ -1115,7 +1114,7 @@ func (a *Authentication) setStatusCodes(service string) error {
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON:
+	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON, global.ServCallback:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -1135,9 +1134,9 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 			return
 		}
 
-		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Action", luaActionName))
+		stopTimer := stats.PrometheusTimer(global.PromAction, luaActionName)
 
-		defer timer.ObserveDuration()
+		defer stopTimer()
 
 		finished := make(chan action.Done)
 
@@ -1261,9 +1260,9 @@ func (a *Authentication) postLuaAction(passDBResult *PassDBResult) {
 	}
 
 	go func() {
-		timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("PostAction", "postLuaAction"))
+		stopTimer := stats.PrometheusTimer(global.PromPostAction, "lua_post_action_request_total")
 
-		defer timer.ObserveDuration()
+		defer stopTimer()
 
 		finished := make(chan action.Done)
 
@@ -1617,9 +1616,9 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		return global.AuthResultFail
 	}
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Filter", "filterLua"))
+	stopTimer := stats.PrometheusTimer(global.PromFilter, "lua_filter_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	BackendServers.mu.RLock()
 
@@ -2078,6 +2077,10 @@ func setupAuth(ctx *gin.Context, auth *Authentication) {
 		setupBodyBasedAuth(ctx, auth)
 	case global.ServBasicAuth:
 		setupHTTPBasiAuth(ctx, auth)
+	case global.ServCallback:
+		auth.withDefaults(ctx)
+
+		return
 	}
 
 	if ctx.Query("mode") != "list-accounts" {
@@ -2671,6 +2674,10 @@ func (a *Authentication) getFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *Authentication) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
+	if a.Service == global.ServCallback {
+		return
+	}
+
 	if found = a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 

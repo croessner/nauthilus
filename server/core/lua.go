@@ -6,16 +6,15 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // luaPassDB implements the Lua password database backend.
 func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Authentication", "luaPassDB"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "lua_backend_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	passDBResult = &PassDBResult{}
 
@@ -137,9 +136,9 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Account", "luaAccountDB"))
+	stopTimer := stats.PrometheusTimer(global.PromAccount, "lua_account_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
@@ -189,9 +188,9 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("StoreTOTP", "luaAddTOTPSecret"))
+	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "lua_store_totp_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 

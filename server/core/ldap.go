@@ -15,7 +15,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // handleMasterUserMode handles the master user mode functionality for authentication.
@@ -266,9 +265,9 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Account", "ldapAccountDB"))
+	stopTimer := stats.PrometheusTimer(global.PromAccount, "ldap_account_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
@@ -356,9 +355,9 @@ func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
 		ldapError   *ldap.Error
 	)
 
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("StoreTOTP", "ldapAddTOTPSecret"))
+	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "ldap_store_totp_request_total")
 
-	defer timer.ObserveDuration()
+	defer stopTimer()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 

@@ -22,7 +22,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/ksuid"
 	"github.com/yuin/gopher-lua"
 )
@@ -58,7 +57,7 @@ type LDAPConnection struct {
 	// essential when multiple goroutines need to access or modify the same connection concurrently.
 	Mu sync.Mutex
 
-	// Conn is the active LDAP connection. It is a pointer to an ldap.Conn object.
+	// Conn is the active LDAP connection. It is a pointer to a ldap.Conn object.
 	Conn *ldap.Conn
 }
 
@@ -1135,7 +1134,7 @@ func (l *LDAPConnection) search(ldapRequest *LDAPRequest) (result DatabaseResult
 //
 //	err: Error. If an error occurs during the search operation or modification, it will return an error, otherwise this function will return nil.
 //
-// Note: This operation is destructive. It modifies the LDAP directory. Therefore, it should be used judiciously and you should make sure that ldapRequest contains correct values.
+// Note: This operation is destructive. It modifies the LDAP directory. Therefore, it should be used judiciously, and you should make sure that ldapRequest contains correct values.
 func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 	var (
 		assertOk           bool
@@ -1270,10 +1269,10 @@ func (l *LDAPPool) processLookupModifyAddRequest(index int, ldapRequest *LDAPReq
 // It sets the connection state to global.LDAPStateFree.
 // It unlocks the connection.
 func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPMainWorker"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
-		timer.ObserveDuration()
+		stopTimer()
 		ldapWaitGroup.Done()
 	}()
 
@@ -1381,10 +1380,10 @@ func (l *LDAPPool) processAuthBindRequest(index int, ldapAuthRequest *LDAPAuthRe
 // The function sends the LDAPReply object (which may contain the result, the raw result, or an error) to the LDAPAuthRequest channel.
 // It locks the connection's mutex, sets the connection state to LDAPStateFree, and unlocks the mutex.
 func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
-	timer := prometheus.NewTimer(stats.FunctionDuration.WithLabelValues("Backend", "LDAPAuthWorker"))
+	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
-		timer.ObserveDuration()
+		stopTimer()
 		ldapWaitGroup.Done()
 	}()
 

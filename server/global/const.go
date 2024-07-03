@@ -476,6 +476,9 @@ const (
 	// ServDovecot is a constant for the "dovecot" service.
 	ServDovecot = "dovecot"
 
+	// ServCallback is a generic callback to call Lua
+	ServCallback = "callback"
+
 	// ServBasicAuth is a constant for the "basicauth" service.
 	ServBasicAuth = "basicauth"
 
@@ -943,6 +946,9 @@ const (
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
 
+	// LuaFnRunCallback represents the constant string "nauthilus_run_callback".
+	LuaFnRunCallback = "nauthilus_run_callback"
+
 	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
 	LuaFnGetBackendServers = "get_backend_servers"
 
@@ -954,6 +960,9 @@ const (
 
 	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
 	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
+
+	// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
+	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
 	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
 	LuaFnRedisGet = "redis_get_str"
@@ -1215,4 +1224,33 @@ const (
 
 	// MonCache represents the flag for caching in monitoring.
 	MonCache
+)
+
+const (
+	// PromAccount represents the label used for Prometheus metrics related to user accounts.
+	PromAccount = "account"
+
+	// PromAction is a string constant representing the action Prometheus label value.
+	PromAction = "action"
+
+	// PromBackend is a constant string representing the Prometheus backend label.
+	PromBackend = "backend"
+
+	// PromBruteForce is a constant representing the "brute_force" metric in a Prometheus monitoring system.
+	PromBruteForce = "brute_force"
+
+	// PromFeature is a constant representing the feature metric used in Prometheus monitoring.
+	PromFeature = "feature"
+
+	// PromFilter is a constant string representing the label used for Prometheus metrics related to filtering.
+	PromFilter = "filter"
+
+	// PromRequest is a constant string that represents the label for Prometheus metrics related to HTTP requests.
+	PromRequest = "request"
+
+	// PromStoreTOTP is a constant representing the label used for storing TOTP secrets in the Prometheus metrics.
+	PromStoreTOTP = "store_totp"
+
+	// PromPostAction represents the constant value "post_action".
+	PromPostAction = "post_action"
 )
