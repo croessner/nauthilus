@@ -997,6 +997,9 @@ const (
 	// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
 	LuaFNRedisHIncrBy = "redis_hincrby"
 
+	// LuaFNRedisHIncrByFloat represents the function name for "redis_hincrbyfloat" in Lua.
+	LuaFNRedisHIncrByFloat = "redis_hincrbyfloat"
+
 	// LuaFnRedisHExists represents the Lua function name for checking if a field exists in a Redis hash.
 	LuaFnRedisHExists = "redis_hexists"
 

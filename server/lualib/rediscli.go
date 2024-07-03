@@ -150,8 +150,8 @@ func RedisSet(L *lua.LState) int {
 // Example usage: val = redis_incr("counter")
 func RedisIncr(L *lua.LState) int {
 	key := L.CheckString(1)
-	val, err := rediscli.WriteHandle.Incr(ctx, key).Result()
 
+	val, err := rediscli.WriteHandle.Incr(ctx, key).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -406,22 +406,53 @@ func RedisHGetAll(L *lua.LState) int {
 	return 1
 }
 
-// RedisHIncrBy is a function that increments the value of a hash field stored in Redis database.
-// The function accepts a lua.LState pointer and an integer value as parameters.
-// It uses the `IncrBy` method from the redis client to increment the value of the key.
+// RedisHIncrBy is responsible for the increment operation on a hash field in a Redis data structure.
+// It takes in 3 parameters: the state of the Lua interpreter (L *lua.LState), the target key,
+// field, and the amount to increment.
+//
+// The function first checks the provided parameters and uses the HIncrBy method of the redis client
+// to perform the increment operation. If successful, the function increments the RedisWriteCounter
+// and pushes the new field value onto the Lua stack, returning 1.
+//
+// In case of an error, the function pushes nil and the error's message onto the Lua stack, then
+// returning 2.
 //
 // Parameters:
-// L *lua.LState - The state of the Lua interpreter.
+// L *lua.LState: Pointer to the current state of the Lua interpreter.
+// key: Name of the hash where the incremented field is kept.
+// field: Name of the field to be incremented.
+// increment: Amount to increment the field by.
 //
 // Returns:
-// int - The return value is an integer. If the hash field increment operation is successful,
-// the function returns 1 and pushes the new value on the Lua stack.
-// If an error occurs, the function pushes `nil` and an error message on the Lua stack, and returns 2.
+// int: Returns 1 if the increment operation was successful, with the new field value pushed onto
+// the Lua stack. Returns 2 if there was an error, with nil and the error's message pushed onto
+// the Lua stack.
 func RedisHIncrBy(L *lua.LState) int {
 	key := L.CheckString(1)
-	increment := L.CheckInt64(2)
+	field := L.CheckString(2)
+	increment := L.CheckInt64(3)
 
-	val, err := rediscli.WriteHandle.IncrBy(ctx, key, increment).Result()
+	val, err := rediscli.WriteHandle.HIncrBy(ctx, key, field, increment).Result()
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+
+		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
+	}
+
+	L.Push(lua.LNumber(val))
+
+	return 1
+}
+
+func RedisHIncrByFloat(L *lua.LState) int {
+	key := L.CheckString(1)
+	field := L.CheckString(2)
+	increment := float64(L.CheckNumber(3))
+
+	val, err := rediscli.WriteHandle.HIncrByFloat(ctx, key, field, increment).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -499,5 +530,6 @@ func SetUPRedisFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnRedisHLen, L.NewFunction(RedisHLen))
 	table.RawSetString(global.LuaFnRedisHGetAll, L.NewFunction(RedisHGetAll))
 	table.RawSetString(global.LuaFNRedisHIncrBy, L.NewFunction(RedisHIncrBy))
+	table.RawSetString(global.LuaFNRedisHIncrByFloat, L.NewFunction(RedisHIncrByFloat))
 	table.RawSetString(global.LuaFnRedisHExists, L.NewFunction(RedisHExists))
 }
