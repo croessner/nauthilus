@@ -158,12 +158,11 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
 	globals.RawSet(lua.LString(global.LuaBackendResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(luaRequest.Context)))
-	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(luaRequest.Context)))
-	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(luaRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
+
+	lualib.SetUPContextFunctions(luaRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {

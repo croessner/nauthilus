@@ -247,11 +247,10 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSet(lua.LString(global.LuaActionResultOk), lua.LNumber(0))
 	globals.RawSet(lua.LString(global.LuaActionResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnCtxSet, L.NewFunction(lualib.ContextSet(aw.luaActionRequest.Context)))
-	globals.RawSetString(global.LuaFnCtxGet, L.NewFunction(lualib.ContextGet(aw.luaActionRequest.Context)))
-	globals.RawSetString(global.LuaFnCtxDelete, L.NewFunction(lualib.ContextDelete(aw.luaActionRequest.Context)))
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
+
+	lualib.SetUPContextFunctions(aw.luaActionRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {

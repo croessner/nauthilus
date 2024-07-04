@@ -237,6 +237,7 @@ func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
+
 	lualib.SetUPRedisFunctions(globals, L)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
