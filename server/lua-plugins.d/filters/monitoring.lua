@@ -1,6 +1,67 @@
-local json = require("json")
+local crypto = require("crypto")
 
 function nauthilus_call_filter(request)
+    ---@return string
+    local function get_dovecot_session() -- TODO: Trach server port as well
+        ---@type table headers
+        local headers = nauthilus:get_all_http_request_headers()
+        ---@param header_name string
+        ---@param header_values table
+        for header_name, header_values in pairs(headers) do
+            if header_name == "x-dovecot-session" then
+                return header_values[1]
+            end
+        end
+
+        return nil
+    end
+
+    ---@param session string
+    ---@param server string
+    ---@return void
+    local function add_session(session, server)
+        local redis_key = "ntc:DS:" .. crypto.md5(request.account)
+
+        ---@type string err_redis_hset
+        local _, err_redis_hset = nauthilus.redis_hset(redis_key, session, server)
+        if err_redis_hset ~= nil then
+            nauthilus.custom_log_add("reids_hset_failure", err_redis_hset)
+        end
+    end
+
+    local function get_server_from_sessions(session)
+        local redis_key = "ntc:DS:" .. crypto.md5(request.account)
+
+        ---@type string server_from_session
+        ---@type string err_redis_hget
+        local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
+        if err_redis_hget ~= nil then
+            nauthilus.custom_log_add("reids_hget_failure", err_redis_hget)
+
+            return nil
+        end
+
+        if server_from_session ~= "" then
+            return server_from_session
+        end
+
+        ---@type table all_sessions
+        ---@type string err_redis_hgetall
+        local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
+        if err_redis_hgetall ~= nil then
+            nauthilus.custom_log_add("reids_hgetall_failure", err_redis_hget)
+
+            return nil
+        end
+
+        ---@param first_server string
+        for _, first_server in pairs(all_sessions) do
+            return first_server
+        end
+
+        return nil
+    end
+
     -- Only look for backend servers, if a user was authenticated
     if request.authenticated then
         local result = {}
@@ -15,37 +76,49 @@ function nauthilus_call_filter(request)
             num_of_bs = #backend_servers
 
             local server_ip = ""
+            local new_server_ip = ""
             local server_port = 0
 
-            for i, server in pairs(backend_servers) do
-                --[[
-                print("Protocol: " .. server.protocol)
-                print("IP: " .. server.ip)
-                print("Port: " .. server.port)
-                if server.haproxy_v2 then
-                    print("HAProxyV2 is enabled.")
-                else
-                    print("HAProxyV2 is not enabled.")
+            local session = get_dovecot_session()
+            if session ~= nil then
+                local maybe_server = get_server_from_sessions(session)
+                if maybe_server ~= nil then
+                    server_ip = maybe_server
                 end
-                ]]--
+            end
 
-                server_ip = server.ip
+            for _, server in ipairs(backend_servers) do
+                new_server_ip = server.ip
                 server_port = server.port
 
-                -- Just an example
-                if i == 1 then
-                    nauthilus.select_backend_server(server_ip, server_port)
+                if server_ip == new_server_ip then
+                    if session ~= nil then
+                        add_session(session, server_ip)
+                    end
 
-                    nauthilus.custom_log_add("backend_server", server_ip .. ":" .. tostring(server_port))
+                    nauthilus.select_backend_server(server_ip, server_port)
+                    nauthilus.custom_log_add("backend_server_session", server_ip .. ":" .. tostring(server_port))
+
+                    break
+                end
+            end
+
+            if server_ip ~= new_server_ip then
+                if session ~= nil then
+                    add_session(session, new_server_ip)
                 end
 
-                break
+                nauthilus.select_backend_server(new_server_ip, server_port)
+                nauthilus.custom_log_add("backend_server_new", server_ip .. ":" .. tostring(server_port))
             end
         end
 
         if num_of_bs == 0 then
             nauthilus.custom_log_add("backend_server_monitoring", "failed")
             nauthilus.context_set("backend_server_monitoring", "fail")
+            nauthilus.status_message_set("No backend servers are available")
+
+            return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
         else
             nauthilus.custom_log_add("backend_server_monitoring", "success")
             nauthilus.context_set("backend_server_monitoring", "ok")

@@ -4,6 +4,7 @@
 --- DateTime: 02.07.24 13:26
 ---
 
+local crypto = require("crypto")
 local json = require("json")
 
 ------@return void
@@ -94,6 +95,9 @@ function nauthilus_run_callback()
             end
 
             print(result_json)
+
+            -- Cleanup dovecot session
+            nauthilus.redis_hdel("ntc:DS:" .. crypto.md5(result.user), result.dovecot_session)
         end
     end
 end
