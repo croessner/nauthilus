@@ -46,6 +46,7 @@ function nauthilus_run_callback()
         local result = {}
 
         result.state = "client disconnected"
+        result.dovecot_session = "unknown"
 
         ---@param k table
         ---@param v any
@@ -87,6 +88,18 @@ function nauthilus_run_callback()
         end
 
         if result.category == "service:imap" or result.category == "service:lmtp" then
+            if result.dovecot_session ~= "unknown" then
+                -- Cleanup dovecot session
+                ---@type string deleted
+                ---@type string err_redis_hdel
+                local deleted, err_redis_hdel = nauthilus.redis_hdel("ntc:DS:" .. crypto.md5(result.user), result.dovecot_session)
+                if err_redis_hdel ~= nil then
+                    result.removed_session_failure = err_redis_hdel
+                else
+                    result.removed_session = deleted
+                end
+            end
+
             ---@type string result_json
             ---@type string err_jenc
             local result_json, err_jenc = json.encode(result)
@@ -95,9 +108,6 @@ function nauthilus_run_callback()
             end
 
             print(result_json)
-
-            -- Cleanup dovecot session
-            nauthilus.redis_hdel("ntc:DS:" .. crypto.md5(result.user), result.dovecot_session)
         end
     end
 end
