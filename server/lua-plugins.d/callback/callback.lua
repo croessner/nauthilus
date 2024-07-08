@@ -100,7 +100,7 @@ function nauthilus_run_callback()
                 local redis_key = "ntc:DS:" .. crypto.md5(result.user)
 
                 if is_cmd_noop then
-                    nauthilus.redis_expire(redis_key, 86400)
+                    nauthilus.redis_expire(redis_key, 3600)
                 else
                     -- Cleanup dovecot session
                     ---@type string deleted
