@@ -4,12 +4,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"log"
+	"net"
 	"os"
 	"time"
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
 	"github.com/emersion/go-imap/server"
+	"github.com/pires/go-proxyproto"
 )
 
 const contactSupport = "Please contact your support"
@@ -65,7 +67,7 @@ type Backend struct{}
 
 func (b *Backend) Login(connInfo *imap.ConnInfo, username string, password string) (user backend.User, err error) {
 	_ = password
-	log.Println("Login from", connInfo.RemoteAddr.String(), "username", username)
+	log.Println("Connect from", connInfo.RemoteAddr.String(), "username", username)
 
 	user = &User{name: username}
 
@@ -80,23 +82,44 @@ func main() {
 	// Create a new server
 	s := server.New(be)
 
-	cer, err := tls.LoadX509KeyPair(os.Getenv("FAKE_IMAP_SERVER_TLSCERT"), os.Getenv("FAKE_IMAP_SERVER_TLSKEY"))
-	if err != nil {
-		log.Println(err)
+	address := os.Getenv("FAKE_IMAP_SERVER_ADDRESS")
+	tlsCert := os.Getenv("FAKE_IMAP_SERVER_TLSCERT")
+	tlsKey := os.Getenv("FAKE_IMAP_SERVER_TLSKEY")
 
-		return
+	if tlsCert != "" && tlsKey != "" {
+		cer, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			log.Println(err)
+
+			return
+		}
+
+		s.TLSConfig = &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cer},
+		}
 	}
 
-	s.TLSConfig = &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cer},
+	if address == "" {
+		address = "127.0.0.1:10143"
 	}
 
-	s.Addr = os.Getenv("FAKE_IMAP_SERVER_ADDRESS")
+	s.Addr = address
 	s.AllowInsecureAuth = true
 
 	log.Println("Starting IMAP server at", s.Addr)
-	if err := s.ListenAndServe(); err != nil {
+
+	// Set up listener
+	listener, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Wrap listener in proxyproto
+	proxyListener := &proxyproto.Listener{Listener: listener}
+
+	// Start server
+	if err := s.Serve(proxyListener); err != nil {
 		log.Fatal(err)
 	}
 }
