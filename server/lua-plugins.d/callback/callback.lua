@@ -48,6 +48,9 @@ function nauthilus_run_callback()
         result.state = "client disconnected"
         result.dovecot_session = "unknown"
 
+        ---@type boolean is_cmd_noop
+        local is_cmd_noop = false
+
         ---@param k table
         ---@param v any
         for k, v in pairs(body_table) do
@@ -81,6 +84,10 @@ function nauthilus_run_callback()
                             result.remote_ip = field_value
                         elseif field_name == "remote_port" then
                             result.remote_port = field_value
+                        elseif field_name == "cmd_name" then
+                            if field_value == "NOOP" then
+                                is_cmd_noop = true
+                            end
                         end
                     end
                 end
@@ -89,14 +96,21 @@ function nauthilus_run_callback()
 
         if result.category == "service:imap" or result.category == "service:lmtp" then
             if result.dovecot_session ~= "unknown" then
-                -- Cleanup dovecot session
-                ---@type string deleted
-                ---@type string err_redis_hdel
-                local deleted, err_redis_hdel = nauthilus.redis_hdel("ntc:DS:" .. crypto.md5(result.user), result.dovecot_session)
-                if err_redis_hdel ~= nil then
-                    result.removed_session_failure = err_redis_hdel
+                ---@type string redis_key
+                local redis_key = "ntc:DS:" .. crypto.md5(result.user)
+
+                if is_cmd_noop then
+                    nauthilus.redis_expire(redis_key, 86400)
                 else
-                    result.removed_session = deleted
+                    -- Cleanup dovecot session
+                    ---@type string deleted
+                    ---@type string err_redis_hdel
+                    local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
+                    if err_redis_hdel ~= nil then
+                        result.removed_session_failure = err_redis_hdel
+                    else
+                        result.removed_session = deleted
+                    end
                 end
             end
 

@@ -2,7 +2,7 @@ local crypto = require("crypto")
 
 function nauthilus_call_filter(request)
     ---@return string
-    local function get_dovecot_session() -- TODO: Trach server port as well
+    local function get_dovecot_session()
         ---@type table headers
         local headers = nauthilus:get_all_http_request_headers()
         ---@param header_name string
