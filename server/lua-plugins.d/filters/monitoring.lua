@@ -16,6 +16,21 @@ function nauthilus_call_filter(request)
         return nil
     end
 
+    ---@param redis_key string
+    ---@return void
+    local function set_initial_expiry(redis_key)
+        ---@type number length
+        ---@type string err_redis_hlen
+        local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
+        if err_redis_hlen ~= nil then
+            nauthilus.custom_log_add("reids_hlen_failure", err_redis_hlen)
+        else
+            if length == 1 then
+                nauthilus.redis_expire(redis_key, 3600)
+            end
+        end
+    end
+
     ---@param session string
     ---@param server string
     ---@return void
@@ -27,6 +42,8 @@ function nauthilus_call_filter(request)
         if err_redis_hset ~= nil then
             nauthilus.custom_log_add("reids_hset_failure", err_redis_hset)
         end
+
+        set_initial_expiry(redis_key)
     end
 
     local function get_server_from_sessions(session)
