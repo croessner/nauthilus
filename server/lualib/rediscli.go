@@ -91,7 +91,7 @@ func RedisGet(L *lua.LState) int {
 	key := L.CheckString(1)
 	valueType := global.TypeString
 
-	if L.GetTop() == 1 {
+	if L.GetTop() == 2 {
 		valueType = L.CheckString(2)
 	}
 
@@ -310,7 +310,7 @@ func RedisHSet(L *lua.LState) int {
 func RedisHDel(L *lua.LState) int {
 	var fields []string
 
-	if (L.GetTop()-1)%2 != 0 {
+	if L.GetTop() < 2 {
 		L.Push(lua.LNil)
 		L.Push(lua.LString("Invalid number of arguments"))
 
@@ -327,6 +327,7 @@ func RedisHDel(L *lua.LState) int {
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
+
 		return 2
 	} else {
 		stats.RedisWriteCounter.Inc()
