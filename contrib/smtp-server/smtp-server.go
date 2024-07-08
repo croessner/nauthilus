@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"time"
 
 	"github.com/emersion/go-smtp"
+	"github.com/pires/go-proxyproto"
 )
 
 const contactSupport = "Please contact your support"
@@ -24,7 +26,9 @@ var (
 // The Backend implements SMTP server methods.
 type Backend struct{}
 
-func (bkd *Backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
+func (bkd *Backend) NewSession(conn *smtp.Conn) (smtp.Session, error) {
+	log.Println("Connect from", conn.Conn().RemoteAddr().String())
+
 	return &Session{}, nil
 }
 
@@ -73,20 +77,35 @@ func main() {
 
 	s := smtp.NewServer(be)
 
-	cer, err := tls.LoadX509KeyPair(os.Getenv("FAKE_SMTP_SERVER_TLSCERT"), os.Getenv("FAKE_SMTP_SERVER_TLSKEY"))
-	if err != nil {
-		log.Println(err)
+	address := os.Getenv("FAKE_SMTP_SERVER_ADDRESS")
+	serverName := os.Getenv("FAKE_SMTP_SERVER_NAME")
+	tlsCert := os.Getenv("FAKE_SMTP_SERVER_TLSCERT")
+	tlsKey := os.Getenv("FAKE_SMTP_SERVER_TLSKEY")
 
-		return
+	if tlsCert != "" && tlsKey != "" {
+		cer, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			log.Println(err)
+
+			return
+		}
+
+		s.TLSConfig = &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cer},
+		}
 	}
 
-	s.TLSConfig = &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cer},
+	if address == "" {
+		address = "127.0.0.1:10025"
 	}
 
-	s.Addr = os.Getenv("FAKE_SMTP_SERVER_ADDRESS")
-	s.Domain = os.Getenv("FAKE_SMTP_SERVER_NAME")
+	if serverName == "" {
+		serverName = "mail.test"
+	}
+
+	s.Addr = address
+	s.Domain = serverName
 	s.ReadTimeout = 10 * time.Second
 	s.WriteTimeout = 10 * time.Second
 	s.MaxMessageBytes = 1024 * 1024
@@ -97,7 +116,17 @@ func main() {
 
 	log.Println("Starting fake server at", s.Addr)
 
-	if err := s.ListenAndServe(); err != nil {
+	// Set up listener
+	listener, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Wrap listener in proxyproto
+	proxyListener := &proxyproto.Listener{Listener: listener}
+
+	// Start server
+	if err := s.Serve(proxyListener); err != nil {
 		log.Fatal(err)
 	}
 }
