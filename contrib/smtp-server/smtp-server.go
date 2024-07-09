@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
 	"github.com/pires/go-proxyproto"
 )
@@ -37,13 +38,23 @@ type Session struct {
 	auth bool
 }
 
-func (s *Session) AuthPlain(username, password string) error {
-	_ = password
-	s.auth = true
+func (s *Session) AuthMechanisms() []string {
+	return []string{"PLAIN"}
+}
 
-	log.Println(fmt.Sprintf("AUTH username=<%s>", username))
+func (s *Session) Auth(mech string) (sasl.Server, error) {
+	if mech != "PLAIN" {
+		return nil, smtp.ErrAuthUnsupported
+	}
 
-	return nil
+	server := sasl.NewPlainServer(func(identity, username, password string) error {
+		s.auth = true
+		log.Println(fmt.Sprintf("AUTH username=<%s>", username))
+
+		return nil
+	})
+
+	return server, nil
 }
 
 func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
@@ -106,13 +117,17 @@ func main() {
 
 	s.Addr = address
 	s.Domain = serverName
+
 	s.ReadTimeout = 10 * time.Second
 	s.WriteTimeout = 10 * time.Second
+
 	s.MaxMessageBytes = 1024 * 1024
 	s.MaxRecipients = 50
+
 	s.AllowInsecureAuth = true
 	s.EnableBINARYMIME = true
 	s.EnableSMTPUTF8 = true
+	s.EnableDSN = true
 
 	log.Println("Starting fake server at", s.Addr)
 

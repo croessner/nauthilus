@@ -533,7 +533,12 @@ func (f *File) HaveLuaActions() bool {
 
 func (f *File) HaveLuaCallback() bool {
 	if f.HaveLua() {
-		return f.Lua.Config.CallbackScriptPath != ""
+		getConfig := f.GetConfig(global.BackendLua)
+		if getConfig == nil {
+			return false
+		}
+
+		return getConfig.(*LuaConf).CallbackScriptPath != ""
 	}
 
 	return false
