@@ -1,16 +1,14 @@
 local crypto = require("crypto")
 
+local N = "monitoring"
+
 function nauthilus_call_filter(request)
     ---@return string
     local function get_dovecot_session()
-        ---@type table headers
-        local headers = nauthilus:get_all_http_request_headers()
-        ---@param header_name string
-        ---@param header_values table
-        for header_name, header_values in pairs(headers) do
-            if header_name == "x-dovecot-session" then
-                return header_values[1]
-            end
+        ---@type table header
+        local header = nauthilus.get_http_request_header("X-Dovecot-Session")
+        if #header == 1 then
+            return header[1]
         end
 
         return nil
@@ -23,7 +21,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hlen
         local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
         if err_redis_hlen ~= nil then
-            nauthilus.custom_log_add("reids_hlen_failure", err_redis_hlen)
+            nauthilus.custom_log_add(N .. "_redis_hlen_failure", err_redis_hlen)
         else
             if length == 1 then
                 nauthilus.redis_expire(redis_key, 3600)
@@ -40,7 +38,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hset
         local _, err_redis_hset = nauthilus.redis_hset(redis_key, session, server)
         if err_redis_hset ~= nil then
-            nauthilus.custom_log_add("reids_hset_failure", err_redis_hset)
+            nauthilus.custom_log_add(N .. "_redis_hset_failure", err_redis_hset)
         end
 
         set_initial_expiry(redis_key)
@@ -53,7 +51,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hget
         local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
         if err_redis_hget ~= nil then
-            nauthilus.custom_log_add("reids_hget_failure", err_redis_hget)
+            nauthilus.custom_log_add(N .. "_redis_hget_failure", err_redis_hget)
 
             return nil
         end
@@ -66,7 +64,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hgetall
         local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
         if err_redis_hgetall ~= nil then
-            nauthilus.custom_log_add("reids_hgetall_failure", err_redis_hget)
+            nauthilus.custom_log_add(N .. "_redis_hgetall_failure", err_redis_hget)
 
             return nil
         end
@@ -114,7 +112,7 @@ function nauthilus_call_filter(request)
                     end
 
                     nauthilus.select_backend_server(server_ip, server_port)
-                    nauthilus.custom_log_add("backend_server_session", server_ip .. ":" .. tostring(server_port))
+                    nauthilus.custom_log_add(N .. "_backend_server_session", server_ip .. ":" .. tostring(server_port))
 
                     break
                 end
@@ -123,21 +121,23 @@ function nauthilus_call_filter(request)
             if server_ip ~= new_server_ip then
                 if session ~= nil then
                     add_session(session, new_server_ip)
+                    nauthilus.custom_log_add(N .. "_dovecot_session", session)
+                    nauthilus.custom_log_add(N .. "_server_protocol", request.protocol)
                 end
 
                 nauthilus.select_backend_server(new_server_ip, server_port)
-                nauthilus.custom_log_add("backend_server_new", server_ip .. ":" .. tostring(server_port))
+                nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip .. ":" .. tostring(server_port))
             end
         end
 
         if num_of_bs == 0 then
-            nauthilus.custom_log_add("backend_server_monitoring", "failed")
+            nauthilus.custom_log_add(N .. "_backend_server", "failed")
             nauthilus.context_set("backend_server_monitoring", "fail")
             nauthilus.status_message_set("No backend servers are available")
 
             return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
         else
-            nauthilus.custom_log_add("backend_server_monitoring", "success")
+            nauthilus.custom_log_add(N .. "_backend_server", "success")
             nauthilus.context_set("backend_server_monitoring", "ok")
         end
 

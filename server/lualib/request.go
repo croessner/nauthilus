@@ -185,6 +185,18 @@ func SetStatusMessage(status **string) lua.LGFunction {
 	}
 }
 
+// createHeaderTable is a helper function that creates a Lua table for a header value
+// It takes an LState, an LTable, the header name, and a list of header values as parameters
+func createHeaderTable(L *lua.LState, headerTable *lua.LTable, name string, headers []string) {
+	headerList := L.NewTable()
+
+	for _, header := range headers {
+		headerList.Append(lua.LString(header))
+	}
+
+	headerTable.RawSetString(name, headerList)
+}
+
 // GetAllHTTPRequestHeaders returns a LGFunction that creates a Lua table containing all headers from the http.Request object
 // The table is indexed by the lowercase header name and each header's value is a list of strings
 // The function expects a *http.Request object as its parameter
@@ -207,13 +219,36 @@ func GetAllHTTPRequestHeaders(httpRequest *http.Request) lua.LGFunction {
 		for name, headers := range httpRequest.Header {
 			name = strings.ToLower(name)
 
-			headerList := L.NewTable()
+			createHeaderTable(L, headerTable, name, headers)
+		}
 
-			for _, h := range headers {
-				headerList.Append(lua.LString(h))
+		L.Push(headerTable)
+
+		return 1
+	}
+}
+
+// GetHTTPRequestHeader returns a LGFunction that retrieves a specific header from the http.Request object
+// The function expects a *http.Request object as its parameter and the name of the requested header as a string
+// If the requested header exists, it creates a Lua table containing the header's value as a list of strings
+// The table is indexed by the lowercase header name
+// createHeaderTable is a helper function that creates a Lua table for a header value
+// It takes an LState, an LTable, the header name, and a list of header values as parameters
+func GetHTTPRequestHeader(httpRequest *http.Request) lua.LGFunction {
+	return func(L *lua.LState) int {
+		reqzestedHeader := strings.ToLower(L.CheckString(1))
+		headerTable := L.NewTable()
+
+		for name, headers := range httpRequest.Header {
+			name = strings.ToLower(name)
+
+			if name != reqzestedHeader {
+				continue
 			}
 
-			headerTable.RawSetString(name, headerList)
+			createHeaderTable(L, headerTable, name, headers)
+
+			break
 		}
 
 		L.Push(headerTable)
