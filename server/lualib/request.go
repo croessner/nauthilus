@@ -185,18 +185,6 @@ func SetStatusMessage(status **string) lua.LGFunction {
 	}
 }
 
-// createHeaderTable is a helper function that creates a Lua table for a header value
-// It takes an LState, an LTable, the header name, and a list of header values as parameters
-func createHeaderTable(L *lua.LState, headerTable *lua.LTable, name string, headers []string) {
-	headerList := L.NewTable()
-
-	for _, header := range headers {
-		headerList.Append(lua.LString(header))
-	}
-
-	headerTable.RawSetString(name, headerList)
-}
-
 // GetAllHTTPRequestHeaders returns a LGFunction that creates a Lua table containing all headers from the http.Request object
 // The table is indexed by the lowercase header name and each header's value is a list of strings
 // The function expects a *http.Request object as its parameter
@@ -216,10 +204,16 @@ func GetAllHTTPRequestHeaders(httpRequest *http.Request) lua.LGFunction {
 	return func(L *lua.LState) int {
 		headerTable := L.NewTable()
 
-		for name, headers := range httpRequest.Header {
-			name = strings.ToLower(name)
+		for headerName, headerValues := range httpRequest.Header {
+			headerName = strings.ToLower(headerName)
 
-			createHeaderTable(L, headerTable, name, headers)
+			headerList := L.NewTable()
+
+			for _, headerValue := range headerValues {
+				headerList.Append(lua.LString(headerValue))
+			}
+
+			headerTable.RawSetString(headerName, headerList)
 		}
 
 		L.Push(headerTable)
@@ -237,21 +231,23 @@ func GetAllHTTPRequestHeaders(httpRequest *http.Request) lua.LGFunction {
 func GetHTTPRequestHeader(httpRequest *http.Request) lua.LGFunction {
 	return func(L *lua.LState) int {
 		reqzestedHeader := strings.ToLower(L.CheckString(1))
-		headerTable := L.NewTable()
+		headerValueTable := L.NewTable()
 
-		for name, headers := range httpRequest.Header {
-			name = strings.ToLower(name)
+		for headerName, headerValues := range httpRequest.Header {
+			headerName = strings.ToLower(headerName)
 
-			if name != reqzestedHeader {
+			if headerName != reqzestedHeader {
 				continue
 			}
 
-			createHeaderTable(L, headerTable, name, headers)
+			for _, headerValue := range headerValues {
+				headerValueTable.Append(lua.LString(headerValue))
+			}
 
 			break
 		}
 
-		L.Push(headerTable)
+		L.Push(headerValueTable)
 
 		return 1
 	}
