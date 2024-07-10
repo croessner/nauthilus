@@ -109,10 +109,11 @@ function nauthilus_call_filter(request)
                 if server_ip == new_server_ip then
                     if session ~= nil then
                         add_session(session, server_ip)
+                        nauthilus.custom_log_add(N .. "_dovecot_session", session)
                     end
 
                     nauthilus.select_backend_server(server_ip, server_port)
-                    nauthilus.custom_log_add(N .. "_backend_server_session", server_ip .. ":" .. tostring(server_port))
+                    nauthilus.custom_log_add(N .. "_backend_server", server_ip .. ":" .. tostring(server_port))
 
                     break
                 end
@@ -122,7 +123,6 @@ function nauthilus_call_filter(request)
                 if session ~= nil then
                     add_session(session, new_server_ip)
                     nauthilus.custom_log_add(N .. "_dovecot_session", session)
-                    nauthilus.custom_log_add(N .. "_server_protocol", request.protocol)
                 end
 
                 nauthilus.select_backend_server(new_server_ip, server_port)
