@@ -9,26 +9,18 @@ local json = require("json")
 
 ------@return void
 function nauthilus_run_callback()
-    ---@type table headers
-    local headers = nauthilus.get_all_http_request_headers()
+    ---@type table header
+    local header = nauthilus.get_http_request_header("Content-Type")
 
     ---@type table request
     local body = nauthilus.get_http_request_body()
 
+    if #header == 1 and header[1] ~= "application/json" then
+        return
+    end
+
     ---@type boolean match_ct
     local match_ct = false
-
-    ---@param header_name string
-    ---@param header_values table
-    for header_name, header_values in pairs(headers) do
-        if header_name == "content-type" then
-            if header_values[1] ~= "application/json" then
-                return
-            end
-
-            match_ct = true
-        end
-    end
 
     if match_ct then
         ---@type table body_table

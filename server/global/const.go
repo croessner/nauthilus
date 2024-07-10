@@ -961,6 +961,9 @@ const (
 	// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
 	LuaFnGetAllHTTPRequestHeaders = "get_all_http_request_headers"
 
+	// LuaFnGetHTTPRequestHeader represents the function name for "get_http_request_header" in Lua
+	LuaFnGetHTTPRequestHeader = "get_http_request_header"
+
 	// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
 	LuaFnGetHTTPRequestBody = "get_http_request_body"
 

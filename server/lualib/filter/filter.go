@@ -337,6 +337,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnApplyBackendResult, L.NewFunction(applyBackendResult(backendResult)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
+	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
 	lualib.SetUPContextFunctions(r.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
