@@ -15,105 +15,100 @@ function nauthilus_run_callback()
     ---@type table request
     local body = nauthilus.get_http_request_body()
 
-    if #header == 1 and header[1] ~= "application/json" then
+    if #header == 0 or header[1] ~= "application/json" then
         return
     end
 
-    ---@type boolean match_ct
-    local match_ct = false
+    ---@type table body_table
+    ---@type string err_jdec
+    local body_table, err_jdec = json.decode(body)
+    if err_jdec ~= nil then
+        return
+    end
 
-    if match_ct then
-        ---@type table body_table
-        ---@type string err_jdec
-        local body_table, err_jdec = json.decode(body)
-        if err_jdec ~= nil then
-            return
-        end
+    if type(body_table) ~= "table" then
+        return
+    end
 
-        if type(body_table) ~= "table" then
-            return
-        end
+    ---@type table result
+    local result = {}
 
-        ---@type table result
-        local result = {}
+    result.state = "client disconnected"
+    result.dovecot_session = "unknown"
 
-        result.state = "client disconnected"
-        result.dovecot_session = "unknown"
+    ---@type boolean is_cmd_noop
+    local is_cmd_noop = false
 
-        ---@type boolean is_cmd_noop
-        local is_cmd_noop = false
-
-        ---@param k table
-        ---@param v any
-        for k, v in pairs(body_table) do
-            if k == "categories" then
-                if type(v) == "table" then
-                    ---@param category table
-                    for _, category in ipairs(v) do
-                        if category == "service:imap" or category == "service:lmtp" then
-                            result.category = category
-                        end
+    ---@param k table
+    ---@param v any
+    for k, v in pairs(body_table) do
+        if k == "categories" then
+            if type(v) == "table" then
+                ---@param category table
+                for _, category in ipairs(v) do
+                    if category == "service:imap" or category == "service:lmtp" then
+                        result.category = category
                     end
                 end
-            elseif k == "start_time" then
-                if type(v) == "string" then
-                    result.start_time = v
-                end
-            elseif k == "end_time" then
-                if type(v) == "string" then
-                    result.end_time = v
-                end
-            elseif k == "fields" then
-                if type(v) == "table" then
-                    ---@param field_name string
-                    ---@param field_value string
-                    for field_name, field_value in pairs(v) do
-                        if field_name == "user" then
-                            result.user = field_value
-                        elseif field_name == "session" then
-                            result.dovecot_session = field_value
-                        elseif field_name == "remote_ip" then
-                            result.remote_ip = field_value
-                        elseif field_name == "remote_port" then
-                            result.remote_port = field_value
-                        elseif field_name == "cmd_name" then
-                            if field_value == "NOOP" then
-                                is_cmd_noop = true
-                            end
+            end
+        elseif k == "start_time" then
+            if type(v) == "string" then
+                result.start_time = v
+            end
+        elseif k == "end_time" then
+            if type(v) == "string" then
+                result.end_time = v
+            end
+        elseif k == "fields" then
+            if type(v) == "table" then
+                ---@param field_name string
+                ---@param field_value string
+                for field_name, field_value in pairs(v) do
+                    if field_name == "user" then
+                        result.user = field_value
+                    elseif field_name == "session" then
+                        result.dovecot_session = field_value
+                    elseif field_name == "remote_ip" then
+                        result.remote_ip = field_value
+                    elseif field_name == "remote_port" then
+                        result.remote_port = field_value
+                    elseif field_name == "cmd_name" then
+                        if field_value == "NOOP" then
+                            is_cmd_noop = true
                         end
                     end
                 end
             end
         end
+    end
 
-        if result.category == "service:imap" or result.category == "service:lmtp" then
-            if result.dovecot_session ~= "unknown" then
-                ---@type string redis_key
-                local redis_key = "ntc:DS:" .. crypto.md5(result.user)
+    if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" then
+        if result.dovecot_session ~= "unknown" then
+            ---@type string redis_key
+            local redis_key = "ntc:DS:" .. crypto.md5(result.user)
 
-                if is_cmd_noop then
-                    nauthilus.redis_expire(redis_key, 3600)
+            if is_cmd_noop then
+                nauthilus.redis_expire(redis_key, 3600)
+            else
+                -- Cleanup dovecot session
+                ---@type string deleted
+                ---@type string err_redis_hdel
+                local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
+                if err_redis_hdel ~= nil then
+                    result.remove_dovecot_session_status = err_redis_hdel
                 else
-                    -- Cleanup dovecot session
-                    ---@type string deleted
-                    ---@type string err_redis_hdel
-                    local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
-                    if err_redis_hdel ~= nil then
-                        result.removed_session_failure = err_redis_hdel
-                    else
-                        result.removed_session = deleted
-                    end
+                    result.remove_dovecot_session_status = deleted
                 end
             end
-
-            ---@type string result_json
-            ---@type string err_jenc
-            local result_json, err_jenc = json.encode(result)
-            if err_jenc ~= nil then
-                return
-            end
-
-            print(result_json)
         end
+
+        ---@type string result_json
+        ---@type string err_jenc
+        local result_json, err_jenc = json.encode(result)
+        if err_jenc ~= nil then
+            return
+        end
+
+        print(result_json)
     end
 end
