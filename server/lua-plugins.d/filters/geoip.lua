@@ -129,7 +129,7 @@ function nauthilus_call_filter(request)
 
         nauthilus.context_set(fg, "ok")
         nauthilus.custom_log_add(fg, "success")
-	else
+    else
         -- We must restore a failed authentication flag!
         if not request.authenticated then
             return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK

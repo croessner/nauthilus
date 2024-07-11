@@ -212,7 +212,7 @@ function nauthilus_call_action(request)
     rt.post_telegram = true
     nauthilus.context_set("rt", rt)
 
-    nauthilus.context_set("action_telegram","ok")
+    nauthilus.context_set("action_telegram", "ok")
     nauthilus.custom_log_add("action_" .. log_prefix .. "telegram", "success")
 
     return nauthilus.ACTION_RESULT_OK
