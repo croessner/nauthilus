@@ -146,5 +146,10 @@ function nauthilus_call_filter(request)
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
 
+    -- Dovecot userdb request
+    if request.authenticated and request.no_auth then
+        return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
+    end
+
     return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
 end
