@@ -77,8 +77,8 @@ function nauthilus_call_filter(request)
         return nil
     end
 
-    -- Only look for backend servers, if a user was authenticated
-    if request.authenticated then
+    -- Only look for backend servers, if a user was authenticated (passdb requests)
+    if request.authenticated and not request.no_auth then
         local result = {}
         local num_of_bs = 0
 
@@ -102,31 +102,33 @@ function nauthilus_call_filter(request)
                 end
             end
 
-            for _, server in ipairs(backend_servers) do
-                new_server_ip = server.ip
-                server_port = server.port
+            if num_of_bs > 0 then
+                for _, server in ipairs(backend_servers) do
+                    new_server_ip = server.ip
+                    server_port = server.port
 
-                if server_ip == new_server_ip then
+                    if server_ip == new_server_ip then
+                        if session ~= nil then
+                            add_session(session, server_ip)
+                            nauthilus.custom_log_add(N .. "_dovecot_session", session)
+                        end
+
+                        nauthilus.select_backend_server(server_ip, server_port)
+                        nauthilus.custom_log_add(N .. "_backend_server", server_ip .. ":" .. tostring(server_port))
+
+                        break
+                    end
+                end
+
+                if server_ip ~= new_server_ip then
                     if session ~= nil then
-                        add_session(session, server_ip)
+                        add_session(session, new_server_ip)
                         nauthilus.custom_log_add(N .. "_dovecot_session", session)
                     end
 
-                    nauthilus.select_backend_server(server_ip, server_port)
-                    nauthilus.custom_log_add(N .. "_backend_server", server_ip .. ":" .. tostring(server_port))
-
-                    break
+                    nauthilus.select_backend_server(new_server_ip, server_port)
+                    nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip .. ":" .. tostring(server_port))
                 end
-            end
-
-            if server_ip ~= new_server_ip then
-                if session ~= nil then
-                    add_session(session, new_server_ip)
-                    nauthilus.custom_log_add(N .. "_dovecot_session", session)
-                end
-
-                nauthilus.select_backend_server(new_server_ip, server_port)
-                nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip .. ":" .. tostring(server_port))
             end
         end
 
