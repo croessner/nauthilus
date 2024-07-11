@@ -2,7 +2,46 @@ local crypto = require("crypto")
 
 local N = "monitoring"
 
+---@type table wanted_protocols
+local wanted_protocols = {
+    [1] = "imap",
+    [2] = "imapa",
+    [3] = "pop3",
+    [4] = "pop3s",
+    [5] = "lmtp",
+    [6] = "lmtps",
+}
+
+---@param request table
+---@return number, number
 function nauthilus_call_filter(request)
+    ---@type boolean skip_and_accept_filter
+    local skip_and_accept_filter = false
+
+    -- Dovecot userdb request
+    if request.authenticated and request.no_auth then
+        skip_and_accept_filter = true
+    end
+
+    -- Dovecot passdb request
+    if request.authenticated and not request.no_auth then
+        skip_and_accept_filter = true
+
+        ---@param proto string
+        for _, proto in ipairs(wanted_protocols) do
+            if proto == request.protocol then
+                skip_and_accept_filter = false
+
+                break
+            end
+        end
+    end
+
+    if skip_and_accept_filter then
+        return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
+    end
+
+    --- This function retrieves the Dovecot session from the http request header.
     ---@return string
     local function get_dovecot_session()
         ---@type table header
@@ -14,6 +53,7 @@ function nauthilus_call_filter(request)
         return nil
     end
 
+    --- This function sets an initial expiry for a given Redis key if the length of the key is 1.
     ---@param redis_key string
     ---@return void
     local function set_initial_expiry(redis_key)
@@ -29,6 +69,7 @@ function nauthilus_call_filter(request)
         end
     end
 
+    --- This function adds a Redis hash map for a user with the key "session" and the value "server".
     ---@param session string
     ---@param server string
     ---@return void
@@ -44,7 +85,11 @@ function nauthilus_call_filter(request)
         set_initial_expiry(redis_key)
     end
 
+    --- This function retrieves a server from a Redis hash map of a user if any was found.
+    ---@param session string
+    ---@return string
     local function get_server_from_sessions(session)
+        ---@type string redis_key
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
         ---@type string server_from_session
@@ -79,7 +124,10 @@ function nauthilus_call_filter(request)
 
     -- Only look for backend servers, if a user was authenticated (passdb requests)
     if request.authenticated and not request.no_auth then
+        ---@type table result
         local result = {}
+
+        ---@type number num_of_bs
         local num_of_bs = 0
 
         result.caller = "monitoring.lua"
@@ -90,8 +138,13 @@ function nauthilus_call_filter(request)
         if backend_servers ~= nil and type(backend_servers) == "table" then
             num_of_bs = #backend_servers
 
+            ---@type string server_ip
             local server_ip = ""
+
+            ---@type string new_server_ip
             local new_server_ip = ""
+
+            ---@type number server_port
             local server_port = 0
 
             local session = get_dovecot_session()
@@ -103,6 +156,7 @@ function nauthilus_call_filter(request)
             end
 
             if num_of_bs > 0 then
+                ---@param server table
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
                     server_port = server.port
@@ -146,10 +200,6 @@ function nauthilus_call_filter(request)
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
 
-    -- Dovecot userdb request
-    if request.authenticated and request.no_auth then
-        return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
-    end
-
+    -- Anything else must be a rejected request
     return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
 end
