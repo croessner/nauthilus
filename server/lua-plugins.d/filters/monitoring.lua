@@ -114,7 +114,7 @@ function nauthilus_call_filter(request)
                         end
 
                         nauthilus.select_backend_server(server_ip, server_port)
-                        nauthilus.custom_log_add(N .. "_backend_server", server_ip .. ":" .. tostring(server_port))
+                        nauthilus.custom_log_add(N .. "_backend_server_current", server_ip .. ":" .. tostring(server_port))
 
                         break
                     end
