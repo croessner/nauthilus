@@ -61,7 +61,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hlen
         local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
         if err_redis_hlen ~= nil then
-            nauthilus.custom_log_add(N .. "_redis_hlen_failure", err_redis_hlen)
+            nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
         else
             if length == 1 then
                 nauthilus.redis_expire(redis_key, 3600)
@@ -74,15 +74,20 @@ function nauthilus_call_filter(request)
     ---@param server string
     ---@return void
     local function add_session(session, server)
+        if session == nil then
+            return
+        end
+
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
         ---@type string err_redis_hset
         local _, err_redis_hset = nauthilus.redis_hset(redis_key, session, server)
         if err_redis_hset ~= nil then
-            nauthilus.custom_log_add(N .. "_redis_hset_failure", err_redis_hset)
+            nauthilus.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
         end
 
         set_initial_expiry(redis_key)
+        nauthilus.custom_log_add(N .. "_dovecot_session", session)
     end
 
     --- This function retrieves a server from a Redis hash map of a user if any was found.
@@ -96,7 +101,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hget
         local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
         if err_redis_hget ~= nil then
-            nauthilus.custom_log_add(N .. "_redis_hget_failure", err_redis_hget)
+            nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
 
             return nil
         end
@@ -109,7 +114,7 @@ function nauthilus_call_filter(request)
         ---@type string err_redis_hgetall
         local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
         if err_redis_hgetall ~= nil then
-            nauthilus.custom_log_add(N .. "_redis_hgetall_failure", err_redis_hget)
+            nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
 
             return nil
         end
@@ -144,9 +149,6 @@ function nauthilus_call_filter(request)
             ---@type string new_server_ip
             local new_server_ip = ""
 
-            ---@type number server_port
-            local server_port = 0
-
             local session = get_dovecot_session()
             if session ~= nil then
                 local maybe_server = get_server_from_sessions(session)
@@ -159,29 +161,18 @@ function nauthilus_call_filter(request)
                 ---@param server table
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
-                    server_port = server.port
 
                     if server_ip == new_server_ip then
-                        if session ~= nil then
-                            add_session(session, server_ip)
-                            nauthilus.custom_log_add(N .. "_dovecot_session", session)
-                        end
-
-                        nauthilus.select_backend_server(server_ip, server_port)
-                        nauthilus.custom_log_add(N .. "_backend_server_current", server_ip .. ":" .. tostring(server_port))
+                        add_session(session, server_ip)
+                        nauthilus.custom_log_add(N .. "_backend_server_current", server_ip)
 
                         break
                     end
                 end
 
                 if server_ip ~= new_server_ip then
-                    if session ~= nil then
-                        add_session(session, new_server_ip)
-                        nauthilus.custom_log_add(N .. "_dovecot_session", session)
-                    end
-
-                    nauthilus.select_backend_server(new_server_ip, server_port)
-                    nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip .. ":" .. tostring(server_port))
+                    add_session(session, new_server_ip)
+                    nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip)
                 end
             end
         end
