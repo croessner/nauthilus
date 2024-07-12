@@ -158,21 +158,39 @@ function nauthilus_call_filter(request)
             end
 
             if num_of_bs > 0 then
+                ---@type table attributes
+                local attributes = {}
+
+                ---@type userdata b
+                local b = backend_result.new()
+
                 ---@param server table
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
 
                     if server_ip == new_server_ip then
+                        attributes["Proxy-Host"] = server_ip
+
                         add_session(session, server_ip)
                         nauthilus.custom_log_add(N .. "_backend_server_current", server_ip)
+
+                        b:attributes(attributes)
+                        nauthilus.apply_backend_result(b)
 
                         break
                     end
                 end
 
                 if server_ip ~= new_server_ip then
+                    -- Put your own logic here to select a proper server for the user. In this demo, the last server
+                    -- available is always used.
+                    attributes["Proxy-Host"] = new_server_ip
+
                     add_session(session, new_server_ip)
                     nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip)
+
+                    b:attributes(attributes)
+                    nauthilus.apply_backend_result(b)
                 end
             end
         end
