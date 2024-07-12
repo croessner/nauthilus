@@ -1683,7 +1683,7 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 		},
 	}
 
-	filterResult, luaBackendResult, err := filterRequest.CallFilterLua(ctx)
+	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
 			level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
@@ -1701,6 +1701,10 @@ func (a *Authentication) filterLua(passDBResult *PassDBResult, ctx *gin.Context)
 
 		if filterResult {
 			return global.AuthResultFail
+		}
+
+		for _, attributeName := range removeAttributes {
+			delete(a.Attributes, attributeName)
 		}
 
 		if luaBackendResult != nil {
@@ -1848,6 +1852,11 @@ func (a *Authentication) getUserAccountFromRedis() (accountName string, err erro
 //	}
 func (a *Authentication) setOperationMode(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
+
+	// We reset flags, because they might have been cached in the in-memory cahce.
+	a.NoAuth = false
+	a.ListAccounts = false
+	a.MonitoringFlags = []global.Monitoring{}
 
 	switch ctx.Query("mode") {
 	case "no-auth":

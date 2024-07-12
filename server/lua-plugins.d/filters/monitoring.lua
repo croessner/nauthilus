@@ -4,12 +4,8 @@ local N = "monitoring"
 
 ---@type table wanted_protocols
 local wanted_protocols = {
-    [1] = "imap",
-    [2] = "imapa",
-    [3] = "pop3",
-    [4] = "pop3s",
-    [5] = "lmtp",
-    [6] = "lmtps",
+    "imap", "imapa", "pop3", "pop3s", "lmtp", "lmtps",
+    "sieve", -- Not sure about this
 }
 
 ---@param request table
@@ -38,6 +34,8 @@ function nauthilus_call_filter(request)
     end
 
     if skip_and_accept_filter then
+        nauthilus.remove_from_backend_result({ "Proxy-Host" })
+
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
 
@@ -158,21 +156,39 @@ function nauthilus_call_filter(request)
             end
 
             if num_of_bs > 0 then
+                ---@type table attributes
+                local attributes = {}
+
+                ---@type userdata b
+                local b = backend_result.new()
+
                 ---@param server table
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
 
                     if server_ip == new_server_ip then
+                        attributes["Proxy-Host"] = server_ip
+
                         add_session(session, server_ip)
                         nauthilus.custom_log_add(N .. "_backend_server_current", server_ip)
+
+                        b:attributes(attributes)
+                        nauthilus.apply_backend_result(b)
 
                         break
                     end
                 end
 
                 if server_ip ~= new_server_ip then
+                    -- Put your own logic here to select a proper server for the user. In this demo, the last server
+                    -- available is always used.
+                    attributes["Proxy-Host"] = new_server_ip
+
                     add_session(session, new_server_ip)
                     nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip)
+
+                    b:attributes(attributes)
+                    nauthilus.apply_backend_result(b)
                 end
             end
         end

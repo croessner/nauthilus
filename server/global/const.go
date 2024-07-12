@@ -1009,6 +1009,9 @@ const (
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
+	// LuaFnRemoveFromBackendResult represents the function to remove an attribute from the backend result set.
+	LuaFnRemoveFromBackendResult = "remove_from_backend_result"
+
 	// LuaFnCheckBackendConnection represents the Lua function name for checking the backend connection.
 	LuaFnCheckBackendConnection = "check_backend_connection"
 
