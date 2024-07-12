@@ -4,13 +4,8 @@ local N = "monitoring"
 
 ---@type table wanted_protocols
 local wanted_protocols = {
-    [1] = "imap",
-    [2] = "imapa",
-    [3] = "pop3",
-    [4] = "pop3s",
-    [5] = "lmtp",
-    [6] = "lmtps",
-    [7] = "sieve", -- Not sure about this
+    "imap", "imapa", "pop3", "pop3s", "lmtp", "lmtps",
+    "sieve", -- Not sure about this
 }
 
 ---@param request table
@@ -39,6 +34,8 @@ function nauthilus_call_filter(request)
     end
 
     if skip_and_accept_filter then
+        nauthilus.remove_from_backend_result({ "Proxy-Host" })
+
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
 

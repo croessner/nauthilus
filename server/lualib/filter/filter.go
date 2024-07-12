@@ -303,6 +303,38 @@ func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction 
 	}
 }
 
+// removeFromBackendResult is a function that creates and returns a Lua LGFunction.
+// The LGFunction takes a Lua state as argument and modifies a slice (attributes)
+// by appending values from a Lua table passed as argument to the LGFunction.
+// The function returns 0, indicating no values are returned to Lua.
+// If the attributes slice is nil, the function returns 0 immediately.
+// The function extracts a Lua table from the Lua stack and iterates over its
+// values. For each value, it appends its string representation to the attributes slice.
+// Finally, the function returns 0 to Lua.
+//
+// Params:
+//
+//	attributes *[]string : Pointer to a slice of strings to store the extracted attributes
+//
+// Returns:
+//
+//	the LGFunction that takes a Lua state as argument and modifies the attributes slice
+func removeFromBackendResult(attributes *[]string) lua.LGFunction {
+	return func(L *lua.LState) int {
+		if attributes == nil {
+			return 0
+		}
+
+		attributeTable := L.ToTable(1)
+
+		attributeTable.ForEach(func(_, value lua.LValue) {
+			*attributes = append(*attributes, value.String())
+		})
+
+		return 0
+	}
+}
+
 // setGlobals is a function that initializes a set of global variables in the provided lua.LState.
 // The globals are set using the provided context (r) and lua table (globals).
 // The following lua variables are set:
@@ -323,7 +355,7 @@ func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction 
 // Returns:
 //
 //	A new request table
-func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lualib.LuaBackendResult) *lua.LTable {
+func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -336,6 +368,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnApplyBackendResult, L.NewFunction(applyBackendResult(backendResult)))
+	globals.RawSetString(global.LuaFnRemoveFromBackendResult, L.NewFunction(removeFromBackendResult(removeAttributes)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
@@ -470,9 +503,9 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 // executes successfully or all scripts have been attempted.
 // If the context has been cancelled, the function returns without executing any more scripts.
 // If a script returns an error, it is skipped and the next script is tried.
-func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, err error) {
+func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
 	if LuaFilters == nil || len(LuaFilters.LuaScripts) == 0 {
-		return false, nil, errors2.ErrNoFiltersDefined
+		return false, nil, nil, errors2.ErrNoFiltersDefined
 	}
 
 	LuaFilters.Mu.RLock()
@@ -484,7 +517,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
-	globals := setGlobals(ctx, r, L, &backendResult)
+	globals := setGlobals(ctx, r, L, &backendResult, &removeAttributes)
 	request := setRequest(r, L)
 
 	for _, script := range LuaFilters.LuaScripts {

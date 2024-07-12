@@ -300,9 +300,9 @@ func (c *Config) setConfigMaxActionWorkers() {
 // Otherwise, the field will be assigned the value of 5 seconds.
 // Please note that this method does not return errors.
 func (c *Config) setLocalCacheTTL() {
-	if val := viper.GetDuration("local_cache_auth_ttl"); val > 5*time.Second {
-		if val < time.Hour {
-			c.LocalCacheAuthTTL = val
+	if val := viper.GetDuration("local_cache_auth_ttl"); val*time.Second > 5*time.Second {
+		if val*time.Second < time.Hour {
+			c.LocalCacheAuthTTL = val * time.Second
 		} else {
 			c.LocalCacheAuthTTL = time.Hour
 		}

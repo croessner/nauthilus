@@ -912,6 +912,36 @@ const (
 	LuaCommandAddMFAValue
 )
 
+// LuaFnCtxSet represents the function name for "context_set" in Lua
+// LuaFnCtxGet represents the function name for "context_get" in Lua
+// LuaFnCtxDelete represents the function name for "context_delete" in Lua
+// LuaFnAddCustomLog represents the function name for "custom_log_add" in Lua
+// LuaFnBackendVerifyPassword represents the function name for "nauthilus_backend_verify_password" in Lua
+// LuaFnBackendListAccounts represents the function name for "nauthilus_backend_list_accounts" in Lua
+// LuaFnBackendAddTOTPSecret represents the function name for "nauthilus_backend_add_totp" in Lua
+// LuaModUtil represents the module name for "nauthilus_util" in Lua
+// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
+// LuaFnCallAction represents the function name for "nauthilus_call_action" in Lua
+// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
+// LuaFnRunCallback represents the constant string "nauthilus_run_callback".
+// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
+// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
+// LuaFnSetStatusMessage represents the Lua function name for setting the status message of a Lua request.
+// LuaFnGetAllHTTPRequestHeaders represents the function name for "get_all_http_request_headers" in Lua
+// LuaFnGetHTTPRequestHeader represents the function name for "get_http_request_header" in Lua
+// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
+// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
+// LuaFnRedisSet represents the function name for "redis_set_str" in Lua
+// LuaFnRedisIncr represents a constant string identifier for the Lua function redis_incr.
+// LuaFnRedisDel represents the function name for "redis_det" in Lua
+// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
+// LuaFnRedisHGet represents the function name for "redis_hget" in Lua.
+// LuaFnRedisHSet represents the function name for "redis_hset" in Lua
+// LuaFnRedisHDel represents the function name for "redis_hdel" in Lua
+// LuaFnRedisHLen represents the function name for "redis_hlen" in Lua.
+// LuaFnRedisHGetAll represents the function name for "redis_hgetall" in Lua
+// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
+// LuaFN
 const (
 	// LuaFnCtxSet represents the function name for "context_set" in Lua
 	LuaFnCtxSet = "context_set"
@@ -1008,6 +1038,9 @@ const (
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
+
+	// LuaFnRemoveFromBackendResult represents the function to remove an attribute from the backend result set.
+	LuaFnRemoveFromBackendResult = "remove_from_backend_result"
 
 	// LuaFnCheckBackendConnection represents the Lua function name for checking the backend connection.
 	LuaFnCheckBackendConnection = "check_backend_connection"
