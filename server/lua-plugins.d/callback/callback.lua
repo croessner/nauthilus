@@ -82,7 +82,7 @@ function nauthilus_run_callback()
         end
     end
 
-    if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" then
+    if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" or result.category == "service:sieve" then
         if result.dovecot_session ~= "unknown" then
             ---@type string redis_key
             local redis_key = "ntc:DS:" .. crypto.md5(result.user)

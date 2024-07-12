@@ -10,6 +10,7 @@ local wanted_protocols = {
     [4] = "pop3s",
     [5] = "lmtp",
     [6] = "lmtps",
+    [7] = "sieve", -- Not sure about this
 }
 
 ---@param request table
