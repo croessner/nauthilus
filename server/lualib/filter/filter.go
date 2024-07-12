@@ -492,6 +492,37 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	)
 }
 
+// mergeMaps merges 2 maps into one. If same key exists in both maps, value from m2 is used.
+func mergeMaps(m1, m2 map[any]any) map[any]any {
+	result := make(map[any]any)
+
+	for k, v := range m1 {
+		result[k] = v
+	}
+
+	for k, v := range m2 {
+		result[k] = v
+	}
+
+	return result
+}
+
+// mapsEqual checks if two maps are equal by comparing their key-value pairs.
+// It returns true if the maps are equal, and false otherwise.
+func mapsEqual(m1, m2 map[any]any) bool {
+	if len(m1) != len(m2) {
+		return false
+	}
+
+	for k, v := range m1 {
+		if v2, ok := m2[k]; !ok || v != v2 {
+			return false
+		}
+	}
+
+	return true
+}
+
 // CallFilterLua attempts to execute Lua scripts defined in LuaFilters. It returns true if at least
 // one of the scripts executed successfully, otherwise it returns false.
 // The error return value is used to indicate any issues with the Lua filters.
@@ -508,6 +539,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		return false, nil, nil, errors2.ErrNoFiltersDefined
 	}
 
+	backendResult = &lualib.LuaBackendResult{}
+	removeAttributes = make([]string, 0)
+
 	LuaFilters.Mu.RLock()
 
 	defer LuaFilters.Mu.RUnlock()
@@ -520,10 +554,15 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	globals := setGlobals(ctx, r, L, &backendResult, &removeAttributes)
 	request := setRequest(r, L)
 
+	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+	mergedRemoveAttributes := config.NewStringSet()
+
 	for _, script := range LuaFilters.LuaScripts {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
+
+		prevBackendResult := backendResult
 
 		result, errLua := executeScriptWithinContext(request, script, r, ctx, L)
 		if errLua != nil {
@@ -532,12 +571,23 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			break
 		}
 
+		if !mapsEqual(prevBackendResult.Attributes, backendResult.Attributes) {
+			mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, backendResult.Attributes)
+		}
+
+		for _, attr := range removeAttributes {
+			mergedRemoveAttributes.Set(attr)
+		}
+
 		if result {
 			action = true
 
 			break
 		}
 	}
+
+	backendResult = mergedBackendResult
+	removeAttributes = mergedRemoveAttributes.GetStringSlice()
 
 	lualib.CleanupLTable(request)
 	lualib.CleanupLTable(globals)
