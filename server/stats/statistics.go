@@ -18,7 +18,7 @@ import (
 var (
 	InstanceInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "instance_info",
+			Name: "nauthilus_instance_info",
 			Help: "Information about the instance.",
 		},
 		[]string{"instance", "version"})
