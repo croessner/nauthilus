@@ -16,6 +16,13 @@ import (
 )
 
 var (
+	InstanceInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "instance_info",
+			Help: "Information about the instance.",
+		},
+		[]string{"instance", "version"})
+
 	// HttpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	HttpRequestsTotalCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{

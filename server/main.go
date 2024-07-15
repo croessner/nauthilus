@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	logStdLib "log"
 	"os"
@@ -30,12 +31,15 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
 )
 
 const version = "@@gittag@@-@@gitcommit@@"
+
+var versionFlag = flag.Bool("version", false, "print version and exit")
 
 // contextTuple represents a tuple that contains a context and a cancel function.
 // This type is used for managing contexts and cancellations in various parts of the application.
@@ -1020,6 +1024,34 @@ func postEnvironmentDebug() {
 	}
 }
 
+// parseFlagsAndPrintVersion parses command line flags and print the version
+// of the application if the version flag (-version) is set.
+// If the version flag is set, it will print the current version and exit the
+// application.
+func parseFlagsAndPrintVersion() {
+	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println("Version: ", version)
+
+		os.Exit(0)
+	}
+}
+
+// initializeInstanceInfo initializes the InstanceInfo metric with the instance name and version.
+//
+// It creates a labels map with "instance" and "version" as keys and the corresponding values from
+// config.LoadableConfig.Server.InstanceName and version as values.
+// Then, it retrieves the InstanceInfo metric using the labels and assigns it to infoMetric.
+// Finally, it sets the value of infoMetric to 1.
+func initializeInstanceInfo() {
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{
+		"instance": config.LoadableConfig.Server.InstanceName,
+		"version":  version,
+	})
+	infoMetric.Set(1)
+}
+
 // main initializes the application and manages the lifecycle of various components.
 //
 // It first sets up the environment and checks if any errors occurred during the process. If an error is encountered, it's logged and the application terminates.
@@ -1031,12 +1063,15 @@ func postEnvironmentDebug() {
 // The application is designed with a focus on managing and handling concurrent processes and operations.
 // Each component has its own lifecycle with dependencies managed and taken care of.
 func main() {
+	parseFlagsAndPrintVersion()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if err := setupEnvironment(); err != nil {
 		logStdLib.Fatalln("Unable to setup the environment. Error:", err)
 	}
 
+	initializeInstanceInfo()
 	postEnvironmentDebug()
 
 	if err := setupLuaScripts(); err != nil {
