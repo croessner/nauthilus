@@ -109,6 +109,8 @@ function nauthilus_run_callback()
             return
         end
 
-        print(result_json)
+        if request.debug then
+            print(result_json)
+        end
     end
 end

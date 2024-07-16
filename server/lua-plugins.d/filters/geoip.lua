@@ -91,7 +91,10 @@ function nauthilus_call_filter(request)
             return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
         end
 
-        print(result.body)
+        if request.debug then
+            print(result.body)
+        end
+
         local response, json_decode_err = json.decode(result.body)
         if json_decode_err then
             error(error_str(json_decode_err))

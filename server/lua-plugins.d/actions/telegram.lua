@@ -75,7 +75,10 @@ function nauthilus_call_action(request)
                 return nauthilus.ACTION_RESULT_FAIL
             end
 
-            print(rt_json)
+            if request.debug then
+                print(rt_json)
+            end
+
             rt.caller = nil
         end
 
@@ -206,7 +209,9 @@ function nauthilus_call_action(request)
             return nauthilus.ACTION_RESULT_FAIL
         end
 
-        print(result_json)
+        if request.debug then
+            print(result_json)
+        end
     end
 
     rt.post_telegram = true
