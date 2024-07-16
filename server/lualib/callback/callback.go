@@ -210,6 +210,31 @@ func getHTTPRequestBody(httpRequest *http.Request) lua.LGFunction {
 	}
 }
 
+// setupLogging creates a Lua table and sets up the "log_format" and "log_level" global variables based on the
+// configuration settings in the LoadableConfig.Server.Log.JSON and LoadableConfig.Server.Log.Level.Get values.
+// It returns the created Lua table.
+//
+// Parameters:
+//   - L *lua.LState: The Lua state in which the Lua table will be created.
+//
+// Returns:
+//
+//	*lua.LTable: The Lua table containing the "log_format" and "log_level" global variables.
+func setupLogging(L *lua.LState) *lua.LTable {
+	logTable := L.NewTable()
+	logFormat := global.LogFormatDefault
+	logLevel := config.LoadableConfig.Server.Log.Level.Get()
+
+	if config.LoadableConfig.Server.Log.JSON {
+		logFormat = global.LogFormatJSON
+	}
+
+	logTable.RawSetString(global.LuaRequestLogFormat, lua.LString(logFormat))
+	logTable.RawSetString(global.LuaRequestLogLevel, lua.LString(logLevel))
+
+	return logTable
+}
+
 // setupGlobals creates a Lua table and sets up global variables for the Lua state.
 // The global variables represent various Redis and HTTP request functions that can be called from Lua.
 // The function expects two parameters: ctx *gin.Context, L *lua.LState.
@@ -270,9 +295,10 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 
 	defer luaCancel()
 
+	logTable := setupLogging(L)
 	globals := setupGlobals(ctx, L)
 
-	err = executeAndHandleError(LuaCallback.GetPrecompiledScript(), L)
+	err = executeAndHandleError(LuaCallback.GetPrecompiledScript(), logTable, L)
 
 	lualib.CleanupLTable(globals)
 
@@ -290,15 +316,16 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 // It returns an error, which will be nil if no errors occurred during the execution of the Lua script.
 // Parameters:
 //   - compiledScript: The compiled Lua script to be executed.
+//   - logTable: The logTable provides the current log level and log format.
 //   - L: The Lua state in which the script will be executed.
 //
 // Example usage:
 //
-//	err := executeAndHandleError(compiledScript, L)
+//	err := executeAndHandleError(compiledScript, logTable, L)
 //	if err != nil {
 //	    // handle error
 //	}
-func executeAndHandleError(compiledScript *lua.FunctionProto, L *lua.LState) (err error) {
+func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState) (err error) {
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err)
 	}
@@ -311,7 +338,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, L *lua.LState) (er
 		Fn:      L.GetGlobal(global.LuaFnRunCallback),
 		NRet:    0,
 		Protect: true,
-	}); err != nil {
+	}, logTable); err != nil {
 		processError(err)
 	}
 
