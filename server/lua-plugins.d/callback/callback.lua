@@ -7,7 +7,7 @@
 local crypto = require("crypto")
 local json = require("json")
 
-local N = "callback.lua"
+local N = "callback"
 
 ---@param logging table
 ------@return void
@@ -16,12 +16,26 @@ function nauthilus_run_callback(logging)
     local result = {}
 
     result.level = "info"
-    result.caller = N
+    result.caller = N .. ".lua"
+
+    ---@return string
+    local function get_current_ts()
+        ---@type string currentTime
+        ---@type string err
+        local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "Europe/Berlin")
+        if err then
+            error(err)
+        end
+
+        return currentTime
+    end
 
     ---@param err_string string
     ---@return void
     local function print_result(err_string)
-        if  err_string ~= nil and err_string ~= "" then
+        result.ts = get_current_ts()
+
+        if err_string ~= nil and err_string ~= "" then
             result.level = "error"
 
             result.error = err_string
@@ -32,7 +46,7 @@ function nauthilus_run_callback(logging)
             ---@type string err_jenc
             local result_json, err_jenc = json.encode(result)
             if err_jenc ~= nil then
-                return
+                error(err_jenc)
             end
 
             print(result_json)
@@ -59,7 +73,7 @@ function nauthilus_run_callback(logging)
     local body = nauthilus.get_http_request_body()
 
     if #header == 0 or header[1] ~= "application/json" then
-        print_result( "HTTP request header: Wrong 'Content-Type'")
+        print_result("HTTP request header: Wrong 'Content-Type'")
 
         return
     end

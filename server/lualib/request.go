@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -130,6 +131,13 @@ type CommonRequest struct {
 
 // SetupRequest sets up the request object with the common request properties
 func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
+	logFormat := global.LogFormatDefault
+	logLevel := config.LoadableConfig.Server.Log.Level.Get()
+
+	if config.LoadableConfig.Server.Log.JSON {
+		logFormat = global.LogFormatJSON
+	}
+
 	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(c.Debug))
 	request.RawSet(lua.LString(global.LuaRequestRepeating), lua.LBool(c.Repeating))
 	request.RawSet(lua.LString(global.LuaRequestUserFound), lua.LBool(c.UserFound))
@@ -171,6 +179,9 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(c.XSSLClientIssuerDN))
 	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(c.XSSLProtocol))
 	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
+
+	request.RawSetString(global.LuaRequestLogFormat, lua.LString(logFormat))
+	request.RawSetString(global.LuaRequestLogLevel, lua.LString(logLevel))
 
 	return request
 }
