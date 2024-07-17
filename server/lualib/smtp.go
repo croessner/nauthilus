@@ -1,42 +1,31 @@
 package lualib
 
 import (
+	"fmt"
+
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 
 	"github.com/yuin/gopher-lua"
 )
 
-// RealSMTP is a struct representing a real SMTP server.
-type RealSMTP struct{}
+// RealSMTPClient is a struct representing a real SMTP client.
+type RealSMTPClient struct{}
 
-// SendMail sends an email using the SMTPClient implementation RealSMTP.
-//
-// Parameters:
-// - server: The SMTP server address.
-// - port: The SMTP server port number.
-// - heloName: The HELO/EHLO hostname in the SMTP session
-// - username: The username for authentication.
-// - password: The password for authentication.
-// - from: The email address of the sender.
-// - to: An array of email addresses of the recipients.
-// - subject: The subject of the email.
-// - body: The body or content of the email.
-// - tls: A boolean indicating whether to use TLS encryption.
-// - startTLS: A boolean indicating whether to start a TLS connection.
-//
-// Returns:
-// - An error if any occurs during sending the email.
-//
-// Note: This method internally calls smtp.SendMail to send the email.
-func (s *RealSMTP) SendMail(server string, port int, heloName string, username string, password string,
-	from string, to []string, subject string, body string, tls bool, useStartTLS bool) error {
-	return smtp.SendMail(server, port, heloName, username, password, from, to, subject, body, tls, useStartTLS)
+// SendMail utilizes the RealSMTPClient struct to invoke the SendMail method from the smtp package
+// This method will return an error if an attempting to send email with nil options.
+// Otherwise, it will pass the non-nil options to smtp.SendMail method and return its result
+func (s *RealSMTPClient) SendMail(options *smtp.MailOptions) error {
+	if options == nil {
+		return fmt.Errorf("options is nil")
+	}
+
+	return smtp.SendMail(options)
 }
 
-// SendMail sends an email using the provided SMTPClient implementation.
+// SendMail sends an email using the provided Client implementation.
 //
 // Parameters:
-// - smtpClient: An implementation of the SMTPClient interface for sending emails.
+// - smtpClient: An implementation of the Client interface for sending emails.
 //
 // Returns:
 // - Returns a Lua LGFunction that accepts a Lua state and sends the email using the provided parameters.
@@ -46,7 +35,7 @@ func (s *RealSMTP) SendMail(server string, port int, heloName string, username s
 // Example usage:
 // ```
 // // Create a real SMTP client instance
-// smtpClient := &lualib.RealSMTP{}
+// smtpClient := &lualib.RealSMTPClient{}
 //
 // // Create a Lua state
 // L := lua.NewState()
@@ -55,16 +44,16 @@ func (s *RealSMTP) SendMail(server string, port int, heloName string, username s
 // L.SetGlobal("SendMail", lualib.SendMail(smtpClient))
 // ```
 //
-// Note: The SMTPClient interface is defined as follows:
+// Note: The Client interface is defined as follows:
 // ```
 //
-//	type SMTPClient interface {
+//	type Client interface {
 //		SendMail(server string, port int, username string, password string,
 //			from string, to []string, subject string, body string, tls bool, startTLS bool) error
 //	}
 //
 // ```
-func SendMail(smtpClient smtp.SMTPClient) lua.LGFunction {
+func SendMail(smtpClient smtp.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 
@@ -114,7 +103,7 @@ func SendMail(smtpClient smtp.SMTPClient) lua.LGFunction {
 			return 1
 		}
 
-		err := smtpClient.SendMail(server, int(port), heloName, username, password, from, to, subject, body, bool(tls), bool(startTLS))
+		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, bool(tls), bool(startTLS)))
 
 		if err != nil {
 			L.Push(lua.LString(err.Error()))
