@@ -149,6 +149,9 @@ function nauthilus_run_callback(logging)
             local redis_key = "ntc:DS:" .. crypto.md5(result.user)
 
             if is_cmd_noop then
+                result.cmd = "NOOP"
+                result.state = "client session refreshed"
+
                 nauthilus.redis_expire(redis_key, 3600)
             else
                 -- Cleanup dovecot session
