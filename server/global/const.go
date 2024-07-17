@@ -1025,6 +1025,9 @@ const (
 
 	// LuaFnLDAPSearch represents the name of the Lua function used to do an LDAP search request.
 	LuaFnLDAPSearch = "ldap_search"
+
+	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
+	LuaFnSendMail = "send_mail"
 )
 
 const (

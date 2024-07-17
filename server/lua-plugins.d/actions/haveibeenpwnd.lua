@@ -7,6 +7,32 @@ local client = http.client({
     user_agent = "Nauthilus",
 })
 
+---@param str string
+---@return boolean
+local function toboolean(str)
+    local lower = string.lower(str)
+
+    return not (lower == "false" or lower == "0" or lower == "")
+end
+
+local smtp_message = [[
+Hello,
+
+a password was found on haveibeenpwnd!
+
+Account: %s
+Hash: %s
+Count: %s
+
+Please inform the user about this incident and lock the account.
+
+Regards
+
+Postmaster
+]]
+
+---@param request table
+---@return number
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
@@ -45,15 +71,53 @@ function nauthilus_call_action(request)
         end
 
         for line in result.body:gmatch("([^\n]*)\n?") do
-            local cmp_hash  = strings.split(line, ":")
+            local cmp_hash = strings.split(line, ":")
             if #cmp_hash == 2 and string.lower(cmp_hash[1]) == hash then
                 nauthilus.redis_hset(redis_key, hash:sub(1, 5), cmp_hash[2])
                 nauthilus.redis_expire(redis_key, 3600)
 
                 -- Required by telegram.lua
                 nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
-
                 nauthilus.custom_log_add("action_haveibeenpwnd", "leaked")
+
+                ---@type string found
+                ---@type string err_redis_hget2
+                local already_sent_mail, err_redis_hget2 = nauthilus.redis_hget(redis_key, "send_mail")
+
+                if err_redis_hget2 then
+                    error(err_redis_hget2)
+                end
+
+                if already_sent_mail == "" then
+                    local smtp_server = os.environ("SMTP_SERVER")
+                    local smtp_port = os.environ("SMTP_PORT")
+                    local smtp_tls = os.environ("SMTP_TLS")
+                    local smtp_starttls = os.environ("SMTP_STARTTLS")
+                    local smtp_username = os.environ("SMTP_USERNAME")
+                    local smtp_password = os.environ("SMTP_PASSWORD")
+                    local smtp_mail_from = os.environ("SMTP_MAIL_FROM")
+                    local smtp_rcpt_to = os.environ("SMTP_RCPT_TO")
+
+                    local err_smtp = nauthilus.send_mail({
+                        server = smtp_server,
+                        port = tonumber(smtp_port),
+                        username = smtp_username,
+                        password = smtp_password,
+                        tls = toboolean(smtp_tls),
+                        smtp_starttls = toboolean(smtp_starttls),
+                        from = smtp_mail_from,
+                        to = { smtp_rcpt_to },
+                        subject = "Password leak detected for account " .. request.account,
+                        body = string.format(smtp_message, request.account, hash:sub(1, 5), cmp_hash[2]),
+                    })
+
+                    if err_smtp then
+                        error(err_smtp)
+                    end
+
+                    nauthilus.redis_hset(redis_key, "send_mail", 1)
+                    nauthilus.redis_expire(redis_key, 86400)
+                end
 
                 return nauthilus.ACTION_RESULT_OK
             end

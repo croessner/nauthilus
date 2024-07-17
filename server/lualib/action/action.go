@@ -250,6 +250,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(httpRequest)))
+	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&lualib.RealSMTP{})))
 
 	lualib.SetUPContextFunctions(aw.luaActionRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)

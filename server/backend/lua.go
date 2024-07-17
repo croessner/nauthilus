@@ -162,6 +162,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(luaRequest.HTTPClientContext.Request)))
+	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&lualib.RealSMTP{})))
 
 	lualib.SetUPContextFunctions(luaRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)

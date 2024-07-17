@@ -216,6 +216,7 @@ func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
+	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&lualib.RealSMTP{})))
 
 	lualib.SetUPContextFunctions(r.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
