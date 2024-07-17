@@ -6,39 +6,6 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-// SMTPClient is an interface for sending email using SMTP protocol.
-type SMTPClient interface {
-	// SendMail sends an email using the provided SMTPClient implementation.
-	//
-	// Parameters:
-	// - server: The address of the SMTP server.
-	// - port: The port number of the SMTP server.
-	// - username: The username to authenticate with the SMTP server.
-	// - password: The password to authenticate with the SMTP server.
-	// - from: The email address of the sender.
-	// - to: A list of email addresses of the recipients.
-	// - subject: The subject of the email.
-	// - body: The body of the email.
-	// - tls: Specifies whether to use TLS for the SMTP connection.
-	// - startTLS: Specifies whether to use STARTTLS for the SMTP connection.
-	//
-	// Returns:
-	// - An error if sending the email fails, otherwise nil.
-	//
-	// Example usage:
-	// ```
-	// smtpClient := &lualib.RealSMTP{}
-	// err := SendMail(smtpClient, "smtp.example.com", 587, "user@example.com", "password",
-	//     "sender@example.com", []string{"recipient@example.com"}, "Hello, World!",
-	//     "This is the body of the email.", true, true)
-	// if err != nil {
-	//     fmt.Println("Failed to send email:", err)
-	// }
-	// ```
-	SendMail(server string, port int, username string, password string,
-		from string, to []string, subject string, body string, tls bool, startTLS bool) error
-}
-
 // RealSMTP is a struct representing a real SMTP server.
 type RealSMTP struct{}
 
@@ -47,6 +14,7 @@ type RealSMTP struct{}
 // Parameters:
 // - server: The SMTP server address.
 // - port: The SMTP server port number.
+// - heloName: The HELO/EHLO hostname in the SMTP session
 // - username: The username for authentication.
 // - password: The password for authentication.
 // - from: The email address of the sender.
@@ -60,9 +28,9 @@ type RealSMTP struct{}
 // - An error if any occurs during sending the email.
 //
 // Note: This method internally calls smtp.SendMail to send the email.
-func (s *RealSMTP) SendMail(server string, port int, username string, password string,
-	from string, to []string, subject string, body string, tls bool, startTLS bool) error {
-	return smtp.SendMail(server, port, username, password, from, to, subject, body, tls, startTLS)
+func (s *RealSMTP) SendMail(server string, port int, heloName string, username string, password string,
+	from string, to []string, subject string, body string, tls bool, useStartTLS bool) error {
+	return smtp.SendMail(server, port, heloName, username, password, from, to, subject, body, tls, useStartTLS)
 }
 
 // SendMail sends an email using the provided SMTPClient implementation.
@@ -96,7 +64,7 @@ func (s *RealSMTP) SendMail(server string, port int, username string, password s
 //	}
 //
 // ```
-func SendMail(smtpClient SMTPClient) lua.LGFunction {
+func SendMail(smtpClient smtp.SMTPClient) lua.LGFunction {
 	return func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 
@@ -104,6 +72,7 @@ func SendMail(smtpClient SMTPClient) lua.LGFunction {
 		password := tbl.RawGetString("password").String()
 		from := tbl.RawGetString("from").String()
 		server := tbl.RawGetString("server").String()
+		heloName := tbl.RawGetString("helo_name").String()
 		subject := tbl.RawGetString("subject").String()
 		body := tbl.RawGetString("body").String()
 
@@ -145,7 +114,7 @@ func SendMail(smtpClient SMTPClient) lua.LGFunction {
 			return 1
 		}
 
-		err := smtpClient.SendMail(server, int(port), username, password, from, to, subject, body, bool(tls), bool(startTLS))
+		err := smtpClient.SendMail(server, int(port), heloName, username, password, from, to, subject, body, bool(tls), bool(startTLS))
 
 		if err != nil {
 			L.Push(lua.LString(err.Error()))

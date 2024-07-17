@@ -91,6 +91,7 @@ function nauthilus_call_action(request)
                 if already_sent_mail == "" then
                     local smtp_server = os.environ("SMTP_SERVER")
                     local smtp_port = os.environ("SMTP_PORT")
+                    local smtp_helo_name = os.environ("SMTP_HELO_NAME")
                     local smtp_tls = os.environ("SMTP_TLS")
                     local smtp_starttls = os.environ("SMTP_STARTTLS")
                     local smtp_username = os.environ("SMTP_USERNAME")
@@ -101,6 +102,7 @@ function nauthilus_call_action(request)
                     local err_smtp = nauthilus.send_mail({
                         server = smtp_server,
                         port = tonumber(smtp_port),
+                        helo_name = smtp_helo_name,
                         username = smtp_username,
                         password = smtp_password,
                         tls = toboolean(smtp_tls),
