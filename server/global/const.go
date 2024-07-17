@@ -358,6 +358,14 @@ const (
 	LabelFailure = "failure"
 )
 
+const (
+	// LogFormatDefault represents the strnig "default".
+	LogFormatDefault = "default"
+
+	// LogFormatJSON represents the sting "json".
+	LogFormatJSON = "json"
+)
+
 // Custom defined types for claims.
 const (
 	// ClaimTypeString constant represents a string claim type
@@ -1017,6 +1025,9 @@ const (
 
 	// LuaFnLDAPSearch represents the name of the Lua function used to do an LDAP search request.
 	LuaFnLDAPSearch = "ldap_search"
+
+	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
+	LuaFnSendMail = "send_mail"
 )
 
 const (
@@ -1097,6 +1108,12 @@ const (
 const (
 	// LuaRequestDebug is for debugging purposes.
 	LuaRequestDebug = "debug"
+
+	// LuaRequestLogFormat indicates wheteher to log in JSON or standard format.
+	LuaRequestLogFormat = "log_format"
+
+	// LuaRequestLogLevel is a constant that represents the log level configuration used.
+	LuaRequestLogLevel = "log_level"
 
 	// LuaRequestNoAuth indicates no authorization required.
 	LuaRequestNoAuth = "no_auth"

@@ -63,12 +63,24 @@ func convertStringCmd(value *redis.StringCmd, valType string, L *lua.LState) err
 	case global.TypeString:
 		L.Push(lua.LString(value.Val()))
 	case global.TypeNumber:
+		if value.Val() == "" {
+			L.Push(lua.LNil)
+
+			return nil
+		}
+
 		if result, err := value.Float64(); err == nil {
 			L.Push(lua.LNumber(result))
 		} else {
 			return err
 		}
 	case global.TypeBoolean:
+		if value.Val() == "" {
+			L.Push(lua.LNil)
+
+			return nil
+		}
+
 		if result, err := value.Bool(); err == nil {
 			L.Push(lua.LBool(result))
 		} else {

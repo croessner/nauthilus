@@ -6,9 +6,67 @@
 
 local crypto = require("crypto")
 local json = require("json")
+local time = require("time")
 
+local N = "callback"
+
+---@param logging table
 ------@return void
-function nauthilus_run_callback()
+function nauthilus_run_callback(logging)
+    ---@type table result
+    local result = {}
+
+    result.level = "info"
+    result.caller = N .. ".lua"
+
+    ---@return string
+    local function get_current_ts()
+        ---@type string currentTime
+        ---@type string err
+        local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "Europe/Berlin")
+        if err then
+            error(err)
+        end
+
+        return currentTime
+    end
+
+    ---@param err_string string
+    ---@return void
+    local function print_result(err_string)
+        result.ts = get_current_ts()
+
+        if err_string ~= nil and err_string ~= "" then
+            result.level = "error"
+
+            result.error = err_string
+        end
+
+        if logging.log_format == "json" then
+            ---@type string result_json
+            ---@type string err_jenc
+            local result_json, err_jenc = json.encode(result)
+            if err_jenc ~= nil then
+                error(err_jenc)
+            end
+
+            print(result_json)
+        else
+            ---@type table output_str
+            local output_str = {}
+
+            for k, v in pairs(result) do
+                if string.match(v, "%s") then
+                    v = '"' .. v .. '"'
+                end
+
+                table.insert(output_str, k .. '=' .. v)
+            end
+
+            print(table.concat(output_str, " "))
+        end
+    end
+
     ---@type table header
     local header = nauthilus.get_http_request_header("Content-Type")
 
@@ -16,6 +74,8 @@ function nauthilus_run_callback()
     local body = nauthilus.get_http_request_body()
 
     if #header == 0 or header[1] ~= "application/json" then
+        print_result("HTTP request header: Wrong 'Content-Type'")
+
         return
     end
 
@@ -23,15 +83,16 @@ function nauthilus_run_callback()
     ---@type string err_jdec
     local body_table, err_jdec = json.decode(body)
     if err_jdec ~= nil then
+        print_result(err_jdec)
+
         return
     end
 
     if type(body_table) ~= "table" then
+        print_result("HTTP request body: Result is not a table")
+
         return
     end
-
-    ---@type table result
-    local result = {}
 
     result.state = "client disconnected"
     result.dovecot_session = "unknown"
@@ -88,6 +149,9 @@ function nauthilus_run_callback()
             local redis_key = "ntc:DS:" .. crypto.md5(result.user)
 
             if is_cmd_noop then
+                result.cmd = "NOOP"
+                result.state = "client session refreshed"
+
                 nauthilus.redis_expire(redis_key, 3600)
             else
                 -- Cleanup dovecot session
@@ -102,13 +166,8 @@ function nauthilus_run_callback()
             end
         end
 
-        ---@type string result_json
-        ---@type string err_jenc
-        local result_json, err_jenc = json.encode(result)
-        if err_jenc ~= nil then
-            return
+        if logging.log_level == "debug" or logging.log_level == "info" then
+            print_result()
         end
-
-        print(result_json)
     end
 end

@@ -127,15 +127,8 @@ function nauthilus_call_filter(request)
 
     -- Only look for backend servers, if a user was authenticated (passdb requests)
     if request.authenticated and not request.no_auth then
-        ---@type table result
-        local result = {}
-
         ---@type number num_of_bs
         local num_of_bs = 0
-
-        result.caller = "monitoring.lua"
-        result.level = "info"
-        result.session = request.session
 
         local backend_servers = nauthilus.get_backend_servers()
         if backend_servers ~= nil and type(backend_servers) == "table" then
@@ -195,13 +188,11 @@ function nauthilus_call_filter(request)
 
         if num_of_bs == 0 then
             nauthilus.custom_log_add(N .. "_backend_server", "failed")
-            nauthilus.context_set("backend_server_monitoring", "fail")
             nauthilus.status_message_set("No backend servers are available")
 
             return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
         else
             nauthilus.custom_log_add(N .. "_backend_server", "success")
-            nauthilus.context_set("backend_server_monitoring", "ok")
         end
 
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK

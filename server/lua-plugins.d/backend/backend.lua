@@ -28,23 +28,19 @@ local config = {
 function nauthilus_backend_verify_password(request)
     local b = backend_result.new()
 
-    local mysql, err = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL, b
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    if err_open then
+        error(err_open)
     end
 
-    local result, err = mysql:query(
+    local result, err_query = mysql:query(
         "SELECT account, password, totp_secret, uniqueid, display_name FROM nauthilus WHERE username = \"" .. request.username .. "\" OR account = \"" .. request.username .. "\";")
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL, b
+    if err_query then
+        error(err_query)
     end
 
     -- We do not want to return all results to each protocol
-    local filter_result_value = function (key)
+    local filter_result_value = function(key)
         if request.protocol ~= "ory-hydra" then
             if key == "totp_secret" then
                 return true
@@ -53,9 +49,9 @@ function nauthilus_backend_verify_password(request)
             elseif key == "display_name" then
                 return true
             end
-       end
+        end
 
-       return false
+        return false
     end
 
     local attributes = {}
@@ -68,8 +64,6 @@ function nauthilus_backend_verify_password(request)
                     local match, err = pw.compare_passwords(row[id], request.password)
                     if err then
                         error(err)
-
-                        return nauthilus.BACKEND_RESULT_FAIL, b
                     end
 
                     b:authenticated(match)
@@ -107,30 +101,25 @@ function nauthilus_backend_verify_password(request)
     b:attributes(attributes)
 
     nauthilus.custom_log_add("backend_lua", "success")
-    nauthilus.context_set("backend_lua", "ok")
 
     return nauthilus.BACKEND_RESULT_OK, b
 end
 
 function nauthilus_backend_list_accounts()
-    local mysql, err = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL, {}
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    if err_open then
+        error(err_open)
     end
 
-    local result, err = mysql:query("SELECT account FROM nauthilus LIMIT 100;")
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL, {}
+    local result, err_query = mysql:query("SELECT account FROM nauthilus LIMIT 100;")
+    if err_query then
+        error(err_query)
     end
 
     local accounts = {}
 
     for _, row in pairs(result.rows) do
-        for id, name in pairs(result.columns) do
+        for id, _ in pairs(result.columns) do
             table.insert(accounts, row[id])
         end
     end
@@ -139,18 +128,14 @@ function nauthilus_backend_list_accounts()
 end
 
 function nauthilus_backend_add_totp(request)
-    local mysql, err = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL
+    local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
+    if err_open then
+        error(err_open)
     end
 
-    local _, err = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
-    if err then
-        error(err)
-
-        return nauthilus.BACKEND_RESULT_FAIL
+    local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
+    if err_exec then
+        error(err_exec)
     end
 
     return nauthilus.BACKEND_RESULT_OK
