@@ -14,10 +14,15 @@ import (
 // If TLS encryption is enabled, it uses the sendMailUsingTLS function to establish a TLS connection and send the email.
 // Otherwise, it uses the smtp.SendMail function to send the email without encryption.
 func SendMail(smtpServer string, smtpPort int, username, password, from string, to []string, subject, body string, tls bool, startTLS bool) error {
-	var err error
+	var (
+		auth smtp.Auth
+		err  error
+	)
 
-	// Set up authentication information.
-	auth := smtp.PlainAuth("", username, password, smtpServer)
+	if username != "" && password != "" {
+		// Set up authentication information.
+		auth = smtp.PlainAuth("", username, password, smtpServer)
+	}
 
 	// Connect to the server, authenticate, set the sender and recipient,
 	// and send the email all in one step.
@@ -32,6 +37,7 @@ func SendMail(smtpServer string, smtpPort int, username, password, from string, 
 	} else {
 		err = smtp.SendMail(smtpServer+fmt.Sprintf(":%d", smtpPort), auth, from, to, msg)
 	}
+
 	return err
 }
 
