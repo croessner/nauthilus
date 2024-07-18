@@ -108,8 +108,13 @@ func SendMail(options *MailOptions) error {
 	)
 
 	if options.Username != "" && options.Password != "" {
+		server := options.Server
+		if options.TLS && !options.StartTLS && options.Port == 465 {
+			server = fmt.Sprintf("%s:%d", options.Server, options.Port)
+		}
+
 		// Set up authentication information.
-		auth = smtp.PlainAuth("", options.Username, options.Password, options.Server)
+		auth = smtp.PlainAuth("", options.Username, options.Password, server)
 	}
 
 	if options.HeloName == "" {
@@ -185,7 +190,6 @@ func sendMail(smtpServer string, heloName string, auth smtp.Auth, from string, t
 	if useStartTLS {
 		// Do STARTTLS
 		if err = smtpClient.StartTLS(tlsConfig); err != nil {
-
 			return err
 		}
 	} else if useTLS {

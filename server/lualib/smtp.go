@@ -81,7 +81,7 @@ func SendMail(smtpClient smtp.Client) lua.LGFunction {
 			return 1
 		}
 
-		to := make([]string, recipientTable.Len())
+		to := make([]string, 0)
 
 		recipientTable.ForEach(func(k lua.LValue, v lua.LValue) {
 			to = append(to, v.String())
