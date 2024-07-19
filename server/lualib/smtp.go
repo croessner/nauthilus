@@ -22,6 +22,51 @@ func (s *RealSMTPClient) SendMail(options *smtp.MailOptions) error {
 	return smtp.SendMail(options)
 }
 
+// getStringFromTable retrieves a string value from a Lua table by its key.
+// If the value is not present or is nil, an empty string is returned.
+//
+// Parameters:
+// - table: The Lua table to retrieve the value from.
+// - key: The key of the value to retrieve.
+//
+// Returns:
+// - The string value corresponding to the provided key. If the value is not present or is nil, an empty string is returned.
+//
+// Example usage:
+// ```
+// value := getStringFromTable(tbl, "key")
+// ```
+func getStringFromTable(table *lua.LTable, key string) string {
+	value := table.RawGetString(key)
+	if value == lua.LNil {
+		return ""
+	}
+
+	return value.String()
+}
+
+// getBoolFromTable retrieves a boolean value from a Lua table by its key.
+// If the value is not present or is not of type boolean, false is returned.
+//
+// Parameters:
+// - table: The Lua table to retrieve the value from.
+// - key: The key of the value to retrieve.
+//
+// Returns:
+// - The boolean value corresponding to the provided key. If the value is not present or is not of type boolean, false is returned.
+func getBoolFromTable(table *lua.LTable, key string) bool {
+	value := table.RawGetString(key)
+	if value == lua.LNil {
+		return false
+	}
+
+	if boolVal, ok := value.(lua.LBool); ok {
+		return bool(boolVal)
+	}
+
+	return false
+}
+
 // SendMail sends an email using the provided Client implementation.
 //
 // Parameters:
@@ -57,13 +102,15 @@ func SendMail(smtpClient smtp.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 
-		username := tbl.RawGetString("username").String()
-		password := tbl.RawGetString("password").String()
-		from := tbl.RawGetString("from").String()
-		server := tbl.RawGetString("server").String()
-		heloName := tbl.RawGetString("helo_name").String()
-		subject := tbl.RawGetString("subject").String()
-		body := tbl.RawGetString("body").String()
+		username := getStringFromTable(tbl, "username")
+		password := getStringFromTable(tbl, "password")
+		from := getStringFromTable(tbl, "from")
+		server := getStringFromTable(tbl, "server")
+		heloName := getStringFromTable(tbl, "helo_name")
+		subject := getStringFromTable(tbl, "subject")
+		body := getStringFromTable(tbl, "body")
+		tls := getBoolFromTable(tbl, "tls")
+		startTLS := getBoolFromTable(tbl, "starttls")
 
 		portVal := tbl.RawGetString("port")
 		port, ok := portVal.(lua.LNumber)
@@ -82,28 +129,11 @@ func SendMail(smtpClient smtp.Client) lua.LGFunction {
 		}
 
 		to := make([]string, 0)
-
 		recipientTable.ForEach(func(k lua.LValue, v lua.LValue) {
 			to = append(to, v.String())
 		})
 
-		tlsVal := tbl.RawGetString("tls")
-		tls, ok := tlsVal.(lua.LBool)
-		if !ok {
-			L.Push(lua.LString("tls must be a boolean"))
-
-			return 1
-		}
-
-		startTLSVal := tbl.RawGetString("starttls")
-		startTLS, ok := startTLSVal.(lua.LBool)
-		if !ok {
-			L.Push(lua.LString("starttls must be a boolean"))
-
-			return 1
-		}
-
-		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, bool(tls), bool(startTLS)))
+		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS))
 
 		if err != nil {
 			L.Push(lua.LString(err.Error()))
