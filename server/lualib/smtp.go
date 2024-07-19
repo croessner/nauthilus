@@ -111,6 +111,7 @@ func SendMail(smtpClient smtp.Client) lua.LGFunction {
 		body := getStringFromTable(tbl, "body")
 		tls := getBoolFromTable(tbl, "tls")
 		startTLS := getBoolFromTable(tbl, "starttls")
+		lmtp := getBoolFromTable(tbl, "lmtp")
 
 		portVal := tbl.RawGetString("port")
 		port, ok := portVal.(lua.LNumber)
@@ -133,7 +134,7 @@ func SendMail(smtpClient smtp.Client) lua.LGFunction {
 			to = append(to, v.String())
 		})
 
-		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS))
+		err := smtpClient.SendMail(smtp.NewMailOptions(server, int(port), heloName, username, password, from, to, subject, body, tls, startTLS, lmtp))
 
 		if err != nil {
 			L.Push(lua.LString(err.Error()))

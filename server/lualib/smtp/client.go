@@ -7,10 +7,177 @@ import (
 	"net"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// GenericClient is an interface that defines the methods required for sending emails using an SMTP or LMTP server.
+// It provides methods for establishing a connection, authenticating, setting the sender and recipients,
+// writing the email content, and closing the connection.
+type GenericClient interface {
+	Close() error
+	Hello(localName string) error
+	StartTLS(config *tls.Config) error
+	Auth(auth smtp.Auth) error
+	Mail(from string) error
+	Rcpt(to string) error
+	Data() (io.WriteCloser, error)
+	Quit() error
+}
+
+// LMTPClient is a struct that represents a client for sending emails using the LMTP protocol.
+//
+// It contains an internalClient of type *smtp.Client and a text of type *textproto.Conn.
+type LMTPClient struct {
+	internalClient *smtp.Client
+	text           *textproto.Conn
+}
+
+// NewLMTPClient creates a new instance of LMTPClient with the provided connection.
+// Parameters:
+// - conn: The net.Conn used for the LMTP connection.
+// Returns:
+// - A pointer to a new LMTPClient instance.
+// - An error if an error occurs during the creation process.
+func NewLMTPClient(conn net.Conn) (*LMTPClient, error) {
+	textConn := textproto.NewConn(conn)
+	internalClient, err := smtp.NewClient(conn, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return &LMTPClient{internalClient: internalClient, text: textConn}, nil
+}
+
+// cmd sends a command to the LMTP server and checks the response code.
+//
+// Parameters:
+// - code: The expected return code from the server.
+// - cmd: The command to send to the LMTP server.
+//
+// Returns:
+//   - An error if an error occurs during the execution of the command or if the response code is not 250.
+//     The error message includes the failed command and any error returned by the server.
+//
+// This method is used internally by other methods in the LMTPClient struct to send commands to the LMTP server.
+func (l *LMTPClient) cmd(expCode int, cmd string) error {
+	id, err := l.text.Cmd(cmd)
+	if err != nil {
+		return err
+	}
+
+	l.text.StartResponse(id)
+
+	defer l.text.EndResponse(id)
+
+	code, _, err := l.text.ReadResponse(expCode)
+	if err != nil || code != expCode {
+		return fmt.Errorf("failed cmd '%s': %v", cmd, err)
+	}
+
+	return nil
+}
+
+// Close closes the LMTP client connection.
+//
+// Returns:
+// - An error if an error occurs during the closing of the client connection.
+//
+// This method is used to close the client connection and should be called
+// after the client finishes sending emails.
+func (l *LMTPClient) Close() error {
+	return l.internalClient.Close()
+}
+
+// Hello sends the LHLO command to the LMTP server.
+//
+// Parameters:
+// - localName: The local name to use in the LHLO command.
+//
+// Returns:
+// - An error if an error occurs during the execution of the LHLO command.
+func (l *LMTPClient) Hello(localName string) error {
+	err := l.cmd(250, fmt.Sprintf("LHLO %s", localName))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// StartTLS is a method on LMTPClient which is mentioned to implement the notion of starting a TLS connection.
+// However, in this implementation, it does not initialize a secure connection. It is a simple no-operation function (nop)
+// that returns nil irrespective of the input.
+func (l *LMTPClient) StartTLS(_ *tls.Config) error {
+	return nil
+}
+
+// Auth is a method on LMTPClient which is mentioned to handle authentication.
+// However, in this implementation, it does not perform any authentication. It is a simple no-operation function (nop)
+// that returns nil irrespective of the input.
+func (l *LMTPClient) Auth(_ smtp.Auth) error {
+	return nil
+}
+
+// Mail sends the MAIL FROM command to the LMTP server with the specified "from" address.
+//
+// Parameters:
+// - from: The email address to use in the MAIL FROM command.
+//
+// Returns:
+//   - An error if an error occurs during the execution of the command or if the response code is not 250.
+//     The error message includes the failed command and any error returned by the server.
+//
+// This method is used internally by other methods in the LMTPClient struct for sending emails.
+func (l *LMTPClient) Mail(from string) error {
+	err := l.cmd(250, fmt.Sprintf("MAIL FROM:<%s>", from))
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+// Rcpt sends the RCPT TO command with the specified "to" address to the LMTP server.
+//
+// Parameters:
+// - to: The email address to use in the RCPT TO command.
+//
+// Returns:
+//   - An error if an error occurs during the execution of the command or if the response code is not 250.
+//     The error message includes the failed command and any error returned by the server.
+//
+// This method is used internally by other methods in the LMTPClient struct for sending emails.
+func (l *LMTPClient) Rcpt(to string) error {
+	return l.internalClient.Rcpt(to)
+}
+
+// Data returns an io.WriteCloser that can be used to write the email message content,
+// and an error if an error occurs during the execution of the command or obtaining the WriteCloser.
+//
+// This method is used internally by other methods in the LMTPClient struct for sending emails.
+func (l *LMTPClient) Data() (io.WriteCloser, error) {
+	return l.internalClient.Data()
+}
+
+// Quit sends the QUIT command to the LMTP server.
+//
+// Returns:
+// - An error if an error occurs during the execution of the command.
+//
+// This method is used to gracefully terminate the LMTP client connection with the server.
+func (l *LMTPClient) Quit() error {
+	err := l.cmd(221, "QUIT")
+	if err != nil {
+		return err
+	}
+
+	l.text.Close()
+
+	return err
+}
 
 // MailOptions represents the options for sending an email.
 // It includes the SMTP server address, port number, HELO name, username, password,
@@ -51,6 +218,12 @@ type MailOptions struct {
 
 	// StartTLS is a boolean field in the MailOptions struct that indicates whether to use STARTTLS to enable TLS encryption for the connection.
 	StartTLS bool
+
+	// LMTP is a field in the MailOptions struct that specifies whether to use
+	// the LMTP (Local Mail Transfer Protocol) protocol for sending an email.
+	// If set to true, the email will be sent using LMTP. If set to false, the
+	// email will be sent using the SMTP (Simple Mail Transfer Protocol) protocol.
+	LMTP bool
 }
 
 // NewMailOptions creates a new instance of MailOptions with the provided parameters.
@@ -67,11 +240,12 @@ type MailOptions struct {
 // - body: The body of the email.
 // - useTLS: Whether to use TLS encryption for the connection.
 // - useStartTLS: Whether to use STARTTLS to enable TLS encryption for the connection.
+// - useLMTP: Wether to use LMTP or SMTP for the communication.
 //
 // Returns:
 // - A pointer to a new MailOptions instance.
 func NewMailOptions(server string, port int, heloName string, username string, password string, from string, to []string,
-	subject string, body string, useTLS bool, useStartTLS bool) *MailOptions {
+	subject string, body string, useTLS bool, useStartTLS bool, useLMTP bool) *MailOptions {
 	return &MailOptions{
 		Server:   server,
 		Port:     port,
@@ -84,6 +258,7 @@ func NewMailOptions(server string, port int, heloName string, username string, p
 		Body:     body,
 		TLS:      useTLS,
 		StartTLS: useStartTLS,
+		LMTP:     useLMTP,
 	}
 }
 
@@ -149,7 +324,7 @@ func SendMail(options *MailOptions) error {
 			options.Body +
 			"\r\n")
 
-	err = sendMail(options.Server+fmt.Sprintf(":%d", options.Port), options.HeloName, auth, options.From, options.To, msg, options.TLS, options.StartTLS)
+	err = sendMail(options.Server+fmt.Sprintf(":%d", options.Port), options.HeloName, auth, options.From, options.To, msg, options.TLS, options.StartTLS, options.LMTP)
 
 	return err
 }
@@ -158,13 +333,13 @@ func SendMail(options *MailOptions) error {
 // sender and recipients, and sends the email message. If the StartTLS option is enabled, it uses smtp.Dial
 // and smtp.Client.StartTLS to establish the connection. Otherwise, it uses tls.Dial and smtp.NewClient.
 // It returns an error if any occurs during the sending process.
-func sendMail(smtpServer string, heloName string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool, useStartTLS bool) error {
+func sendMail(smtpServer string, heloName string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool, useStartTLS bool, useLMTP bool) error {
 	var (
-		smtpClient *smtp.Client
-		tlsConfig  *tls.Config
-		conn       net.Conn
-		wc         io.WriteCloser
-		err        error
+		genericClient GenericClient
+		tlsConfig     *tls.Config
+		conn          net.Conn
+		wc            io.WriteCloser
+		err           error
 	)
 
 	if useTLS {
@@ -177,58 +352,80 @@ func sendMail(smtpServer string, heloName string, auth smtp.Auth, from string, t
 
 	// Initialize plain connection
 	if !useTLS || useStartTLS {
-		smtpClient, err = smtp.Dial(smtpServer)
-		if err != nil {
-			return err
+		if !useLMTP {
+			genericClient, err = smtp.Dial(smtpServer)
+			if err != nil {
+				return err
+			}
+		} else {
+			conn, err = net.Dial("tcp", smtpServer)
+			if err != nil {
+				return err
+			}
+
+			genericClient, err = NewLMTPClient(conn)
+			if err != nil {
+				return err
+			}
 		}
 
-		if err = smtpClient.Hello(heloName); err != nil {
-			return err
-		}
-	}
-
-	if useStartTLS {
-		// Do STARTTLS
-		if err = smtpClient.StartTLS(tlsConfig); err != nil {
-			return err
-		}
-	} else if useTLS {
-		// Initialize secure connection
-		conn, err = tls.Dial("tcp", smtpServer, tlsConfig)
-		if err != nil {
-			return err
-		}
-
-		smtpClient, err = smtp.NewClient(conn, smtpServer)
-		if err != nil {
-			return err
-		}
-
-		if err = smtpClient.Hello(heloName); err != nil {
+		if err = genericClient.Hello(heloName); err != nil {
 			return err
 		}
 	}
 
-	defer smtpClient.Quit()
-	defer smtpClient.Close()
+	if useStartTLS && !useLMTP {
+		// Do SMTP/STARTTLS
+		if err = genericClient.StartTLS(tlsConfig); err != nil {
+			return err
+		}
+	} else {
+		if useTLS {
+			// Initialize secure connection for SMTP-only
+			conn, err = tls.Dial("tcp", smtpServer, tlsConfig)
+			if err != nil {
+				return err
+			}
 
-	if auth != nil {
-		if err = smtpClient.Auth(auth); err != nil {
+			if !useLMTP {
+				genericClient, err = smtp.NewClient(conn, smtpServer)
+				if err != nil {
+					return err
+				}
+			} else {
+				genericClient, err = NewLMTPClient(conn)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		if err = genericClient.Hello(heloName); err != nil {
+			return err
+		}
+
+	}
+
+	defer genericClient.Quit()
+	defer genericClient.Close()
+
+	if !useLMTP && auth != nil {
+		if err = genericClient.Auth(auth); err != nil {
 			return err
 		}
 	}
 
-	if err = smtpClient.Mail(from); err != nil {
+	if err = genericClient.Mail(from); err != nil {
 		return err
 	}
 
 	for _, addr := range to {
-		if err = smtpClient.Rcpt(addr); err != nil {
+		if err = genericClient.Rcpt(addr); err != nil {
 			return err
 		}
 	}
 
-	wc, err = smtpClient.Data()
+	wc, err = genericClient.Data()
 	if err != nil {
 		return err
 	}
@@ -243,7 +440,7 @@ func sendMail(smtpServer string, heloName string, auth smtp.Auth, from string, t
 		return err
 	}
 
-	err = smtpClient.Quit()
+	err = genericClient.Quit()
 	if err != nil {
 		return err
 	}
