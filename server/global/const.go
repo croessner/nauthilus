@@ -920,6 +920,7 @@ const (
 	LuaCommandAddMFAValue
 )
 
+// LuaFnCtxSet represents the function name for "context_set" in Lua
 const (
 	// LuaFnCtxSet represents the function name for "context_set" in Lua
 	LuaFnCtxSet = "context_set"
@@ -1013,6 +1014,9 @@ const (
 
 	// LuaFnRedisHExists represents the Lua function name for checking if a field exists in a Redis hash.
 	LuaFnRedisHExists = "redis_hexists"
+
+	// LuaFnRedisRename represebts the Lua function name "redis_rename" to rename an existing Redis key.
+	LuaFnRedisRename = "redis_rename"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"

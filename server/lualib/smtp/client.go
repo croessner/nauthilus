@@ -320,6 +320,8 @@ func SendMail(options *MailOptions) error {
 			"From: " + options.From + "\r\n" +
 			"To: " + toConcatenated + "\r\n" +
 			"Subject: " + options.Subject + "\r\n" +
+			"Content-Type: text/plain; charset=utf-8\r\n" +
+			"MIME-Version: 1.0\r\n" +
 			"\r\n" +
 			options.Body +
 			"\r\n")

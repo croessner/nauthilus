@@ -38,6 +38,16 @@ function nauthilus_call_filter(request)
         end
     end
 
+    local function exists_in_table(tbl, element)
+        for _, value in pairs(tbl) do
+            if value == element then
+                return true
+            end
+        end
+
+        return false
+    end
+
     ts = get_current_ts()
     if ts == nil then
         ts = "unknown"
@@ -82,6 +92,25 @@ function nauthilus_call_filter(request)
 
             if response.object ~= nil then
                 add_custom_logs(response.object)
+
+                -- Try to get all ISO country codes
+                if type(object) == "table" then
+                    local result_idso_codes = {}
+
+                    for key, values in pairs(object) do
+                        if key == "foreign_countries_seen" or key == "home_countries_seen" then
+                            if type(values) == "table" then
+                                for _, iso_code in ipairs(values) do
+                                    if not exists_in_table(result_idso_codes, iso_code) then
+                                        table.insert(result_idso_codes, iso_code)
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    nauthilus.context_set(N .. "_iso_codes_seen", result_idso_codes)
+                end
             end
 
             if not response.result then
