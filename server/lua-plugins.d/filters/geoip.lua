@@ -94,22 +94,22 @@ function nauthilus_call_filter(request)
                 add_custom_logs(response.object)
 
                 -- Try to get all ISO country codes
-                if type(object) == "table" then
-                    local result_idso_codes = {}
+                if type(response.object) == "table" then
+                    local result_iso_codes = {}
 
-                    for key, values in pairs(object) do
+                    for key, values in pairs(response.object) do
                         if key == "foreign_countries_seen" or key == "home_countries_seen" then
                             if type(values) == "table" then
                                 for _, iso_code in ipairs(values) do
-                                    if not exists_in_table(result_idso_codes, iso_code) then
-                                        table.insert(result_idso_codes, iso_code)
+                                    if not exists_in_table(result_iso_codes, iso_code) then
+                                        table.insert(result_iso_codes, iso_code)
                                     end
                                 end
                             end
                         end
                     end
 
-                    nauthilus.context_set(N .. "_iso_codes_seen", result_idso_codes)
+                    nauthilus.context_set(N .. "_iso_codes_seen", result_iso_codes)
                 end
             end
 
