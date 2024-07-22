@@ -516,6 +516,29 @@ func RedisHExists(L *lua.LState) int {
 	return 1
 }
 
+// RedisRename renames a key in the Redis server.
+// It takes two arguments: the old key and the new key.
+// If the rename operation is successful, it returns "OK" as a Lua string.
+// If an error occurs, it returns nil and the error message as a Lua string.
+func RedisRename(L *lua.LState) int {
+	oldKey := L.CheckString(1)
+	newKey := L.CheckString(2)
+
+	err := rediscli.WriteHandle.Rename(ctx, oldKey, newKey).Err()
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+
+		return 2
+	} else {
+		stats.RedisWriteCounter.Inc()
+	}
+
+	L.Push(lua.LString("OK"))
+
+	return 1
+}
+
 // SetUPRedisFunctions is a function that associates a set of Redis-related functions to a Lua table.
 // Each function is linked to a string that corresponds to its name in the global Lua functions namespace.
 // The provided Lua state `L` and the Lua table `table` are used to facilitate this setting up process.
@@ -545,4 +568,5 @@ func SetUPRedisFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFNRedisHIncrBy, L.NewFunction(RedisHIncrBy))
 	table.RawSetString(global.LuaFNRedisHIncrByFloat, L.NewFunction(RedisHIncrByFloat))
 	table.RawSetString(global.LuaFnRedisHExists, L.NewFunction(RedisHExists))
+	table.RawSetString(global.LuaFnRedisRename, L.NewFunction(RedisRename))
 }
