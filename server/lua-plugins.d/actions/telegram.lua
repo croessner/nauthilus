@@ -1,11 +1,14 @@
+local nauthilus_util = require("nauthilus_util")
+
 local http = require("http")
 local telegram = require("telegram")
 local json = require("json")
-local time = require("time")
 local template = require("template")
 
 local client = http.client()
 local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
+
+local N = "telegram"
 
 function nauthilus_call_action(request)
     local send_message = false
@@ -20,56 +23,17 @@ function nauthilus_call_action(request)
         rt = {}
     end
 
-    -- Handle errors
-    local function error_str(err)
-        local m = {}
-
-        m.caller = "telegram.lua"
-        m.ts = ts
-        m.error = err
-
-        local m_json, err_enc = json.encode(m)
-        if err_enc then
-            return err_enc
-        end
-
-        return m_json
-    end
-
-    -- Create time stamp string
-    local function get_current_ts()
-        local result, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "Europe/Berlin")
-        if err then
-            error(error_str(err))
-        end
-
-        return result
-    end
-
-    ts = get_current_ts()
+    ts = nauthilus_util.get_current_timestamp()
     if ts == nil then
         ts = "unknown"
     end
 
-    -- Count table elements
-    local function table_length(t)
-        local count = 0
-
-        for _ in pairs(t) do
-            count = count + 1
-        end
-
-        return count
-    end
-
-    if type(rt) == "table" and table_length(rt) > 0 then
+    if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
         if request.debug then
             rt.caller = "telegram.lua"
 
             local rt_json, err = json.encode(rt)
-            if err then
-                error(error_str(err))
-            end
+            nauthilus_util.raise_error(err)
 
             if request.debug then
                 print(rt_json)
@@ -79,14 +43,14 @@ function nauthilus_call_action(request)
         end
 
         -- brute_force_haproxy
-        if rt.brute_force_haproxy ~= nil and rt.brute_force_haproxy then
+        if rt.brute_force_haproxy then
             send_message = true
             headline = "Brute force"
             log_prefix = "brute_force_"
         end
 
         -- feature_haproxy (not part of demo plugins)
-        if rt.feature_haproxy ~= nil and rt.feature_haproxy then
+        if rt.feature_haproxy then
             send_message = true
             if request.feature ~= nil and request.feature ~= "" then
                 headline = "Feature " .. request.feature .. " triggered"
@@ -98,14 +62,14 @@ function nauthilus_call_action(request)
         end
 
         -- filter_geoippolicyd
-        if rt.filter_geoippolicyd ~= nil and rt.filter_geoippolicyd then
+        if rt.filter_geoippolicyd then
             send_message = true
             headline = "GeoIP-Policyd"
             log_prefix = "geoippolicyd_"
         end
 
         -- action_haveibeenpwnd
-        if rt.action_haveibeenpwnd ~= nil and rt.action_haveibeenpwnd then
+        if rt.action_haveibeenpwnd then
             send_message = true
             headline = "Password leaked"
             log_preifx = "haveibeenpwnd_"
@@ -113,7 +77,7 @@ function nauthilus_call_action(request)
     end
 
     local pwnd = nauthilus.context_get("haveibeenpwnd_hash_info")
-    if pwnd ~= nil then
+    if pwnd then
         pwnd_info = pwnd
     end
 
@@ -151,9 +115,7 @@ function nauthilus_call_action(request)
         end
 
         local mustache, err = template.choose("mustache")
-        if err then
-            error(error_str(err))
-        end
+        nauthilus_util.raise_error(err)
 
         -- Template data
         local values = {}
@@ -172,21 +134,16 @@ function nauthilus_call_action(request)
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)
         })
+        nauthilus_util.raise_error(err_bat)
 
-        if err_bat then
-            error(error_str(err_bat))
-        end
-
-        result.caller = "telegram.lua"
+        result.caller = N .. ".lua"
         result.action_class = "post"
         result.password = nil
 
         if request.log_level == "debug" or request.log_level == "info" then
             if request.log_format == "json" then
                 local result_json, err_enc = json.encode(result)
-                if err_enc then
-                    error(err_enc)
-                end
+                nauthilus_util.raise_error(error_str(err_enc))
 
                 print(result_json)
             else

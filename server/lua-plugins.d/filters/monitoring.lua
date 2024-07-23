@@ -1,3 +1,5 @@
+local nauthilus_util = require("nauthilus_util")
+
 local crypto = require("crypto")
 
 local N = "monitoring"
@@ -44,7 +46,7 @@ function nauthilus_call_filter(request)
     local function get_dovecot_session()
         ---@type table header
         local header = nauthilus.get_http_request_header("X-Dovecot-Session")
-        if #header == 1 then
+        if nauthilus_util.table_length(header) == 1 then
             return header[1]
         end
 
@@ -58,7 +60,7 @@ function nauthilus_call_filter(request)
         ---@type number length
         ---@type string err_redis_hlen
         local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
-        if err_redis_hlen ~= nil then
+        if err_redis_hlen then
             nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
         else
             if length == 1 then
@@ -80,8 +82,10 @@ function nauthilus_call_filter(request)
 
         ---@type string err_redis_hset
         local _, err_redis_hset = nauthilus.redis_hset(redis_key, session, server)
-        if err_redis_hset ~= nil then
+        if err_redis_hset then
             nauthilus.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
+
+            return
         end
 
         set_initial_expiry(redis_key)
@@ -98,7 +102,7 @@ function nauthilus_call_filter(request)
         ---@type string server_from_session
         ---@type string err_redis_hget
         local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
-        if err_redis_hget ~= nil then
+        if err_redis_hget then
             nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
 
             return nil
@@ -111,7 +115,7 @@ function nauthilus_call_filter(request)
         ---@type table all_sessions
         ---@type string err_redis_hgetall
         local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
-        if err_redis_hgetall ~= nil then
+        if err_redis_hgetall then
             nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
 
             return nil
@@ -131,8 +135,8 @@ function nauthilus_call_filter(request)
         local num_of_bs = 0
 
         local backend_servers = nauthilus.get_backend_servers()
-        if backend_servers ~= nil and type(backend_servers) == "table" then
-            num_of_bs = #backend_servers
+        if nauthilus_util.is_table(backend_servers) then
+            num_of_bs = nauthilus_util.table_length(backend_servers)
 
             ---@type string server_ip
             local server_ip = ""
@@ -141,9 +145,9 @@ function nauthilus_call_filter(request)
             local new_server_ip = ""
 
             local session = get_dovecot_session()
-            if session ~= nil then
+            if session then
                 local maybe_server = get_server_from_sessions(session)
-                if maybe_server ~= nil then
+                if maybe_server then
                     server_ip = maybe_server
                 end
             end
