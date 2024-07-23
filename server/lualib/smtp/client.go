@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/gomail.v2"
 )
 
 // GenericClient is an interface that defines the methods required for sending emails using an SMTP or LMTP server.
@@ -278,6 +281,7 @@ type Client interface {
 // Otherwise, it uses the smtp.SendMail function to send the email without encryption.
 func SendMail(options *MailOptions) error {
 	var (
+		buf  bytes.Buffer
 		auth smtp.Auth
 		err  error
 	)
@@ -311,22 +315,21 @@ func SendMail(options *MailOptions) error {
 		}
 	}
 
-	// Connect to the server, authenticate, set the sender and recipient,
-	// and send the email all in one step.
-	toConcatenated := strings.Join(options.To, ",")
-	msg := []byte(
-		"Date: " + time.Now().Format(time.RFC1123Z) + "\r\n" +
-			"Message-ID: <" + strconv.FormatInt(time.Now().UnixNano(), 10) + "@" + msgIDDomain + ">\r\n" +
-			"From: " + options.From + "\r\n" +
-			"To: " + toConcatenated + "\r\n" +
-			"Subject: " + options.Subject + "\r\n" +
-			"Content-Type: text/plain; charset=utf-8\r\n" +
-			"MIME-Version: 1.0\r\n" +
-			"\r\n" +
-			options.Body +
-			"\r\n")
+	msg := gomail.NewMessage()
 
-	err = sendMail(options.Server+fmt.Sprintf(":%d", options.Port), options.HeloName, auth, options.From, options.To, msg, options.TLS, options.StartTLS, options.LMTP)
+	msg.SetHeader("Date", msg.FormatDate(time.Now()))
+	msg.SetHeader("Message-ID", strconv.FormatInt(time.Now().UnixNano(), 10)+"@"+msgIDDomain)
+	msg.SetHeader("From", options.From)
+	msg.SetHeader("To", options.To...)
+	msg.SetHeader("Subject", options.Subject)
+	msg.SetBody("text/plain; charset=UTF-8", options.Body)
+
+	_, err = msg.WriteTo(&buf)
+	if err != nil {
+		return err
+	}
+
+	err = sendMail(options.Server+fmt.Sprintf(":%d", options.Port), options.HeloName, auth, options.From, options.To, buf.Bytes(), options.TLS, options.StartTLS, options.LMTP)
 
 	return err
 }
