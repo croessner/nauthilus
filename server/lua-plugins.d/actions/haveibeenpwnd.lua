@@ -1,28 +1,23 @@
+local nauthilus_util = require("nauthilus_util")
+
 local http = require("http")
 local crypto = require('crypto')
 local strings = require("strings")
+local template = require("template")
 
 local client = http.client({
     timeout = 30,
     user_agent = "Nauthilus",
 })
 
----@param str string
----@return boolean
-local function toboolean(str)
-    local lower = string.lower(str)
-
-    return not (lower == "false" or lower == "0" or lower == "")
-end
-
 local smtp_message = [[
 Hello,
 
 a password was found on haveibeenpwnd!
 
-Account: %s
-Hash: %s
-Count: %s
+Account: {{account}}
+Hash: {{hash}}
+Count: {{count}}
 
 Please inform the user about this incident and lock the account.
 
@@ -39,12 +34,10 @@ function nauthilus_call_action(request)
         local hash = string.lower(crypto.sha1(request.password))
 
         local redis_hash_count, err_redis_hget = nauthilus.redis_hget(redis_key, hash:sub(1, 5), "number")
-        if err_redis_hget then
-            error(err_redis_hget)
-        end
+        nauthilus_util.raise_error(err_redis_hget)
 
-        if redis_hash_count ~= nil then
-            if type(redis_hash_count) == "number" then
+        if redis_hash_count then
+            if nauthilus_util.is_number(redis_hash_count) then
                 if redis_hash_count > 0 then
                     -- Required by telegram.lua
                     nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. redis_hash_count)
@@ -63,10 +56,9 @@ function nauthilus_call_action(request)
         local http_request = http.request("GET", "https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), "")
 
         local result, err = client:do_request(http_request)
-        if err then
-            error(err)
-        end
-        if not (result.code == 200) then
+        nauthilus_util.raise_error(err)
+
+        if result.code ~= 200 then
             error("haveibeenpwnd did not return status code 200")
         end
 
@@ -83,10 +75,7 @@ function nauthilus_call_action(request)
                 ---@type string found
                 ---@type string err_redis_hget2
                 local already_sent_mail, err_redis_hget2 = nauthilus.redis_hget(redis_key, "send_mail")
-
-                if err_redis_hget2 then
-                    error(err_redis_hget2)
-                end
+                nauthilus_util.raise_error(err_redis_hget2)
 
                 if already_sent_mail == "" then
                     local smtp_use_lmtp = os.environ("SMTP_USE_LMTP")
@@ -100,6 +89,15 @@ function nauthilus_call_action(request)
                     local smtp_mail_from = os.environ("SMTP_MAIL_FROM")
                     local smtp_rcpt_to = os.environ("SMTP_RCPT_TO")
 
+                    local mustache, err_tmpl = template.choose("mustache")
+                    nauthilus_util.raise_error(err_tmpl)
+
+                    local tmpl_data = {
+                        account = request.account,
+                        hash = hash:sub(1, 5),
+                        count = cmp_hash[2],
+                    }
+
                     local err_smtp = nauthilus.send_mail({
                         lmtp = smtp_use_lmtp,
                         server = smtp_server,
@@ -107,17 +105,14 @@ function nauthilus_call_action(request)
                         helo_name = smtp_helo_name,
                         username = smtp_username,
                         password = smtp_password,
-                        tls = toboolean(smtp_tls),
-                        smtp_starttls = toboolean(smtp_starttls),
+                        tls = nauthilus_util.toboolean(smtp_tls),
+                        smtp_starttls = nauthilus_util.toboolean(smtp_starttls),
                         from = smtp_mail_from,
                         to = { smtp_rcpt_to },
                         subject = "Password leak detected for account " .. request.account,
-                        body = string.format(smtp_message, request.account, hash:sub(1, 5), cmp_hash[2]),
+                        body = mustache:render(smtp_message, tmpl_data)
                     })
-
-                    if err_smtp then
-                        error(err_smtp)
-                    end
+                    nauthilus_util.raise_error(err_smtp)
 
                     nauthilus.redis_hset(redis_key, "send_mail", 1)
                     nauthilus.redis_expire(redis_key, 86400)

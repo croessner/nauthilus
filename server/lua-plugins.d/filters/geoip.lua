@@ -1,6 +1,7 @@
+local nauthilus_util = require("nauthilus_util")
+
 local http = require("http")
 local json = require("json")
-local time = require("time")
 
 local client = http.client({
     timeout = 30,
@@ -10,16 +11,6 @@ local client = http.client({
 local N = "filter_geoippolicyd"
 
 function nauthilus_call_filter(request)
-    local ts
-    local function get_current_ts()
-        local result, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "Europe/Berlin")
-        if err then
-            error(err)
-        end
-
-        return result
-    end
-
     local function add_custom_logs(object)
         for item, values in pairs(object) do
             if type(values) == "table" then
@@ -48,7 +39,7 @@ function nauthilus_call_filter(request)
         return false
     end
 
-    ts = get_current_ts()
+    local ts = nauthilus_util.get_current_timestamp()
     if ts == nil then
         ts = "unknown"
     end
@@ -63,43 +54,38 @@ function nauthilus_call_filter(request)
         }
 
         local payload, json_encode_err = json.encode(t)
-        if json_encode_err then
-            error(json_encode_err)
-        end
+        nauthilus_util.raise_error(json_encode_err)
 
         local geoip_request = http.request("POST", os.getenv("GEOIP_POLICY_URL"), payload)
         geoip_request:header_set("Content-Type", "application/json")
 
         local result, request_err = client:do_request(geoip_request)
-        if request_err then
-            error(request_err)
-        end
-        if not (result.code == 202) then
-            error(request_err)
+        nauthilus_util.raise_error(request_err)
+
+        if result.code ~= 202 then
+            nauthilus_util.raise_error(N .. "_status_code=" .. tostring(result.code))
         end
 
         if request.debug then
             print(result.body)
         end
 
-        local response, json_decode_err = json.decode(result.body)
-        if json_decode_err then
-            error(json_decode_err)
-        end
+        local response, err_jdec = json.decode(result.body)
+        nauthilus_util.raise_error(err_jdec)
 
         if response.err == nil then
             nauthilus.custom_log_add(N .. "_guid", response.guid)
 
-            if response.object ~= nil then
+            if response.object then
                 add_custom_logs(response.object)
 
                 -- Try to get all ISO country codes
-                if type(response.object) == "table" then
+                if nauthilus_util.is_table(response.object) then
                     local result_iso_codes = {}
 
                     for key, values in pairs(response.object) do
                         if key == "foreign_countries_seen" or key == "home_countries_seen" then
-                            if type(values) == "table" then
+                            if nauthilus_util.is_table(values) then
                                 for _, iso_code in ipairs(values) do
                                     if not exists_in_table(result_iso_codes, iso_code) then
                                         table.insert(result_iso_codes, iso_code)

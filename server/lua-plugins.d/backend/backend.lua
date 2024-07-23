@@ -16,6 +16,8 @@
     ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ]]--
 
+local nauthilus_util = require("nauthilus_util")
+
 local db = require("db")
 local pw = require("nauthilus_util")
 
@@ -29,15 +31,11 @@ function nauthilus_backend_verify_password(request)
     local b = backend_result.new()
 
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err_open then
-        error(err_open)
-    end
+    nauthilus_util.raise_error(err_open)
 
     local result, err_query = mysql:query(
         "SELECT account, password, totp_secret, uniqueid, display_name FROM nauthilus WHERE username = \"" .. request.username .. "\" OR account = \"" .. request.username .. "\";")
-    if err_query then
-        error(err_query)
-    end
+    nauthilus_util.raise_error(err_query)
 
     -- We do not want to return all results to each protocol
     local filter_result_value = function(key)
@@ -62,9 +60,7 @@ function nauthilus_backend_verify_password(request)
                 if not request.no_auth then
                     -- The example assumes crypted passwords in the database.
                     local match, err = pw.compare_passwords(row[id], request.password)
-                    if err then
-                        error(err)
-                    end
+                    nauthilus_util.raise_error(err)
 
                     b:authenticated(match)
                 end
@@ -107,14 +103,10 @@ end
 
 function nauthilus_backend_list_accounts()
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err_open then
-        error(err_open)
-    end
+    nauthilus_util.raise_error(err_open)
 
     local result, err_query = mysql:query("SELECT account FROM nauthilus LIMIT 100;")
-    if err_query then
-        error(err_query)
-    end
+    nauthilus_util.raise_error(err_query)
 
     local accounts = {}
 
@@ -129,14 +121,10 @@ end
 
 function nauthilus_backend_add_totp(request)
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    if err_open then
-        error(err_open)
-    end
+    nauthilus_util.raise_error(err_open)
 
     local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
-    if err_exec then
-        error(err_exec)
-    end
+    nauthilus_util.raise_error(err_exec)
 
     return nauthilus.BACKEND_RESULT_OK
 end
