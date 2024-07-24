@@ -59,6 +59,25 @@ func TestSendMail(t *testing.T) {
 			expectErr:    false,
 		},
 		{
+			name: "valid input with umLauts in subject, no auth",
+			opts: NewMailOptions(
+				"localhost",
+				25,
+				"localhost",
+				"",
+				"",
+				"test@example.com",
+				[]string{"recipient@example.com"},
+				"Subject contain ö, ä, ü, ß",
+				"Body",
+				false,
+				false,
+				false,
+			),
+			sendMailFunc: FakeSendMail,
+			expectErr:    false,
+		},
+		{
 			name: "valid input, no auth, many to",
 			opts: NewMailOptions(
 				"localhost",
