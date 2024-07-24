@@ -1,26 +1,10 @@
 package lualib
 
 import (
-	"fmt"
-
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 
 	"github.com/yuin/gopher-lua"
 )
-
-// RealSMTPClient is a struct representing a real SMTP client.
-type RealSMTPClient struct{}
-
-// SendMail utilizes the RealSMTPClient struct to invoke the SendMail method from the smtp package
-// This method will return an error if an attempting to send email with nil options.
-// Otherwise, it will pass the non-nil options to smtp.SendMail method and return its result
-func (s *RealSMTPClient) SendMail(options *smtp.MailOptions) error {
-	if options == nil {
-		return fmt.Errorf("options is nil")
-	}
-
-	return smtp.SendMail(options)
-}
 
 // getStringFromTable retrieves a string value from a Lua table by its key.
 // If the value is not present or is nil, an empty string is returned.
@@ -80,7 +64,7 @@ func getBoolFromTable(table *lua.LTable, key string) bool {
 // Example usage:
 // ```
 // // Create a real SMTP client instance
-// smtpClient := &lualib.RealSMTPClient{}
+// smtpClient := &lualib.EmailClient{}
 //
 // // Create a Lua state
 // L := lua.NewState()
@@ -93,8 +77,7 @@ func getBoolFromTable(table *lua.LTable, key string) bool {
 // ```
 //
 //	type Client interface {
-//		SendMail(server string, port int, username string, password string,
-//			from string, to []string, subject string, body string, tls bool, startTLS bool) error
+//		SendMail(options *MailOptions) error
 //	}
 //
 // ```
