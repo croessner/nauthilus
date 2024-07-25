@@ -860,7 +860,6 @@ func (a *ApiConfig) handleLoginSkip() {
 	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx)
 
 	auth.Username = a.loginRequest.GetSubject()
-	auth.UsernameOrig = a.loginRequest.GetSubject()
 
 	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
 		handleErr(a.ctx, err)
@@ -1218,8 +1217,6 @@ func handleSessionDataLogin(ctx *gin.Context, auth *Authentication) (
 	if err != nil {
 		return
 	}
-
-	auth.UsernameOrig = auth.Username
 
 	return
 }

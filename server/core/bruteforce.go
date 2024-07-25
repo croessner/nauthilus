@@ -52,7 +52,7 @@ func (a *Authentication) isRepeatingWrongPassword() (repeating bool, err error) 
 							level.Info(logging.DefaultLogger).Log(
 								global.LogKeyGUID, a.GUID,
 								global.LogKeyBruteForce, "Repeating wrong password",
-								global.LogKeyOrigUsername, a.UsernameOrig,
+								global.LogKeyUsername, a.Username,
 								global.LogKeyClientIP, a.ClientIP,
 								"counter", counter,
 							)
@@ -137,7 +137,7 @@ func (a *Authentication) checkEnforceBruteForceComputation() (bool, error) {
 			level.Warn(logging.DefaultLogger).Log(
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyMsg, "No negative password cache present",
-				global.LogKeyOrigUsername, a.UsernameOrig,
+				global.LogKeyUsername, a.Username,
 				global.LogKeyClientIP, a.ClientIP,
 			)
 
@@ -210,7 +210,7 @@ func (a *Authentication) getNetwork(rule *config.BruteForceRule) (*net.IPNet, er
 // An additional feature of this function is to log the generated key along with some context information (GUID and Client IP)
 func (a *Authentication) getBruteForcePasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
-		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", a.UsernameOrig, a.ClientIP)
+		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", a.Username, a.ClientIP)
 	} else {
 		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s", a.ClientIP)
 	}
@@ -611,7 +611,6 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		global.LogKeyLocalIP, a.XLocalIP,
 		global.LogKeyPort, a.XPort,
 		global.LogKeyUsername, a.Username,
-		global.LogKeyOrigUsername, a.UsernameOrig,
 		global.LogKeyProtocol, a.Protocol.Get(),
 		"service", util.WithNotAvailable(a.Service),
 		"no-auth", a.NoAuth,
@@ -772,7 +771,7 @@ func (a *Authentication) checkBruteForce() (blockClientIP bool) {
 		level.Info(logging.DefaultLogger).Log(
 			global.LogKeyGUID, a.GUID,
 			global.LogKeyBruteForce, message,
-			global.LogKeyOrigUsername, a.UsernameOrig,
+			global.LogKeyUsername, a.Username,
 			global.LogKeyClientIP, a.ClientIP,
 			"rule_network", network.String(),
 			"rule", rules[index].Name,
@@ -862,7 +861,6 @@ func (a *Authentication) updateBruteForceBucketsCounter() {
 		global.LogKeyLocalIP, a.XLocalIP,
 		global.LogKeyPort, a.XPort,
 		global.LogKeyUsername, a.Username,
-		global.LogKeyOrigUsername, a.UsernameOrig,
 		global.LogKeyProtocol, a.Protocol.Get(),
 		"service", util.WithNotAvailable(a.Service),
 		"no-auth", a.NoAuth,

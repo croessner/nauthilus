@@ -115,8 +115,8 @@ type JSONRequest struct {
 
 // Authentication represents a struct that holds information related to authentication process.
 type Authentication struct {
-	// UsernameReplace is a flag that is set, if a user was found in a Database.
-	UsernameReplace bool
+	// HaveAccountField is a flag that is set, if a user account field was found in a Database.
+	HaveAccountField bool
 
 	// NoAuth is a flag that is set, if the request mode does not require authentication.
 	NoAuth bool
@@ -158,9 +158,6 @@ type Authentication struct {
 
 	// Username is the value that was taken from the HTTP header "Auth-User" (Nginx protocol).
 	Username string
-
-	// UsernameOrig is a copy from the username that was set by the HTTP request header "Auth-User" (Nginx protocol).
-	UsernameOrig string
 
 	// Password is the value that was taken from the HTTP header "Auth-Pass" (Nginx protocol).
 	Password string
@@ -410,7 +407,6 @@ func (a *Authentication) LogLineMail(status string, endpoint string) []any {
 		global.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
 		global.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
 		global.LogKeyUsername, util.WithNotAvailable(a.Username),
-		global.LogKeyOrigUsername, util.WithNotAvailable(a.UsernameOrig),
 		global.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
 		global.LogKeyLoginAttempts, a.LoginAttempts,
 		global.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
@@ -555,12 +551,12 @@ func (a *Authentication) authOK(ctx *gin.Context) {
 
 // setCommonHeaders sets common headers for the given gin.Context and Authentication.
 // It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the Authentication.
-// If the Authentication's Service is not global.ServBasicAuth and the UsernameReplace flag is true, it retrieves the account from the Authentication and sets the "Auth-User" header
+// If the Authentication's Service is not global.ServBasicAuth and the HaveAccountField flag is true, it retrieves the account from the Authentication and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, a *Authentication) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service != global.ServBasicAuth && a.UsernameReplace {
+	if a.Service != global.ServBasicAuth && a.HaveAccountField {
 		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
@@ -1063,7 +1059,6 @@ func authenticateUser(passDBResult *PassDBResult, a *Authentication, passDB *Pas
 		global.LogKeyGUID, a.GUID,
 		"passdb", passDB.backend.String(),
 		global.LogKeyUsername, a.Username,
-		global.LogKeyOrigUsername, a.UsernameOrig,
 		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
 	)
 
@@ -1162,7 +1157,7 @@ func (a *Authentication) handleFeatures(ctx *gin.Context) (authResult global.Aut
 				LocalIP:             a.XLocalIP,
 				LocalPort:           a.XPort,
 				UserAgent:           *a.UserAgent,
-				Username:            a.UsernameOrig,
+				Username:            a.Username,
 				Account:             "", // unavailable
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
@@ -1589,7 +1584,7 @@ func (a *Authentication) postVerificationProcesses(ctx *gin.Context, useCache bo
 	if passDBResult.UserFound {
 		if passDBResult.AccountField != nil {
 			a.AccountField = passDBResult.AccountField
-			a.UsernameReplace = true
+			a.HaveAccountField = true
 		}
 	}
 
@@ -1894,7 +1889,6 @@ func (a *Authentication) setOperationMode(ctx *gin.Context) {
 func setupHeaderBasedAuth(ctx *gin.Context, auth *Authentication) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	auth.Username = ctx.GetHeader("Auth-User")
-	auth.UsernameOrig = auth.Username
 	auth.Password = ctx.GetHeader("Auth-Pass")
 
 	encoded := ctx.GetHeader("X-Auth-Password-Encoded")
@@ -1954,7 +1948,6 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *Authentication
 	auth.Method = &method
 	auth.UserAgent = &userAgent
 	auth.Username = ctx.PostForm("username")
-	auth.UsernameOrig = auth.Username
 	auth.Password = ctx.PostForm("password")
 	auth.Protocol = &config.Protocol{}
 	auth.Protocol.Set(ctx.PostForm("protocol"))
@@ -1990,7 +1983,7 @@ func processApplicationJSON(ctx *gin.Context, auth *Authentication) {
 
 // setAuthenticationFields populates the fields of the Authentication struct with values from the JSONRequest.
 // It takes a pointer to the Authentication struct and a pointer to the JSONRequest struct as input.
-// It sets the values of the Method, UserAgent, Username, UsernameOrig, Password, ClientIP, XClientPort,
+// It sets the values of the Method, UserAgent, Username, Password, ClientIP, XClientPort,
 // ClientHost, XLocalIP, XPort, and Service fields of the Authentication struct with the corresponding values
 // from the JSONRequest struct.
 // It then returns the pointer to the modified Authentication struct.
@@ -2018,7 +2011,6 @@ func setAuthenticationFields(auth *Authentication, request *JSONRequest) *Authen
 	auth.Method = &request.Method
 	auth.UserAgent = &request.ClientID
 	auth.Username = request.Username
-	auth.UsernameOrig = request.Username
 	auth.Password = request.Password
 	auth.ClientIP = request.ClientIP
 	auth.XClientPort = request.ClientPort
@@ -2632,11 +2624,11 @@ func (a *Authentication) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Cl
 }
 
 // generateLocalChacheKey generates a string key used for caching the Authentication object in the local cache.
-// The key is constructed by concatenating the UsernameOrig, Password and  Service values using a null character ('\0')
+// The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
 func (a *Authentication) generateLocalChacheKey() string {
 	return fmt.Sprintf("%s\000%s\000%s",
-		a.UsernameOrig,
+		a.Username,
 		a.Password,
 		a.Service)
 }

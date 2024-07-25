@@ -44,7 +44,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 				UserAgent:           *a.UserAgent,
 				LocalIP:             a.XLocalIP,
 				LocalPort:           a.XPort,
-				Username:            a.UsernameOrig,
+				Username:            a.Username,
 				Account:             "", // unavailable
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable

@@ -74,8 +74,6 @@ func (a *Authentication) generic(ctx *gin.Context) {
 
 			return
 		}
-
-		a.UsernameOrig = a.Username
 	}
 
 	if a.ListAccounts {
