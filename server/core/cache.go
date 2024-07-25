@@ -9,7 +9,7 @@ import (
 )
 
 // cachePassDB implements the redis password database backend.
-func cachePassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		accountName string
 		ppc         *backend.PositivePasswordCache
