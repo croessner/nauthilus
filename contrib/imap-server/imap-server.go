@@ -71,7 +71,7 @@ func (b *Backend) Login(connInfo *imap.ConnInfo, username string, password strin
 
 	user = &User{name: username}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	return user, errContactSupport
 }
