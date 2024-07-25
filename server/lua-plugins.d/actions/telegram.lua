@@ -143,7 +143,7 @@ function nauthilus_call_action(request)
         if request.log_level == "debug" or request.log_level == "info" then
             if request.log_format == "json" then
                 local result_json, err_enc = json.encode(result)
-                nauthilus_util.raise_error(error_str(err_enc))
+                nauthilus_util.raise_error(err_enc)
 
                 print(result_json)
             else
