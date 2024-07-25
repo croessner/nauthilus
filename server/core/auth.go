@@ -2097,12 +2097,12 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 	auth.setOperationMode(ctx)
 }
 
-// NewAuthentication creates a new instance of the AuthState struct.
+// NewAuthState creates a new instance of the AuthState struct.
 // It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the AuthState struct.
 // If an error occurs while setting the StatusCode field using the setStatusCodes function, it logs the error and returns nil.
 // Otherwise, it calls the setupAuth function to setup the AuthState struct based on the service parameter from the gin.Context object.
 // Finally, it returns the created AuthState struct.
-func NewAuthentication(ctx *gin.Context) *AuthState {
+func NewAuthState(ctx *gin.Context) *AuthState {
 	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
 	}

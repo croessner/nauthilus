@@ -58,7 +58,7 @@ func httpQueryHandler(ctx *gin.Context) {
 	} else {
 		switch ctx.Param("category") {
 		case global.CatMail, global.CatGeneric:
-			auth := NewAuthentication(ctx)
+			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
 
@@ -84,7 +84,7 @@ func httpQueryHandler(ctx *gin.Context) {
 			}
 
 		case global.CatHTTP:
-			auth := NewAuthentication(ctx)
+			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
 
