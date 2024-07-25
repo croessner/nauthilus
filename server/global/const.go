@@ -917,7 +917,6 @@ const (
 	LuaCommandAddMFAValue
 )
 
-// LuaFnCtxSet represents the function name for "context_set" in Lua
 const (
 	// LuaFnCtxSet represents the function name for "context_set" in Lua
 	LuaFnCtxSet = "context_set"
@@ -1003,17 +1002,33 @@ const (
 	// LuaFnRedisHGetAll represents the function name for "redis_hgetall" in Lua
 	LuaFnRedisHGetAll = "redis_hgetall"
 
-	// LuaFNRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
-	LuaFNRedisHIncrBy = "redis_hincrby"
+	// LuaFnRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
+	LuaFnRedisHIncrBy = "redis_hincrby"
 
-	// LuaFNRedisHIncrByFloat represents the function name for "redis_hincrbyfloat" in Lua.
-	LuaFNRedisHIncrByFloat = "redis_hincrbyfloat"
+	// LuaFnRedisHIncrByFloat represents the function name for "redis_hincrbyfloat" in Lua.
+	LuaFnRedisHIncrByFloat = "redis_hincrbyfloat"
 
 	// LuaFnRedisHExists represents the Lua function name for checking if a field exists in a Redis hash.
 	LuaFnRedisHExists = "redis_hexists"
 
 	// LuaFnRedisRename represebts the Lua function name "redis_rename" to rename an existing Redis key.
 	LuaFnRedisRename = "redis_rename"
+
+	// LuaFnRedisSAdd represents the Lua function name for adding one or more members to a set in Redis.
+	LuaFnRedisSAdd = "redis_sadd"
+
+	// LuaFnRedisSIsMember represents the name of the Redis function "SISMEMBER" used to check if a member exists in a set.
+	LuaFnRedisSIsMember = "redis_sismember"
+
+	// LuaFnRedisSMembers represents the Redis command "SMEMBERS" which returns all the members
+	// of a set stored at the specified key.
+	LuaFnRedisSMembers = "redis_smembers"
+
+	// LuaFnRedisSRem represents a Lua function that removes one or more members from a set in Redis.
+	LuaFnRedisSRem = "redis_srem"
+
+	// LuaFnRedisSCard represents a Lua function that returns the number of elements in a Redis set.
+	LuaFnRedisSCard = "redis_scard"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
