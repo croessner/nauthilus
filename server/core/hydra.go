@@ -851,7 +851,7 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	oauth2Client := a.loginRequest.GetClient()
 
-	auth := &Authentication{
+	auth := &AuthState{
 		HTTPClientContext: a.ctx.Copy(),
 		NoAuth:            true,
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
@@ -860,7 +860,6 @@ func (a *ApiConfig) handleLoginSkip() {
 	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx)
 
 	auth.Username = a.loginRequest.GetSubject()
-	auth.UsernameOrig = a.loginRequest.GetSubject()
 
 	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
 		handleErr(a.ctx, err)
@@ -1137,9 +1136,9 @@ func loginGETHandler(ctx *gin.Context) {
 	apiConfig.handleLogin(apiConfig.loginRequest.GetSkip())
 }
 
-// initializeAuthLogin initializes the Authentication struct with the necessary information for logging in.
-func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
-	auth := &Authentication{
+// initializeAuthLogin initializes the AuthState struct with the necessary information for logging in.
+func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
+	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
 		Username:          ctx.PostForm("username"),
 		Password:          ctx.PostForm("password"),
@@ -1168,7 +1167,7 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 //
 // Parameters:
 // - ctx: The gin context object.
-// - auth: Pointer to an Authentication struct to populate with retrieved values.
+// - auth: Pointer to an AuthState struct to populate with retrieved values.
 //
 // Returns:
 // - authResult: The result of the authentication process (global.AuthResult enum).
@@ -1176,7 +1175,7 @@ func initializeAuthLogin(ctx *gin.Context) (*Authentication, error) {
 // - rememberPost2FA: The remember value after the second factor authentication.
 // - post2FA: A bool indicating if a second factor authentication is required.
 // - err: An error object if saving the session failed, or nil otherwise.
-func handleSessionDataLogin(ctx *gin.Context, auth *Authentication) (
+func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
 	authResult global.AuthResult, recentSubject string, rememberPost2FA string, post2FA bool, err error,
 ) {
 	var cookieValue any
@@ -1219,15 +1218,13 @@ func handleSessionDataLogin(ctx *gin.Context, auth *Authentication) (
 		return
 	}
 
-	auth.UsernameOrig = auth.Username
-
 	return
 }
 
 // processAuthOkLogin processes the successful login authentication flow.
 //
 // Params:
-// - auth: the Authentication object containing the authentication data
+// - auth: the AuthState object containing the authentication data
 // - authResult: the AuthResult code indicating the authentication result
 // - rememberPost2FA: a string indicating whether to remember the user after 2FA
 // - recentSubject: the subject of the recent login attempt
@@ -1235,7 +1232,7 @@ func handleSessionDataLogin(ctx *gin.Context, auth *Authentication) (
 //
 // Returns:
 // - err: an error if any occurred during the process
-func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult global.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool) error {
+func (a *ApiConfig) processAuthOkLogin(auth *AuthState, authResult global.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool) error {
 	var (
 		redirectFlag bool
 		redirectTo   string
@@ -1286,7 +1283,7 @@ func (a *ApiConfig) processAuthOkLogin(auth *Authentication, authResult global.A
 // If the OAuth2 client is not available or the subject is empty, it uses the account as the subject.
 // If the subject is empty, it logs a warning message using the `guid` field from the `ApiConfig` object and the account value.
 // It returns the subject and claims as a string and map respectively.
-func (a *ApiConfig) getSubjectAndClaims(account string, auth *Authentication) (string, map[string]any) {
+func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string, map[string]any) {
 	var (
 		subject string
 		claims  map[string]any
@@ -1316,7 +1313,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *Authentication) (s
 // If an error occurs, it will be returned.
 //
 // Params:
-// - auth: The Authentication object.
+// - auth: The AuthState object.
 // - session: The session object.
 // - authResult: The authentication result.
 // - subject: The authentication subject.
@@ -1324,7 +1321,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *Authentication) (s
 // Returns:
 // - bool: Indicates whether redirection is performed or not.
 // - error: The error if any occurs.
-func (a *ApiConfig) handleNonPost2FA(auth *Authentication, session sessions.Session, authResult global.AuthResult, subject string) (bool, error) {
+func (a *ApiConfig) handleNonPost2FA(auth *AuthState, session sessions.Session, authResult global.AuthResult, subject string) (bool, error) {
 	if config.GetSkipTOTP(*a.clientId) {
 		return false, nil
 	}
@@ -1351,7 +1348,7 @@ func (a *ApiConfig) handleNonPost2FA(auth *Authentication, session sessions.Sess
 // If both the code and secret are present, it performs TOTP validation using the code, account, and secret.
 // If the validation is successful, it returns nil.
 // Otherwise, it returns an error, specifically ErrNoTOTPCode if either the code or secret is missing.
-func (a *ApiConfig) handlePost2FA(auth *Authentication, account string) error {
+func (a *ApiConfig) handlePost2FA(auth *AuthState, account string) error {
 	code := a.ctx.PostForm("code")
 	if code == "" {
 		return errors2.ErrNoTOTPCode
@@ -1439,7 +1436,7 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 }
 
 // logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
-func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *Authentication) {
+func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *AuthState) {
 	logs := []any{
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
@@ -1563,7 +1560,7 @@ func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authRes
 // if post2FA is false and the TOTP secret is found.
 //
 // Parameters:
-// - auth: the Authentication object for the failed login
+// - auth: the AuthState object for the failed login
 // - authResult: the result of the authentication
 // - post2FA: flag indicating if it is a post-2FA login
 //
@@ -1576,7 +1573,7 @@ func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authRes
 // - auth.getTOTPSecretOk(): method to get the TOTP secret for the authentication
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
-func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global.AuthResult, post2FA bool) (err error) {
+func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult global.AuthResult, post2FA bool) (err error) {
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
@@ -1597,7 +1594,7 @@ func (a *ApiConfig) processAuthFailLogin(auth *Authentication, authResult global
 }
 
 // logFailedLoginAndRedirect logs a failed login attempt and redirects the user to a login page with an error message.
-func (a *ApiConfig) logFailedLoginAndRedirect(auth *Authentication) {
+func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
 	auth.ClientIP = a.ctx.GetString(global.CtxClientIPKey)
 

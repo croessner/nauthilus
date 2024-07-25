@@ -60,7 +60,7 @@ type FlushRuleCmd struct {
 }
 
 // generic handles the generic authentication logic based on the selected service type.
-func (a *Authentication) generic(ctx *gin.Context) {
+func (a *AuthState) generic(ctx *gin.Context) {
 	var mode string
 
 	if a.Service == global.ServBasicAuth {
@@ -74,8 +74,6 @@ func (a *Authentication) generic(ctx *gin.Context) {
 
 			return
 		}
-
-		a.UsernameOrig = a.Username
 	}
 
 	if a.ListAccounts {
@@ -131,7 +129,7 @@ func (a *Authentication) generic(ctx *gin.Context) {
 }
 
 // saslAuthd handles the authentication logic for the saslAuthd service.
-func (a *Authentication) saslAuthd(ctx *gin.Context) {
+func (a *AuthState) saslAuthd(ctx *gin.Context) {
 	switch a.handlePassword(ctx) {
 	case global.AuthResultOK:
 		a.authOK(ctx)
@@ -152,7 +150,7 @@ func (a *Authentication) saslAuthd(ctx *gin.Context) {
 }
 
 // callback handles the execution of a Lua callback request in a Gin context.
-func (a *Authentication) callback(ctx *gin.Context) {
+func (a *AuthState) callback(ctx *gin.Context) {
 	callback.RunCallbackLuaRequest(ctx)
 }
 
@@ -542,7 +540,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 	ruleFlushError := false
 
-	auth := &Authentication{
+	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
 		Username:          "*",
 		ClientIP:          ipCmd.IPAddress,

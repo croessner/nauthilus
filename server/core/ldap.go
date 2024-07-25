@@ -23,11 +23,11 @@ import (
 // based on the master user mode flag.
 //
 // Parameters:
-// - auth: a pointer to the Authentication struct which contains the user authentication information.
+// - auth: a pointer to the AuthState struct which contains the user authentication information.
 //
 // Returns:
 // - string: the username based on the master user mode flag.
-func handleMasterUserMode(auth *Authentication) string {
+func handleMasterUserMode(auth *AuthState) string {
 	if config.LoadableConfig.Server.MasterUser.Enabled {
 		if strings.Count(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
 			parts := strings.Split(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
@@ -94,7 +94,7 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 // ldapPassDB implements the LDAP password database backend.
 //
 //nolint:gocognit // Backends are complex
-func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		assertOk           bool
 		accountField       string
@@ -234,7 +234,7 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 				}
 			}
 
-			// Authentication failed!
+			// AuthState failed!
 			return
 		}
 	}
@@ -254,7 +254,7 @@ func ldapPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 }
 
 // ldapAccountDB implements the list-account mode and returns all known users from an LDAP server.
-func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
+func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	var (
 		accountField string
 		filter       string
@@ -344,7 +344,7 @@ func ldapAccountDB(auth *Authentication) (accounts AccountList, err error) {
 }
 
 // ldapAddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
-func ldapAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
+func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	var (
 		filter      string
 		baseDN      string

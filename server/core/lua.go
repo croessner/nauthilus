@@ -9,7 +9,7 @@ import (
 )
 
 // luaPassDB implements the Lua password database backend.
-func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
+func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
 	stopTimer := stats.PrometheusTimer(global.PromBackend, "lua_backend_request_total")
@@ -133,7 +133,7 @@ func luaPassDB(auth *Authentication) (passDBResult *PassDBResult, err error) {
 }
 
 // luaAccountDB implements the list-account mode and returns all known users from a Lua backend logic.
-func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
+func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
 	stopTimer := stats.PrometheusTimer(global.PromAccount, "lua_account_request_total")
@@ -185,7 +185,7 @@ func luaAccountDB(auth *Authentication) (accounts AccountList, err error) {
 }
 
 // luaAddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
-func luaAddTOTPSecret(auth *Authentication, totp *TOTPSecret) (err error) {
+func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
 	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "lua_store_totp_request_total")

@@ -40,9 +40,6 @@ const (
 	// LogKeyUsername represents the username being used for authentication during a session.
 	LogKeyUsername = "username"
 
-	// LogKeyOrigUsername represents the original username (prior to any modifications) used for a session.
-	LogKeyOrigUsername = "orig_username"
-
 	// LogKeyClientIP represents the IP address of the client.
 	LogKeyClientIP = "client_ip"
 

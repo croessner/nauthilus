@@ -255,7 +255,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		authCompleteWithFail = true
 	}
 
-	auth := &Authentication{
+	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
 		GUID:              &guid,
 		Username:          ctx.PostForm("username"),
@@ -277,8 +277,6 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	}
 
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
-
-	auth.UsernameOrig = auth.Username
 
 	if found, reject := auth.preproccessAuthRequest(ctx); reject {
 		handleErr(ctx, errors2.ErrBruteForceAttack)
@@ -347,8 +345,8 @@ func processTOTPSecret(ctx *gin.Context) global.AuthResult {
 // processAuthResult handles the authentication result by calling the respective handler functions based on the authResult value
 // ctx: The Gin context.
 // authResult: The result of the authentication.
-// auth: The Authentication object.
-func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *Authentication, authCompleteWithOK bool, authCompleteWithFail bool) {
+// auth: The AuthState object.
+func processAuthResult(ctx *gin.Context, authResult global.AuthResult, auth *AuthState, authCompleteWithOK bool, authCompleteWithFail bool) {
 	if authResult == global.AuthResultOK {
 		if !authCompleteWithOK {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
@@ -403,7 +401,7 @@ func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 }
 
 // saveSessionData handles the authentication result by setting session variables and redirecting to the 2FA page.
-// It takes the Gin context, the authentication result, and the Authentication object as inputs.
+// It takes the Gin context, the authentication result, and the AuthState object as inputs.
 // It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `totpSecret`.
 // It retrieves the default session from the Gin context.
 // It checks if the `account` is found and if not, calls the `handleErr` function with the `ErrNoAccount` error and returns.
@@ -416,8 +414,8 @@ func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 //
 // ctx: The Gin context.
 // authResult: The result of the authentication.
-// auth: The Authentication object.
-func saveSessionData(ctx *gin.Context, authResult global.AuthResult, auth *Authentication) error {
+// auth: The AuthState object.
+func saveSessionData(ctx *gin.Context, authResult global.AuthResult, auth *AuthState) error {
 	var (
 		found        bool
 		account      string
@@ -459,11 +457,11 @@ func saveSessionData(ctx *gin.Context, authResult global.AuthResult, auth *Authe
 
 // handleAuthFailureAndRedirect handles the authentication failure result by updating the brute force counter, redirecting
 // the context to the 2FA page with the error message, and logging the authentication rejection information.
-// It takes the Gin context and the Authentication object as inputs.
+// It takes the Gin context and the AuthState object as inputs.
 //
 // ctx: The Gin context.
-// auth: The Authentication object.
-func handleAuthFailureAndRedirect(ctx *gin.Context, auth *Authentication) {
+// auth: The AuthState object.
+func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 
 	auth.ClientIP = ctx.GetString(global.CtxClientIPKey)
@@ -717,7 +715,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	username := session.Get(global.CookieUsername).(string)
 
-	auth := &Authentication{
+	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
 		GUID:              &guid,
 		Username:          username,

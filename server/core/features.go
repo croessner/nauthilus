@@ -19,7 +19,7 @@ import (
 )
 
 // featureLua runs Lua scripts and returns a trigger result.
-func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureLua)
 
 	defer stopTimer()
@@ -44,7 +44,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 				UserAgent:           *a.UserAgent,
 				LocalIP:             a.XLocalIP,
 				LocalPort:           a.XPort,
-				Username:            a.UsernameOrig,
+				Username:            a.Username,
 				Account:             "", // unavailable
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
@@ -89,7 +89,7 @@ func (a *Authentication) featureLua(ctx *gin.Context) (triggered bool, abortFeat
 }
 
 // featureTLSEncryption checks, if the remote client connection was secured.
-func (a *Authentication) featureTLSEncryption() (triggered bool) {
+func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureTLSEncryption)
 
 	defer stopTimer()
@@ -123,7 +123,7 @@ func (a *Authentication) featureTLSEncryption() (triggered bool) {
 
 // featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
-func (a *Authentication) featureRelayDomains() (triggered bool) {
+func (a *AuthState) featureRelayDomains() (triggered bool) {
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRelayDomains)
 
 	defer stopTimer()
@@ -164,7 +164,7 @@ func (a *Authentication) featureRelayDomains() (triggered bool) {
 // featureRBLs checks the remote client IP address against a list of realtime block lists.
 //
 //nolint:gocognit // Ignore
-func (a *Authentication) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
+func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	var (
 		rblScore      int
 		totalRBLScore int

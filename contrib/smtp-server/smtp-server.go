@@ -72,7 +72,7 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 func (s *Session) Data(r io.Reader) error {
 	_ = r
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	return smtpErr
 }

@@ -58,7 +58,7 @@ func httpQueryHandler(ctx *gin.Context) {
 	} else {
 		switch ctx.Param("category") {
 		case global.CatMail, global.CatGeneric:
-			auth := NewAuthentication(ctx)
+			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
 
@@ -84,7 +84,7 @@ func httpQueryHandler(ctx *gin.Context) {
 			}
 
 		case global.CatHTTP:
-			auth := NewAuthentication(ctx)
+			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
 
@@ -151,7 +151,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 		method := "plain"
 
-		auth := &Authentication{
+		auth := &AuthState{
 			HTTPClientContext: ctx.Copy(),
 			NoAuth:            true,
 			GUID:              &guid,
@@ -217,7 +217,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 	}
 }
 
-// basicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic Authentication.
+// basicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic AuthState.
 // It first checks for specified parameters in the incoming request context.
 // If the request already contains BasicAuth in its header, it attempts to authenticate the credentials. Hashed values
 // of the supplied username and password are compared in constant time against expected username and password hashes.
@@ -542,7 +542,7 @@ func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 	routerGroup(viper.GetString("logout_page"), router, store, logoutGETHandler, logoutPOSTHandler)
 }
 
-// setup2FAEndpoints is a function that sets up the 2FA (Two-Factor Authentication) endpoints in the given Gin router.
+// setup2FAEndpoints is a function that sets up the 2FA (Two-Factor AuthState) endpoints in the given Gin router.
 //
 // It takes in two parameters:
 // - router: a pointer to a gin.Engine instance, which represents the Gin router.
