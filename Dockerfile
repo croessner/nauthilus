@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine3.19 AS builder
+FROM golang:1.22-alpine3.20 AS builder
 
 WORKDIR /build
 
@@ -12,8 +12,7 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 
-FROM alpine:3.19
-#FROM golang:1.22-alpine3.19
+FROM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
@@ -25,9 +24,6 @@ RUN addgroup -S nauthilus; \
     adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
 
 RUN apk --no-cache --upgrade add ca-certificates bash curl
-
-# Debugging with pprof
-#COPY --from=builder ["/build", "/build"]
 
 # Copy binary to destination image
 COPY --from=builder ["/build/server/nauthilus", "./"]
