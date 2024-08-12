@@ -187,6 +187,7 @@ github.com/go-jose/go-jose/v4/json
 ## explicit; go 1.17
 github.com/go-kit/log
 github.com/go-kit/log/level
+github.com/go-kit/log/term
 # github.com/go-ldap/ldap/v3 v3.4.8
 ## explicit; go 1.14
 github.com/go-ldap/ldap/v3

@@ -162,7 +162,7 @@ func MeasureCPU(ctx context.Context) {
 
 			newCpu, err := cpu.Get()
 			if err != nil {
-				level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+				level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 				return
 			}
@@ -194,15 +194,15 @@ func MeasureCPU(ctx context.Context) {
 //
 // It uses the util.ByteSize function to convert the memory values in bytes to kilobytes (KB)
 // by dividing them by 1024.
-// The logging is performed using the DefaultLogger from the logging package.
-// Note: The declarations of logging.DefaultLogger, global.LogKeyStatsAlloc, util.ByteSize,
+// The logging is performed using the Logger from the logging package.
+// Note: The declarations of logging.Logger, global.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		// Heap Stats
 		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
 		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),

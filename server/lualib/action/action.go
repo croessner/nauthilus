@@ -173,7 +173,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 
 // loadScript loads a Lua script into a LuaScriptAction object.
 // It compiles the script using lualib.CompileLua and stores the compiled script in LuaScriptAction.ScriptCompiled.
-// If the compilation fails, it logs the error using logging.DefaultErrLogger.
+// If the compilation fails, it logs the error using logging.Logger.
 //
 // Parameters:
 // - luaAction: a pointer to a LuaScriptAction object.
@@ -185,7 +185,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+		level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 		return
 	}
@@ -316,7 +316,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 			"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 		)
 
-		level.Info(logging.DefaultLogger).Log(
+		level.Info(logging.Logger).Log(
 			append([]any{
 				global.LogKeyGUID, aw.luaActionRequest.Session,
 				"script", aw.actionScripts[index].ScriptPath,
@@ -363,7 +363,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 // It takes the index of the action script, the error that occurred, and the custom log key-value pair as parameters.
 // It logs the error, script path, session ID, and custom log key-value pair using the error logger.
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		append([]any{
 			global.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,

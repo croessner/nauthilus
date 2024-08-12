@@ -226,7 +226,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			level.Debug(logging.DefaultLogger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+			level.Debug(logging.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
 
 			if errors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {

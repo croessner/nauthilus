@@ -28,7 +28,7 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+		level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 		return 0
 	}
@@ -53,12 +53,12 @@ func LoadStatsFromRedis() {
 	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
 		if redisValue, err = rediscli.ReadHandle.HGet(context.Background(), redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
-				level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "No statistics on Redis server")
+				level.Info(logging.Logger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
 				return
 			}
 
-			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+			level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 			return
 		}
@@ -83,7 +83,7 @@ func SaveStatsToRedis() {
 
 	for index := range metrics {
 		if err = rediscli.WriteHandle.HSet(context.Background(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+			level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 			return
 		}

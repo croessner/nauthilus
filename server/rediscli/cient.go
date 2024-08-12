@@ -23,7 +23,7 @@ func redisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 	if config.LoadableConfig.Server.Redis.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
 		if err != nil {
-			level.Error(logging.DefaultErrLogger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
+			level.Error(logging.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
 
 			return nil
 		}
@@ -148,13 +148,13 @@ func NewRedisReplicaClient() redis.UniversalClient {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.LoadableConfig.Server.DNS.Resolver == "" {
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Using default DNS resolver")
+		level.Debug(logging.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
 
 		resolver = &net.Resolver{
 			PreferGo: true,
 		}
 	} else {
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
+		level.Debug(logging.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
 
 		resolver = &net.Resolver{
 			PreferGo: true,

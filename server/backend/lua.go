@@ -315,11 +315,11 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 // processError logs the error and sends a LuaBackendResult with the error and the logs to the LuaRequest's LuaReplyChan.
 // It takes an error, a LuaRequest, and a logs slice of CustomLogKeyValue as parameters.
-// The error is logged at the Error level using the DefaultErrLogger.
+// The error is logged at the Error level using the Logger.
 // The logs contain the session GUID and the path to the Lua script.
 // Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
 func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyGUID, luaRequest.Session,
 		"script", config.LoadableConfig.GetLuaScriptPath(),
 		global.LogKeyError, err,

@@ -167,7 +167,7 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	ctx.HTML(http.StatusOK, "login.html", loginData)
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page"),
 	)
@@ -392,7 +392,7 @@ func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 
 	ctx.Redirect(http.StatusFound, targetURI)
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
@@ -475,7 +475,7 @@ func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 		global.TwoFAv1Root+viper.GetString("login_2fa_page")+"?_error="+global.PasswordFail,
 	)
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
@@ -691,7 +691,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	}
 
 	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
-		level.Debug(logging.DefaultLogger).Log(
+		level.Debug(logging.Logger).Log(
 			global.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
 		)
@@ -703,7 +703,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			global.TwoFAv1Root+viper.GetString("totp_page")+"?_error="+global.InvalidCode,
 		)
 
-		level.Info(logging.DefaultLogger).Log(
+		level.Info(logging.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyUsername, ctx.PostForm("username"),
 			global.LogKeyAuthStatus, global.LogKeyAuthReject,
@@ -785,7 +785,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 					continue
 				}
 
-				level.Error(logging.DefaultErrLogger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+				level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 				break
 			}
@@ -801,7 +801,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=OTP code is valid. Registration completed successfully")
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,

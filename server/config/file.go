@@ -822,19 +822,19 @@ func (f *File) validateBackends() error {
 func (f *File) validateRBLs() error {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
-			level.Warn(logging.DefaultLogger).Log(
+			level.Warn(logging.Logger).Log(
 				global.LogKeyWarning, "Please use a smaller RBL threshold!",
 				"rbl_threshold", f.RBLs.Threshold)
 		}
 
 		for _, rbl := range f.RBLs.Lists {
 			if rbl.Weight > math.MaxUint8 {
-				level.Warn(logging.DefaultLogger).Log(
+				level.Warn(logging.Logger).Log(
 					global.LogKeyWarning, "Please use a lower RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			} else if rbl.Weight < -math.MaxUint8 {
-				level.Warn(logging.DefaultLogger).Log(
+				level.Warn(logging.Logger).Log(
 					global.LogKeyWarning, "Please use a higher RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
@@ -982,7 +982,7 @@ func (f *File) LDAPHavePoolOnly() bool {
 //
 // The method uses the EnvConfig and Backend structs defined in the codebase.
 // The Backend constants from the global package are also used for comparison.
-// The method logs debug information using the DefaultLogger from the logging package.
+// The method logs debug information using the Logger from the logging package.
 // The errors package is used to define and return the error messages.
 func (f *File) validatePassDBBackends() error {
 	for _, backend := range f.Server.Backends {
@@ -1724,7 +1724,7 @@ func ReloadConfigFile() (err error) {
 	// Replace existing configuration
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&LoadableConfig)), unsafe.Pointer(newCfgReload))
 
-	level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Reloading configuration file finished")
+	level.Info(logging.Logger).Log(global.LogKeyMsg, "Reloading configuration file finished")
 
 	return
 }
