@@ -312,7 +312,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyError, err,
@@ -334,10 +334,10 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 // Example usage:
 // r.generateLog(triggered, abortFeatures, ret, scriptName)
 //
-// NOTE: This method uses the logging.DefaultErrLogger logger.
+// NOTE: This method uses the logging.Logger logger.
 //
 // Dependencies:
-// - logging.DefaultErrLogger: the default error logger for logging the log entry
+// - logging.Logger: the default error logger for logging the log entry
 // - global.LogKeyGUID: the constant representing the log key for the session ID
 // - global.LogKeyMsg: the constant representing the log key for the log message
 // - r.formatResult: a helper method to format the feature result as a string
@@ -367,7 +367,7 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		}
 	}
 
-	level.Info(logging.DefaultLogger).Log(logs...)
+	level.Info(logging.Logger).Log(logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.

@@ -355,7 +355,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 //
 //	executeAndHandleError(compiledScript, L)
 func processError(err error) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		"script", config.LoadableConfig.GetLuaCallbackScriptPath(),
 		global.LogKeyError, err,
 	)

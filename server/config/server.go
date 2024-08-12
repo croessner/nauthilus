@@ -38,6 +38,7 @@ type BasicAuth struct {
 
 type Log struct {
 	JSON       bool         `mapstructure:"json"`
+	Color      bool         `mapstructure:"color"`
 	Level      Verbosity    `mapstructure:"level"`
 	DbgModules []*DbgModule `mapstructure:"debug_modules"`
 }

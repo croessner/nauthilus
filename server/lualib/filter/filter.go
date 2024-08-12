@@ -457,7 +457,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 // logError is a function that logs error information when a LuaFilter script fails during a Request session.
 // It logs the Session GUID, the name of the script, and the error message to the default error logger with an Error level.
 func logError(r *Request, script *LuaFilter, err error) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", script.Name,
 		global.LogKeyError, err,
@@ -481,7 +481,7 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 			}
 		}
 
-		level.Info(logging.DefaultErrLogger).Log(logs...)
+		level.Info(logging.Logger).Log(logs...)
 	}
 
 	util.DebugModule(

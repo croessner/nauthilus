@@ -36,7 +36,7 @@ type RedisLogger struct{}
 
 // Printf implements the printf function from Redis.
 func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
-	level.Info(logging.DefaultLogger).Log("redis", fmt.Sprintf(format, values...))
+	level.Info(logging.Logger).Log("redis", fmt.Sprintf(format, values...))
 }
 
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
@@ -267,7 +267,7 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 			keyvals = append(keyvals, "function")
 			keyvals = append(keyvals, runtime.FuncForPC(counter).Name())
 
-			level.Debug(logging.DefaultLogger).Log(keyvals...)
+			level.Debug(logging.Logger).Log(keyvals...)
 		}
 
 		break

@@ -230,7 +230,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 
 		// Note: Chicken-egg problem.
 		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
-			level.Warn(logging.DefaultLogger).Log(
+			level.Warn(logging.Logger).Log(
 				global.LogKeyGUID, guid,
 				global.LogKeyWarning, "Disabling HTTP basic Auth",
 				"category", ctx.Param("category"),
@@ -271,7 +271,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
 // Based on the presence of an error, it decides which logger, logWrapper, and logKey to use.
-// The logger is either logging.DefaultErrLogger or logging.DefaultLogger.
+// The logger is either logging.Logger or logging.Logger.
 // The logWrapper is either level.Error or level.Info.
 // The logKey is either global.LogKeyError or global.LogKeyMsg.
 // The function stops the timer and calculates the latency.
@@ -299,11 +299,11 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		// Decide which logger to use
 		if err != nil {
-			logger = logging.DefaultErrLogger
+			logger = logging.Logger
 			logWrapper = level.Error
 			logKey = global.LogKeyError
 		} else {
-			logger = logging.DefaultLogger
+			logger = logging.Logger
 			logWrapper = level.Info
 			logKey = global.LogKeyMsg
 		}
@@ -711,7 +711,7 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
+		level.Error(logging.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
 
 		os.Exit(-1)
 	}
@@ -790,7 +790,7 @@ func HTTPApp(ctx context.Context) {
 	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, err)
+		level.Error(logging.Logger).Log(global.LogKeyError, err)
 
 		os.Exit(1)
 	}

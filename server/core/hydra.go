@@ -480,7 +480,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 }
 
 // logError logs the error details along with the corresponding GUID, client IP, and error message.
-// If the error is of type *errors2.DetailedError, it logs the error details using logging.DefaultErrLogger.Log method.
+// If the error is of type *errors2.DetailedError, it logs the error details using logging.Logger.Log method.
 // Otherwise, it logs only the error message.
 //
 // ctx: The Gin context.
@@ -491,14 +491,14 @@ func logError(ctx *gin.Context, err error) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 
 	if errors.As(err, &detailedError) {
-		level.Error(logging.DefaultErrLogger).Log(
+		level.Error(logging.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, (*detailedError).Error(),
 			global.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
-		level.Error(logging.DefaultErrLogger).Log(
+		level.Error(logging.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
@@ -577,7 +577,7 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	}
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
+		level.Error(logging.Logger).Log(
 			global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
 			"message_id", messageID, global.LogKeyError, err.Error(),
 		)
@@ -1068,7 +1068,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 // logInfoLoginSkip logs the login skip event with the provided details.
 func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
@@ -1083,7 +1083,7 @@ func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
 
 // logInfoLoginNoSkip logs information about the login operation without skipping any step.
 func (a *ApiConfig) logInfoLoginNoSkip() {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *a.clientId,
@@ -1297,7 +1297,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string
 	if subject == "" {
 		subject = account
 
-		level.Warn(logging.DefaultLogger).Log(
+		level.Warn(logging.Logger).Log(
 			global.LogKeyGUID, a.guid,
 			global.LogKeyMsg, fmt.Sprintf("Empty 'subject', using '%s' as value", account),
 		)
@@ -1453,7 +1453,7 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *
 		logs = append(logs, auth.AdditionalLogs...)
 	}
 
-	level.Info(logging.DefaultLogger).Log(logs...)
+	level.Info(logging.Logger).Log(logs...)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
@@ -1619,7 +1619,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 		logs = append(logs, auth.AdditionalLogs...)
 	}
 
-	level.Info(logging.DefaultLogger).Log(logs...)
+	level.Info(logging.Logger).Log(logs...)
 }
 
 // Page '/login/post'
@@ -1821,7 +1821,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	ctx.HTML(http.StatusOK, "device.html", loginData)
 
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *clientId,
@@ -2149,7 +2149,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 // logInfoConsent logs information about the consent request.
 func (a *ApiConfig) logInfoConsent() {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *a.clientId,
@@ -2163,7 +2163,7 @@ func (a *ApiConfig) logInfoConsent() {
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
 func (a *ApiConfig) logInfoRedirectWithConsent(redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
@@ -2392,7 +2392,7 @@ func (a *ApiConfig) processConsentReject() {
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
 func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
@@ -2406,7 +2406,7 @@ func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
 
 // logInfoConsentReject logs the information about a rejected consent request.
 func (a *ApiConfig) logInfoConsentReject(redirectTo *string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
@@ -2504,7 +2504,7 @@ func (a *ApiConfig) handleLogout() {
 
 // logInfoLogout logs information about a logout action.
 func (a *ApiConfig) logInfoLogout() {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2650,7 +2650,7 @@ func (a *ApiConfig) rejectLogout() {
 
 // logInfoLogoutAccept logs information about the logout request acceptance.
 func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2662,7 +2662,7 @@ func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
 
 // logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
 func (a *ApiConfig) logInfoLogoutReject(redirectTo string) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2890,7 +2890,7 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 
 // Logs error for unknown claim type
 func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		"custom_claim_name", customClaimName,
 		global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 	)

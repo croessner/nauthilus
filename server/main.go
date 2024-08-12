@@ -95,7 +95,7 @@ func newContextTuple(ctx context.Context) *contextTuple {
 // - Calls config.NewConfig() to initialize the global variable config.EnvConfig.
 // - Calls loadLanguageBundles() to load language bundles.
 // - Calls logging.SetupLogging() to configure the logging settings using the values from config.EnvConfig.
-// - Configures the standard library logger logStdLib to output logs to logging.DefaultErrLogger.
+// - Configures the standard library logger logStdLib to output logs to logging.Logger.
 // - Calls setTimeZone() to set the time zone.
 // - Calls config.NewConfigFile() to initialize the global variable config.LoadableConfig.
 //
@@ -119,8 +119,13 @@ func setupEnvironment() (err error) {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
-	logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
-	logStdLib.SetOutput(log.NewStdlibAdapter(logging.DefaultErrLogger))
+	logging.SetupLogging(
+		config.LoadableConfig.Server.Log.Level.Level(),
+		config.LoadableConfig.Server.Log.JSON,
+		config.LoadableConfig.Server.Log.Color,
+		config.LoadableConfig.Server.InstanceName,
+	)
+	logStdLib.SetOutput(log.NewStdlibAdapter(logging.Logger))
 
 	return nil
 }
@@ -169,7 +174,7 @@ func setTimeZone() {
 	// Manually set time zone
 	if tz := os.Getenv("TZ"); tz != "" {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
-			level.Error(logging.DefaultErrLogger).Log(
+			level.Error(logging.Logger).Log(
 				global.LogKeyError, fmt.Sprintf("Error loading location '%s': %v", tz, err),
 			)
 		}
@@ -299,7 +304,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	sig := <-sigsTerminate
 
-	level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
+	level.Info(logging.Logger).Log(global.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
 
 	cancel()
 
@@ -315,7 +320,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 	// Sync some Prometheus data to Redis
 	core.SaveStatsToRedis()
 
-	level.Debug(logging.DefaultLogger).Log(global.LogKeyMsg, "Shutdown complete")
+	level.Debug(logging.Logger).Log(global.LogKeyMsg, "Shutdown complete")
 
 	terminateLuaStatePools()
 	closeChannels()
@@ -396,7 +401,7 @@ func handleBackend(passDB *config.Backend) {
 		close(backend.LuaRequestChan)
 	case global.BackendCache:
 	default:
-		level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
+		level.Warn(logging.Logger).Log(global.LogKeyWarning, "Unknown backend")
 	}
 }
 
@@ -498,7 +503,7 @@ func startLuaWorker(store *contextStore) {
 // handleServerRestart handles the server restart process. It stops the server, waits for the HTTP server to stop,
 // and then starts the HTTP server again with the given context and contextStore.
 func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyMsg, "Restarting Nauthilus", "signal", sig,
 	)
 
@@ -534,7 +539,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 //
 //	 actionWorkers: A slice of action workers that are stopped and restarted during the process.
 func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
@@ -546,7 +551,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			handleLuaBackend(store.lua)
 		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
+			level.Warn(logging.Logger).Log(global.LogKeyWarning, "Unknown backend")
 		}
 	}
 
@@ -554,17 +559,22 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	stopAndRestartRedis()
 
 	if err := config.ReloadConfigFile(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
+		level.Error(logging.Logger).Log(
 			global.LogKeyError, err,
 		)
 	} else {
-		logging.SetupLogging(config.LoadableConfig.Server.Log.Level.Level(), config.LoadableConfig.Server.Log.JSON, config.LoadableConfig.Server.InstanceName)
+		logging.SetupLogging(
+			config.LoadableConfig.Server.Log.Level.Level(),
+			config.LoadableConfig.Server.Log.JSON,
+			config.LoadableConfig.Server.Log.Color,
+			config.LoadableConfig.Server.InstanceName,
+		)
 
 		postEnvironmentDebug()
 	}
 
 	if err := setupLuaScripts(); err != nil {
-		level.Error(logging.DefaultErrLogger).Log(
+		level.Error(logging.Logger).Log(
 			global.LogKeyMsg, "Unable to setup Lua scripts",
 			global.LogKeyError, err,
 		)
@@ -587,13 +597,13 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			startLuaWorker(store)
 		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend")
+			level.Warn(logging.Logger).Log(global.LogKeyWarning, "Unknown backend")
 		}
 	}
 
 	restartNgxMonitoring(ctx, store, ngxMonitoringTicker)
 
-	level.Debug(logging.DefaultLogger).Log(
+	level.Debug(logging.Logger).Log(
 		global.LogKeyMsg, "Reload complete",
 	)
 }
@@ -630,7 +640,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 			setupLuaWorker(store, ctx)
 		case global.BackendCache:
 		default:
-			level.Warn(logging.DefaultLogger).Log(global.LogKeyWarning, "Unknown backend", "backend")
+			level.Warn(logging.Logger).Log(global.LogKeyWarning, "Unknown backend", "backend")
 		}
 	}
 }
@@ -700,7 +710,7 @@ func setupRedis() {
 // The server is started as a goroutine and runs asynchronously in the background.
 // Any signal sent to close the server is sent through the HTTPEndChan channel of type Done.
 func startHTTPServer(ctx context.Context, store *contextStore) {
-	level.Info(logging.DefaultLogger).Log(
+	level.Info(logging.Logger).Log(
 		global.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
 	)
@@ -768,7 +778,7 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 //	server: a pointer to the configuration of the Backend Server at the time of the error
 //	err: the error that has occurred
 func logBackendServerError(server *config.BackendServer, err error) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyError, err,
 		global.LogKeyMsg, "Server down",
 		global.LogKeyProtocol, server.Protocol,
@@ -961,10 +971,10 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 func handleMonitoringError(err error) {
 	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		if errors.Is(err, errors2.ErrFeatureBackendServersMonitoringDisabled) {
-			level.Info(logging.DefaultLogger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
+			level.Info(logging.Logger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
 		}
 	} else if errors.Is(err, errors2.ErrMonitoringBackendServersEmpty) {
-		level.Error(logging.DefaultErrLogger).Log(global.LogKeyError, "Monitoring backend servers are not configured")
+		level.Error(logging.Logger).Log(global.LogKeyError, "Monitoring backend servers are not configured")
 	}
 }
 
@@ -996,31 +1006,31 @@ func enableBlockProfile() {
 
 func postEnvironmentDebug() {
 	if config.LoadableConfig.RBLs != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
+		level.Debug(logging.Logger).Log(global.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
 	}
 
 	if config.LoadableConfig.ClearTextList != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
+		level.Debug(logging.Logger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
 	}
 
 	if config.LoadableConfig.RelayDomains != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
+		level.Debug(logging.Logger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
 	}
 
 	if config.LoadableConfig.BackendServerMonitoring != nil {
-		level.Debug(logging.DefaultLogger).Log(global.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
+		level.Debug(logging.Logger).Log(global.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
 	}
 
 	if config.LoadableConfig.BruteForce != nil {
-		level.Debug(logging.DefaultLogger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
+		level.Debug(logging.Logger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
 	}
 
 	if config.LoadableConfig.Oauth2 != nil {
-		level.Debug(logging.DefaultLogger).Log("oauth2", fmt.Sprintf("%+v", config.LoadableConfig.Oauth2))
+		level.Debug(logging.Logger).Log("oauth2", fmt.Sprintf("%+v", config.LoadableConfig.Oauth2))
 	}
 
 	if config.LoadableConfig.LDAP != nil {
-		level.Debug(logging.DefaultLogger).Log("ldap", fmt.Sprintf("%+v", config.LoadableConfig.LDAP.Config))
+		level.Debug(logging.Logger).Log("ldap", fmt.Sprintf("%+v", config.LoadableConfig.LDAP.Config))
 	}
 }
 

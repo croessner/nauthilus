@@ -538,7 +538,7 @@ func (l *LDAPPool) logConnectionInfo(guid *string, index int) {
 //	err := errors.New("connection error")
 //	l.logConnectionError(&guid, err)
 func (l *LDAPPool) logConnectionError(guid *string, err error) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
 		global.LogKeyError, err,
@@ -569,7 +569,7 @@ func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
 // Finally, it logs a warning message indicating that the pool has obtained free connections.
 func (l *LDAPPool) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWaitGroup *sync.WaitGroup) {
 	if ldapConnIndex == global.LDAPPoolExhausted {
-		level.Warn(logging.DefaultLogger).Log(
+		level.Warn(logging.Logger).Log(
 			global.LogKeyLDAPPoolName, l.name,
 			global.LogKeyGUID, *guid,
 			global.LogKeyMsg, "Pool exhausted. Waiting for a free connection")
@@ -577,7 +577,7 @@ func (l *LDAPPool) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWa
 		// XXX: Very hard decision, but an exhausted pool needs a human interaction!
 		ldapWaitGroup.Wait()
 
-		level.Warn(logging.DefaultLogger).Log(
+		level.Warn(logging.Logger).Log(
 			global.LogKeyLDAPPoolName, l.name,
 			global.LogKeyGUID, *guid,
 			global.LogKeyMsg, "Pool got free connections")
@@ -706,7 +706,7 @@ func (l *LDAPPool) connectAndBindIfNeeded(guid *string, index int) error {
 // The function takes a GUID string pointer and an error object as input parameters.
 // It logs the LDAP pool name, GUID, and the error encountered.
 func (l *LDAPPool) logConnectionFailed(guid *string, err error) {
-	level.Error(logging.DefaultErrLogger).Log(
+	level.Error(logging.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
 		global.LogKeyError, err)
@@ -729,7 +729,7 @@ func (l *LDAPPool) checkConnection(guid *string, index int) (err error) {
 
 		l.conn[index].state = global.LDAPStateClosed
 
-		level.Warn(logging.DefaultLogger).Log(
+		level.Warn(logging.Logger).Log(
 			global.LogKeyLDAPPoolName, l.name,
 			global.LogKeyGUID, *guid,
 			global.LogKeyMsg, fmt.Sprintf("Connection #%d is closed", index+1),
@@ -1221,7 +1221,7 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 		}
 
 		if doLog {
-			level.Error(logging.DefaultErrLogger).Log(
+			level.Error(logging.Logger).Log(
 				global.LogKeyLDAPPoolName, l.name,
 				global.LogKeyGUID, *ldapRequest.GUID,
 				global.LogKeyError, ldapError.Error(),
