@@ -9,7 +9,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/callback"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -83,7 +83,7 @@ func (a *AuthState) generic(ctx *gin.Context) {
 			ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
 		}
 
-		level.Info(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
+		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
 	} else {
 		if !(a.NoAuth || ctx.GetBool(global.CtxLocalCacheAuthKey)) {
 			//nolint:exhaustive // Ignore some results
@@ -156,7 +156,7 @@ func (a *AuthState) callback(ctx *gin.Context) {
 
 // healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
 func healthCheck(ctx *gin.Context) {
-	level.Info(logging.Logger).Log(global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey), global.LogKeyMsg, "Health check")
+	level.Info(log.Logger).Log(global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey), global.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
 }
@@ -180,7 +180,7 @@ func listBruteforce(ctx *gin.Context) {
 	result, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			httpStatusCode = http.StatusInternalServerError
 			list.Error = err.Error()
@@ -190,7 +190,7 @@ func listBruteforce(ctx *gin.Context) {
 			stats.RedisReadCounter.Inc()
 		}
 	} else {
-		level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
+		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
 
 		list.IPAddresses = result
 		list.Error = "none"
@@ -235,10 +235,10 @@ func flushCache(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 	userCmd := &FlushUserCmd{}
 
-	level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
+	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
 
 	if err := ctx.BindJSON(userCmd); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
@@ -387,7 +387,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 	}
 
 	if err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 		return
 	}
@@ -396,14 +396,14 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 
 	for _, userKey := range userKeys.GetStringSlice() {
 		if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
-			level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			return
 		}
 
 		stats.RedisWriteCounter.Inc()
 
-		level.Info(logging.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+		level.Info(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 	}
 }
 
@@ -424,10 +424,10 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 //	   guid := ctx.GetString(global.CtxGUIDKey)
 //	   userCmd := &FlushUserCmd{}
 //
-//	   level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
+//	   level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
 //
 //	   if err := ctx.BindJSON(userCmd); err != nil {
-//	       level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+//	       level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 //	       ctx.AbortWithStatus(http.StatusBadRequest)
 //	       return
 //	   }
@@ -443,7 +443,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 //	}
 func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string) {
 	if useCache {
-		level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
+		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
 
 		ctx.JSON(http.StatusOK, &RESTResult{
 			GUID:      guid,
@@ -457,7 +457,7 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCa
 	} else {
 		msg := "Cache backend not enabled"
 
-		level.Warn(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, msg)
+		level.Warn(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, msg)
 
 		ctx.JSON(http.StatusInternalServerError, &RESTResult{
 			GUID:      guid,
@@ -483,22 +483,22 @@ func flushBruteForceRule(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 	statusMsg := "flushed"
 
-	level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.CatBruteForce, global.ServFlush)
+	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatBruteForce, global.ServFlush)
 
 	ipCmd := &FlushRuleCmd{}
 
 	if err = ctx.BindJSON(ipCmd); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
 	}
 
-	level.Info(logging.Logger).Log(global.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
+	level.Info(log.Logger).Log(global.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
 
 	ruleFlushError, err = processBruteForceRules(ctx, ipCmd, guid)
 	if err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return
@@ -508,7 +508,7 @@ func flushBruteForceRule(ctx *gin.Context) {
 		statusMsg = "not flushed"
 	}
 
-	level.Info(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
+	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
 
 	ctx.JSON(http.StatusOK, &RESTResult{
 		GUID:      guid,
@@ -562,7 +562,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 				stats.RedisWriteCounter.Inc()
 
-				level.Info(logging.Logger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
+				level.Info(log.Logger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
 			}
 		}
 	}

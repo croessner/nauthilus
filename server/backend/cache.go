@@ -9,7 +9,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -71,7 +71,7 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, e
 			return true, nil
 		}
 
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return true, err
 	}
@@ -79,7 +79,7 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, e
 	*cache = new(T)
 
 	if err = json.Unmarshal(redisValue, *cache); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return
 	}
@@ -104,7 +104,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 
 	redisValue, err := json.Marshal(cache)
 	if err != nil {
-		level.Error(logging.Logger).Log(
+		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
 		)
@@ -114,7 +114,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
-		level.Error(logging.Logger).Log(
+		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
 		)
@@ -193,7 +193,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	key := "as_webauthn:user:" + uniqueUserId
 
 	if redisValue, err = rediscli.ReadHandle.Get(context.Background(), key).Bytes(); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 	user = &User{}
 
 	if err = json.Unmarshal(redisValue, user); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 
 	redisValue, err := json.Marshal(user)
 	if err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return err
 	}
@@ -227,7 +227,7 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 	}
 
 	util.DebugModule(global.DbgCache, "redis", result)

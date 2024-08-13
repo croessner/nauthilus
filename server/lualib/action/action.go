@@ -10,7 +10,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/stats"
@@ -173,7 +173,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 
 // loadScript loads a Lua script into a LuaScriptAction object.
 // It compiles the script using lualib.CompileLua and stores the compiled script in LuaScriptAction.ScriptCompiled.
-// If the compilation fails, it logs the error using logging.Logger.
+// If the compilation fails, it logs the error using log.Logger.
 //
 // Parameters:
 // - luaAction: a pointer to a LuaScriptAction object.
@@ -185,7 +185,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return
 	}
@@ -316,7 +316,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 			"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 		)
 
-		level.Info(logging.Logger).Log(
+		level.Info(log.Logger).Log(
 			append([]any{
 				global.LogKeyGUID, aw.luaActionRequest.Session,
 				"script", aw.actionScripts[index].ScriptPath,
@@ -363,7 +363,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 // It takes the index of the action script, the error that occurred, and the custom log key-value pair as parameters.
 // It logs the error, script path, session ID, and custom log key-value pair using the error logger.
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		append([]any{
 			global.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,

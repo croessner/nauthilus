@@ -11,7 +11,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/stats"
@@ -312,7 +312,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
 		global.LogKeyError, err,
@@ -334,10 +334,10 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 // Example usage:
 // r.generateLog(triggered, abortFeatures, ret, scriptName)
 //
-// NOTE: This method uses the logging.Logger logger.
+// NOTE: This method uses the log.Logger logger.
 //
 // Dependencies:
-// - logging.Logger: the default error logger for logging the log entry
+// - log.Logger: the default error logger for logging the log entry
 // - global.LogKeyGUID: the constant representing the log key for the session ID
 // - global.LogKeyMsg: the constant representing the log key for the log message
 // - r.formatResult: a helper method to format the feature result as a string
@@ -367,7 +367,7 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		}
 	}
 
-	level.Info(logging.Logger).Log(logs...)
+	level.Info(log.Logger).Log(logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.

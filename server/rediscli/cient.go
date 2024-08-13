@@ -9,7 +9,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
@@ -23,7 +23,7 @@ func redisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 	if config.LoadableConfig.Server.Redis.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
 		if err != nil {
-			level.Error(logging.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
 
 			return nil
 		}
@@ -148,13 +148,13 @@ func NewRedisReplicaClient() redis.UniversalClient {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.LoadableConfig.Server.DNS.Resolver == "" {
-		level.Debug(logging.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
+		level.Debug(log.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
 
 		resolver = &net.Resolver{
 			PreferGo: true,
 		}
 	} else {
-		level.Debug(logging.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
+		level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
 
 		resolver = &net.Resolver{
 			PreferGo: true,

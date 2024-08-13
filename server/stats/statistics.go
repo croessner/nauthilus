@@ -7,7 +7,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/mackerelio/go-osstat/cpu"
@@ -162,7 +162,7 @@ func MeasureCPU(ctx context.Context) {
 
 			newCpu, err := cpu.Get()
 			if err != nil {
-				level.Error(logging.Logger).Log(global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyError, err)
 
 				return
 			}
@@ -195,14 +195,14 @@ func MeasureCPU(ctx context.Context) {
 // It uses the util.ByteSize function to convert the memory values in bytes to kilobytes (KB)
 // by dividing them by 1024.
 // The logging is performed using the Logger from the logging package.
-// Note: The declarations of logging.Logger, global.LogKeyStatsAlloc, util.ByteSize,
+// Note: The declarations of log.Logger, global.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		// Heap Stats
 		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
 		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),

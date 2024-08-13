@@ -15,7 +15,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -25,7 +25,7 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log"
+	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gwatts/gin-adapter"
@@ -55,7 +55,7 @@ type RESTResult struct {
 // customWriter represents a type that logs data based on a specified log level.
 type customWriter struct {
 	// logger represents a logger instance and is used for all messages that are printed to stdout.
-	logger log.Logger
+	logger kitlog.Logger
 
 	// logLevel represents the log level used for logging data in the customWriter type.
 	// The log level determines how the written data is logged:
@@ -272,7 +272,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 
 		// Note: Chicken-egg problem.
 		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
-			level.Warn(logging.Logger).Log(
+			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, guid,
 				global.LogKeyWarning, "Disabling HTTP basic Auth",
 				"category", ctx.Param("category"),
@@ -313,7 +313,6 @@ func basicAuthMiddleware() gin.HandlerFunc {
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
 // Based on the presence of an error, it decides which logger, logWrapper, and logKey to use.
-// The logger is either logging.Logger or logging.Logger.
 // The logWrapper is either level.Error or level.Info.
 // The logKey is either global.LogKeyError or global.LogKeyMsg.
 // The function stops the timer and calculates the latency.
@@ -323,8 +322,8 @@ func loggerMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			logKey     string
-			logger     log.Logger
-			logWrapper func(logger log.Logger) log.Logger
+			logger     kitlog.Logger
+			logWrapper func(logger kitlog.Logger) kitlog.Logger
 		)
 
 		guid := ksuid.New().String()
@@ -341,11 +340,11 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		// Decide which logger to use
 		if err != nil {
-			logger = logging.Logger
+			logger = log.Logger
 			logWrapper = level.Error
 			logKey = global.LogKeyError
 		} else {
-			logger = logging.Logger
+			logger = log.Logger
 			logWrapper = level.Info
 			logKey = global.LogKeyMsg
 		}
@@ -753,13 +752,13 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
 
 		os.Exit(-1)
 	}
 
-	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: logging.Logger, logLevel: level.DebugValue()})
-	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: logging.Logger, logLevel: level.ErrorValue()})
+	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
+	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
 
 	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug) {
 		gin.SetMode(gin.ReleaseMode)
@@ -834,7 +833,7 @@ func HTTPApp(ctx context.Context) {
 	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		os.Exit(1)
 	}

@@ -18,7 +18,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	errors2 "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -36,7 +36,7 @@ type RedisLogger struct{}
 
 // Printf implements the printf function from Redis.
 func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
-	level.Info(logging.Logger).Log("redis", fmt.Sprintf(format, values...))
+	level.Info(log.Logger).Log("redis", fmt.Sprintf(format, values...))
 }
 
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
@@ -267,7 +267,7 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 			keyvals = append(keyvals, "function")
 			keyvals = append(keyvals, runtime.FuncForPC(counter).Name())
 
-			level.Debug(logging.Logger).Log(keyvals...)
+			level.Debug(log.Logger).Log(keyvals...)
 		}
 
 		break
