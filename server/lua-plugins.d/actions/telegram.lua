@@ -150,11 +150,13 @@ function nauthilus_call_action(request)
                 local output_str = {}
 
                 for k, v in pairs(result) do
-                    if string.match(v, "%s") then
-                        v = '"' .. v .. '"'
+                    if nauthilus_util.is_string(v) then
+                        if string.match(v, "%s") then
+                            v = '"' .. v .. '"'
+                        end
                     end
 
-                    table.insert(output_str, k .. '=' .. v)
+                    table.insert(output_str, k .. '=' .. tostring(v))
                 end
 
                 print(table.concat(output_str, " "))
