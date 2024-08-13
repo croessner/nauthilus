@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -450,7 +450,7 @@ func determineIdlePoolSize(l *LDAPPool, poolSize int) (idlePoolSize int, openCon
 // - Sets up the connection using l.setupConnection, passing in the unique identifier, bind value, and index.
 // - Decrements idlePoolSize if the connection setup was successful.
 // - Returns early if idlePoolSize reaches zero.
-// Returns errors2.ErrLDAPConnect if all connections fail to be set up.
+// Returns errors.ErrLDAPConnect if all connections fail to be set up.
 func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int, poolSize int) (err error) {
 	for index := 0; index < poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
@@ -467,7 +467,7 @@ func initializeConnections(l *LDAPPool, bind bool, idlePoolSize int, poolSize in
 		}
 	}
 
-	return errors2.ErrLDAPConnect
+	return errors.ErrLDAPConnect
 }
 
 // setupConnection sets up a connection in the LDAPPool. It takes the following parameters:
@@ -895,7 +895,7 @@ EndlessLoop:
 
 		default:
 			if retryLimit > global.LDAPMaxRetries {
-				return errors2.ErrLDAPConnect.WithDetail(
+				return errors.ErrLDAPConnect.WithDetail(
 					fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
 			}
 
@@ -932,7 +932,7 @@ EndlessLoop:
 		}
 
 		if timeout {
-			err = errors2.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
+			err = errors.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
 
 			break EndlessLoop
 		}
@@ -1147,14 +1147,14 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 	}
 
 	if distinguishedNames, assertOk = result[global.DistinguishedName]; !assertOk {
-		err = errors2.ErrNoLDAPSearchResult.WithDetail(
+		err = errors.ErrNoLDAPSearchResult.WithDetail(
 			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
 
 		return
 	}
 
 	if len(distinguishedNames.([]any)) == 0 {
-		err = errors2.ErrNoLDAPSearchResult.WithDetail(
+		err = errors.ErrNoLDAPSearchResult.WithDetail(
 			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
 
 		return
@@ -1208,7 +1208,7 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 			doLog     bool
 		)
 
-		if errors.As(err, &ldapError) {
+		if stderrors.As(err, &ldapError) {
 			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
 				doLog = true
 				ldapReply.Err = ldapError.Err
@@ -1467,7 +1467,7 @@ func convertScopeStringToLDAP(toString string) (*config.LDAPScope, error) {
 		scope.Set("sub")
 	} else {
 		if err = scope.Set(toString); err != nil {
-			return nil, errors.New(fmt.Sprintf("LDAP scope not detected: %s", toString))
+			return nil, stderrors.New(fmt.Sprintf("LDAP scope not detected: %s", toString))
 		}
 	}
 

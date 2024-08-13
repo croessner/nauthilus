@@ -2,12 +2,12 @@ package core
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/callback"
@@ -70,7 +70,7 @@ func (a *AuthState) generic(ctx *gin.Context) {
 		a.Username, a.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
 		if !httpBasicAuthOk {
 			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors2.ErrUnauthorized)
+			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
 
 			return
 		}
@@ -179,7 +179,7 @@ func listBruteforce(ctx *gin.Context) {
 
 	result, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result()
 	if err != nil {
-		if !errors.Is(err, redis.Nil) {
+		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 			httpStatusCode = http.StatusInternalServerError

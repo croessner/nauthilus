@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	stderrors "errors"
 	"flag"
 	"fmt"
 	stdlog "log"
@@ -17,7 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -902,12 +902,12 @@ func compareBackendServers(servers []*config.BackendServer, servers2 []*config.B
 // It returns a list with backend servers or an error.
 func monitoringConfig() ([]*config.BackendServer, error) {
 	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
-		return nil, errors2.ErrFeatureBackendServersMonitoringDisabled
+		return nil, errors.ErrFeatureBackendServersMonitoringDisabled
 	}
 
 	backendServers := config.LoadableConfig.GetBackendServers()
 	if len(backendServers) == 0 {
-		return nil, errors2.ErrMonitoringBackendServersEmpty
+		return nil, errors.ErrMonitoringBackendServersEmpty
 	}
 
 	return backendServers, nil
@@ -970,10 +970,10 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 // configured backend servers for monitoring, it logs an error message.
 func handleMonitoringError(err error) {
 	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
-		if errors.Is(err, errors2.ErrFeatureBackendServersMonitoringDisabled) {
+		if stderrors.Is(err, errors.ErrFeatureBackendServersMonitoringDisabled) {
 			level.Info(log.Logger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
 		}
-	} else if errors.Is(err, errors2.ErrMonitoringBackendServersEmpty) {
+	} else if stderrors.Is(err, errors.ErrMonitoringBackendServersEmpty) {
 		level.Error(log.Logger).Log(global.LogKeyError, "Monitoring backend servers are not configured")
 	}
 }

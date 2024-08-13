@@ -6,7 +6,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"hash"
 	"net/http"
@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -67,7 +67,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 		hashValue = sha256.New()
 		c.Algorithm = global.SSHA256
 	default:
-		return "", errors2.ErrUnsupportedAlgorithm
+		return "", errors.ErrUnsupportedAlgorithm
 	}
 
 	hashValue.Write(hashSalt)
@@ -80,7 +80,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 		c.Password = hex.EncodeToString(append(hashValue.Sum(nil), salt...))
 		c.PasswordOption = global.HEX
 	default:
-		return "", errors2.ErrUnsupportedPasswordOption
+		return "", errors.ErrUnsupportedPasswordOption
 	}
 
 	return c.Password, nil
@@ -102,7 +102,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 		if strings.HasPrefix(passwordPrefix, "SSHA256") {
 			alg = global.SSHA256
 		} else {
-			return salt, alg, pwOption, errors2.ErrUnsupportedAlgorithm
+			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
 	}
 
@@ -114,7 +114,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 		if strings.HasSuffix(passwordPrefix, ".HEX") {
 			pwOption = global.HEX
 		} else {
-			return salt, alg, pwOption, errors2.ErrUnsupportedPasswordOption
+			return salt, alg, pwOption, errors.ErrUnsupportedPasswordOption
 		}
 	}
 
@@ -195,7 +195,7 @@ func ProtoErrToFields(err error) (fields []zap.Field) {
 	}
 
 	switch {
-	case errors.As(err, &e):
+	case stderrors.As(err, &e):
 		return []zap.Field{
 			{Key: "err", Type: zapcore.ErrorType, Interface: e},
 			{Key: "details", Type: zapcore.StringType, String: e.Details},

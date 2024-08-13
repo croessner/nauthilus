@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
-	"errors"
+	stderrors "errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -237,7 +237,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		switch auth.handleFeatures(ctx) {
 		case global.AuthResultFeatureTLS:
 			auth.postLuaAction(&PassDBResult{})
-			handleErr(ctx, errors2.ErrNoTLS)
+			handleErr(ctx, errors.ErrNoTLS)
 			ctx.Abort()
 
 			return
@@ -302,7 +302,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 			ctx.AbortWithStatus(http.StatusForbidden)
 		} else {
 			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors2.ErrUnauthorized)
+			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
 		}
 	}
 }
@@ -832,7 +832,7 @@ func HTTPApp(ctx context.Context) {
 		}
 	}
 
-	if !errors.Is(err, http.ErrServerClosed) {
+	if !stderrors.Is(err, http.ErrServerClosed) {
 		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		os.Exit(1)

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"net"
@@ -17,7 +17,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
@@ -1007,7 +1007,7 @@ func logDebugModule(a *AuthState, passDB *PassDBMap, passDBResult *PassDBResult)
 // If the error is not a configuration error, it logs the error using the Logger.
 // It returns the error unchanged.
 func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *AuthState, configErrors map[global.Backend]error) error {
-	if errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
+	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
@@ -1035,7 +1035,7 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
-		err = errors2.ErrAllBackendConfigError
+		err = errors.ErrAllBackendConfigError
 		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyError, err)
 	}
 
@@ -1044,14 +1044,14 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 
 // authenticateUser updates the passDBResult based on the provided passDB
 // and the AuthState object a.
-// If passDBResult is nil, it returns an error of type errors2.ErrNoPassDBResult.
+// If passDBResult is nil, it returns an error of type errors.ErrNoPassDBResult.
 // It then calls the util.DebugModule function to log debug information.
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
 func authenticateUser(passDBResult *PassDBResult, a *AuthState, passDB *PassDBMap) (*PassDBResult, error) {
 	if passDBResult == nil {
-		return passDBResult, errors2.ErrNoPassDBResult
+		return passDBResult, errors.ErrNoPassDBResult
 	}
 
 	util.DebugModule(
@@ -1114,7 +1114,7 @@ func (a *AuthState) setStatusCodes(service string) error {
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
 	default:
-		return errors2.ErrUnknownService
+		return errors.ErrUnknownService
 	}
 
 	return nil
@@ -1480,9 +1480,9 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType global.Backe
 func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
-		var detailedError *errors2.DetailedError
+		var detailedError *errors.DetailedError
 
-		if errors.As(err, &detailedError) {
+		if stderrors.As(err, &detailedError) {
 			logs := []any{
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyError, detailedError.Error(),
@@ -1680,7 +1680,7 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
-		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
+		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
 			return global.AuthResultTempFail
@@ -1758,8 +1758,8 @@ func (a *AuthState) listUserAccounts() (accountList AccountList) {
 		if err == nil {
 			accountList = append(accountList, result...)
 		} else {
-			var detailedError *errors2.DetailedError
-			if errors.As(err, &detailedError) {
+			var detailedError *errors.DetailedError
+			if stderrors.As(err, &detailedError) {
 				level.Error(log.Logger).Log(
 					global.LogKeyGUID, a.GUID,
 					global.LogKeyError, detailedError.Error(),
@@ -1811,7 +1811,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 	if a.AccountField != nil {
 		if values, assertOk = a.Attributes[*a.AccountField]; !assertOk {
-			return "", errors2.ErrNoAccount
+			return "", errors.ErrNoAccount
 		}
 
 		for index := range values {
@@ -1901,7 +1901,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 		if password, err := base64.URLEncoding.DecodeString(auth.Password); err != nil {
 			auth.Password = ""
 
-			ctx.Error(errors2.ErrPasswordEncoding)
+			ctx.Error(errors.ErrPasswordEncoding)
 		} else {
 			auth.Password = string(password)
 		}
@@ -1959,7 +1959,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 	if !util.ValidateUsername(auth.Username) {
 		auth.Username = ""
 
-		ctx.Error(errors2.ErrInvalidUsername)
+		ctx.Error(errors.ErrInvalidUsername)
 	}
 }
 
@@ -1973,7 +1973,7 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 
 	err := ctx.ShouldBindJSON(&jsonRequest)
 	if err != nil {
-		ctx.Error(errors2.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+		ctx.Error(errors.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
 
 		return
 	}
@@ -2038,7 +2038,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 	} else if contentType == "application/json" {
 		processApplicationJSON(ctx, auth)
 	} else {
-		ctx.Error(errors2.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 	}
 }
 
@@ -2088,7 +2088,7 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		if !util.ValidateUsername(auth.Username) {
 			auth.Username = ""
 
-			ctx.Error(errors2.ErrInvalidUsername)
+			ctx.Error(errors.ErrInvalidUsername)
 		}
 	}
 

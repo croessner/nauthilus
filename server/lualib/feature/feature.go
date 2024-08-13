@@ -2,14 +2,14 @@ package feature
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -117,11 +117,11 @@ type LuaFeature struct {
 // Otherwise, it returns nil and the appropriate error.
 func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 	if name == "" {
-		return nil, errors2.ErrFeatureLuaNameMissing
+		return nil, errors.ErrFeatureLuaNameMissing
 	}
 
 	if scriptPath == "" {
-		return nil, errors2.ErrFeatureLuaScriptPathEmpty
+		return nil, errors.ErrFeatureLuaScriptPathEmpty
 	}
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
@@ -257,7 +257,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 	for index := range LuaFeatures.LuaScripts {
 		stopTimer := stats.PrometheusTimer(global.PromFeature, LuaFeatures.LuaScripts[index].Name)
 
-		if errors.Is(ctx.Err(), context.Canceled) {
+		if stderrors.Is(ctx.Err(), context.Canceled) {
 			stopTimer()
 
 			return

@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -172,7 +172,7 @@ func (a *AuthState) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) 
 	ipAddress := net.ParseIP(a.ClientIP)
 
 	if ipAddress == nil {
-		return nil, fmt.Errorf("%s '%s'", errors2.ErrWrongIPAddress, a.ClientIP)
+		return nil, fmt.Errorf("%s '%s'", errors.ErrWrongIPAddress, a.ClientIP)
 	}
 
 	if strings.Contains(ipAddress.String(), ":") {
@@ -310,7 +310,7 @@ func (a *AuthState) loadBruteForcePasswordHistoryFromRedis(key string) {
 	util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
 
 	if passwordHistory, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result(); err != nil {
-		if !errors.Is(err, redis.Nil) {
+		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
 			stats.RedisReadCounter.Inc()
@@ -327,7 +327,7 @@ func (a *AuthState) loadBruteForcePasswordHistoryFromRedis(key string) {
 
 		for passwordHash, counter := range passwordHistory {
 			if counterInt, err = strconv.Atoi(counter); err != nil {
-				if !errors.Is(err, redis.Nil) {
+				if !stderrors.Is(err, redis.Nil) {
 					level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 				}
 
@@ -523,7 +523,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 
 		return
 	} else if ruleName, err = rediscli.WriteHandle.HGet(context.Background(), key, network.String()).Result(); err != nil {
-		if !errors.Is(err, redis.Nil) {
+		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
 			stats.RedisReadCounter.Inc()
