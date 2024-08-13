@@ -9,6 +9,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -19,7 +20,6 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/simia-tech/crypt"
@@ -175,7 +175,7 @@ func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
 
 	defer cancel()
 
-	resolver := rediscli.NewDNSResolver()
+	resolver := NewDNSResolver()
 
 	if hostNames, err := resolver.LookupAddr(ctxTimeout, address); err == nil {
 		if len(hostNames) > 0 {
@@ -421,4 +421,30 @@ func ByteSize(bytes uint64) string {
 // The function returns true if the username matches the pattern, and false otherwise.
 func ValidateUsername(username string) bool {
 	return usernamePattern.MatchString(username)
+}
+
+// NewDNSResolver creates a new DNS resolver based on the configured settings.
+func NewDNSResolver() (resolver *net.Resolver) {
+	if config.LoadableConfig.Server.DNS.Resolver == "" {
+		level.Debug(log.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
+
+		resolver = &net.Resolver{
+			PreferGo: true,
+		}
+	} else {
+		level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
+
+		resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				dialer := net.Dialer{
+					Timeout: time.Millisecond * time.Duration(10000),
+				}
+
+				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))
+			},
+		}
+	}
+
+	return
 }
