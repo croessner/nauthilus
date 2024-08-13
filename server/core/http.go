@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -49,6 +50,47 @@ type RESTResult struct {
 	Object    string `json:"object"`
 	Operation string `json:"operation"`
 	Result    any    `json:"result"`
+}
+
+// customWriter represents a type that logs data based on a specified log level.
+type customWriter struct {
+	// logger represents a logger instance and is used for all messages that are printed to stdout.
+	logger log.Logger
+
+	// logLevel represents the log level used for logging data in the customWriter type.
+	// The log level determines how the written data is logged:
+	//   - If the log level is set to Debug, the data is logged at the Debug level.
+	//   - If the log level is set to Error, the data is logged at the Error level.
+	//   - If the log level is set to any other value, the data is logged normally.
+	// The logLevel field is of type level.Value, which is used to store and compare log levels.
+	// The logLevel field is set in the customWriter struct and is used in the Write method to determine the appropriate log level for the data being written.
+	// The logLevel field is not accessible outside of the customWriter type.
+	logLevel level.Value
+}
+
+// Write writes the provided byte slice to the customWriter.
+//
+// The Write method logs the data based on the log level specified in the customWriter type.
+// If the log level is set to Debug, the data is logged at the Debug level.
+// If the log level is set to Error, the data is logged at the Error level.
+// For any other log level value, the data is logged normally at the Info level.
+//
+// The method returns the number of bytes written and any error that occurred during the logging process.
+func (w *customWriter) Write(data []byte) (numBytes int, err error) {
+	switch w.logLevel {
+	case level.DebugValue():
+		err = level.Debug(w.logger).Log("msg", string(data))
+	case level.ErrorValue():
+		err = level.Error(w.logger).Log("msg", string(data))
+	default:
+		err = level.Info(w.logger).Log("msg", string(data))
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
 }
 
 //nolint:gocognit // Main logic
@@ -716,8 +758,10 @@ func HTTPApp(ctx context.Context) {
 		os.Exit(-1)
 	}
 
-	// Disable debugging
-	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
+	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: logging.Logger, logLevel: level.DebugValue()})
+	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: logging.Logger, logLevel: level.ErrorValue()})
+
+	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
