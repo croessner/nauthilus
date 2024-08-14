@@ -99,6 +99,17 @@ function nauthilus_call_filter(request)
                 nauthilus.context_set(N, "ok")
                 nauthilus.custom_log_add(N, "blocked")
 
+                -- Get result table
+                local rt = nauthilus.context_get("rt")
+                if rt == nil then
+                    rt = {}
+                end
+                if nauthilus_util.is_table(rt) then
+                    rt.filter_geoippolicyd = true
+
+                    nauthilus.context_set("rt", rt)
+                end
+
                 return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
             end
         else

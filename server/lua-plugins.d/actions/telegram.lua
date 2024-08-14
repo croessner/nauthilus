@@ -29,19 +29,6 @@ function nauthilus_call_action(request)
     end
 
     if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
-        if request.debug then
-            rt.caller = "telegram.lua"
-
-            local rt_json, err = json.encode(rt)
-            nauthilus_util.if_error_raise(err)
-
-            if request.debug then
-                print(rt_json)
-            end
-
-            rt.caller = nil
-        end
-
         -- brute_force_haproxy
         if rt.brute_force_haproxy then
             send_message = true
@@ -52,7 +39,7 @@ function nauthilus_call_action(request)
         -- feature_haproxy (not part of demo plugins)
         if rt.feature_haproxy then
             send_message = true
-            if request.feature ~= nil and request.feature ~= "" then
+            if request.feature and request.feature ~= "" then
                 headline = "Feature " .. request.feature .. " triggered"
                 log_prefix = request.feature .. "_"
             else

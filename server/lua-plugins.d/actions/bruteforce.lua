@@ -16,6 +16,17 @@ function nauthilus_call_action(request)
         end
 
         nauthilus_util.if_error_raise(err)
+
+        -- Get result table
+        local rt = nauthilus.context_get("rt")
+        if rt == nil then
+            rt = {}
+        end
+        if nauthilus_util.is_table(rt) then
+            rt.brute_force_haproxy = true
+
+            nauthilus.context_set("rt", rt)
+        end
     end
 
     -- Required by telegram.lua
