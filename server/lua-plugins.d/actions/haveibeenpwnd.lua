@@ -59,7 +59,7 @@ function nauthilus_call_action(request)
         nauthilus_util.if_error_raise(err)
 
         if result.code ~= 200 then
-            error("haveibeenpwnd did not return status code 200")
+            nauthilus_util.if_error_raise("haveibeenpwnd did not return status code 200")
         end
 
         for line in result.body:gmatch("([^\n]*)\n?") do
@@ -116,6 +116,17 @@ function nauthilus_call_action(request)
 
                     nauthilus.redis_hset(redis_key, "send_mail", 1)
                     nauthilus.redis_expire(redis_key, 86400)
+
+                    -- Get result table
+                    local rt = nauthilus.context_get("rt")
+                    if rt == nil then
+                        rt = {}
+                    end
+                    if nauthilus_util.is_table(rt) then
+                        rt.action_haveibeenpwnd = true
+
+                        nauthilus.context_set("rt", rt)
+                    end
                 end
 
                 return nauthilus.ACTION_RESULT_OK
