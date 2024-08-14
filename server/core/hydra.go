@@ -4,7 +4,7 @@ package core
 
 import (
 	"crypto/tls"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
@@ -434,7 +434,7 @@ type ApiConfig struct {
 
 // handleErr handles an error by logging the error details and printing a goroutine dump.
 // It sets the "failure" and "message" values in the context, and then calls the notifyGETHandler function.
-// If the error is of type *errors2.DetailedError, it logs the error details along with the error message.
+// If the error is of type *errors.DetailedError, it logs the error details along with the error message.
 // Otherwise, it logs only the error message.
 // The function also prints the goroutine dump with the corresponding GUID.
 // Finally, it cleans up the session using the sessionCleaner function.
@@ -480,25 +480,25 @@ func processErrorLogging(ctx *gin.Context, err error) {
 }
 
 // logError logs the error details along with the corresponding GUID, client IP, and error message.
-// If the error is of type *errors2.DetailedError, it logs the error details using logging.Logger.Log method.
+// If the error is of type *errors.DetailedError, it logs the error details using log.Logger.Log method.
 // Otherwise, it logs only the error message.
 //
 // ctx: The Gin context.
 // err: The error to log.
 func logError(ctx *gin.Context, err error) {
-	var detailedError *errors2.DetailedError
+	var detailedError *errors.DetailedError
 
 	guid := ctx.GetString(global.CtxGUIDKey)
 
-	if errors.As(err, &detailedError) {
-		level.Error(logging.Logger).Log(
+	if stderrors.As(err, &detailedError) {
+		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, (*detailedError).Error(),
 			global.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
-		level.Error(logging.Logger).Log(
+		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
@@ -577,7 +577,7 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	}
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
-		level.Error(logging.Logger).Log(
+		level.Error(log.Logger).Log(
 			global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
 			"message_id", messageID, global.LogKeyError, err.Error(),
 		)
@@ -587,8 +587,8 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 }
 
 // handleHydraErr handles an error by checking the status code of the http response.
-// If the status code is StatusNotFound, it calls the handleErr function with errors2.ErrUnknownJSON as the error.
-// If the status code is StatusGone, it calls the handleErr function with errors2.ErrHTTPRequestGone as the error.
+// If the status code is StatusNotFound, it calls the handleErr function with errors.ErrUnknownJSON as the error.
+// If the status code is StatusGone, it calls the handleErr function with errors.ErrHTTPRequestGone as the error.
 // Otherwise, it calls the handleErr function with the original error.
 // If the http response is nil, it calls the handleErr function with the original error.
 //
@@ -596,15 +596,15 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 // err: The error to handle.
 // httpResponse: The http response object.
 // handleErr: The function that handles an error.
-// errors2.ErrUnknownJSON: The error representing an unknown JSON response.
-// errors2.ErrHTTPRequestGone: The error representing a gone http request.
+// errors.ErrUnknownJSON: The error representing an unknown JSON response.
+// errors.ErrHTTPRequestGone: The error representing a gone http request.
 func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 	if httpResponse != nil {
 		switch httpResponse.StatusCode {
 		case http.StatusNotFound:
-			handleErr(ctx, errors2.ErrUnknownJSON)
+			handleErr(ctx, errors.ErrUnknownJSON)
 		case http.StatusGone:
-			handleErr(ctx, errors2.ErrHTTPRequestGone)
+			handleErr(ctx, errors.ErrHTTPRequestGone)
 		default:
 			handleErr(ctx, err)
 		}
@@ -692,7 +692,7 @@ func withLanguageMiddleware() gin.HandlerFunc {
 
 		// Language not found in catalog
 		if lang != "" && lang != baseName.String() {
-			ctx.AbortWithError(http.StatusNotFound, errors2.ErrLanguageNotFound)
+			ctx.AbortWithError(http.StatusNotFound, errors.ErrLanguageNotFound)
 
 			return
 		}
@@ -875,7 +875,7 @@ func (a *ApiConfig) handleLoginSkip() {
 		auth.ClientIP = a.ctx.GetString(global.CtxClientIPKey)
 
 		auth.updateBruteForceBucketsCounter()
-		a.ctx.AbortWithError(http.StatusInternalServerError, errors2.ErrUnknownCause)
+		a.ctx.AbortWithError(http.StatusInternalServerError, errors.ErrUnknownCause)
 
 		return
 	}
@@ -1068,7 +1068,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 // logInfoLoginSkip logs the login skip event with the provided details.
 func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
@@ -1083,7 +1083,7 @@ func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
 
 // logInfoLoginNoSkip logs information about the login operation without skipping any step.
 func (a *ApiConfig) logInfoLoginNoSkip() {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *a.clientId,
@@ -1102,7 +1102,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1126,7 +1126,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors2.ErrHydraNoClientId)
+		handleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1147,7 +1147,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
 	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
-		return nil, errors2.ErrInvalidUsername
+		return nil, errors.ErrInvalidUsername
 	}
 
 	if err := auth.setStatusCodes(global.ServOryHydra); err != nil {
@@ -1157,7 +1157,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
 	if _, reject := auth.preproccessAuthRequest(ctx); reject {
-		return nil, errors2.ErrBruteForceAttack
+		return nil, errors.ErrBruteForceAttack
 	}
 
 	return auth, nil
@@ -1241,14 +1241,14 @@ func (a *ApiConfig) processAuthOkLogin(auth *AuthState, authResult global.AuthRe
 
 	account, found := auth.getAccountOk()
 	if !found {
-		return errors2.ErrNoAccount
+		return errors.ErrNoAccount
 	}
 
 	subject, claims := a.getSubjectAndClaims(account, auth)
 
 	if post2FA {
 		if recentSubject != subject {
-			return errors2.ErrNoAccount
+			return errors.ErrNoAccount
 		}
 
 		err = a.handlePost2FA(auth, account)
@@ -1297,7 +1297,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string
 	if subject == "" {
 		subject = account
 
-		level.Warn(logging.Logger).Log(
+		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.guid,
 			global.LogKeyMsg, fmt.Sprintf("Empty 'subject', using '%s' as value", account),
 		)
@@ -1351,12 +1351,12 @@ func (a *ApiConfig) handleNonPost2FA(auth *AuthState, session sessions.Session, 
 func (a *ApiConfig) handlePost2FA(auth *AuthState, account string) error {
 	code := a.ctx.PostForm("code")
 	if code == "" {
-		return errors2.ErrNoTOTPCode
+		return errors.ErrNoTOTPCode
 	}
 
 	totpSecret, found := auth.getTOTPSecretOk()
 	if !found {
-		return errors2.ErrNoTOTPCode
+		return errors.ErrNoTOTPCode
 	}
 
 	err := a.totpValidation(code, account, totpSecret)
@@ -1453,7 +1453,7 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *
 		logs = append(logs, auth.AdditionalLogs...)
 	}
 
-	level.Info(logging.Logger).Log(logs...)
+	level.Info(log.Logger).Log(logs...)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
@@ -1520,7 +1520,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 	})
 
 	if !codeValid {
-		return errors2.ErrTOTPCodeInvalid
+		return errors.ErrTOTPCodeInvalid
 	}
 
 	return nil
@@ -1619,7 +1619,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 		logs = append(logs, auth.AdditionalLogs...)
 	}
 
-	level.Info(logging.Logger).Log(logs...)
+	level.Info(log.Logger).Log(logs...)
 }
 
 // Page '/login/post'
@@ -1634,7 +1634,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.PostForm("ory.hydra.login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1671,7 +1671,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors2.ErrHydraNoClientId)
+		handleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1728,7 +1728,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1749,7 +1749,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors2.ErrHydraNoClientId)
+		handleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1821,7 +1821,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	ctx.HTML(http.StatusOK, "device.html", loginData)
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *clientId,
@@ -1833,7 +1833,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 // Page '/device/post'
 func devicePOSTHandler(ctx *gin.Context) {
-	handleErr(ctx, errors.New("not implemented yet"))
+	handleErr(ctx, stderrors.New("not implemented yet"))
 }
 
 // handleRequestedScopes is a function that analyzes requested scopes from the user in a session.
@@ -2149,7 +2149,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 // logInfoConsent logs information about the consent request.
 func (a *ApiConfig) logInfoConsent() {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *a.clientId,
@@ -2163,7 +2163,7 @@ func (a *ApiConfig) logInfoConsent() {
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
 func (a *ApiConfig) logInfoRedirectWithConsent(redirectTo string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
@@ -2185,7 +2185,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.Query("consent_challenge")
 	if consentChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2209,7 +2209,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors2.ErrHydraNoClientId)
+		handleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -2392,7 +2392,7 @@ func (a *ApiConfig) processConsentReject() {
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
 func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
@@ -2406,7 +2406,7 @@ func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
 
 // logInfoConsentReject logs the information about a rejected consent request.
 func (a *ApiConfig) logInfoConsentReject(redirectTo *string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
@@ -2427,7 +2427,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
 	if consentChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2450,7 +2450,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors2.ErrHydraNoClientId)
+		handleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -2504,7 +2504,7 @@ func (a *ApiConfig) handleLogout() {
 
 // logInfoLogout logs information about a logout action.
 func (a *ApiConfig) logInfoLogout() {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2521,7 +2521,7 @@ func logoutGETHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.Query("logout_challenge")
 	if logoutChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2650,7 +2650,7 @@ func (a *ApiConfig) rejectLogout() {
 
 // logInfoLogoutAccept logs information about the logout request acceptance.
 func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2662,7 +2662,7 @@ func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
 
 // logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
 func (a *ApiConfig) logInfoLogoutReject(redirectTo string) {
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		global.LogKeyAuthChallenge, a.challenge,
@@ -2681,7 +2681,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
 	if logoutChallenge == "" {
-		handleErr(ctx, errors2.ErrNoLoginChallenge)
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2890,7 +2890,7 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 
 // Logs error for unknown claim type
 func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		"custom_claim_name", customClaimName,
 		global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 	)

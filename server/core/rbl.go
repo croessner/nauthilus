@@ -9,7 +9,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"
@@ -68,7 +67,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	defer cancel()
 
-	resolver := rediscli.NewDNSResolver()
+	resolver := util.NewDNSResolver()
 
 	results, err = resolver.LookupIP(ctxTimeut, "ip4", query)
 	if err != nil {

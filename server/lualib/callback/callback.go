@@ -10,7 +10,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/gin-gonic/gin"
@@ -355,7 +355,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 //
 //	executeAndHandleError(compiledScript, L)
 func processError(err error) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		"script", config.LoadableConfig.GetLuaCallbackScriptPath(),
 		global.LogKeyError, err,
 	)

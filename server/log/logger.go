@@ -1,4 +1,4 @@
-package logging
+package log
 
 import (
 	"os"
@@ -34,7 +34,7 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, instance s
 
 				switch keyvals[i+1] {
 				case level.DebugValue():
-					return term.FgBgColor{Fg: term.Gray}
+					return term.FgBgColor{Fg: term.DarkBlue}
 				case level.InfoValue():
 					return term.FgBgColor{Fg: term.Default}
 				case level.WarnValue():

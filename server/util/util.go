@@ -6,9 +6,10 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"hash"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -16,10 +17,9 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
-	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/simia-tech/crypt"
@@ -36,7 +36,7 @@ type RedisLogger struct{}
 
 // Printf implements the printf function from Redis.
 func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
-	level.Info(logging.Logger).Log("redis", fmt.Sprintf(format, values...))
+	level.Info(log.Logger).Log("redis", fmt.Sprintf(format, values...))
 }
 
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
@@ -67,7 +67,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 		hashValue = sha256.New()
 		c.Algorithm = global.SSHA256
 	default:
-		return "", errors2.ErrUnsupportedAlgorithm
+		return "", errors.ErrUnsupportedAlgorithm
 	}
 
 	hashValue.Write(hashSalt)
@@ -80,7 +80,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 		c.Password = hex.EncodeToString(append(hashValue.Sum(nil), salt...))
 		c.PasswordOption = global.HEX
 	default:
-		return "", errors2.ErrUnsupportedPasswordOption
+		return "", errors.ErrUnsupportedPasswordOption
 	}
 
 	return c.Password, nil
@@ -102,7 +102,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 		if strings.HasPrefix(passwordPrefix, "SSHA256") {
 			alg = global.SSHA256
 		} else {
-			return salt, alg, pwOption, errors2.ErrUnsupportedAlgorithm
+			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
 	}
 
@@ -114,7 +114,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 		if strings.HasSuffix(passwordPrefix, ".HEX") {
 			pwOption = global.HEX
 		} else {
-			return salt, alg, pwOption, errors2.ErrUnsupportedPasswordOption
+			return salt, alg, pwOption, errors.ErrUnsupportedPasswordOption
 		}
 	}
 
@@ -175,7 +175,7 @@ func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
 
 	defer cancel()
 
-	resolver := rediscli.NewDNSResolver()
+	resolver := NewDNSResolver()
 
 	if hostNames, err := resolver.LookupAddr(ctxTimeout, address); err == nil {
 		if len(hostNames) > 0 {
@@ -195,7 +195,7 @@ func ProtoErrToFields(err error) (fields []zap.Field) {
 	}
 
 	switch {
-	case errors.As(err, &e):
+	case stderrors.As(err, &e):
 		return []zap.Field{
 			{Key: "err", Type: zapcore.ErrorType, Interface: e},
 			{Key: "details", Type: zapcore.StringType, String: e.Details},
@@ -267,7 +267,7 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 			keyvals = append(keyvals, "function")
 			keyvals = append(keyvals, runtime.FuncForPC(counter).Name())
 
-			level.Debug(logging.Logger).Log(keyvals...)
+			level.Debug(log.Logger).Log(keyvals...)
 		}
 
 		break
@@ -421,4 +421,30 @@ func ByteSize(bytes uint64) string {
 // The function returns true if the username matches the pattern, and false otherwise.
 func ValidateUsername(username string) bool {
 	return usernamePattern.MatchString(username)
+}
+
+// NewDNSResolver creates a new DNS resolver based on the configured settings.
+func NewDNSResolver() (resolver *net.Resolver) {
+	if config.LoadableConfig.Server.DNS.Resolver == "" {
+		level.Debug(log.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
+
+		resolver = &net.Resolver{
+			PreferGo: true,
+		}
+	} else {
+		level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
+
+		resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				dialer := net.Dialer{
+					Timeout: time.Millisecond * time.Duration(10000),
+				}
+
+				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))
+			},
+		}
+	}
+
+	return
 }

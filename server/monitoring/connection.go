@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/pires/go-proxyproto"
 )
@@ -75,7 +75,7 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 }
 
 func handleHAproxyV2Error(err error) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		global.LogKeyInstance, global.InstanceName,
 		global.LogKeyError, "HAProxy v2 error", "error", err,
 	)

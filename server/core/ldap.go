@@ -1,15 +1,15 @@
 package core
 
 import (
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -226,9 +226,9 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			level.Debug(logging.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+			level.Debug(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
 
-			if errors.As(err, &ldapError) {
+			if stderrors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
 					return passDBResult, ldapError.Err
 				}
@@ -325,7 +325,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	if ldapReply.Err != nil {
 		var ldapError *ldap.Error
 
-		if errors.As(err, &ldapError) {
+		if stderrors.As(err, &ldapError) {
 			return accounts, ldapError.Err
 		}
 
@@ -381,7 +381,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	configField = totp.getLDAPTOTPSecret(protocol)
 	if configField == "" {
-		err = errors2.ErrLDAPConfig.WithDetail(
+		err = errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
 
 		return
@@ -413,7 +413,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	ldapReply = <-ldapReplyChan
 
-	if errors.As(ldapReply.Err, &ldapError) {
+	if stderrors.As(ldapReply.Err, &ldapError) {
 		return ldapError.Err
 	}
 

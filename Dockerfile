@@ -15,8 +15,8 @@ RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 FROM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
+LABEL org.opencontainers.image.description="Multi purpose authentication server"
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
-LABEL description="Multi purpose authentication server"
 
 WORKDIR /usr/app
 
@@ -40,6 +40,7 @@ COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 RUN echo 'hosts: files dns' > /etc/nsswitch.conf
 
 ENV ZONEINFO=/zoneinfo.zip
+ENV TERM=xterm-256color
 
 EXPOSE 8180
 

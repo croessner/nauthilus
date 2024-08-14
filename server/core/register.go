@@ -2,15 +2,15 @@ package core
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
@@ -167,7 +167,7 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	ctx.HTML(http.StatusOK, "login.html", loginData)
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUriPath, global.TwoFAv1Root+viper.GetString("login_2fa_page"),
 	)
@@ -265,7 +265,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
 	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
-		handleErr(ctx, errors2.ErrInvalidUsername)
+		handleErr(ctx, errors.ErrInvalidUsername)
 
 		return
 	}
@@ -279,7 +279,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
 	if found, reject := auth.preproccessAuthRequest(ctx); reject {
-		handleErr(ctx, errors2.ErrBruteForceAttack)
+		handleErr(ctx, errors.ErrBruteForceAttack)
 
 		return
 	} else if found {
@@ -392,7 +392,7 @@ func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 
 	ctx.Redirect(http.StatusFound, targetURI)
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
@@ -427,7 +427,7 @@ func saveSessionData(ctx *gin.Context, authResult global.AuthResult, auth *AuthS
 	session := sessions.Default(ctx)
 
 	if account, found = auth.getAccountOk(); !found {
-		return errors2.ErrNoAccount
+		return errors.ErrNoAccount
 	}
 
 	if totpSecret, found = auth.getTOTPSecretOk(); found {
@@ -475,7 +475,7 @@ func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 		global.TwoFAv1Root+viper.GetString("login_2fa_page")+"?_error="+global.PasswordFail,
 	)
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
@@ -511,14 +511,14 @@ func register2FAHomeHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(global.CookieAuthResult)
 	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
-		handleErr(ctx, errors2.ErrNotLoggedIn)
+		handleErr(ctx, errors.ErrNotLoggedIn)
 
 		return
 	}
 
 	cookieValue = session.Get(global.CookieAccount)
 	if cookieValue == nil {
-		handleErr(ctx, errors2.ErrNoAccount)
+		handleErr(ctx, errors.ErrNoAccount)
 
 		return
 	}
@@ -587,14 +587,14 @@ func registerTotpGETHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(global.CookieAuthResult)
 	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
-		handleErr(ctx, errors2.ErrNotLoggedIn)
+		handleErr(ctx, errors.ErrNotLoggedIn)
 
 		return
 	}
 
 	cookieValue = session.Get(global.CookieAccount)
 	if cookieValue == nil {
-		handleErr(ctx, errors2.ErrNoAccount)
+		handleErr(ctx, errors.ErrNoAccount)
 
 		return
 	}
@@ -679,7 +679,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	cookieValue := session.Get(global.CookieTOTPURL)
 	if cookieValue == nil {
-		handleErr(ctx, errors2.ErrNoTOTPURL)
+		handleErr(ctx, errors.ErrNoTOTPURL)
 
 		return
 	}
@@ -691,7 +691,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	}
 
 	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug && config.EnvConfig.DevMode {
-		level.Debug(logging.Logger).Log(
+		level.Debug(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
 		)
@@ -703,7 +703,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			global.TwoFAv1Root+viper.GetString("totp_page")+"?_error="+global.InvalidCode,
 		)
 
-		level.Info(logging.Logger).Log(
+		level.Info(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyUsername, ctx.PostForm("username"),
 			global.LogKeyAuthStatus, global.LogKeyAuthReject,
@@ -730,7 +730,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	case uint8(global.BackendLua):
 		addTOTPSecret = luaAddTOTPSecret
 	default:
-		handleErr(ctx, errors2.NewDetailedError("unsupported_backend").WithDetail(
+		handleErr(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
 			"Database backend not supported"))
 
 		return
@@ -779,13 +779,13 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
-				if errors.Is(err, redis.Nil) {
+				if stderrors.Is(err, redis.Nil) {
 					stats.RedisWriteCounter.Inc()
 
 					continue
 				}
 
-				level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 				break
 			}
@@ -801,7 +801,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	ctx.Redirect(http.StatusFound, viper.GetString("notify_page")+"?message=OTP code is valid. Registration completed successfully")
 
-	level.Info(logging.Logger).Log(
+	level.Info(log.Logger).Log(
 		global.LogKeyGUID, guid,
 		global.LogKeyUsername, ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,

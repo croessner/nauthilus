@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"net"
@@ -17,10 +17,10 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
@@ -688,11 +688,11 @@ func setUserInfoHeaders(ctx *gin.Context, a *AuthState) {
 }
 
 // handleLogging logs information about the authentication request if the verbosity level is greater than LogLevelWarn.
-// It uses the logging.Logger to log the information.
+// It uses the log.Logger to log the information.
 // The logged information includes the result of the a.LogLineMail() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, a *AuthState) {
-	level.Info(logging.Logger).Log(a.LogLineMail(func() string {
+	level.Info(log.Logger).Log(a.LogLineMail(func() string {
 		if !a.NoAuth {
 			return "ok"
 		}
@@ -762,7 +762,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
-	level.Info(logging.Logger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
+	level.Info(log.Logger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 
 	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
@@ -854,7 +854,7 @@ func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 	}
 
 	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
-	level.Info(logging.Logger).Log(a.LogLineMail("tempfail", ctx.Request.URL.Path)...)
+	level.Info(log.Logger).Log(a.LogLineMail("tempfail", ctx.Request.URL.Path)...)
 }
 
 // isMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
@@ -914,7 +914,7 @@ func (a *AuthState) isInNetwork(networkList []string) (matchIP bool) {
 // Usage example:
 // a.logNetworkError(ipOrNet, err)
 func (a *AuthState) logNetworkError(ipOrNet string, err error) {
-	level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
+	level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
 }
 
 // checkAndLogNetwork logs the information about checking a network for the given authentication object.
@@ -1007,7 +1007,7 @@ func logDebugModule(a *AuthState, passDB *PassDBMap, passDBResult *PassDBResult)
 // If the error is not a configuration error, it logs the error using the Logger.
 // It returns the error unchanged.
 func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, a *AuthState, configErrors map[global.Backend]error) error {
-	if errors.Is(err, errors2.ErrLDAPConfig) || errors.Is(err, errors2.ErrLuaConfig) {
+	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
@@ -1015,7 +1015,7 @@ func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 			err = checkAllBackends(configErrors, a)
 		}
 	} else {
-		level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), global.LogKeyError, err)
 	}
 
 	return err
@@ -1035,8 +1035,8 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
-		err = errors2.ErrAllBackendConfigError
-		level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyError, err)
+		err = errors.ErrAllBackendConfigError
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyError, err)
 	}
 
 	return err
@@ -1044,14 +1044,14 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 
 // authenticateUser updates the passDBResult based on the provided passDB
 // and the AuthState object a.
-// If passDBResult is nil, it returns an error of type errors2.ErrNoPassDBResult.
+// If passDBResult is nil, it returns an error of type errors.ErrNoPassDBResult.
 // It then calls the util.DebugModule function to log debug information.
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
 func authenticateUser(passDBResult *PassDBResult, a *AuthState, passDB *PassDBMap) (*PassDBResult, error) {
 	if passDBResult == nil {
-		return passDBResult, errors2.ErrNoPassDBResult
+		return passDBResult, errors.ErrNoPassDBResult
 	}
 
 	util.DebugModule(
@@ -1114,7 +1114,7 @@ func (a *AuthState) setStatusCodes(service string) error {
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
 	default:
-		return errors2.ErrUnknownService
+		return errors.ErrUnknownService
 	}
 
 	return nil
@@ -1480,9 +1480,9 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType global.Backe
 func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
-		var detailedError *errors2.DetailedError
+		var detailedError *errors.DetailedError
 
-		if errors.As(err, &detailedError) {
+		if stderrors.As(err, &detailedError) {
 			logs := []any{
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyError, detailedError.Error(),
@@ -1493,9 +1493,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 				logs = append(logs, a.AdditionalLogs...)
 			}
 
-			level.Error(logging.Logger).Log(logs...)
+			level.Error(log.Logger).Log(logs...)
 		} else {
-			level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
 		return global.AuthResultTempFail
@@ -1524,7 +1524,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 					accountName, err = a.getUserAccountFromRedis()
 					if err != nil {
-						level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
 						return global.AuthResultTempFail
 					}
@@ -1680,8 +1680,8 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
-		if !errors.Is(err, errors2.ErrNoFiltersDefined) {
-			level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
 			return global.AuthResultTempFail
 		}
@@ -1758,14 +1758,14 @@ func (a *AuthState) listUserAccounts() (accountList AccountList) {
 		if err == nil {
 			accountList = append(accountList, result...)
 		} else {
-			var detailedError *errors2.DetailedError
-			if errors.As(err, &detailedError) {
-				level.Error(logging.Logger).Log(
+			var detailedError *errors.DetailedError
+			if stderrors.As(err, &detailedError) {
+				level.Error(log.Logger).Log(
 					global.LogKeyGUID, a.GUID,
 					global.LogKeyError, detailedError.Error(),
 					global.LogKeyErrorDetails, detailedError.GetDetails())
 			} else {
-				level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 			}
 		}
 	}
@@ -1811,7 +1811,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 	if a.AccountField != nil {
 		if values, assertOk = a.Attributes[*a.AccountField]; !assertOk {
-			return "", errors2.ErrNoAccount
+			return "", errors.ErrNoAccount
 		}
 
 		for index := range values {
@@ -1901,7 +1901,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 		if password, err := base64.URLEncoding.DecodeString(auth.Password); err != nil {
 			auth.Password = ""
 
-			ctx.Error(errors2.ErrPasswordEncoding)
+			ctx.Error(errors.ErrPasswordEncoding)
 		} else {
 			auth.Password = string(password)
 		}
@@ -1959,7 +1959,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 	if !util.ValidateUsername(auth.Username) {
 		auth.Username = ""
 
-		ctx.Error(errors2.ErrInvalidUsername)
+		ctx.Error(errors.ErrInvalidUsername)
 	}
 }
 
@@ -1973,7 +1973,7 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 
 	err := ctx.ShouldBindJSON(&jsonRequest)
 	if err != nil {
-		ctx.Error(errors2.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+		ctx.Error(errors.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
 
 		return
 	}
@@ -2038,7 +2038,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 	} else if contentType == "application/json" {
 		processApplicationJSON(ctx, auth)
 	} else {
-		ctx.Error(errors2.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 	}
 }
 
@@ -2088,7 +2088,7 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		if !util.ValidateUsername(auth.Username) {
 			auth.Username = ""
 
-			ctx.Error(errors2.ErrInvalidUsername)
+			ctx.Error(errors.ErrInvalidUsername)
 		}
 	}
 
@@ -2110,7 +2110,7 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
 		guid := ctx.GetString(global.CtxGUIDKey)
 
-		level.Error(logging.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
 		return nil
 	}
@@ -2173,7 +2173,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 		// This might be valid, if HAproxy v2 support is enabled
 		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 		if err != nil {
-			level.Error(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
 		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, a.ClientIP, a.XClientPort)
@@ -2255,7 +2255,7 @@ func (a *AuthState) processClaim(claimName string, claimValue string, claims map
 			}
 		}
 
-		level.Warn(logging.Logger).Log(
+		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.GUID,
 			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
 		)
@@ -2278,7 +2278,7 @@ func applyClaim(claimKey string, attributeKey string, a *AuthState, claims map[s
 	}
 
 	if !success {
-		level.Warn(logging.Logger).Log(
+		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.GUID,
 			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
 		)
@@ -2418,7 +2418,7 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 // - `config.LoadableConfig.Oauth2.Clients`: The OAuth2 clients configuration.
 // - `a.Attributes`: The AuthState object's Attributes map.
 // - `util.DebugModule`: A function for logging debug messages.
-// - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `logging.Logger`, `global.LogKeyWarning`: Various declarations used internally in the method.
+// - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `log.Logger`, `global.LogKeyWarning`: Various declarations used internally in the method.
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
@@ -2443,7 +2443,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 		}
 
 		if !valueApplied {
-			level.Warn(logging.Logger).Log(
+			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, a.GUID,
 				global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
 			)
@@ -2536,7 +2536,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 			}
 
 			if !valueTypeMatch {
-				level.Error(logging.Logger).Log(
+				level.Error(log.Logger).Log(
 					global.LogKeyGUID, a.GUID,
 					"custom_claim_name", customClaimName,
 					global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
@@ -2591,7 +2591,7 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 			var value []any
 
 			if value, okay = a.Attributes[client.Subject]; !okay {
-				level.Info(logging.Logger).Log(
+				level.Info(log.Logger).Log(
 					global.LogKeyGUID, a.GUID,
 					global.LogKeyMsg, fmt.Sprintf(
 						"Attributes did not contain requested field '%s'",
@@ -2613,7 +2613,7 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		}
 
 		if !clientIDFound {
-			level.Warn(logging.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "No client_id section found")
+			level.Warn(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "No client_id section found")
 		}
 	} else {
 		// Default result, if no oauth2/clients definition is found

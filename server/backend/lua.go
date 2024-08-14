@@ -8,7 +8,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/util"
@@ -319,7 +319,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 // The logs contain the session GUID and the path to the Lua script.
 // Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
 func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		global.LogKeyGUID, luaRequest.Session,
 		"script", config.LoadableConfig.GetLuaScriptPath(),
 		global.LogKeyError, err,

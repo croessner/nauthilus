@@ -29,7 +29,7 @@ function nauthilus_run_callback(logging)
             ---@type string result_json
             ---@type string err_jenc
             local result_json, err_jenc = json.encode(result)
-            nauthilus_util.raise_error(err_jenc)
+            nauthilus_util.if_error_raise(err_jenc)
 
             print(result_json)
         else
@@ -63,7 +63,7 @@ function nauthilus_run_callback(logging)
     ---@type table body_table
     ---@type string err_jdec
     local body_table, err_jdec = json.decode(body)
-    nauthilus_util.raise_error(err_jdec)
+    nauthilus_util.if_error_raise(err_jdec)
 
     if not nauthilus_util.is_table(body_table) then
         print_result("HTTP request body: Result is not a table")

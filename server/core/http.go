@@ -5,16 +5,17 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
-	"errors"
+	stderrors "errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -24,7 +25,7 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log"
+	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gwatts/gin-adapter"
@@ -49,6 +50,47 @@ type RESTResult struct {
 	Object    string `json:"object"`
 	Operation string `json:"operation"`
 	Result    any    `json:"result"`
+}
+
+// customWriter represents a type that logs data based on a specified log level.
+type customWriter struct {
+	// logger represents a logger instance and is used for all messages that are printed to stdout.
+	logger kitlog.Logger
+
+	// logLevel represents the log level used for logging data in the customWriter type.
+	// The log level determines how the written data is logged:
+	//   - If the log level is set to Debug, the data is logged at the Debug level.
+	//   - If the log level is set to Error, the data is logged at the Error level.
+	//   - If the log level is set to any other value, the data is logged normally.
+	// The logLevel field is of type level.Value, which is used to store and compare log levels.
+	// The logLevel field is set in the customWriter struct and is used in the Write method to determine the appropriate log level for the data being written.
+	// The logLevel field is not accessible outside of the customWriter type.
+	logLevel level.Value
+}
+
+// Write writes the provided byte slice to the customWriter.
+//
+// The Write method logs the data based on the log level specified in the customWriter type.
+// If the log level is set to Debug, the data is logged at the Debug level.
+// If the log level is set to Error, the data is logged at the Error level.
+// For any other log level value, the data is logged normally at the Info level.
+//
+// The method returns the number of bytes written and any error that occurred during the logging process.
+func (w *customWriter) Write(data []byte) (numBytes int, err error) {
+	switch w.logLevel {
+	case level.DebugValue():
+		err = level.Debug(w.logger).Log("msg", string(data))
+	case level.ErrorValue():
+		err = level.Error(w.logger).Log("msg", string(data))
+	default:
+		err = level.Info(w.logger).Log("msg", string(data))
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
 }
 
 //nolint:gocognit // Main logic
@@ -195,7 +237,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		switch auth.handleFeatures(ctx) {
 		case global.AuthResultFeatureTLS:
 			auth.postLuaAction(&PassDBResult{})
-			handleErr(ctx, errors2.ErrNoTLS)
+			handleErr(ctx, errors.ErrNoTLS)
 			ctx.Abort()
 
 			return
@@ -230,7 +272,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 
 		// Note: Chicken-egg problem.
 		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
-			level.Warn(logging.Logger).Log(
+			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, guid,
 				global.LogKeyWarning, "Disabling HTTP basic Auth",
 				"category", ctx.Param("category"),
@@ -260,7 +302,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 			ctx.AbortWithStatus(http.StatusForbidden)
 		} else {
 			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors2.ErrUnauthorized)
+			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
 		}
 	}
 }
@@ -271,7 +313,6 @@ func basicAuthMiddleware() gin.HandlerFunc {
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
 // Based on the presence of an error, it decides which logger, logWrapper, and logKey to use.
-// The logger is either logging.Logger or logging.Logger.
 // The logWrapper is either level.Error or level.Info.
 // The logKey is either global.LogKeyError or global.LogKeyMsg.
 // The function stops the timer and calculates the latency.
@@ -281,8 +322,8 @@ func loggerMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			logKey     string
-			logger     log.Logger
-			logWrapper func(logger log.Logger) log.Logger
+			logger     kitlog.Logger
+			logWrapper func(logger kitlog.Logger) kitlog.Logger
 		)
 
 		guid := ksuid.New().String()
@@ -299,11 +340,11 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		// Decide which logger to use
 		if err != nil {
-			logger = logging.Logger
+			logger = log.Logger
 			logWrapper = level.Error
 			logKey = global.LogKeyError
 		} else {
-			logger = logging.Logger
+			logger = log.Logger
 			logWrapper = level.Info
 			logKey = global.LogKeyMsg
 		}
@@ -711,13 +752,15 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(logging.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
 
 		os.Exit(-1)
 	}
 
-	// Disable debugging
-	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug && config.EnvConfig.DevMode) {
+	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
+	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
+
+	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -789,8 +832,8 @@ func HTTPApp(ctx context.Context) {
 		}
 	}
 
-	if !errors.Is(err, http.ErrServerClosed) {
-		level.Error(logging.Logger).Log(global.LogKeyError, err)
+	if !stderrors.Is(err, http.ErrServerClosed) {
+		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		os.Exit(1)
 	}

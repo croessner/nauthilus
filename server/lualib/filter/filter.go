@@ -2,15 +2,15 @@ package filter
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	errors2 "github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/stats"
@@ -129,11 +129,11 @@ type LuaFilter struct {
 // The returned LuaFilter instance includes the provided name and the compiled script.
 func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 	if name == "" {
-		return nil, errors2.ErrFilterLuaNameMissing
+		return nil, errors.ErrFilterLuaNameMissing
 	}
 
 	if scriptPath == "" {
-		return nil, errors2.ErrFilterLuaScriptPathEmpty
+		return nil, errors.ErrFilterLuaScriptPathEmpty
 	}
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
@@ -457,7 +457,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 // logError is a function that logs error information when a LuaFilter script fails during a Request session.
 // It logs the Session GUID, the name of the script, and the error message to the default error logger with an Error level.
 func logError(r *Request, script *LuaFilter, err error) {
-	level.Error(logging.Logger).Log(
+	level.Error(log.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", script.Name,
 		global.LogKeyError, err,
@@ -481,7 +481,7 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 			}
 		}
 
-		level.Info(logging.Logger).Log(logs...)
+		level.Info(log.Logger).Log(logs...)
 	}
 
 	util.DebugModule(
@@ -538,7 +538,7 @@ func mapsEqual(m1, m2 map[any]any) bool {
 // If a script returns an error, it is skipped and the next script is tried.
 func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
 	if LuaFilters == nil || len(LuaFilters.LuaScripts) == 0 {
-		return false, nil, nil, errors2.ErrNoFiltersDefined
+		return false, nil, nil, errors.ErrNoFiltersDefined
 	}
 
 	backendResult = &lualib.LuaBackendResult{}
@@ -560,7 +560,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	mergedRemoveAttributes := config.NewStringSet()
 
 	for _, script := range LuaFilters.LuaScripts {
-		if errors.Is(ctx.Err(), context.Canceled) {
+		if stderrors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
 

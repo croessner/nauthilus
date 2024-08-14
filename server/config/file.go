@@ -15,7 +15,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/logging"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -822,19 +822,19 @@ func (f *File) validateBackends() error {
 func (f *File) validateRBLs() error {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
-			level.Warn(logging.Logger).Log(
+			level.Warn(log.Logger).Log(
 				global.LogKeyWarning, "Please use a smaller RBL threshold!",
 				"rbl_threshold", f.RBLs.Threshold)
 		}
 
 		for _, rbl := range f.RBLs.Lists {
 			if rbl.Weight > math.MaxUint8 {
-				level.Warn(logging.Logger).Log(
+				level.Warn(log.Logger).Log(
 					global.LogKeyWarning, "Please use a lower RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			} else if rbl.Weight < -math.MaxUint8 {
-				level.Warn(logging.Logger).Log(
+				level.Warn(log.Logger).Log(
 					global.LogKeyWarning, "Please use a higher RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
@@ -1724,7 +1724,7 @@ func ReloadConfigFile() (err error) {
 	// Replace existing configuration
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&LoadableConfig)), unsafe.Pointer(newCfgReload))
 
-	level.Info(logging.Logger).Log(global.LogKeyMsg, "Reloading configuration file finished")
+	level.Info(log.Logger).Log(global.LogKeyMsg, "Reloading configuration file finished")
 
 	return
 }
