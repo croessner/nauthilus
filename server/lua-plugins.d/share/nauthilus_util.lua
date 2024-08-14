@@ -46,7 +46,7 @@ end
 --- nauthilus_util.raise_error checks if an error was set and calls the Lua error function to exit script execution.
 ---@param err string
 ---@return void
-function nauthilus_util.raise_error(err)
+function nauthilus_util.if_error_raise(err)
     if err then
         error(err)
     end

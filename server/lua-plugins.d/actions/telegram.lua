@@ -33,7 +33,7 @@ function nauthilus_call_action(request)
             rt.caller = "telegram.lua"
 
             local rt_json, err = json.encode(rt)
-            nauthilus_util.raise_error(err)
+            nauthilus_util.if_error_raise(err)
 
             if request.debug then
                 print(rt_json)
@@ -115,7 +115,7 @@ function nauthilus_call_action(request)
         end
 
         local mustache, err = template.choose("mustache")
-        nauthilus_util.raise_error(err)
+        nauthilus_util.if_error_raise(err)
 
         -- Template data
         local values = {}
@@ -134,7 +134,7 @@ function nauthilus_call_action(request)
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)
         })
-        nauthilus_util.raise_error(err_bat)
+        nauthilus_util.if_error_raise(err_bat)
 
         result.caller = N .. ".lua"
         result.action_class = "post"
@@ -143,7 +143,7 @@ function nauthilus_call_action(request)
         if request.log_level == "debug" or request.log_level == "info" then
             if request.log_format == "json" then
                 local result_json, err_enc = json.encode(result)
-                nauthilus_util.raise_error(err_enc)
+                nauthilus_util.if_error_raise(err_enc)
 
                 print(result_json)
             else

@@ -15,7 +15,7 @@ function nauthilus_call_action(request)
             err = conn:write("add map " .. os.getenv('HAPROXY_GENERIC_MAP') .. " " .. request.client_net .. " block_" .. request.protocol .. "\n")
         end
 
-        nauthilus_util.raise_error(err)
+        nauthilus_util.if_error_raise(err)
     end
 
     -- Required by telegram.lua

@@ -31,11 +31,11 @@ function nauthilus_backend_verify_password(request)
     local b = backend_result.new()
 
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.raise_error(err_open)
+    nauthilus_util.if_error_raise(err_open)
 
     local result, err_query = mysql:query(
         "SELECT account, password, totp_secret, uniqueid, display_name FROM nauthilus WHERE username = \"" .. request.username .. "\" OR account = \"" .. request.username .. "\";")
-    nauthilus_util.raise_error(err_query)
+    nauthilus_util.if_error_raise(err_query)
 
     -- We do not want to return all results to each protocol
     local filter_result_value = function(key)
@@ -60,7 +60,7 @@ function nauthilus_backend_verify_password(request)
                 if not request.no_auth then
                     -- The example assumes crypted passwords in the database.
                     local match, err = pw.compare_passwords(row[id], request.password)
-                    nauthilus_util.raise_error(err)
+                    nauthilus_util.if_error_raise(err)
 
                     b:authenticated(match)
                 end
@@ -103,10 +103,10 @@ end
 
 function nauthilus_backend_list_accounts()
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.raise_error(err_open)
+    nauthilus_util.if_error_raise(err_open)
 
     local result, err_query = mysql:query("SELECT account FROM nauthilus LIMIT 100;")
-    nauthilus_util.raise_error(err_query)
+    nauthilus_util.if_error_raise(err_query)
 
     local accounts = {}
 
@@ -121,10 +121,10 @@ end
 
 function nauthilus_backend_add_totp(request)
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
-    nauthilus_util.raise_error(err_open)
+    nauthilus_util.if_error_raise(err_open)
 
     local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
-    nauthilus_util.raise_error(err_exec)
+    nauthilus_util.if_error_raise(err_exec)
 
     return nauthilus.BACKEND_RESULT_OK
 end

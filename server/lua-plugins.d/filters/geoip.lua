@@ -54,24 +54,20 @@ function nauthilus_call_filter(request)
         }
 
         local payload, json_encode_err = json.encode(t)
-        nauthilus_util.raise_error(json_encode_err)
+        nauthilus_util.if_error_raise(json_encode_err)
 
         local geoip_request = http.request("POST", os.getenv("GEOIP_POLICY_URL"), payload)
         geoip_request:header_set("Content-Type", "application/json")
 
         local result, request_err = client:do_request(geoip_request)
-        nauthilus_util.raise_error(request_err)
+        nauthilus_util.if_error_raise(request_err)
 
         if result.code ~= 202 then
-            nauthilus_util.raise_error(N .. "_status_code=" .. tostring(result.code))
-        end
-
-        if request.debug then
-            print(result.body)
+            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.code))
         end
 
         local response, err_jdec = json.decode(result.body)
-        nauthilus_util.raise_error(err_jdec)
+        nauthilus_util.if_error_raise(err_jdec)
 
         if response.err == nil then
             nauthilus.custom_log_add(N .. "_guid", response.guid)
@@ -121,5 +117,3 @@ function nauthilus_call_filter(request)
     -- The request should be accepted
     return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
 end
-
--- vim: ts=4 sw=4 expandtab
