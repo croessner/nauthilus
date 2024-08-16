@@ -26,8 +26,6 @@ Regards
 Postmaster
 ]]
 
----@param request table
----@return number
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
@@ -72,8 +70,6 @@ function nauthilus_call_action(request)
                 nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
                 nauthilus.custom_log_add("action_haveibeenpwnd", "leaked")
 
-                ---@type string found
-                ---@type string err_redis_hget2
                 local already_sent_mail, err_redis_hget2 = nauthilus.redis_hget(redis_key, "send_mail")
                 nauthilus_util.if_error_raise(err_redis_hget2)
 

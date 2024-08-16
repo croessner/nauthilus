@@ -5,17 +5,12 @@ local json = require("json")
 
 local N = "callback"
 
----@param logging table
-------@return void
 function nauthilus_run_callback(logging)
-    ---@type table result
     local result = {}
 
     result.level = "info"
     result.caller = N .. ".lua"
 
-    ---@param err_string string
-    ---@return void
     local function print_result(err_string)
         result.ts = nauthilus_util.get_current_timestamp()
 
@@ -26,14 +21,11 @@ function nauthilus_run_callback(logging)
         end
 
         if logging.log_format == "json" then
-            ---@type string result_json
-            ---@type string err_jenc
             local result_json, err_jenc = json.encode(result)
             nauthilus_util.if_error_raise(err_jenc)
 
             print(result_json)
         else
-            ---@type table output_str
             local output_str = {}
 
             for k, v in pairs(result) do
@@ -48,10 +40,7 @@ function nauthilus_run_callback(logging)
         end
     end
 
-    ---@type table header
     local header = nauthilus.get_http_request_header("Content-Type")
-
-    ---@type table request
     local body = nauthilus.get_http_request_body()
 
     if nauthilus_util.table_length(header) == 0 or header[1] ~= "application/json" then
@@ -60,8 +49,6 @@ function nauthilus_run_callback(logging)
         return
     end
 
-    ---@type table body_table
-    ---@type string err_jdec
     local body_table, err_jdec = json.decode(body)
     nauthilus_util.if_error_raise(err_jdec)
 
@@ -74,15 +61,11 @@ function nauthilus_run_callback(logging)
     result.state = "client disconnected"
     result.dovecot_session = "unknown"
 
-    ---@type boolean is_cmd_noop
     local is_cmd_noop = false
 
-    ---@param k table
-    ---@param v any
     for k, v in pairs(body_table) do
         if k == "categories" then
             if nauthilus_util.is_table(v) then
-                ---@param category table
                 for _, category in ipairs(v) do
                     if category == "service:imap" or category == "service:lmtp" then
                         result.category = category
@@ -99,8 +82,6 @@ function nauthilus_run_callback(logging)
             end
         elseif k == "fields" then
             if nauthilus_util.is_table(v) then
-                ---@param field_name string
-                ---@param field_value string
                 for field_name, field_value in pairs(v) do
                     if field_name == "user" then
                         result.user = field_value
@@ -122,7 +103,6 @@ function nauthilus_run_callback(logging)
 
     if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" or result.category == "service:sieve" then
         if result.dovecot_session ~= "unknown" then
-            ---@type string redis_key
             local redis_key = "ntc:DS:" .. crypto.md5(result.user)
 
             if is_cmd_noop then
@@ -132,8 +112,6 @@ function nauthilus_run_callback(logging)
                 nauthilus.redis_expire(redis_key, 3600)
             else
                 -- Cleanup dovecot session
-                ---@type string deleted
-                ---@type string err_redis_hdel
                 local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
                 if err_redis_hdel then
                     result.remove_dovecot_session_status = err_redis_hdel
