@@ -3,6 +3,7 @@ package lualib
 import (
 	"unicode"
 
+	"github.com/biter777/countries"
 	"github.com/croessner/nauthilus/server/global"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -81,17 +82,46 @@ func validatePassword(L *lua.LState) int {
 	return 1
 }
 
-// SetUPMiscFunctions sets up miscellaneous functions in the given Lua table. It adds the function "check_password_policy"
-// to the table, which is implemented by the validatePassword function.
+// getCountryName retrieves the country name based on the given ISO code.
 //
-// The function expects two arguments:
-// 1. A Lua table to store the function.
-// 2. A Lua state pointer.
+// It takes a Lua state pointer as input and returns an integer indicating the number of values pushed onto the stack.
+// The function expects one argument:
+//  1. A string representing the ISO code of the country.
 //
-// The function retrieves the constant value of "check_password_policy" from the global package and adds it as a string key
-// in the provided table, with the value being a new function created by calling validatePassword with the Lua state pointer.
+// The function first checks if the ISO code exists in the countries database.
+// If the code is unknown, it pushes the string "Unknown" onto the Lua stack.
+// Otherwise, it retrieves the country name and pushes it onto the Lua stack.
 //
-// Returns: None.
+// The function does not throw any errors.
+//
+// It returns 1 to indicate that one value has been pushed onto the stack.
+func getCountryName(L *lua.LState) int {
+	isoCode := L.CheckString(1)
+	country := countries.ByName(isoCode)
+
+	if country == countries.Unknown {
+		L.Push(lua.LString("Unknown"))
+	} else {
+		countryName := country.String()
+		L.Push(lua.LString(countryName))
+	}
+
+	return 1
+}
+
+// SetUPMiscFunctions sets up miscellaneous Lua functions in the given Lua table.
+//
+// It registers `validatePassword` function with the key `global.LuaFnCheckPasswordPolicy`
+// and `getCountryName` function with the key `global.LuaFnGetCountryName`.
+//
+// The `validatePassword` function validates a password against a set of policy requirements.
+// It expects two arguments: a Lua table containing the password policy requirements,
+// and a string representing the password to be validated.
+//
+// The `getCountryName` function retrieves the country name based on the given ISO code.
+//
+// This function does not return a value.
 func SetUPMiscFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnCheckPasswordPolicy, L.NewFunction(validatePassword))
+	table.RawSetString(global.LuaFnGetCountryName, L.NewFunction(getCountryName))
 }

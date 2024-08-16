@@ -1047,6 +1047,9 @@ const (
 
 	// LuaFnCheckPasswordPolicy represents the constant for the Lua function "check_password_policy".
 	LuaFnCheckPasswordPolicy = "check_password_policy"
+
+	// LuaFnGetCountryName is a constant that represents the name of the Lua function "get_country_name".
+	LuaFnGetCountryName = "get_country_name"
 )
 
 const (

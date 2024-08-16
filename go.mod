@@ -4,6 +4,7 @@ go 1.22.2
 
 require (
 	github.com/DmitriyVTitov/size v1.5.0
+	github.com/biter777/countries v1.7.5
 	github.com/coreos/go-oidc/v3 v3.10.0
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
 	github.com/emersion/go-imap v1.2.1
