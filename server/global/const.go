@@ -1044,6 +1044,9 @@ const (
 
 	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
 	LuaFnSendMail = "send_mail"
+
+	// LuaFnCheckPasswordPolicy represents the constant for the Lua function "check_password_policy".
+	LuaFnCheckPasswordPolicy = "check_password_policy"
 )
 
 const (
