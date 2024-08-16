@@ -13,13 +13,15 @@ local client = http.client({
 local smtp_message = [[
 Hello,
 
-a password was found on haveibeenpwnd!
+your account password has been found on haveibeenpwnd! It means that your password has been leaked and is known
+to the public.
 
 Account: {{account}}
 Hash: {{hash}}
 Count: {{count}}
 
-Please inform the user about this incident and lock the account.
+Please consider changing your password as soon as poosible. To do so, please go to the following
+website: {{website}}.
 
 Regards
 
@@ -83,7 +85,7 @@ function nauthilus_call_action(request)
                     local smtp_username = os.environ("SMTP_USERNAME")
                     local smtp_password = os.environ("SMTP_PASSWORD")
                     local smtp_mail_from = os.environ("SMTP_MAIL_FROM")
-                    local smtp_rcpt_to = os.environ("SMTP_RCPT_TO")
+                    local smtp_rcpt_to = request.account
 
                     local mustache, err_tmpl = template.choose("mustache")
                     nauthilus_util.if_error_raise(err_tmpl)
@@ -92,6 +94,7 @@ function nauthilus_call_action(request)
                         account = request.account,
                         hash = hash:sub(1, 5),
                         count = cmp_hash[2],
+                        website = os.environ("SSP_WEBSITE")
                     }
 
                     local err_smtp = nauthilus.send_mail({
@@ -105,7 +108,7 @@ function nauthilus_call_action(request)
                         smtp_starttls = nauthilus_util.toboolean(smtp_starttls),
                         from = smtp_mail_from,
                         to = { smtp_rcpt_to },
-                        subject = "Password leak detected for account " .. request.account,
+                        subject = "Password leak detected for your account <" .. request.account .. ">",
                         body = mustache:render(smtp_message, tmpl_data)
                     })
                     nauthilus_util.if_error_raise(err_smtp)
