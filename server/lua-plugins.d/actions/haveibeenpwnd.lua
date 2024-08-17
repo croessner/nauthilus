@@ -30,6 +30,8 @@ Postmaster
 
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
+        nauthilus.wait_random(500, 3000)
+
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
 

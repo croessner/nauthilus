@@ -146,3 +146,69 @@ func TestGetCountryName(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitRandom(t *testing.T) {
+	tests := []struct {
+		name    string
+		minWait lua.LNumber
+		maxWait lua.LNumber
+		err     bool
+	}{
+		{
+			name:    "TestValidRange",
+			minWait: 100,
+			maxWait: 500,
+			err:     false,
+		},
+		{
+			name:    "TestNegativeMinWait",
+			minWait: -100,
+			maxWait: 500,
+			err:     true,
+		},
+		{
+			name:    "TestNegativeMaxWait",
+			minWait: 100,
+			maxWait: -500,
+			err:     true,
+		},
+		{
+			name:    "TestMinWaitGreaterThanMaxWait",
+			minWait: 1000,
+			maxWait: 500,
+			err:     true,
+		},
+		{
+			name:    "TestEqualMinAndMaxWait",
+			minWait: 500,
+			maxWait: 500,
+			err:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			L := lua.NewState()
+
+			defer L.Close()
+
+			L.Push(tt.minWait)
+			L.Push(tt.maxWait)
+			waitRandom(L)
+
+			hasError := L.Get(-1) == lua.LNil
+			if hasError != tt.err {
+				t.Errorf("Unexpected result, got error: %v, want error: %v", hasError, tt.err)
+			}
+
+			if !tt.err {
+				value := L.ToInt(-1)
+
+				if value < int(tt.minWait) || value > int(tt.maxWait) {
+					t.Errorf("Returned value is outside the given range. Got: %d, Range: (%d - %d)", value, tt.minWait, tt.maxWait)
+				}
+			}
+		})
+	}
+}

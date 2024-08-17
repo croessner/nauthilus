@@ -1,6 +1,8 @@
 package lualib
 
 import (
+	"math/rand"
+	"time"
 	"unicode"
 
 	"github.com/biter777/countries"
@@ -109,19 +111,37 @@ func getCountryName(L *lua.LState) int {
 	return 1
 }
 
+// waitRandom waits for a random amount of time between `minWait` and `maxWait`.
+func waitRandom(L *lua.LState) int {
+	minWait := L.CheckNumber(1)
+	maxWait := L.CheckNumber(2)
+
+	if minWait < 0 || maxWait < 0 || minWait >= maxWait {
+		L.Push(lua.LNil)
+
+		return 1
+	}
+
+	minMillis := int(minWait)
+	maxMillis := int(maxWait)
+
+	rand.Seed(time.Now().UnixNano())
+	randomMillis := rand.Intn(maxMillis-minMillis) + minMillis
+
+	time.Sleep(time.Duration(randomMillis) * time.Millisecond)
+
+	L.Push(lua.LNumber(randomMillis))
+
+	return 1
+}
+
 // SetUPMiscFunctions sets up miscellaneous Lua functions in the given Lua table.
-//
-// It registers `validatePassword` function with the key `global.LuaFnCheckPasswordPolicy`
-// and `getCountryName` function with the key `global.LuaFnGetCountryName`.
-//
-// The `validatePassword` function validates a password against a set of policy requirements.
-// It expects two arguments: a Lua table containing the password policy requirements,
-// and a string representing the password to be validated.
-//
-// The `getCountryName` function retrieves the country name based on the given ISO code.
-//
-// This function does not return a value.
+// It adds the Lua functions "check_password_policy", "get_country_name", and "wait_random"
+// to the table, using the respective function implementations as callbacks.
+// The table is expected to be a Lua table object, and the Lua state parameter is used
+// to create new Lua function objects and add them to the table.
 func SetUPMiscFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnCheckPasswordPolicy, L.NewFunction(validatePassword))
 	table.RawSetString(global.LuaFnGetCountryName, L.NewFunction(getCountryName))
+	table.RawSetString(global.LuaFnWaitRandom, L.NewFunction(waitRandom))
 }
