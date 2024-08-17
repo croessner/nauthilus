@@ -4,16 +4,12 @@ local crypto = require("crypto")
 
 local N = "monitoring"
 
----@type table wanted_protocols
 local wanted_protocols = {
     "imap", "imapa", "pop3", "pop3s", "lmtp", "lmtps",
     "sieve", -- Not sure about this
 }
 
----@param request table
----@return number, number
 function nauthilus_call_filter(request)
-    ---@type boolean skip_and_accept_filter
     local skip_and_accept_filter = false
 
     -- Dovecot userdb request
@@ -25,7 +21,6 @@ function nauthilus_call_filter(request)
     if request.authenticated and not request.no_auth then
         skip_and_accept_filter = true
 
-        ---@param proto string
         for _, proto in ipairs(wanted_protocols) do
             if proto == request.protocol then
                 skip_and_accept_filter = false
@@ -41,10 +36,7 @@ function nauthilus_call_filter(request)
         return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
     end
 
-    --- This function retrieves the Dovecot session from the http request header.
-    ---@return string
     local function get_dovecot_session()
-        ---@type table header
         local header = nauthilus.get_http_request_header("X-Dovecot-Session")
         if nauthilus_util.table_length(header) == 1 then
             return header[1]
@@ -53,12 +45,7 @@ function nauthilus_call_filter(request)
         return nil
     end
 
-    --- This function sets an initial expiry for a given Redis key if the length of the key is 1.
-    ---@param redis_key string
-    ---@return void
     local function set_initial_expiry(redis_key)
-        ---@type number length
-        ---@type string err_redis_hlen
         local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
         if err_redis_hlen then
             nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
@@ -69,10 +56,6 @@ function nauthilus_call_filter(request)
         end
     end
 
-    --- This function adds a Redis hash map for a user with the key "session" and the value "server".
-    ---@param session string
-    ---@param server string
-    ---@return void
     local function add_session(session, server)
         if session == nil then
             return
@@ -80,7 +63,6 @@ function nauthilus_call_filter(request)
 
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
-        ---@type string err_redis_hset
         local _, err_redis_hset = nauthilus.redis_hset(redis_key, session, server)
         if err_redis_hset then
             nauthilus.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
@@ -92,15 +74,9 @@ function nauthilus_call_filter(request)
         nauthilus.custom_log_add(N .. "_dovecot_session", session)
     end
 
-    --- This function retrieves a server from a Redis hash map of a user if any was found.
-    ---@param session string
-    ---@return string
     local function get_server_from_sessions(session)
-        ---@type string redis_key
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
-        ---@type string server_from_session
-        ---@type string err_redis_hget
         local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
         if err_redis_hget then
             nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
@@ -112,8 +88,6 @@ function nauthilus_call_filter(request)
             return server_from_session
         end
 
-        ---@type table all_sessions
-        ---@type string err_redis_hgetall
         local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
         if err_redis_hgetall then
             nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
@@ -121,7 +95,6 @@ function nauthilus_call_filter(request)
             return nil
         end
 
-        ---@param first_server string
         for _, first_server in pairs(all_sessions) do
             return first_server
         end
@@ -131,17 +104,13 @@ function nauthilus_call_filter(request)
 
     -- Only look for backend servers, if a user was authenticated (passdb requests)
     if request.authenticated and not request.no_auth then
-        ---@type number num_of_bs
         local num_of_bs = 0
 
         local backend_servers = nauthilus.get_backend_servers()
         if nauthilus_util.is_table(backend_servers) then
             num_of_bs = nauthilus_util.table_length(backend_servers)
 
-            ---@type string server_ip
             local server_ip = ""
-
-            ---@type string new_server_ip
             local new_server_ip = ""
 
             local session = get_dovecot_session()
@@ -153,13 +122,10 @@ function nauthilus_call_filter(request)
             end
 
             if num_of_bs > 0 then
-                ---@type table attributes
                 local attributes = {}
 
-                ---@type userdata b
                 local b = backend_result.new()
 
-                ---@param server table
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
 

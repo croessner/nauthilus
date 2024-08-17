@@ -255,6 +255,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 
 	lualib.SetUPContextFunctions(aw.luaActionRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
+	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(context.Background())))

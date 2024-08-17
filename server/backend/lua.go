@@ -167,6 +167,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 
 	lualib.SetUPContextFunctions(luaRequest.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
+	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(LuaLDAPSearch(luaRequest.HTTPClientContext)))

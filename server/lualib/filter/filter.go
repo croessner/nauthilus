@@ -376,6 +376,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 
 	lualib.SetUPContextFunctions(r.Context, globals, L)
 	lualib.SetUPRedisFunctions(globals, L)
+	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
