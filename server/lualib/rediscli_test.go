@@ -184,6 +184,89 @@ func TestRedisSet(t *testing.T) {
 			}
 
 			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+func TestRedisIncr(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "IncrementNonExistingKey",
+			key:            "testKey",
+			expectedResult: lua.LNumber(1),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectIncr("testKey").SetVal(1)
+			},
+		},
+		{
+			name:           "IncrementExistingKey",
+			key:            "existingKey",
+			expectedResult: lua.LNumber(2),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectIncr("existingKey").SetVal(2)
+			},
+		},
+		{
+			name:           "IncrementKeyWithError",
+			key:            "keyWithError",
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectIncr("keyWithError").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisIncrFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisIncr)
+			if redisIncrFunction == nil {
+				t.Fatalf("Function nauthilus.redis_incr does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_incr(key)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || lua.LVAsNumber(gotResult) != lua.LVAsNumber(tt.expectedResult) {
+				t.Errorf("nauthilus.redis_incr() gotResult = %v, want %v", gotResult, tt.expectedResult)
+			}
+
+			gotErr := L.GetGlobal("err")
+
 			checkLuaError(t, gotErr, tt.expectedErr)
 
 			mock.ClearExpect()
