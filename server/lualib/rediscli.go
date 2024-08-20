@@ -2,98 +2,16 @@ package lualib
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
-	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 var ctx = context.Background()
-
-// convertLuaValue converts a Lua value to its corresponding Go type.
-// It takes a lua.LValue as input and returns the converted value and an error.
-// The function supports converting Lua strings to Go strings, Lua numbers to Go float64,
-// Lua booleans to Go bool, and Lua nil to Go nil.
-// If the Lua value is of any other type, it returns an error.
-func convertLuaValue(lValue lua.LValue) (any, error) {
-	switch lValue.Type() {
-	case lua.LTString:
-		return lua.LVAsString(lValue), nil
-	case lua.LTNumber:
-		return float64(lua.LVAsNumber(lValue)), nil
-	case lua.LTBool:
-		return lua.LVAsBool(lValue), nil
-	case lua.LTNil:
-		return nil, nil
-	default:
-		err := fmt.Errorf("unable to convert Lua value of type %s", lValue.Type())
-
-		return nil, err
-	}
-}
-
-// convertStringCmd attempts to convert a given *redis.StringCmd value into the specified type.
-//
-// Parameters:
-// value: The redis.StringCmd value to be converted.
-// valType: The type that the redis.StringCmd should be converted to. Acceptable values include:
-//   - "string": converts the redis.StringCmd to a Lua string.
-//   - "number": converts the redis.StringCmd to a Lua number. If the conversion fails, it returns an error.
-//   - "boolean": converts the redis.StringCmd to a Lua boolean. If the conversion fails, it returns an error.
-//
-// L: The Lua state against which these conversions are made.
-// This method pushes the converted value onto the L lua.LState if the conversion is successful.
-//
-// It returns nil if the conversion is successful.
-// It returns an error if the conversion fails or if the conversion is attempted on an unsupported type.
-//
-// Example usage:
-//
-//	err := convertStringCmd(myStringCmd, "number", myLuaState)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-func convertStringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
-	switch valType {
-	case global.TypeString:
-		L.Push(lua.LString(value.Val()))
-	case global.TypeNumber:
-		if value.Val() == "" {
-			L.Push(lua.LNil)
-
-			return nil
-		}
-
-		if result, err := value.Float64(); err == nil {
-			L.Push(lua.LNumber(result))
-		} else {
-			return err
-		}
-	case global.TypeBoolean:
-		if value.Val() == "" {
-			L.Push(lua.LNil)
-
-			return nil
-		}
-
-		if result, err := value.Bool(); err == nil {
-			L.Push(lua.LBool(result))
-		} else {
-			return err
-		}
-	case global.TypeNil:
-		L.Push(lua.LNil)
-	default:
-		return fmt.Errorf("unable to convert string command of type %s", valType)
-	}
-
-	return nil
-}
 
 // RedisGet retrieves the value associated with the given key from the Redis server.
 // It returns the value as a Lua string. If an error occurs, it returns nil and the error message as a Lua string.
@@ -107,7 +25,7 @@ func RedisGet(L *lua.LState) int {
 		valueType = L.CheckString(2)
 	}
 
-	err := convertStringCmd(rediscli.ReadHandle.Get(ctx, key), valueType, L)
+	err := ConvertStringCmd(rediscli.ReadHandle.Get(ctx, key), valueType, L)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -128,7 +46,7 @@ func RedisSet(L *lua.LState) int {
 	expiration := time.Duration(0)
 	key := L.CheckString(1)
 
-	value, err := convertLuaValue(L.Get(2))
+	value, err := ConvertLuaValue(L.Get(2))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -244,7 +162,7 @@ func RedisHGet(L *lua.LState) int {
 		valueType = L.CheckString(3)
 	}
 
-	err := convertStringCmd(rediscli.ReadHandle.HGet(ctx, key, field), valueType, L)
+	err := ConvertStringCmd(rediscli.ReadHandle.HGet(ctx, key, field), valueType, L)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -282,7 +200,7 @@ func RedisHSet(L *lua.LState) int {
 	for i := 2; i <= L.GetTop(); i += 2 {
 		field := L.CheckString(i)
 
-		value, err := convertLuaValue(L.Get(i + 1))
+		value, err := ConvertLuaValue(L.Get(i + 1))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -556,8 +474,9 @@ func RedisRename(L *lua.LState) int {
 func RedisSAdd(L *lua.LState) int {
 	key := L.CheckString(1)
 	values := make([]any, L.GetTop()-1)
+
 	for i := 2; i <= L.GetTop(); i++ {
-		value, err := convertLuaValue(L.Get(i))
+		value, err := ConvertLuaValue(L.Get(i))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -613,7 +532,14 @@ func RedisSAdd(L *lua.LState) int {
 //	end
 func RedisSIsMember(L *lua.LState) int {
 	key := L.CheckString(1)
-	value := L.CheckString(2)
+
+	value, err := ConvertLuaValue(L.Get(2))
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+
+		return 2
+	}
 
 	cmd := rediscli.ReadHandle.SIsMember(ctx, key, value)
 	if cmd.Err() != nil {
@@ -667,7 +593,7 @@ func RedisSMembers(L *lua.LState) int {
 		members := cmd.Val()
 		table := L.NewTable()
 		for _, member := range members {
-			table.Append(lua.LString(member))
+			table.Append(ConvertGoToLuaValue(member))
 		}
 
 		stats.RedisReadCounter.Inc()
@@ -695,7 +621,7 @@ func RedisSRem(L *lua.LState) int {
 	values := make([]any, L.GetTop()-1)
 
 	for i := 2; i <= L.GetTop(); i++ {
-		value, err := convertLuaValue(L.Get(i))
+		value, err := ConvertLuaValue(L.Get(i))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

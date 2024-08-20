@@ -113,17 +113,15 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	} else {
 		if strings.HasSuffix(passwordPrefix, ".HEX") {
 			pwOption = global.HEX
-		} else {
-			return salt, alg, pwOption, errors.ErrUnsupportedPasswordOption
 		}
 	}
 
-	c.PasswordOption = pwOption
-
-	// {SSHA256} or {SSHA512}
+	// {SSHA256} or {SSHA512} without suffix
 	if len(passwordPrefix) == 7 {
 		pwOption = global.B64
 	}
+
+	c.PasswordOption = pwOption
 
 	c.Password = cryptedPassword[strings.Index(cryptedPassword, "}")+1:]
 
@@ -142,8 +140,16 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	//goland:noinspection GoDfaConstantCondition
 	switch alg {
 	case global.SSHA512:
+		if len(decodedPwSasltSalt) < 65 {
+			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
+		}
+
 		salt = decodedPwSasltSalt[64:]
 	case global.SSHA256:
+		if len(decodedPwSasltSalt) < 33 {
+			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
+		}
+
 		salt = decodedPwSasltSalt[32:]
 	}
 
