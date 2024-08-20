@@ -192,6 +192,93 @@ func TestRedisSet(t *testing.T) {
 	}
 }
 
+func TestRedisExpire(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		expiration       lua.LNumber
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "ExpireWithExistingKey",
+			key:            "testKey",
+			expiration:     60,
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectExpire("testKey", time.Duration(60)*time.Second).SetVal(true)
+			},
+		},
+		{
+			name:           "ExpireWithNonExistingKey",
+			key:            "missingKey",
+			expiration:     30,
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectExpire("missingKey", time.Duration(30)*time.Second).SetVal(false)
+			},
+		},
+		{
+			name:           "ExpireWithError",
+			key:            "keyWithError",
+			expiration:     10,
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectExpire("keyWithError", time.Duration(10)*time.Second).SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("expiration", tt.expiration)
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisExpireFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisExpire)
+			if redisExpireFunction == nil {
+				t.Fatalf("Function nauthilus.redis_expire does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_expire(key, expiration)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("nauthilus.redis_expire() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
+
 func TestRedisIncr(t *testing.T) {
 	tests := []struct {
 		name             string
