@@ -187,7 +187,7 @@ func RedisHGet(L *lua.LState) int {
 func RedisHSet(L *lua.LState) int {
 	var kvpairs []any
 
-	if (L.GetTop()-1)%2 != 0 {
+	if L.GetTop() < 3 || (L.GetTop()-1)%2 != 0 {
 		L.Push(lua.LNil)
 		L.Push(lua.LString("Invalid number of arguments"))
 

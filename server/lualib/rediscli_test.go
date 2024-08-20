@@ -2,6 +2,7 @@ package lualib
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,6 +21,19 @@ func checkLuaError(t *testing.T, gotErr lua.LValue, expectedErr lua.LValue) {
 		}
 	} else if gotErr != lua.LNil && gotErr != nil {
 		t.Errorf("expected no error but got 'err' = %v", gotErr.String())
+	}
+}
+
+func formatLuaValue(val any) string {
+	switch v := val.(type) {
+	case string:
+		return fmt.Sprintf(`"%s"`, v)
+	case int, int64, float64, bool:
+		return fmt.Sprintf("%v", v)
+	case lua.LValue:
+		return v.String()
+	default:
+		return "nil"
 	}
 }
 
@@ -524,6 +538,102 @@ func TestRedisHGet(t *testing.T) {
 			gotResult := L.GetGlobal("result")
 			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
 				t.Errorf("nauthilus.redis_hget() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+func TestRedisHSet(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		kvPairs          []any
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "SetStringKeyValuePairs",
+			key:            "testKey",
+			kvPairs:        []any{"field1", "value1", "field2", "value2"},
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHSet("testKey", "field1", "value1", "field2", "value2").SetVal(2)
+			},
+		},
+		{
+			name:           "SetNilKeyValuePairs",
+			key:            "nilKey",
+			kvPairs:        []any{},
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("Invalid number of arguments"),
+		},
+		{
+			name:           "SetKeyValuePairsWithError",
+			key:            "errorKey",
+			kvPairs:        []any{"field1", "value1"},
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHSet("errorKey", "field1", "value1").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			if tt.prepareMockRedis != nil {
+				tt.prepareMockRedis(mock)
+			}
+
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHSetFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHSet)
+			if redisHSetFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hset does not exist")
+			}
+
+			kvPairsStr := ""
+
+			for i := 0; i < len(tt.kvPairs); i += 2 {
+				field := formatLuaValue(tt.kvPairs[i])
+				value := formatLuaValue(tt.kvPairs[i+1])
+
+				kvPairsStr += fmt.Sprintf(", %s, %s", field, value)
+			}
+
+			luaScript := fmt.Sprintf(`result, err = nauthilus.redis_hset(key%s)`, kvPairsStr)
+
+			err := L.DoString(luaScript)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("nauthilus.redis_hset() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
 			}
 
 			gotErr := L.GetGlobal("err")
