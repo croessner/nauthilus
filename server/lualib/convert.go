@@ -54,6 +54,12 @@ func ConvertLuaValue(lValue lua.LValue) (any, error) {
 func ConvertStringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 	switch valType {
 	case global.TypeString:
+		if value.Val() == "" {
+			L.Push(lua.LNil)
+
+			return nil
+		}
+
 		L.Push(lua.LString(value.Val()))
 	case global.TypeNumber:
 		if value.Val() == "" {

@@ -15,6 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-kit/log v0.2.1
 	github.com/go-ldap/ldap/v3 v3.4.8
+	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/go-webauthn/webauthn v0.10.2
 	github.com/gwatts/gin-adapter v1.0.0
 	github.com/justinas/nosurf v1.1.1
