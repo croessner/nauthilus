@@ -2,7 +2,6 @@ package lualib
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
@@ -55,7 +54,7 @@ func RedisSet(L *lua.LState) int {
 	}
 
 	if L.GetTop() == 3 {
-		expiration, _ = time.ParseDuration(strconv.Itoa(L.CheckInt(3)))
+		expiration = time.Duration(L.CheckInt(3))
 	}
 
 	err = rediscli.WriteHandle.Set(ctx, key, value, expiration*time.Second).Err()
