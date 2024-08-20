@@ -2,12 +2,14 @@ package lualib
 
 import (
 	"bufio"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"os"
 	"time"
 	"unicode"
 
 	"github.com/biter777/countries"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
@@ -126,17 +128,35 @@ func waitRandom(L *lua.LState) int {
 		return 1
 	}
 
-	minMillis := int(minWait)
-	maxMillis := int(maxWait)
+	minMillis := int64(minWait)
+	maxMillis := int64(maxWait)
 
-	rand.Seed(time.Now().UnixNano())
-	randomMillis := rand.Intn(maxMillis-minMillis) + minMillis
+	randomMillis, err := getCryptoRandomInt(minMillis, maxMillis)
+	if err != nil {
+		L.Push(lua.LNil)
+		return 1
+	}
 
 	time.Sleep(time.Duration(randomMillis) * time.Millisecond)
 
 	L.Push(lua.LNumber(randomMillis))
 
 	return 1
+}
+
+// getCryptoRandomInt returns a cryptographically secure random integer between min and max.
+func getCryptoRandomInt(min, max int64) (int64, error) {
+	diff := max - min
+	if diff <= 0 {
+		return 0, errors.ErrInvalidRange
+	}
+
+	nBig, err := rand.Int(rand.Reader, big.NewInt(diff))
+	if err != nil {
+		return 0, err
+	}
+
+	return nBig.Int64() + min, nil
 }
 
 // SetUPMiscFunctions sets up miscellaneous Lua functions in the given Lua table.

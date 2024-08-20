@@ -201,3 +201,9 @@ var (
 	ErrFilterLuaNameMissing     = errors.New("filter 'name' sttribute missing")
 	ErrFilterLuaScriptPathEmpty = errors.New("filter 'script_path' attribute missing")
 )
+
+// misc.
+
+var (
+	ErrInvalidRange = errors.New("invalid range")
+)
