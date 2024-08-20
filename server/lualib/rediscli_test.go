@@ -360,3 +360,85 @@ func TestRedisIncr(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisDel(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "DeleteExistingKey",
+			key:            "existingKey",
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectDel("existingKey").SetVal(1)
+			},
+		},
+		{
+			name:           "DeleteNonExistingKey",
+			key:            "nonExistingKey",
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectDel("nonExistingKey").SetVal(0)
+			},
+		},
+		{
+			name:           "DeleteWithError",
+			key:            "keyWithError",
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectDel("keyWithError").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisDelFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisDel)
+			if redisDelFunction == nil {
+				t.Fatalf("Function nauthilus.redis_del does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_del(key)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("nauthilus.redis_del() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
