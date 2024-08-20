@@ -735,3 +735,86 @@ func TestRedisHDel(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisHLen(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		expectedLength   int64
+		expectedErr      string
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "ExistingKey",
+			key:            "testKey",
+			expectedLength: 2,
+			expectedErr:    "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHLen("testKey").SetVal(2)
+			},
+		},
+		{
+			name:           "NonExistingKey",
+			key:            "missingKey",
+			expectedLength: 0,
+			expectedErr:    "redis: nil",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHLen("missingKey").RedisNil()
+			},
+		},
+		{
+			name:           "RedisError",
+			key:            "errorKey",
+			expectedLength: 0,
+			expectedErr:    "Redis connection error",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHLen("errorKey").SetErr(errors.New("Redis connection error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.ReadHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHLenFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHLen)
+			if redisHLenFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hlen does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_hlen(key)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotLength := L.GetGlobal("result")
+			if gotLength != lua.LNil && int64(gotLength.(lua.LNumber)) != tt.expectedLength {
+				t.Errorf("nauthilus.redis_hlen() gotLength = %v, want %v", int64(gotLength.(lua.LNumber)), tt.expectedLength)
+			}
+
+			gotErr := L.GetGlobal("err")
+			if tt.expectedErr != "" && gotErr.String() != tt.expectedErr {
+				t.Errorf("Expected error: %v, but got: %v", tt.expectedErr, gotErr.String())
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
