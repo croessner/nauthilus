@@ -3,6 +3,7 @@ package lualib
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -639,6 +640,96 @@ func TestRedisHSet(t *testing.T) {
 			gotErr := L.GetGlobal("err")
 
 			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+func TestRedisHDel(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		fields           []string
+		expectedRes      string
+		expectedErr      string
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:        "DeleteExistingField",
+			key:         "testKey",
+			fields:      []string{"field1"},
+			expectedRes: "OK",
+			expectedErr: "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHDel("testKey", "field1").SetVal(1)
+			},
+		},
+		{
+			name:        "DeleteNonExistingField",
+			key:         "testKey",
+			fields:      []string{"field1"},
+			expectedRes: "OK",
+			expectedErr: "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHDel("testKey", "field1").SetVal(0)
+			},
+		},
+		{
+			name:        "DeleteFromNonExistingKey",
+			key:         "nonExistingKey",
+			fields:      []string{"field1"},
+			expectedRes: "OK",
+			expectedErr: "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHDel("nonExistingKey", "field1").SetVal(0)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			for index, field := range tt.fields {
+				L.SetGlobal(fmt.Sprintf("field%d", index+1), lua.LString(field))
+			}
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHDelFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHDel)
+			if redisHDelFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hdel does not exist")
+			}
+
+			err := L.DoString(fmt.Sprintf(`result, err = nauthilus.redis_hdel(key, %s)`, strings.Join(tt.fields, ", ")))
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotRes := L.GetGlobal("result").String()
+			if gotRes != tt.expectedRes {
+				t.Errorf("nauthilus.redis_hdel() gotRes = %v, want %v", gotRes, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+			if gotErr != lua.LNil && gotErr.String() != tt.expectedErr {
+				t.Errorf("nauthilus.redis_hdel() gotErr = %v, want %v", gotErr.String(), tt.expectedErr)
+			}
 
 			mock.ClearExpect()
 		})
