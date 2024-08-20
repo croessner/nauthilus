@@ -377,6 +377,13 @@ func RedisHIncrBy(L *lua.LState) int {
 	return 1
 }
 
+// RedisHIncrByFloat increments the value of a hash field by the provided floating-point increment.
+// It retrieves a string `key`, a hash field `field`, and a floating-point `increment` from the Lua state.
+// The function uses `rediscli.WriteHandle.HIncrByFloat` to handle the increment operation.
+// If the operation is successful, it returns the new value as a Lua number.
+// If an error occurs, it returns nil and an error message as Lua strings.
+// The function is designed to be called from Lua scripts and uses the provided Lua state `L`.
+// Example usage: `result = redis_hincrby_float("mykey", "myfield", 0.5)`.
 func RedisHIncrByFloat(L *lua.LState) int {
 	key := L.CheckString(1)
 	field := L.CheckString(2)
