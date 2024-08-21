@@ -76,7 +76,7 @@ func RedisHSet(L *lua.LState) int {
 		kvpairs = append(kvpairs, field, value)
 	}
 
-	err := rediscli.WriteHandle.HSet(ctx, key, kvpairs...).Err()
+	val, err := rediscli.WriteHandle.HSet(ctx, key, kvpairs...).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -86,7 +86,7 @@ func RedisHSet(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LNumber(val))
 
 	return 1
 }
@@ -118,7 +118,7 @@ func RedisHDel(L *lua.LState) int {
 		fields = append(fields, L.CheckString(i))
 	}
 
-	err := rediscli.WriteHandle.HDel(ctx, key, fields...).Err()
+	val, err := rediscli.WriteHandle.HDel(ctx, key, fields...).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -128,7 +128,7 @@ func RedisHDel(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LNumber(val))
 
 	return 1
 }

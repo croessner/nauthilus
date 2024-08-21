@@ -118,7 +118,7 @@ func TestRedisHSet(t *testing.T) {
 			name:           "SetStringKeyValuePairs",
 			key:            "testKey",
 			kvPairs:        []any{"field1", "value1", "field2", "value2"},
-			expectedResult: lua.LString("OK"),
+			expectedResult: lua.LNumber(2),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectHSet("testKey", "field1", "value1", "field2", "value2").SetVal(2)
@@ -206,36 +206,36 @@ func TestRedisHDel(t *testing.T) {
 		name             string
 		key              string
 		fields           []string
-		expectedRes      string
-		expectedErr      string
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
 		prepareMockRedis func(mock redismock.ClientMock)
 	}{
 		{
-			name:        "DeleteExistingField",
-			key:         "testKey",
-			fields:      []string{"field1"},
-			expectedRes: "OK",
-			expectedErr: "",
+			name:           "DeleteExistingField",
+			key:            "testKey",
+			fields:         []string{"field1"},
+			expectedResult: lua.LNumber(1),
+			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectHDel("testKey", "field1").SetVal(1)
 			},
 		},
 		{
-			name:        "DeleteNonExistingField",
-			key:         "testKey",
-			fields:      []string{"field1"},
-			expectedRes: "OK",
-			expectedErr: "",
+			name:           "DeleteNonExistingField",
+			key:            "testKey",
+			fields:         []string{"field1"},
+			expectedResult: lua.LNumber(0),
+			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectHDel("testKey", "field1").SetVal(0)
 			},
 		},
 		{
-			name:        "DeleteFromNonExistingKey",
-			key:         "nonExistingKey",
-			fields:      []string{"field1"},
-			expectedRes: "OK",
-			expectedErr: "",
+			name:           "DeleteFromNonExistingKey",
+			key:            "nonExistingKey",
+			fields:         []string{"field1"},
+			expectedResult: lua.LNumber(0),
+			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectHDel("nonExistingKey", "field1").SetVal(0)
 			},
@@ -276,13 +276,13 @@ func TestRedisHDel(t *testing.T) {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
 
-			gotRes := L.GetGlobal("result").String()
-			if gotRes != tt.expectedRes {
-				t.Errorf("nauthilus.redis_hdel() gotRes = %v, want %v", gotRes, tt.expectedRes)
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("nauthilus.redis_hdel() gotResult = %v, want %v", gotResult, tt.expectedResult)
 			}
 
 			gotErr := L.GetGlobal("err")
-			if gotErr != lua.LNil && gotErr.String() != tt.expectedErr {
+			if gotErr.Type() != tt.expectedErr.Type() && gotErr.String() != tt.expectedErr.String() {
 				t.Errorf("nauthilus.redis_hdel() gotErr = %v, want %v", gotErr.String(), tt.expectedErr)
 			}
 
