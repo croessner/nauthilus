@@ -382,3 +382,85 @@ func TestRedisSRem(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisSCard(t *testing.T) {
+	tests := []struct {
+		name          string
+		key           string
+		expectedValue lua.LValue
+		expectedErr   lua.LValue
+		setupMock     func(mock redismock.ClientMock)
+	}{
+		{
+			name:          "ValidKey",
+			key:           "existingKey",
+			expectedValue: lua.LNumber(2),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSCard("existingKey").SetVal(2)
+			},
+		},
+		{
+			name:          "NonExistingKey",
+			key:           "nonExistingKey",
+			expectedValue: lua.LNumber(0),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSCard("nonExistingKey").SetVal(0)
+			},
+		},
+		{
+			name:          "ErrorOnSCard",
+			key:           "anyKey",
+			expectedValue: lua.LNil,
+			expectedErr:   lua.LString("some error"),
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSCard("anyKey").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.setupMock(mock)
+			rediscli.ReadHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisSCardFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSCard)
+			if redisSCardFunction == nil {
+				t.Fatalf("Function nauthilus.redis_scard does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_scard(key)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedValue.Type() || gotResult.String() != tt.expectedValue.String() {
+				t.Errorf("nauthilus.redis_scard() gotResult = %v, want %v", gotResult, tt.expectedValue)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
