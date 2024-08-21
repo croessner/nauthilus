@@ -679,3 +679,90 @@ func TestRedisHIncrByFloat(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisHExists(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		field            string
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "ExistingKeyField",
+			key:            "existingKey",
+			field:          "existingField",
+			expectedResult: lua.LTrue,
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHExists("existingKey", "existingField").SetVal(true)
+			},
+		},
+		{
+			name:           "NonExistingKeyField",
+			key:            "nonExistingKey",
+			field:          "nonExistingField",
+			expectedResult: lua.LFalse,
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHExists("nonExistingKey", "nonExistingField").SetVal(false)
+			},
+		},
+		{
+			name:           "KeyFieldWithError",
+			key:            "keyWithError",
+			field:          "fieldWithError",
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHExists("keyWithError", "fieldWithError").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.ReadHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("field", lua.LString(tt.field))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHExistsFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHExists)
+			if redisHExistsFunction == lua.LNil {
+				t.Fatalf("Function nauthilus.redis_hexists does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_hexists(key, field)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("nauthilus.redis_hexists() gotResult = %v, want %v", gotResult.String(), tt.expectedResult.String())
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
