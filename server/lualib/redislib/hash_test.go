@@ -478,3 +478,104 @@ func TestRedisHGetAll(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisHIncrBy(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		field            string
+		increment        int64
+		expectedResult   int64
+		expectedErr      string
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "IncrementExistingField",
+			key:            "testKey",
+			field:          "field1",
+			increment:      5,
+			expectedResult: 6,
+			expectedErr:    "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrBy("testKey", "field1", 5).SetVal(6)
+			},
+		},
+		{
+			name:           "IncrementNonExistingField",
+			key:            "testKey",
+			field:          "missingField",
+			increment:      5,
+			expectedResult: 5,
+			expectedErr:    "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrBy("testKey", "missingField", 5).SetVal(5)
+			},
+		},
+		{
+			name:           "IncrementWithRedisError",
+			key:            "errorKey",
+			field:          "errorField",
+			increment:      6,
+			expectedResult: 0,
+			expectedErr:    "connection error",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrBy("errorKey", "errorField", 6).SetErr(errors.New("connection error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("field", lua.LString(tt.field))
+			L.SetGlobal("increment", lua.LNumber(tt.increment))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHIncrByFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHIncrBy)
+			if redisHIncrByFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hincrby does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_hincrby(key, field, increment)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			result := L.GetGlobal("result")
+
+			if result == lua.LNil {
+				if tt.expectedResult != 0 {
+					t.Errorf("nauthilus.redis_hincrby() gotResult = %v, want %v", 0, tt.expectedResult)
+				}
+			} else {
+				gotResult := int64(result.(lua.LNumber))
+				if gotResult != tt.expectedResult {
+					t.Errorf("nauthilus.redis_hincrby() gotResult = %v, want %v", gotResult, tt.expectedResult)
+				}
+			}
+
+			gotErr := L.GetGlobal("err")
+			if tt.expectedErr != "" && gotErr.String() != tt.expectedErr {
+				t.Errorf("Expected error: %v, but got: %v", tt.expectedErr, gotErr.String())
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
