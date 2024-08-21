@@ -281,3 +281,104 @@ func TestRedisSMembers(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisSRem(t *testing.T) {
+	tests := []struct {
+		name          string
+		key           string
+		values        []any
+		expectedValue lua.LValue
+		expectedErr   lua.LValue
+		setupMock     func(mock redismock.ClientMock)
+	}{
+		{
+			name:          "RemoveExistingValues",
+			key:           "existingKey",
+			values:        []any{"val1", "val2"},
+			expectedValue: lua.LNumber(2),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetVal(2)
+			},
+		},
+		{
+			name:          "RemoveNonExistingValues",
+			key:           "existingKey",
+			values:        []any{"nonExistingVal1", "nonExistingVal2"},
+			expectedValue: lua.LNumber(0),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSRem("existingKey", []any{"nonExistingVal1", "nonExistingVal2"}).SetVal(0)
+			},
+		},
+		{
+			name:          "ErrorOnRemove",
+			key:           "existingKey",
+			values:        []any{"val1", "val2"},
+			expectedValue: lua.LNil,
+			expectedErr:   lua.LString("some error"),
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSRem("existingKey", []any{"val1", "val2"}).SetErr(errors.New("some error"))
+			},
+		},
+		{
+			name:          "RemoveNoValues",
+			key:           "existingKey",
+			values:        []any{},
+			expectedValue: lua.LNumber(0),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSRem("existingKey", []any{}).SetVal(0)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.setupMock(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			valueStr := ""
+			for _, v := range tt.values {
+				valueStr += fmt.Sprintf(", %s", formatLuaValue(v))
+			}
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisSRemFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSRem)
+			if redisSRemFunction == nil {
+				t.Fatalf("Function nauthilus.redis_srem does not exist")
+			}
+
+			err := L.DoString(fmt.Sprintf("result, err = nauthilus.redis_srem(key%s)", valueStr))
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedValue.Type() && gotResult.String() != tt.expectedValue.String() {
+				t.Errorf("nauthilus.redis_srem() gotResult = %v, want %v", gotResult, tt.expectedValue)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
