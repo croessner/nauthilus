@@ -52,3 +52,43 @@ func formatLuaValue(val any) string {
 		return "nil"
 	}
 }
+
+// createLuaTable creates a new Lua table using the provided values. Each value in the
+// `values` slice is converted to a Lua string (LString) and appended to the table. The
+// function returns a pointer to the created table.
+func createLuaTable(values []string) *lua.LTable {
+	tbl := &lua.LTable{}
+	for _, val := range values {
+		tbl.Append(lua.LString(val))
+	}
+
+	return tbl
+}
+
+// luaTablesAreEqual checks if two LTables are equal. It returns true if they have the same length and the same
+// values. It returns false if either table is nil, if the tables have different lengths, or if they have different
+// values.
+func luaTablesAreEqual(tbl1, tbl2 *lua.LTable) bool {
+	if tbl1 == nil || tbl2 == nil {
+		return tbl1 == tbl2
+	}
+
+	if tbl1.Len() != tbl2.Len() {
+		return false
+	}
+
+	tbl2Map := make(map[string]struct{}, tbl2.Len())
+
+	tbl2.ForEach(func(_, v lua.LValue) {
+		tbl2Map[v.String()] = struct{}{}
+	})
+
+	equal := true
+	tbl1.ForEach(func(_, v lua.LValue) {
+		if _, exists := tbl2Map[v.String()]; !exists {
+			equal = false
+		}
+	})
+
+	return equal
+}
