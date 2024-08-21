@@ -193,7 +193,7 @@ func TestRedisExpire(t *testing.T) {
 			name:           "ExpireWithExistingKey",
 			key:            "testKey",
 			expiration:     60,
-			expectedResult: lua.LBool(true),
+			expectedResult: lua.LTrue,
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectExpire("testKey", time.Duration(60)*time.Second).SetVal(true)
@@ -203,7 +203,7 @@ func TestRedisExpire(t *testing.T) {
 			name:           "ExpireWithNonExistingKey",
 			key:            "missingKey",
 			expiration:     30,
-			expectedResult: lua.LBool(false),
+			expectedResult: lua.LFalse,
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectExpire("missingKey", time.Duration(30)*time.Second).SetVal(false)
