@@ -57,7 +57,7 @@ func RedisSet(L *lua.LState) int {
 		expiration = time.Duration(L.CheckInt(3))
 	}
 
-	err = rediscli.WriteHandle.Set(ctx, key, value, expiration*time.Second).Err()
+	val, err := rediscli.WriteHandle.Set(ctx, key, value, expiration*time.Second).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -67,7 +67,7 @@ func RedisSet(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LString(val))
 
 	return 1
 }
@@ -102,7 +102,7 @@ func RedisIncr(L *lua.LState) int {
 func RedisDel(L *lua.LState) int {
 	key := L.CheckString(1)
 
-	err := rediscli.WriteHandle.Del(ctx, key).Err()
+	val, err := rediscli.WriteHandle.Del(ctx, key).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -112,7 +112,7 @@ func RedisDel(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LNumber(val))
 
 	return 1
 }
@@ -126,7 +126,7 @@ func RedisExpire(L *lua.LState) int {
 	key := L.CheckString(1)
 	expiration := L.CheckNumber(2)
 
-	err := rediscli.WriteHandle.Expire(ctx, key, time.Duration(expiration)*time.Second).Err()
+	val, err := rediscli.WriteHandle.Expire(ctx, key, time.Duration(expiration)*time.Second).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -136,7 +136,7 @@ func RedisExpire(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LBool(val))
 
 	return 1
 }
@@ -149,7 +149,7 @@ func RedisRename(L *lua.LState) int {
 	oldKey := L.CheckString(1)
 	newKey := L.CheckString(2)
 
-	err := rediscli.WriteHandle.Rename(ctx, oldKey, newKey).Err()
+	val, err := rediscli.WriteHandle.Rename(ctx, oldKey, newKey).Result()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -159,7 +159,7 @@ func RedisRename(L *lua.LState) int {
 		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LString("OK"))
+	L.Push(lua.LString(val))
 
 	return 1
 }

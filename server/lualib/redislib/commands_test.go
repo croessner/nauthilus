@@ -193,7 +193,7 @@ func TestRedisExpire(t *testing.T) {
 			name:           "ExpireWithExistingKey",
 			key:            "testKey",
 			expiration:     60,
-			expectedResult: lua.LString("OK"),
+			expectedResult: lua.LBool(true),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectExpire("testKey", time.Duration(60)*time.Second).SetVal(true)
@@ -203,7 +203,7 @@ func TestRedisExpire(t *testing.T) {
 			name:           "ExpireWithNonExistingKey",
 			key:            "missingKey",
 			expiration:     30,
-			expectedResult: lua.LString("OK"),
+			expectedResult: lua.LBool(false),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectExpire("missingKey", time.Duration(30)*time.Second).SetVal(false)
@@ -360,7 +360,7 @@ func TestRedisDel(t *testing.T) {
 		{
 			name:           "DeleteExistingKey",
 			key:            "existingKey",
-			expectedResult: lua.LString("OK"),
+			expectedResult: lua.LNumber(1),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectDel("existingKey").SetVal(1)
@@ -369,7 +369,7 @@ func TestRedisDel(t *testing.T) {
 		{
 			name:           "DeleteNonExistingKey",
 			key:            "nonExistingKey",
-			expectedResult: lua.LString("OK"),
+			expectedResult: lua.LNumber(0),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
 				mock.ExpectDel("nonExistingKey").SetVal(0)
@@ -423,6 +423,93 @@ func TestRedisDel(t *testing.T) {
 			}
 
 			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+func TestRedisRename(t *testing.T) {
+	tests := []struct {
+		name             string
+		oldKey           string
+		newKey           string
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "RenameExistingKey",
+			oldKey:         "existingKey",
+			newKey:         "newKey",
+			expectedResult: lua.LString("OK"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectRename("existingKey", "newKey").SetVal("OK")
+			},
+		},
+		{
+			name:           "RenameNonExistingKey",
+			oldKey:         "nonExistingKey",
+			newKey:         "newKey",
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("redis: nil"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectRename("nonExistingKey", "newKey").RedisNil()
+			},
+		},
+		{
+			name:           "RenameWithError",
+			oldKey:         "keyWithError",
+			newKey:         "newKey",
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectRename("keyWithError", "newKey").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
+			L.SetGlobal("newKey", lua.LString(tt.newKey))
+
+			globals := L.NewTable()
+
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisRenameFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisRename)
+			if redisRenameFunction == nil {
+				t.Fatalf("Function nauthilus.redis_rename does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_rename(oldKey, newKey)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			gotErr := L.GetGlobal("err")
+
+			if gotResult.Type() != tt.expectedResult.Type() || gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("Unexpected result: got %v, want %v", gotResult, tt.expectedResult)
+			}
 
 			checkLuaError(t, gotErr, tt.expectedErr)
 
