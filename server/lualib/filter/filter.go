@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -375,7 +376,7 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	lualib.SetUPContextFunctions(r.Context, globals, L)
-	lualib.SetUPRedisFunctions(globals, L)
+	redislib.SetUPRedisFunctions(globals, L)
 	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {

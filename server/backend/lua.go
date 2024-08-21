@@ -10,6 +10,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -166,7 +167,7 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	lualib.SetUPContextFunctions(luaRequest.Context, globals, L)
-	lualib.SetUPRedisFunctions(globals, L)
+	redislib.SetUPRedisFunctions(globals, L)
 	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
@@ -303,7 +304,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 	case global.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
+			Attributes: redislib.LuaTableToMap(L.ToTable(-1)),
 			Logs:       logs,
 		}
 

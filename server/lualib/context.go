@@ -7,6 +7,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -114,7 +115,7 @@ func ContextSet(ctx *Context) lua.LGFunction {
 		case lua.LNumber:
 			ctx.Set(key, float64(value))
 		case *lua.LTable:
-			ctx.Set(key, LuaTableToMap(value))
+			ctx.Set(key, redislib.LuaTableToMap(value))
 		default:
 			level.Warn(log.Logger).Log(
 				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
@@ -138,7 +139,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 		case float64:
 			L.Push(lua.LNumber(value))
 		case map[any]any:
-			L.Push(MapToLuaTable(L, value))
+			L.Push(redislib.MapToLuaTable(L, value))
 		case nil:
 			L.Push(lua.LNil)
 		default:

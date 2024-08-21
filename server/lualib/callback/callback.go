@@ -12,6 +12,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -266,7 +267,7 @@ func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
-	lualib.SetUPRedisFunctions(globals, L)
+	redislib.SetUPRedisFunctions(globals, L)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
