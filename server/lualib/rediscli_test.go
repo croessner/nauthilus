@@ -766,9 +766,9 @@ func TestRedisHLen(t *testing.T) {
 			name:           "RedisError",
 			key:            "errorKey",
 			expectedLength: 0,
-			expectedErr:    "Redis connection error",
+			expectedErr:    "connection error",
 			prepareMockRedis: func(mock redismock.ClientMock) {
-				mock.ExpectHLen("errorKey").SetErr(errors.New("Redis connection error"))
+				mock.ExpectHLen("errorKey").SetErr(errors.New("connection error"))
 			},
 		},
 	}
