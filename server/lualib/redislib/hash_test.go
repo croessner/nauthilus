@@ -3,13 +3,14 @@ package redislib
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 func TestRedisHGet(t *testing.T) {
@@ -361,6 +362,111 @@ func TestRedisHLen(t *testing.T) {
 			gotLength := L.GetGlobal("result")
 			if gotLength != lua.LNil && int64(gotLength.(lua.LNumber)) != tt.expectedLength {
 				t.Errorf("nauthilus.redis_hlen() gotLength = %v, want %v", int64(gotLength.(lua.LNumber)), tt.expectedLength)
+			}
+
+			gotErr := L.GetGlobal("err")
+			if tt.expectedErr != "" && gotErr.String() != tt.expectedErr {
+				t.Errorf("Expected error: %v, but got: %v", tt.expectedErr, gotErr.String())
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+func TestRedisHGetAll(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		expectedResult   map[string]string
+		expectedErr      string
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name: "ExistingKey",
+			key:  "testKey",
+			expectedResult: map[string]string{
+				"field1": "value1",
+				"field2": "value2",
+			},
+			expectedErr: "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHGetAll("testKey").SetVal(map[string]string{
+					"field1": "value1",
+					"field2": "value2",
+				})
+			},
+		},
+		{
+			name:           "NonExistingKey",
+			key:            "missingKey",
+			expectedResult: map[string]string{},
+			expectedErr:    "redis: nil",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHGetAll("missingKey").RedisNil()
+			},
+		},
+		{
+			name:           "RedisError",
+			key:            "errorKey",
+			expectedResult: map[string]string{},
+			expectedErr:    "connection error",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHGetAll("errorKey").SetErr(errors.New("connection error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.ReadHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			globals := L.NewTable()
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHGetAllFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHGetAll)
+			if redisHGetAllFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hgetall does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_hgetall(key)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			result := L.GetGlobal("result")
+
+			if result == lua.LNil {
+				if !reflect.DeepEqual(map[string]string{}, tt.expectedResult) {
+					t.Errorf("nauthilus.redis_hgetall() gotResult = %v, want %v", map[string]string{}, tt.expectedResult)
+				}
+			} else {
+				gotResult, ok := result.(*lua.LTable)
+				if !ok {
+					t.Fatalf("Expected 'result' to be a table, but got %T", result)
+				}
+
+				gotTable := make(map[string]string)
+				gotResult.ForEach(func(value lua.LValue, value2 lua.LValue) {
+					gotTable[value.String()] = value2.String()
+				})
+
+				if !reflect.DeepEqual(gotTable, tt.expectedResult) {
+					t.Errorf("nauthilus.redis_hgetall() gotResult = %v, want %v", gotTable, tt.expectedResult)
+				}
 			}
 
 			gotErr := L.GetGlobal("err")
