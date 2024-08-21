@@ -304,7 +304,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 	case global.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-			Attributes: redislib.LuaTableToMap(L.ToTable(-1)),
+			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
 			Logs:       logs,
 		}
 

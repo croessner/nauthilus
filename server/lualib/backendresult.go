@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -262,12 +261,12 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 
 	if L.GetTop() == 2 {
 		// XXX: We expect keys to be strings!
-		backendResult.Attributes = redislib.LuaTableToMap(L.CheckTable(2))
+		backendResult.Attributes = LuaTableToMap(L.CheckTable(2))
 
 		return 0
 	}
 
-	L.Push(redislib.MapToLuaTable(L, backendResult.Attributes))
+	L.Push(MapToLuaTable(L, backendResult.Attributes))
 
 	return 1
 }

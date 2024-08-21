@@ -17,7 +17,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -1631,7 +1631,7 @@ func processReply(L *lua.LState, ldapReplyChan chan *LDAPReply) int {
 		convertedMap[key] = list
 	}
 
-	resultTable := redislib.MapToLuaTable(L, convertedMap)
+	resultTable := lualib.MapToLuaTable(L, convertedMap)
 
 	if resultTable == nil {
 		L.Push(lua.LString("no result"))
