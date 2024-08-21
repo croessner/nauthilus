@@ -579,3 +579,103 @@ func TestRedisHIncrBy(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisHIncrByFloat(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		field            string
+		increment        float64
+		expectedResult   float64
+		expectedErr      string
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "IncrementFloatExistingField",
+			key:            "testKey",
+			field:          "field1",
+			increment:      3.5,
+			expectedResult: 6.5,
+			expectedErr:    "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrByFloat("testKey", "field1", 3.5).SetVal(6.5)
+			},
+		},
+		{
+			name:           "IncrementFloatNonExistingField",
+			key:            "testKey",
+			field:          "missingField",
+			increment:      3.5,
+			expectedResult: 3.5,
+			expectedErr:    "",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrByFloat("testKey", "missingField", 3.5).SetVal(3.5)
+			},
+		},
+		{
+			name:           "IncrementFloatWithRedisError",
+			key:            "errorKey",
+			field:          "errorField",
+			increment:      3.5,
+			expectedResult: 0,
+			expectedErr:    "connection error",
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHIncrByFloat("errorKey", "errorField", 3.5).SetErr(errors.New("connection error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.WriteHandle = db
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("field", lua.LString(tt.field))
+			L.SetGlobal("increment", lua.LNumber(tt.increment))
+
+			globals := L.NewTable()
+			SetUPRedisFunctions(globals, L)
+			L.SetGlobal(global.LuaDefaultTable, globals)
+
+			redisHIncrByFloatFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHIncrByFloat)
+			if redisHIncrByFloatFunction == nil {
+				t.Fatalf("Function nauthilus.redis_hincrbyfloat does not exist")
+			}
+
+			err := L.DoString(`result, err = nauthilus.redis_hincrbyfloat(key, field, increment)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			result := L.GetGlobal("result")
+
+			if result == lua.LNil {
+				if tt.expectedResult != 0 {
+					t.Errorf("nauthilus.redis_hincrbyfloat() gotResult = %v, want %v", 0, tt.expectedResult)
+				}
+			} else {
+				gotResult := float64(result.(lua.LNumber))
+				if gotResult != tt.expectedResult {
+					t.Errorf("nauthilus.redis_hincrbyfloat() gotResult = %v, want %v", gotResult, tt.expectedResult)
+				}
+			}
+
+			gotErr := L.GetGlobal("err")
+			if tt.expectedErr != "" && gotErr.String() != tt.expectedErr {
+				t.Errorf("Expected error: %v, but got: %v", tt.expectedErr, gotErr.String())
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
