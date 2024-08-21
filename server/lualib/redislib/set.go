@@ -42,12 +42,12 @@ func RedisSAdd(L *lua.LState) int {
 		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
 	}
+
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
+
+	return 1
 }
 
 // RedisSIsMember checks if a given value is a member of the set stored at a specified key in Redis.
@@ -96,12 +96,12 @@ func RedisSIsMember(L *lua.LState) int {
 		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisReadCounter.Inc()
-		L.Push(lua.LBool(cmd.Val()))
-
-		return 1
 	}
+
+	stats.RedisReadCounter.Inc()
+	L.Push(lua.LBool(cmd.Val()))
+
+	return 1
 }
 
 // RedisSMembers retrieves all the members of a set in Redis corresponding to the given key.
@@ -138,18 +138,18 @@ func RedisSMembers(L *lua.LState) int {
 		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		members := cmd.Val()
-		table := L.NewTable()
-		for _, member := range members {
-			table.Append(ConvertGoToLuaValue(member))
-		}
-
-		stats.RedisReadCounter.Inc()
-		L.Push(table)
-
-		return 1
 	}
+
+	members := cmd.Val()
+	table := L.NewTable()
+	for _, member := range members {
+		table.Append(ConvertGoToLuaValue(member))
+	}
+
+	stats.RedisReadCounter.Inc()
+	L.Push(table)
+
+	return 1
 }
 
 // RedisSRem removes one or more members from a Redis set.
@@ -187,12 +187,12 @@ func RedisSRem(L *lua.LState) int {
 		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
 	}
+
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
+
+	return 1
 }
 
 // RedisSCard fetches the cardinality (number of elements) of the set stored at the specified key in Redis.
@@ -215,10 +215,10 @@ func RedisSCard(L *lua.LState) int {
 		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisReadCounter.Inc()
-		L.Push(lua.LNumber(cmd.Val()))
-
-		return 1
 	}
+
+	stats.RedisReadCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
+
+	return 1
 }

@@ -52,7 +52,7 @@ func ConvertLuaValue(lValue lua.LValue) (any, error) {
 //	    log.Fatal(err)
 //	}
 func ConvertStringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
-	if _, err := value.Result(); err != nil {
+	if err := value.Err(); err != nil {
 		return err
 	}
 

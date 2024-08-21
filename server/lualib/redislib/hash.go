@@ -33,9 +33,9 @@ func RedisHGet(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 
 		return 2
-	} else {
-		stats.RedisReadCounter.Inc()
 	}
+
+	stats.RedisReadCounter.Inc()
 
 	return 1
 }
@@ -76,17 +76,16 @@ func RedisHSet(L *lua.LState) int {
 		kvpairs = append(kvpairs, field, value)
 	}
 
-	val, err := rediscli.WriteHandle.HSet(ctx, key, kvpairs...).Result()
-	if err != nil {
+	cmd := rediscli.WriteHandle.HSet(ctx, key, kvpairs...)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LNumber(val))
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
 
 	return 1
 }
@@ -118,17 +117,16 @@ func RedisHDel(L *lua.LState) int {
 		fields = append(fields, L.CheckString(i))
 	}
 
-	val, err := rediscli.WriteHandle.HDel(ctx, key, fields...).Result()
-	if err != nil {
+	cmd := rediscli.WriteHandle.HDel(ctx, key, fields...)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LNumber(val))
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
 
 	return 1
 }
@@ -150,15 +148,15 @@ func RedisHDel(L *lua.LState) int {
 func RedisHLen(L *lua.LState) int {
 	key := L.CheckString(1)
 
-	result, err := rediscli.ReadHandle.HLen(ctx, key).Result()
-	if err != nil {
+	cmd := rediscli.ReadHandle.HLen(ctx, key)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		L.Push(lua.LNumber(result))
 	}
+
+	L.Push(lua.LNumber(cmd.Val()))
 
 	return 1
 }
@@ -181,18 +179,18 @@ func RedisHLen(L *lua.LState) int {
 func RedisHGetAll(L *lua.LState) int {
 	key := L.CheckString(1)
 
-	result, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
-	if err != nil {
+	cmd := rediscli.ReadHandle.HGetAll(ctx, key)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisReadCounter.Inc()
 	}
 
+	stats.RedisReadCounter.Inc()
+
 	table := L.NewTable()
-	for field, value := range result {
+	for field, value := range cmd.Val() {
 		// We cannot make a difference for the types of the values. So, all values are returned as strings
 		table.RawSetString(field, lua.LString(value))
 	}
@@ -228,17 +226,16 @@ func RedisHIncrBy(L *lua.LState) int {
 	field := L.CheckString(2)
 	increment := L.CheckInt64(3)
 
-	val, err := rediscli.WriteHandle.HIncrBy(ctx, key, field, increment).Result()
-	if err != nil {
+	cmd := rediscli.WriteHandle.HIncrBy(ctx, key, field, increment)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LNumber(val))
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
 
 	return 1
 }
@@ -255,17 +252,16 @@ func RedisHIncrByFloat(L *lua.LState) int {
 	field := L.CheckString(2)
 	increment := float64(L.CheckNumber(3))
 
-	val, err := rediscli.WriteHandle.HIncrByFloat(ctx, key, field, increment).Result()
-	if err != nil {
+	cmd := rediscli.WriteHandle.HIncrByFloat(ctx, key, field, increment)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisWriteCounter.Inc()
 	}
 
-	L.Push(lua.LNumber(val))
+	stats.RedisWriteCounter.Inc()
+	L.Push(lua.LNumber(cmd.Val()))
 
 	return 1
 }
@@ -287,21 +283,16 @@ func RedisHExists(L *lua.LState) int {
 	key := L.CheckString(1)
 	field := L.CheckString(2)
 
-	exists, err := rediscli.ReadHandle.HExists(ctx, key, field).Result()
-	if err != nil {
+	cmd := rediscli.ReadHandle.HExists(ctx, key, field)
+	if cmd.Err() != nil {
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(cmd.Err().Error()))
 
 		return 2
-	} else {
-		stats.RedisReadCounter.Inc()
 	}
 
-	if exists {
-		L.Push(lua.LTrue)
-	} else {
-		L.Push(lua.LFalse)
-	}
+	stats.RedisReadCounter.Inc()
+	L.Push(lua.LBool(cmd.Val()))
 
 	return 1
 }
