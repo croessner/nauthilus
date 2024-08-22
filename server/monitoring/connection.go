@@ -12,10 +12,39 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
-// CheckBackendConnection checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
+// Monitor represents an interface used to check the backend connection of a server.
+// It provides the method CheckBackendConnection to perform the check and returns an error if the connection fails.
+// The CheckBackendConnection method takes the IP address, port number, whether the server runs with HAProxy V2 protocol,
+// and whether TLS should be used as parameters.
+type Monitor interface {
+	// CheckBackendConnection checks the backend connection of a server based on the provided IP address, port number, whether the server runs with HAProxy V2 protocol, and whether TLS should be used. It returns an error if the connection fails.
+	CheckBackendConnection(ipAddress string, port int, haproxyv2 bool, useTLS bool) error
+}
+
+// ConnMonitor represents a connection monitor that can be used to check the availability of a backend server
+// by establishing a TCP connection with the specified IP address and port.
+// It provides a method `CheckBackendConnection` to perform the check and returns an error if the connection
+// cannot be established within the timeout period. This monitor does not retry the connection and closes
+// the connection before returning.
+type ConnMonitor struct{}
+
+// CheckBackendConnection checks the availability of a backend server by trying to
+// establish a TCP connection with the specified IP address and port.
 // It returns an error if the connection cannot be established within the timeout period.
 // The function does not retry the connection and closes the connection before returning.
-func CheckBackendConnection(ipAddress string, port int, haproxyV2 bool, useTLS bool) error {
+func (ConnMonitor) CheckBackendConnection(ipAddress string, port int, haproxyv2 bool, useTLS bool) error {
+	return checkBackendConnection(ipAddress, port, haproxyv2, useTLS)
+}
+
+// NewMonitor returns a new instance of the Monitor interface. The returned Monitor is implemented by the ConnMonitor struct.
+func NewMonitor() Monitor {
+	return &ConnMonitor{}
+}
+
+// checkBackendConnection checks the availability of a backend server by trying to establish a TCP connection with the specified IP address and port.
+// It returns an error if the connection cannot be established within the timeout period.
+// The function does not retry the connection and closes the connection before returning.
+func checkBackendConnection(ipAddress string, port int, haproxyV2 bool, useTLS bool) error {
 	timeout := 5 * time.Second
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port)), timeout)

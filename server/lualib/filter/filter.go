@@ -12,7 +12,9 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
+	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -375,13 +377,13 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	lualib.SetUPContextFunctions(r.Context, globals, L)
-	lualib.SetUPRedisFunctions(globals, L)
+	redislib.SetUPRedisFunctions(globals, L)
 	lualib.SetUPMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
 		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
-		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection()))
+		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection(monitoring.NewMonitor())))
 	}
 
 	if config.LoadableConfig.HaveLDAPBackend() {

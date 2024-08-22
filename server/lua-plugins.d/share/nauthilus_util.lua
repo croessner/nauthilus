@@ -48,7 +48,10 @@ end
 ---@return void
 function nauthilus_util.if_error_raise(err)
     if err then
-        error(err)
+        -- Do nothing on "redis: nil" messages
+        if err ~= "redis: nil" then
+            error(err)
+        end
     end
 end
 
