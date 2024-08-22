@@ -67,8 +67,11 @@ function nauthilus_call_action(request)
         for line in result.body:gmatch("([^\n]*)\n?") do
             local cmp_hash = strings.split(line, ":")
             if #cmp_hash == 2 and string.lower(cmp_hash[1]) == hash then
-                nauthilus.redis_hset(redis_key, hash:sub(1, 5), cmp_hash[2])
-                nauthilus.redis_expire(redis_key, 3600)
+                local _, err_redis_hset = nauthilus.redis_hset(redis_key, hash:sub(1, 5), cmp_hash[2])
+                nauthilus_util.if_error_raise(err_redis_hset)
+
+                local _, err_redis_expire = nauthilus.redis_expire(redis_key, 3600)
+                nauthilus_util.if_error_raise(err_redis_expire)
 
                 -- Required by telegram.lua
                 nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
@@ -115,8 +118,11 @@ function nauthilus_call_action(request)
                     })
                     nauthilus_util.if_error_raise(err_smtp)
 
-                    nauthilus.redis_hset(redis_key, "send_mail", 1)
-                    nauthilus.redis_expire(redis_key, 86400)
+                    _, err_redis_hset = nauthilus.redis_hset(redis_key, "send_mail", 1)
+                    nauthilus_util.if_error_raise(err_redis_hset)
+
+                    _, err_redis_expire = nauthilus.redis_expire(redis_key, 86400)
+                    nauthilus_util.if_error_raise(err_redis_expire)
 
                     -- Get result table
                     local rt = nauthilus.context_get("rt")
@@ -134,8 +140,11 @@ function nauthilus_call_action(request)
             end
         end
 
-        nauthilus.redis_hset(redis_key, hash:sub(1, 5), 0)
-        nauthilus.redis_expire(redis_key, 86400)
+        local _, err_redis_hset = nauthilus.redis_hset(redis_key, hash:sub(1, 5), 0)
+        nauthilus_util.if_error_raise(err_redis_hset)
+
+        local _, err_redis_expire = nauthilus.redis_expire(redis_key, 86400)
+        nauthilus_util.if_error_raise(err_redis_expire)
     end
 
     nauthilus.custom_log_add("action_haveibeenpwnd", "success")

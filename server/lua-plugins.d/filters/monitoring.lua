@@ -53,7 +53,8 @@ function nauthilus_call_filter(request)
             end
         else
             if length == 1 then
-                nauthilus.redis_expire(redis_key, 3600)
+                local _, err_redis_expire = nauthilus.redis_expire(redis_key, 3600)
+                nauthilus_util.if_error_raise(err_redis_expire)
             end
         end
     end

@@ -109,7 +109,8 @@ function nauthilus_run_callback(logging)
                 result.cmd = "NOOP"
                 result.state = "client session refreshed"
 
-                nauthilus.redis_expire(redis_key, 3600)
+                local _, err_redis_expire = nauthilus.redis_expire(redis_key, 3600)
+                nauthilus_util.if_error_raise(err_redis_expire)
             else
                 -- Cleanup dovecot session
                 local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
