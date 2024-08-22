@@ -819,7 +819,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 // ngxAlive: An instance of the backendServersAlive struct.
 //
 // Iterates over each server in the servers slice using a goroutine.
-// - For each server, it checks the connectivity using the CheckBackendConnection function.
+// - For each server, it checks the connectivity using the checkBackendConnection function.
 // - Acquires a lock on ngxAlive.mu to prevent concurrent writes.
 // - If an error occurs, sets ngxAlive.update to true and logs the error using the logBackendServerError function.
 // - If no error occurs, appends the server to ngxAlive.servers.
@@ -837,7 +837,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := monitoring.CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
+			err := monitoring.NewMonitor().CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
 
 			backendServersLiveness.mu.Lock()
 
