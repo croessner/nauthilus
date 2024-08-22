@@ -48,7 +48,9 @@ function nauthilus_call_filter(request)
     local function set_initial_expiry(redis_key)
         local length, err_redis_hlen = nauthilus.redis_hlen(redis_key)
         if err_redis_hlen then
-            nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
+            if err_redis_hlen ~= "redis: nil" then
+                nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
+            end
         else
             if length == 1 then
                 nauthilus.redis_expire(redis_key, 3600)
@@ -79,7 +81,9 @@ function nauthilus_call_filter(request)
 
         local server_from_session, err_redis_hget = nauthilus.redis_hget(redis_key, session)
         if err_redis_hget then
-            nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
+            if err_redis_hget ~= "redis: nil" then
+                nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
+            end
 
             return nil
         end
@@ -90,7 +94,9 @@ function nauthilus_call_filter(request)
 
         local all_sessions, err_redis_hgetall = nauthilus.redis_hgetall(redis_key)
         if err_redis_hgetall then
-            nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
+            if err_redis_hgetall ~= "redis: nil" then
+                nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
+            end
 
             return nil
         end
