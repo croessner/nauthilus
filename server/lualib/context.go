@@ -16,20 +16,20 @@ import (
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
 type Context struct {
-	data map[any]any
+	data map[string]any
 	mu   sync.RWMutex
 }
 
 // NewContext initializes a new Lua Context.
 func NewContext() *Context {
 	ctx := &Context{}
-	ctx.data = make(map[any]any)
+	ctx.data = make(map[string]any)
 
 	return ctx
 }
 
 // Set sets or replaces a new key/value pair in the Lua Context map.
-func (c *Context) Set(key any, value any) {
+func (c *Context) Set(key string, value any) {
 	if c == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (c *Context) Set(key any, value any) {
 }
 
 // Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
-func (c *Context) Get(key any) any {
+func (c *Context) Get(key string) any {
 	if c == nil {
 		return nil
 	}
@@ -59,26 +59,16 @@ func (c *Context) Get(key any) any {
 }
 
 // Delete removes a key and its value from the Lua Context.
-func (c *Context) Delete(key lua.LValue) {
+func (c *Context) Delete(key string) {
 	if c == nil {
 		return
 	}
 
 	c.mu.Lock()
 
-	switch mappedKey := key.(type) {
-	case lua.LString:
-		delete(c.data, string(mappedKey))
-	case lua.LBool:
-		delete(c.data, bool(mappedKey))
-	case lua.LNumber:
-		delete(c.data, float64(mappedKey))
-	default:
-		level.Warn(log.Logger).Log(
-			global.LogKeyWarning, fmt.Sprintf("Lua key '%v' unsupported", mappedKey))
-	}
+	defer c.mu.Unlock()
 
-	c.mu.Unlock()
+	delete(c.data, key)
 }
 
 // Deadline is not currently used
@@ -105,11 +95,7 @@ func (c *Context) Value(_ any) lua.LValue {
 // Lua function.
 func ContextSet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
-
-		if _, ok := key.(*lua.LNilType); ok {
-			return 0
-		}
+		key := L.CheckString(1)
 
 		switch value := L.Get(2).(type) {
 		case lua.LString:
@@ -133,7 +119,7 @@ func ContextSet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextGet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
+		key := L.CheckString(1)
 
 		switch value := ctx.Get(key).(type) {
 		case string:
@@ -160,7 +146,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextDelete(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
+		key := L.CheckString(1)
 
 		ctx.Delete(key)
 

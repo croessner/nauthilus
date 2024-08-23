@@ -40,12 +40,6 @@ func TestContextSet(t *testing.T) {
 			value:   &lua.LTable{},
 			wantErr: false,
 		},
-		{
-			name:    "Nil",
-			key:     lua.LNil,
-			value:   lua.LNil,
-			wantErr: true,
-		},
 	}
 
 	for _, tc := range tests {
@@ -60,7 +54,7 @@ func TestContextSet(t *testing.T) {
 
 			ContextSet(ctx)(L)
 
-			val := convert.GoToLuaValue(L, ctx.Get(tc.key))
+			val := convert.GoToLuaValue(L, ctx.Get(lua.LVAsString(tc.key)))
 
 			if val.Type() != tc.value.Type() && val.String() != tc.value.String() {
 				if !tc.wantErr {
@@ -121,6 +115,65 @@ func TestContextGet(t *testing.T) {
 			val := L.Get(-1)
 			if val != tt.value {
 				t.Errorf("ContextGet(%v): got %v, want %v", tt.name, val, tt.value)
+			}
+		})
+	}
+}
+
+func TestContextDelete(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name              string
+		key               lua.LValue
+		preSets, postSets map[lua.LValue]lua.LValue
+	}{
+		{
+			name: "Existing Key",
+			key:  lua.LString("key"),
+			preSets: map[lua.LValue]lua.LValue{
+				lua.LString("key"): lua.LString("value"),
+			},
+			postSets: map[lua.LValue]lua.LValue{},
+		},
+		{
+			name:     "Non-Existing Key",
+			key:      lua.LString("key"),
+			preSets:  map[lua.LValue]lua.LValue{},
+			postSets: map[lua.LValue]lua.LValue{},
+		},
+		{
+			name: "Mixed Keys",
+			key:  lua.LString("key1"),
+			preSets: map[lua.LValue]lua.LValue{
+				lua.LString("key1"): lua.LString("value1"),
+				lua.LString("key2"): lua.LString("value2"),
+			},
+			postSets: map[lua.LValue]lua.LValue{
+				lua.LString("key2"): lua.LString("value2"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := NewContext()
+			L := lua.NewState()
+
+			defer L.Close()
+
+			for key, value := range tt.preSets {
+				ctx.Set(lua.LVAsString(key), value)
+			}
+
+			L.Push(tt.key)
+
+			ContextDelete(ctx)(L)
+
+			for key, expectedValue := range tt.postSets {
+				val := ctx.Get(lua.LVAsString(key)).(lua.LValue)
+				if val.Type() != expectedValue.Type() && val.String() != expectedValue.String() {
+					t.Errorf("ContextGet(%v): got %v, want %v", key, val, expectedValue)
+				}
 			}
 		})
 	}
