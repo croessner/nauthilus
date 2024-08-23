@@ -78,7 +78,7 @@ func TestRedisHGet(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHGetFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHGet)
@@ -163,7 +163,7 @@ func TestRedisHSet(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 
 			globals := L.NewTable()
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHSetFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHSet)
@@ -263,7 +263,7 @@ func TestRedisHDel(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHDelFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHDel)
@@ -346,7 +346,7 @@ func TestRedisHLen(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHLenFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHLen)
@@ -434,7 +434,7 @@ func TestRedisHGetAll(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 
 			globals := L.NewTable()
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHGetAllFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHGetAll)
@@ -544,7 +544,7 @@ func TestRedisHIncrBy(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHIncrByFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHIncrBy)
@@ -644,7 +644,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 			L.SetGlobal("increment", lua.LNumber(tt.increment))
 
 			globals := L.NewTable()
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHIncrByFloatFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHIncrByFloat)
@@ -740,7 +740,7 @@ func TestRedisHExists(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisHExistsFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisHExists)

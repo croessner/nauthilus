@@ -254,9 +254,9 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(httpRequest)))
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
-	lualib.SetUPContextFunctions(aw.luaActionRequest.Context, globals, L)
-	redislib.SetUPRedisFunctions(globals, L)
-	lualib.SetUPMiscFunctions(globals, L)
+	lualib.SetupContextFunctions(aw.luaActionRequest.Context, globals, L)
+	redislib.SetupRedisFunctions(globals, L)
+	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(context.Background())))

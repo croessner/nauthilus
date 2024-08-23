@@ -166,9 +166,9 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(luaRequest.HTTPClientContext.Request)))
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
-	lualib.SetUPContextFunctions(luaRequest.Context, globals, L)
-	redislib.SetUPRedisFunctions(globals, L)
-	lualib.SetUPMiscFunctions(globals, L)
+	lualib.SetupContextFunctions(luaRequest.Context, globals, L)
+	redislib.SetupRedisFunctions(globals, L)
+	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(LuaLDAPSearch(luaRequest.HTTPClientContext)))

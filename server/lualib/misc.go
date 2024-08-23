@@ -159,12 +159,12 @@ func getCryptoRandomInt(min, max int64) (int64, error) {
 	return nBig.Int64() + min, nil
 }
 
-// SetUPMiscFunctions sets up miscellaneous Lua functions in the given Lua table.
+// SetupMiscFunctions sets up miscellaneous Lua functions in the given Lua table.
 // It adds the Lua functions "check_password_policy", "get_country_name", and "wait_random"
 // to the table, using the respective function implementations as callbacks.
 // The table is expected to be a Lua table object, and the Lua state parameter is used
 // to create new Lua function objects and add them to the table.
-func SetUPMiscFunctions(table *lua.LTable, L *lua.LState) {
+func SetupMiscFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnCheckPasswordPolicy, L.NewFunction(validatePassword))
 	table.RawSetString(global.LuaFnGetCountryName, L.NewFunction(getCountryName))
 	table.RawSetString(global.LuaFnWaitRandom, L.NewFunction(waitRandom))

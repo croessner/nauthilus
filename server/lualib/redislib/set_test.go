@@ -85,7 +85,7 @@ func TestRedisSAdd(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSAddFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSAdd)
@@ -172,7 +172,7 @@ func TestRedisSIsMember(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSIsMemberFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSIsMember)
@@ -253,7 +253,7 @@ func TestRedisSMembers(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSMembersFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSMembers)
@@ -356,7 +356,7 @@ func TestRedisSRem(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSRemFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSRem)
@@ -438,7 +438,7 @@ func TestRedisSCard(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSCardFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSCard)

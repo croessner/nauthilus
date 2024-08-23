@@ -267,7 +267,7 @@ func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
-	redislib.SetUPRedisFunctions(globals, L)
+	redislib.SetupRedisFunctions(globals, L)
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

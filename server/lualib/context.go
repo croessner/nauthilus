@@ -163,12 +163,12 @@ func ContextDelete(ctx *Context) lua.LGFunction {
 	}
 }
 
-// SetUPContextFunctions sets up the Lua functions for working with the Context. The functions include:
+// SetupContextFunctions sets up the Lua functions for working with the Context. The functions include:
 // - `context_set`: A function that sets a value in the Context.
 // - `context_get`: A function that retrieves a value from the Context.
 // - `context_delete`: A function that deletes a value from the Context.
 // The functions are added to the specified Lua table using the specified Lua state.
-func SetUPContextFunctions(ctx *Context, table *lua.LTable, L *lua.LState) {
+func SetupContextFunctions(ctx *Context, table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnCtxSet, L.NewFunction(ContextSet(ctx)))
 	table.RawSetString(global.LuaFnCtxGet, L.NewFunction(ContextGet(ctx)))
 	table.RawSetString(global.LuaFnCtxDelete, L.NewFunction(ContextDelete(ctx)))
