@@ -5,7 +5,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// SetUPRedisFunctions sets up the Redis functions in the Lua table.
+// SetupRedisFunctions sets up the Redis functions in the Lua table.
 // It takes a Lua table and a Lua state as arguments.
 // It assigns the Redis functions to the corresponding keys in the Lua table.
 // Each Redis function is implemented as a Lua function that interacts with the Redis server.
@@ -29,7 +29,7 @@ import (
 //   - RedisSMembers: Returns all the members of a set stored at a key in the Redis server.
 //   - RedisSRem: Removes one or more members from a set stored at a key in the Redis server.
 //   - RedisSCard: Returns the number of members in a set stored at a key in the Redis server.
-func SetUPRedisFunctions(table *lua.LTable, L *lua.LState) {
+func SetupRedisFunctions(table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnRedisGet, L.NewFunction(RedisGet))
 	table.RawSetString(global.LuaFnRedisSet, L.NewFunction(RedisSet))
 	table.RawSetString(global.LuaFnRedisIncr, L.NewFunction(RedisIncr))

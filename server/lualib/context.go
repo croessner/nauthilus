@@ -7,6 +7,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -15,20 +16,20 @@ import (
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
 type Context struct {
-	data map[any]any
+	data map[string]any
 	mu   sync.RWMutex
 }
 
 // NewContext initializes a new Lua Context.
 func NewContext() *Context {
 	ctx := &Context{}
-	ctx.data = make(map[any]any)
+	ctx.data = make(map[string]any)
 
 	return ctx
 }
 
 // Set sets or replaces a new key/value pair in the Lua Context map.
-func (c *Context) Set(key any, value any) {
+func (c *Context) Set(key string, value any) {
 	if c == nil {
 		return
 	}
@@ -41,7 +42,7 @@ func (c *Context) Set(key any, value any) {
 }
 
 // Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
-func (c *Context) Get(key any) any {
+func (c *Context) Get(key string) any {
 	if c == nil {
 		return nil
 	}
@@ -58,26 +59,16 @@ func (c *Context) Get(key any) any {
 }
 
 // Delete removes a key and its value from the Lua Context.
-func (c *Context) Delete(key lua.LValue) {
+func (c *Context) Delete(key string) {
 	if c == nil {
 		return
 	}
 
 	c.mu.Lock()
 
-	switch mappedKey := key.(type) {
-	case lua.LString:
-		delete(c.data, string(mappedKey))
-	case lua.LBool:
-		delete(c.data, bool(mappedKey))
-	case lua.LNumber:
-		delete(c.data, float64(mappedKey))
-	default:
-		level.Warn(log.Logger).Log(
-			global.LogKeyWarning, fmt.Sprintf("Lua key '%v' unsupported", mappedKey))
-	}
+	defer c.mu.Unlock()
 
-	c.mu.Unlock()
+	delete(c.data, key)
 }
 
 // Deadline is not currently used
@@ -104,7 +95,7 @@ func (c *Context) Value(_ any) lua.LValue {
 // Lua function.
 func ContextSet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
+		key := L.CheckString(1)
 
 		switch value := L.Get(2).(type) {
 		case lua.LString:
@@ -114,7 +105,7 @@ func ContextSet(ctx *Context) lua.LGFunction {
 		case lua.LNumber:
 			ctx.Set(key, float64(value))
 		case *lua.LTable:
-			ctx.Set(key, LuaTableToMap(value))
+			ctx.Set(key, convert.LuaTableToMap(value))
 		default:
 			level.Warn(log.Logger).Log(
 				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
@@ -128,7 +119,7 @@ func ContextSet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextGet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
+		key := L.CheckString(1)
 
 		switch value := ctx.Get(key).(type) {
 		case string:
@@ -138,7 +129,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 		case float64:
 			L.Push(lua.LNumber(value))
 		case map[any]any:
-			L.Push(MapToLuaTable(L, value))
+			L.Push(convert.MapToLuaTable(L, value))
 		case nil:
 			L.Push(lua.LNil)
 		default:
@@ -155,7 +146,7 @@ func ContextGet(ctx *Context) lua.LGFunction {
 // Lua function.
 func ContextDelete(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		key := L.Get(1)
+		key := L.CheckString(1)
 
 		ctx.Delete(key)
 
@@ -163,12 +154,12 @@ func ContextDelete(ctx *Context) lua.LGFunction {
 	}
 }
 
-// SetUPContextFunctions sets up the Lua functions for working with the Context. The functions include:
+// SetupContextFunctions sets up the Lua functions for working with the Context. The functions include:
 // - `context_set`: A function that sets a value in the Context.
 // - `context_get`: A function that retrieves a value from the Context.
 // - `context_delete`: A function that deletes a value from the Context.
 // The functions are added to the specified Lua table using the specified Lua state.
-func SetUPContextFunctions(ctx *Context, table *lua.LTable, L *lua.LState) {
+func SetupContextFunctions(ctx *Context, table *lua.LTable, L *lua.LState) {
 	table.RawSetString(global.LuaFnCtxSet, L.NewFunction(ContextSet(ctx)))
 	table.RawSetString(global.LuaFnCtxGet, L.NewFunction(ContextGet(ctx)))
 	table.RawSetString(global.LuaFnCtxDelete, L.NewFunction(ContextDelete(ctx)))

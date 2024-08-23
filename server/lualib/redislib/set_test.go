@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -85,7 +86,7 @@ func TestRedisSAdd(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSAddFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSAdd)
@@ -168,11 +169,11 @@ func TestRedisSIsMember(t *testing.T) {
 			rediscli.ReadHandle = db
 
 			L.SetGlobal("key", lua.LString(tt.key))
-			L.SetGlobal("value", ConvertGoToLuaValue(tt.value))
+			L.SetGlobal("value", convert.GoToLuaValue(L, tt.value))
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSIsMemberFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSIsMember)
@@ -253,7 +254,7 @@ func TestRedisSMembers(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSMembersFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSMembers)
@@ -356,7 +357,7 @@ func TestRedisSRem(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSRemFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSRem)
@@ -438,7 +439,7 @@ func TestRedisSCard(t *testing.T) {
 
 			globals := L.NewTable()
 
-			SetUPRedisFunctions(globals, L)
+			SetupRedisFunctions(globals, L)
 			L.SetGlobal(global.LuaDefaultTable, globals)
 
 			redisSCardFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSCard)

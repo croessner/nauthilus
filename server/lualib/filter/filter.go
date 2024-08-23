@@ -376,9 +376,9 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
-	lualib.SetUPContextFunctions(r.Context, globals, L)
-	redislib.SetUPRedisFunctions(globals, L)
-	lualib.SetUPMiscFunctions(globals, L)
+	lualib.SetupContextFunctions(r.Context, globals, L)
+	redislib.SetupRedisFunctions(globals, L)
+	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
