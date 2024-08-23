@@ -70,3 +70,58 @@ func TestContextSet(t *testing.T) {
 		})
 	}
 }
+
+func TestContextGet(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		key   lua.LValue
+		value lua.LValue
+	}{
+		{
+			name:  "Existing String",
+			key:   lua.LString("key"),
+			value: lua.LString("value"),
+		},
+		{
+			name:  "Existing Bool",
+			key:   lua.LString("bkey"),
+			value: lua.LBool(true),
+		},
+		{
+			name:  "Existing Number",
+			key:   lua.LString("nkey"),
+			value: lua.LNumber(123),
+		},
+		{
+			name:  "Non-existent Key",
+			key:   lua.LString("nokey"),
+			value: lua.LNil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := NewContext()
+			L := lua.NewState()
+
+			defer L.Close()
+
+			if tt.name != "Non-existent Key" {
+				L.Push(tt.key)
+				L.Push(tt.value)
+
+				ContextSet(ctx)(L)
+			}
+
+			L.Push(tt.key)
+
+			ContextGet(ctx)(L)
+
+			val := L.Get(-1)
+			if val != tt.value {
+				t.Errorf("ContextGet(%v): got %v, want %v", tt.name, val, tt.value)
+			}
+		})
+	}
+}
