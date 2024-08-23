@@ -1,6 +1,7 @@
 package redislib
 
 import (
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	lua "github.com/yuin/gopher-lua"
@@ -25,7 +26,7 @@ func RedisSAdd(L *lua.LState) int {
 	values := make([]any, L.GetTop()-1)
 
 	for i := 2; i <= L.GetTop(); i++ {
-		value, err := ConvertLuaValue(L.Get(i))
+		value, err := convert.LuaValue(L.Get(i))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -82,7 +83,7 @@ func RedisSAdd(L *lua.LState) int {
 func RedisSIsMember(L *lua.LState) int {
 	key := L.CheckString(1)
 
-	value, err := ConvertLuaValue(L.Get(2))
+	value, err := convert.LuaValue(L.Get(2))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -143,7 +144,7 @@ func RedisSMembers(L *lua.LState) int {
 	members := cmd.Val()
 	table := L.NewTable()
 	for _, member := range members {
-		table.Append(ConvertGoToLuaValue(member))
+		table.Append(convert.GoToLuaValue(L, member))
 	}
 
 	stats.RedisReadCounter.Inc()
@@ -170,7 +171,7 @@ func RedisSRem(L *lua.LState) int {
 	values := make([]any, L.GetTop()-1)
 
 	for i := 2; i <= L.GetTop(); i++ {
-		value, err := ConvertLuaValue(L.Get(i))
+		value, err := convert.LuaValue(L.Get(i))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

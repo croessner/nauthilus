@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	lua "github.com/yuin/gopher-lua"
@@ -24,7 +25,7 @@ func RedisGet(L *lua.LState) int {
 		valueType = L.CheckString(2)
 	}
 
-	err := ConvertStringCmd(rediscli.ReadHandle.Get(ctx, key), valueType, L)
+	err := convert.StringCmd(rediscli.ReadHandle.Get(ctx, key), valueType, L)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -45,7 +46,7 @@ func RedisSet(L *lua.LState) int {
 	expiration := time.Duration(0)
 	key := L.CheckString(1)
 
-	value, err := ConvertLuaValue(L.Get(2))
+	value, err := convert.LuaValue(L.Get(2))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))

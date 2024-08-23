@@ -2,6 +2,7 @@ package redislib
 
 import (
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	lua "github.com/yuin/gopher-lua"
@@ -27,7 +28,7 @@ func RedisHGet(L *lua.LState) int {
 		valueType = L.CheckString(3)
 	}
 
-	err := ConvertStringCmd(rediscli.ReadHandle.HGet(ctx, key, field), valueType, L)
+	err := convert.StringCmd(rediscli.ReadHandle.HGet(ctx, key, field), valueType, L)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -65,7 +66,7 @@ func RedisHSet(L *lua.LState) int {
 	for i := 2; i <= L.GetTop(); i += 2 {
 		field := L.CheckString(i)
 
-		value, err := ConvertLuaValue(L.Get(i + 1))
+		value, err := convert.LuaValue(L.Get(i + 1))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

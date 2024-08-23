@@ -10,6 +10,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/util"
@@ -304,7 +305,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 	case global.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-			Attributes: lualib.LuaTableToMap(L.ToTable(-1)),
+			Attributes: convert.LuaTableToMap(L.ToTable(-1)),
 			Logs:       logs,
 		}
 
