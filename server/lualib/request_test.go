@@ -8,6 +8,46 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+func pString(v string) *string {
+	return &v
+}
+
+func TestSetStatusMessage(t *testing.T) {
+	testCases := []struct {
+		name          string
+		initialStatus *string
+		newStatus     string
+	}{
+		{
+			name:          "NilInitialStatus",
+			initialStatus: nil,
+			newStatus:     "Testing status message",
+		},
+		{
+			name:          "NonNilInitialStatus",
+			initialStatus: pString("Initial status message"),
+			newStatus:     "New status message",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			L := lua.NewState()
+
+			defer L.Close()
+
+			L.Push(lua.LString(tc.newStatus))
+
+			lFunc := SetStatusMessage(&tc.initialStatus)
+			lFunc(L)
+
+			if tc.initialStatus == nil || *tc.initialStatus != tc.newStatus {
+				t.Errorf("expected status to be %s, got %s", tc.newStatus, *tc.initialStatus)
+			}
+		})
+	}
+}
+
 func TestGetAllHTTPRequestHeaders(t *testing.T) {
 	testCases := []struct {
 		name           string
