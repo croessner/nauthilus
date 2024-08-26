@@ -34,22 +34,40 @@ import (
 	"github.com/pires/go-proxyproto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
 
 var (
-	HTTPEndChan chan Done    //nolint:gochecknoglobals // Quit-Channel for HTTP on shutdown
-	LangBundle  *i18n.Bundle //nolint:gochecknoglobals // System wide i18n bundle
+	// HTTPEndChan is a channel of type `Done` used to signal the completion of HTTP server operations.
+	HTTPEndChan chan Done
+
+	// HTTP3EndChan is a channel of type `Done` used to signal the completion of HTTP3 server operations.
+	HTTP3EndChan chan Done
+
+	// LangBundle is a pointer to an instance of the i18n.Bundle type.
+	// It represents a language bundle which is used for localization and internationalization purposes in the application.
+	LangBundle *i18n.Bundle
 )
 
 // RESTResult is a generic JSON result object for the Nauthilus REST API.
 type RESTResult struct {
-	GUID      string `json:"session"`
-	Object    string `json:"object"`
+	// GUID represents a unique identifier for a session. It is a string field used in the RESTResult struct
+	// and is also annotated with the json tag "session".
+	GUID string `json:"session"`
+
+	// Object represents a string field used in the RESTResult struct. It is annotated with the json tag "object".
+	Object string `json:"object"`
+
+	// Operation represents a string field used in the RESTResult struct. It is annotated with the json tag "operation".
 	Operation string `json:"operation"`
-	Result    any    `json:"result"`
+
+	// Result represents the result field in the RESTResult struct. It can hold any type of value.
+	// The field is annotated with the json tag "result".
+	Result any `json:"result"`
 }
 
 // customWriter represents a type that logs data based on a specified log level.
@@ -160,6 +178,18 @@ func httpQueryHandler(ctx *gin.Context) {
 	}
 }
 
+// httpCacheHandler handles the HTTP requests for cache related operations.
+// It takes a gin.Context as a parameter.
+//
+// Procedure:
+//  1. The function retrieves the "category" parameter from the request context.
+//  2. It uses a switch statement to handle different category values.
+//  3. For the "cache" category, it retrieves the "service" parameter and uses a switch statement
+//     to handle different service values.
+//  4. For the "flush" service, it calls the flushCache function.
+//  5. For the "bruteforce" category, it retrieves the "service" parameter and uses a switch statement
+//     to handle different service values.
+//  6. For the "flush" service, it calls the flushBruteForceRule function.
 func httpCacheHandler(ctx *gin.Context) {
 	//nolint:gocritic // Prepared for future commands
 	switch ctx.Param("category") {
@@ -700,18 +730,31 @@ func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 // It takes in two parameters:
 // - www: a pointer to the http.Server instance
 // - ctx: a context.Context instance
-func waitForShutdown(www *http.Server, ctx context.Context) {
+func waitForShutdown(httpServer *http.Server, ctx context.Context) {
 	<-ctx.Done()
 
 	waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
 
 	defer cancel()
 
-	www.Shutdown(waitCtx)
+	httpServer.Shutdown(waitCtx)
 
 	HTTPEndChan <- Done{}
+}
 
-	return
+// waitForShutdown3 waits for the context to be done and then gracefully closes the http3 server.
+//
+// It accepts a pointer to an http3.Server and a context.Context as parameters.
+// The function waits for the context to be done, which indicates that the server should be shut down.
+// It then calls the CloseGracefully method of the http3.Server, with a timeout of 30 seconds,
+// to gracefully close the server and release any resources.
+// Finally, it sends a Done{} value to the HTTP3EndChan channel to notify that the server has shut down.
+func waitForShutdown3(http3Server *http3.Server, ctx context.Context) {
+	<-ctx.Done()
+
+	http3Server.CloseGracefully(30 * time.Second)
+
+	HTTP3EndChan <- Done{}
 }
 
 // prepareHAproxyV2 returns a *proxyproto.Listener which is used to prepare HAProxy V2 version by:
@@ -745,40 +788,153 @@ func prepareHAproxyV2() *proxyproto.Listener {
 	return proxyListener
 }
 
-// HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
-// It takes a context.Context parameter.
-func HTTPApp(ctx context.Context) {
-	var err error
+// serveHTTP serves HTTP requests using the provided http.Server.
+//
+// The function accepts an http.Server pointer, a certFile string representing the path to
+// the TLS certificate file, a keyFile string representing the path to the TLS key file,
+// and a proxyListener pointer to a proxyproto.Listener.
+//
+// If TLS is enabled in the configuration and proxyListener is set to nil, the function
+// calls httpServer.ListenAndServeTLS with certFile and keyFile as parameters. If an error
+// occurs during server startup and the error is not http.ErrServerClosed, the function logs
+// the error and exits the program with a status code of 1 using the logAndExit function.
+//
+// If TLS is enabled in the configuration and proxyListener is not nil, the function calls
+// httpServer.ServeTLS with proxyListener, certFile, and keyFile as parameters. If an error
+// occurs during server startup and the error is not http.ErrServerClosed, the function logs
+// the error and exits the program with a status code of 1 using the logAndExit function.
+//
+// If TLS is not enabled in the configuration and proxyListener is set to nil, the function
+// calls httpServer.ListenAndServe. If an error occurs during server startup and the error is
+// not http.ErrServerClosed, the function logs the error and exits the program with a status
+// code of 1 using the logAndExit function.
+//
+// If TLS is not enabled in the configuration and proxyListener is not nil, the function calls
+// httpServer.Serve with proxyListener as a parameter. If an error occurs during server startup
+// and the error is not http.ErrServerClosed, the function logs the error and exits the program
+// with a status code of 1 using the logAndExit function.
+func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
+	if config.LoadableConfig.Server.TLS.Enabled {
+		if proxyListener == nil {
+			if err := httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			}
+		} else {
+			logProxyHTTP3()
 
-	webAuthn, err = setupWebAuthn()
-	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
-
-		os.Exit(-1)
+			if err := httpServer.ServeTLS(proxyListener, certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			}
+		}
+	} else {
+		if proxyListener == nil {
+			if err := httpServer.ListenAndServe(); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			}
+		} else {
+			if err := httpServer.Serve(proxyListener); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			}
+		}
 	}
+}
 
+// logProxyHTTP3 is a function that checks if the HTTP/3 server is enabled and the HAproxy is turned on.
+// If both conditions are true, it logs a warning message using the Warn level of the logger provided in the log package.
+// The warning message indicates that PROXY protocol is not available for HTTP/3.
+func logProxyHTTP3() {
+	if config.LoadableConfig.Server.HTTP3 && config.LoadableConfig.Server.HAproxyV2 {
+		level.Warn(log.Logger).Log(global.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
+	}
+}
+
+// serveHTTPAndHTTP3 serves both HTTP/1.1 and HTTP/3 requests.
+//
+// It starts an HTTP/1.1 and HTTP/2 server in a goroutine using the provided http.Server with TLS configuration
+// specified by the certFile and keyFile parameters. If an error occurs during server start-up, it logs the error
+// and exits the program with a status code of 1.
+//
+// It also starts an HTTP/3 server using the provided http.Server with HTTP/2 handler, TLS configuration
+// specified by the certFile and keyFile parameters, and QUIC configuration. If an error occurs during server start-up,
+// it returns the error.
+//
+// The function returns an error indicating whether the HTTP/3 server started successfully.
+// If the HTTP/3 server failed to start, the error will be returned.
+// Otherwise, nil is returned.
+func serveHTTPAndHTTP3(ctx context.Context, httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
+	if config.LoadableConfig.Server.HTTP3 {
+		go serveHTTP(httpServer, certFile, keyFile, proxyListener)
+
+		http3Server := &http3.Server{
+			Addr:       httpServer.Addr,
+			Handler:    httpServer.Handler,
+			TLSConfig:  httpServer.TLSConfig,
+			QUICConfig: &quic.Config{},
+		}
+
+		go waitForShutdown3(http3Server, ctx)
+
+		if err := http3Server.ListenAndServeTLS(certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+			logAndExit("HTTP/3 server error", err)
+		}
+	} else {
+		serveHTTP(httpServer, certFile, keyFile, proxyListener)
+	}
+}
+
+// setupGinLoggers sets up the loggers for the Gin framework.
+//
+// It assigns a custom writer to the default Gin writer and error writer.
+// The custom writer logs data based on a specified log level.
+// If the log level is set to Debug, the data is logged at the Debug level.
+// If the log level is set to Error, the data is logged at the Error level.
+// For any other log level value, the data is logged normally at the Info level.
+//
+// If the log level specified in the configuration is not Debug, it sets the Gin mode to ReleaseMode.
+// This disables debug features such as detailed error messages.
+//
+// It also disables console colors for Gin.
+func setupGinLoggers() {
 	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
 	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
 
-	if !(config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug) {
+	if config.LoadableConfig.Server.Log.Level.Level() != global.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	gin.DisableConsoleColor()
+}
 
-	router := gin.New()
+// logAndExit logs an error message and exits the program with a status code of 1.
+//
+// The function accepts a message string and an error. It logs the message and error using the
+// `level.Error` function from the `log.Logger` package. The message is logged using the
+// `global.LogKeyMsg` key and the error is logged using the `global.LogKeyError` key.
+//
+// After logging the message and error, the function exits the program with a status code of 1
+// using the `os.Exit` function.
+func logAndExit(message string, err error) {
+	level.Error(log.Logger).Log(global.LogKeyMsg, message, global.LogKeyError, err)
 
-	if config.LoadableConfig.GetServerInsightsEnablePprof() {
-		pprof.Register(router)
+	os.Exit(1)
+}
+
+// configureTLS returns a new *tls.Config with the NextProtos field set to [h2, http/1.1, h3] and the MinVersion field set to tls.VersionTLS12.
+func configureTLS() *tls.Config {
+	return &tls.Config{
+		NextProtos: []string{"h3", "h2", "http/1.1"},
+		MinVersion: tls.VersionTLS12,
 	}
+}
 
-	// Wrap the GoKit logger
-	router.Use(loggerMiddleware())
-
-	www := setupHTTPServer(router)
-
-	go waitForShutdown(www, ctx)
-
+// setupRouter sets up the router for the HTTP server.
+//
+// It takes in one parameter:
+// - router: a pointer to a gin.Engine instance, which represents the Gin router.
+//
+// This function initializes the necessary middlewares and adds various endpoints to the router for handling different requests.
+// The function also sets up session store, Hydra endpoints, static content, and back channel endpoints based on the configuration.
+func setupRouter(router *gin.Engine) {
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
 	router.Use(gin.Recovery())
 
@@ -808,33 +964,44 @@ func HTTPApp(ctx context.Context) {
 
 	setupStaticContent(router)
 	setupBackChannelEndpoints(router)
+}
 
-	// www.SetKeepAlivesEnabled(false)
+// HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
+// It takes a context.Context parameter.
+func HTTPApp(ctx context.Context) {
+	var err error
+
+	webAuthn, err = setupWebAuthn()
+	if err != nil {
+		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
+
+		os.Exit(-1)
+	}
+
+	setupGinLoggers()
+
+	router := gin.New()
+
+	if config.LoadableConfig.GetServerInsightsEnablePprof() {
+		pprof.Register(router)
+	}
+
+	// Wrap the GoKit logger
+	router.Use(loggerMiddleware())
+
+	httpServer := setupHTTPServer(router)
+
+	setupRouter(router)
+
+	go waitForShutdown(httpServer, ctx)
 
 	proxyListener := prepareHAproxyV2()
 
 	if config.LoadableConfig.Server.TLS.Enabled {
-		www.TLSConfig = &tls.Config{
-			NextProtos: []string{"h2", "http/1.1"},
-			MinVersion: tls.VersionTLS12,
-		}
+		httpServer.TLSConfig = configureTLS()
 
-		if proxyListener != nil {
-			err = www.ServeTLS(proxyListener, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
-		} else {
-			err = www.ListenAndServeTLS(config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key)
-		}
+		serveHTTPAndHTTP3(ctx, httpServer, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key, proxyListener)
 	} else {
-		if proxyListener != nil {
-			err = www.Serve(proxyListener)
-		} else {
-			err = www.ListenAndServe()
-		}
-	}
-
-	if !stderrors.Is(err, http.ErrServerClosed) {
-		level.Error(log.Logger).Log(global.LogKeyError, err)
-
-		os.Exit(1)
+		serveHTTP(httpServer, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key, proxyListener)
 	}
 }

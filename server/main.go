@@ -277,6 +277,7 @@ func terminateLuaStatePools() {
 // closeChannels closes the HTTPEndChan and WorkerEndChan channels.
 func closeChannels() {
 	close(core.HTTPEndChan)
+	close(core.HTTP3EndChan)
 }
 
 // handleTerminateSignal handles the termination signal (SIGINT or SIGTERM) and performs cleanup tasks before shutting down the program.
@@ -310,6 +311,10 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
+
+	if config.LoadableConfig.Server.HTTP3 {
+		<-core.HTTP3EndChan
+	}
 
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		handleBackend(backendType)
@@ -510,6 +515,10 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 	stopContext(store.server)
 
 	<-core.HTTPEndChan
+
+	if config.LoadableConfig.Server.HTTP3 {
+		<-core.HTTP3EndChan
+	}
 
 	startHTTPServer(ctx, store)
 }
@@ -719,6 +728,12 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 
 	if core.HTTPEndChan == nil {
 		core.HTTPEndChan = make(chan core.Done)
+	}
+
+	if config.LoadableConfig.Server.HTTP3 {
+		if core.HTTP3EndChan == nil {
+			core.HTTP3EndChan = make(chan core.Done)
+		}
 	}
 
 	go core.HTTPApp(store.server.ctx)
