@@ -820,6 +820,8 @@ func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener 
 				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
 			}
 		} else {
+			logProxyHTTP3()
+
 			if err := httpServer.ServeTLS(proxyListener, certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
 				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
 			}
@@ -834,6 +836,15 @@ func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener 
 				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
 			}
 		}
+	}
+}
+
+// logProxyHTTP3 is a function that checks if the HTTP/3 server is enabled and the HAproxy is turned on.
+// If both conditions are true, it logs a warning message using the Warn level of the logger provided in the log package.
+// The warning message indicates that PROXY protocol is not available for HTTP/3.
+func logProxyHTTP3() {
+	if config.LoadableConfig.Server.HTTP3 && config.LoadableConfig.Server.HAproxyV2 {
+		level.Warn(log.Logger).Log(global.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
 	}
 }
 
