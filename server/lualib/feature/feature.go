@@ -13,7 +13,6 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
@@ -221,7 +220,6 @@ func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	lualib.SetupContextFunctions(r.Context, globals, L)
-	redislib.SetupRedisFunctions(globals, L)
 	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {

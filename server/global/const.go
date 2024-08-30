@@ -939,8 +939,11 @@ const (
 	// LuaFnBackendAddTOTPSecret represents the function name for "nauthilus_backend_add_totp" in Lua
 	LuaFnBackendAddTOTPSecret = "nauthilus_backend_add_totp"
 
-	// LuaModUtil represents the module name for "nauthilus_util" in Lua
-	LuaModUtil = "nauthilus_util"
+	// LuaModPassword represents the module name for "nauthilus_password" in Lua
+	LuaModPassword = "nauthilus_password"
+
+	// LuaModRedis is the constant representing the module name "nauthilus_redis" in Lua.
+	LuaModRedis = "nauthilus_redis"
 
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
@@ -1044,6 +1047,10 @@ const (
 
 	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
 	LuaFnSendMail = "send_mail"
+
+	// LuaFnComparePasswords is a constant representing the name of a Lua function
+	// used to compare passwords.
+	LuaFnComparePasswords = "compare_passwords"
 
 	// LuaFnCheckPasswordPolicy represents the constant for the Lua function "check_password_policy".
 	LuaFnCheckPasswordPolicy = "check_password_policy"

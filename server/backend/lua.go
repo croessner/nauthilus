@@ -11,7 +11,6 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -121,8 +120,6 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 
 	defer luaCancel()
 
-	registerLibraries(L)
-
 	globals := setupGlobals(luaRequest, L, logs)
 	request := L.NewTable()
 
@@ -139,12 +136,6 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	if err == nil {
 		handleReturnTypes(L, nret, luaRequest, logs)
 	}
-}
-
-// registerLibraries registers various libraries to the given LState.
-// It preloads libraries, registers the backend result type, and preloads a module.
-func registerLibraries(L *lua.LState) {
-	L.PreloadModule(global.LuaModUtil, lualib.Loader)
 }
 
 // setupGlobals registers global variables and functions used in Lua scripts.
@@ -168,7 +159,6 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	lualib.SetupContextFunctions(luaRequest.Context, globals, L)
-	redislib.SetupRedisFunctions(globals, L)
 	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {

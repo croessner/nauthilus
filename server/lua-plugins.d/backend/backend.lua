@@ -19,7 +19,7 @@
 local nauthilus_util = require("nauthilus_util")
 
 local db = require("db")
-local pw = require("nauthilus_util")
+local pw = require("nauthilus_password")
 
 local config = {
     shared = true,

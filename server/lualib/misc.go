@@ -165,7 +165,6 @@ func getCryptoRandomInt(min, max int64) (int64, error) {
 // The table is expected to be a Lua table object, and the Lua state parameter is used
 // to create new Lua function objects and add them to the table.
 func SetupMiscFunctions(table *lua.LTable, L *lua.LState) {
-	table.RawSetString(global.LuaFnCheckPasswordPolicy, L.NewFunction(validatePassword))
 	table.RawSetString(global.LuaFnGetCountryName, L.NewFunction(getCountryName))
 	table.RawSetString(global.LuaFnWaitRandom, L.NewFunction(waitRandom))
 }
@@ -217,19 +216,20 @@ func CleanupLTable(table *lua.LTable) {
 	})
 }
 
-// Loader takes a *lua.LState as input and initializes a new module by setting the functions from `exports`
+// LoaderModPassword takes a *lua.LState as input and initializes a new module by setting the functions from `exportsModPassword`
 // into a new lua.LTable. The module table is then pushed onto the top of the stack.
 // Finally, it returns 1 to indicate that one value has been returned to Lua.
-func Loader(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exports)
+func LoaderModPassword(L *lua.LState) int {
+	mod := L.SetFuncs(L.NewTable(), exportsModPassword)
 
 	L.Push(mod)
 
 	return 1
 }
 
-var exports = map[string]lua.LGFunction{
-	"compare_passwords": comparePasswords,
+var exportsModPassword = map[string]lua.LGFunction{
+	global.LuaFnComparePasswords:    comparePasswords,
+	global.LuaFnCheckPasswordPolicy: validatePassword,
 }
 
 // comparePasswords takes two strings, `hashPassword` and `plainPassword`, as input parameters.
