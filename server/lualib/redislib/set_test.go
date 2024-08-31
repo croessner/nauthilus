@@ -65,6 +65,8 @@ func TestRedisSAdd(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -84,17 +86,7 @@ func TestRedisSAdd(t *testing.T) {
 				valueStr += fmt.Sprintf(", %s", formatLuaValue(v))
 			}
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSAddFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSAdd)
-			if redisSAddFunction == nil {
-				t.Fatalf("Function nauthilus.redis_sadd does not exist")
-			}
-
-			err := L.DoString(fmt.Sprintf("result, err = nauthilus.redis_sadd(key%s)", valueStr))
+			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sadd(key%s)`, valueStr))
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -156,6 +148,8 @@ func TestRedisSIsMember(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -171,17 +165,7 @@ func TestRedisSIsMember(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("value", convert.GoToLuaValue(L, tt.value))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSIsMemberFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSIsMember)
-			if redisSIsMemberFunction == nil {
-				t.Fatalf("Function nauthilus.redis_sismember does not exist")
-			}
-
-			err := L.DoString(fmt.Sprintf("result, err = nauthilus.redis_sismember(key, value)"))
+			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sismember(key, value)`))
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -238,6 +222,8 @@ func TestRedisSMembers(t *testing.T) {
 	}
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -252,17 +238,7 @@ func TestRedisSMembers(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSMembersFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSMembers)
-			if redisSMembersFunction == nil {
-				t.Fatalf("Function nautilus.redis_smembers does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_smembers(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_smembers(key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -336,6 +312,8 @@ func TestRedisSRem(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -355,17 +333,7 @@ func TestRedisSRem(t *testing.T) {
 				valueStr += fmt.Sprintf(", %s", formatLuaValue(v))
 			}
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSRemFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSRem)
-			if redisSRemFunction == nil {
-				t.Fatalf("Function nauthilus.redis_srem does not exist")
-			}
-
-			err := L.DoString(fmt.Sprintf("result, err = nauthilus.redis_srem(key%s)", valueStr))
+			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_srem(key%s)`, valueStr))
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -423,6 +391,8 @@ func TestRedisSCard(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -437,17 +407,7 @@ func TestRedisSCard(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSCardFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSCard)
-			if redisSCardFunction == nil {
-				t.Fatalf("Function nauthilus.redis_scard does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_scard(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_scard(key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}

@@ -44,6 +44,8 @@ func TestRedisGet(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -59,17 +61,7 @@ func TestRedisGet(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("valueType", lua.LString(tt.valueType))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisGetFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisGet)
-			if redisGetFunction == nil {
-				t.Fatalf("Function nauthilus.redis_get does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_get(key, valueType)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_get(key, valueType)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -135,6 +127,8 @@ func TestRedisSet(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -151,17 +145,7 @@ func TestRedisSet(t *testing.T) {
 			L.SetGlobal("value", tt.value)
 			L.SetGlobal("expiration", lua.LNumber(tt.expiration))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisSetFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisSet)
-			if redisSetFunction == nil {
-				t.Fatalf("Function nauthilus.redis_set does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_set(key, value, expiration)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_set(key, value, expiration)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -223,6 +207,8 @@ func TestRedisExpire(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -238,17 +224,7 @@ func TestRedisExpire(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("expiration", tt.expiration)
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisExpireFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisExpire)
-			if redisExpireFunction == nil {
-				t.Fatalf("Function nauthilus.redis_expire does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_expire(key, expiration)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_expire(key, expiration)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -306,6 +282,8 @@ func TestRedisIncr(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -320,17 +298,7 @@ func TestRedisIncr(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisIncrFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisIncr)
-			if redisIncrFunction == nil {
-				t.Fatalf("Function nauthilus.redis_incr does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_incr(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_incr(key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -388,6 +356,8 @@ func TestRedisDel(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -402,17 +372,7 @@ func TestRedisDel(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisDelFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisDel)
-			if redisDelFunction == nil {
-				t.Fatalf("Function nauthilus.redis_del does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_del(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_del(key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -474,6 +434,8 @@ func TestRedisRename(t *testing.T) {
 
 	L := lua.NewState()
 
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -489,17 +451,7 @@ func TestRedisRename(t *testing.T) {
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
 			L.SetGlobal("newKey", lua.LString(tt.newKey))
 
-			globals := L.NewTable()
-
-			SetupRedisFunctions(globals, L)
-			L.SetGlobal(global.LuaDefaultTable, globals)
-
-			redisRenameFunction := L.GetGlobal(global.LuaDefaultTable).(*lua.LTable).RawGetString(global.LuaFnRedisRename)
-			if redisRenameFunction == nil {
-				t.Fatalf("Function nauthilus.redis_rename does not exist")
-			}
-
-			err := L.DoString(`result, err = nauthilus.redis_rename(oldKey, newKey)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_rename(oldKey, newKey)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}

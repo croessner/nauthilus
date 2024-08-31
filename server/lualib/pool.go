@@ -73,6 +73,7 @@ func NewLStateWithDefaultLibraries() *lua.LState {
 
 	libs.Preload(L)
 	gluacrypto.Preload(L)
+	RegisterLibraries(L)
 
 	return L
 }
