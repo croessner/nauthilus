@@ -18,21 +18,21 @@ function nauthilus_call_action(request)
         nauthilus_util.if_error_raise(err)
 
         -- Get result table
-        local rt = nauthilus.context_get("rt")
+        local rt = nauthilus_builtin.context_get("rt")
         if rt == nil then
             rt = {}
         end
         if nauthilus_util.is_table(rt) then
             rt.brute_force_haproxy = true
 
-            nauthilus.context_set("rt", rt)
+            nauthilus_builtin.context_set("rt", rt)
         end
     end
 
     -- Required by telegram.lua
-    nauthilus.context_set("haproxy", "ok")
+    nauthilus_builtin.context_set("haproxy", "ok")
 
-    nauthilus.custom_log_add("haproxy", "success")
+    nauthilus_builtin.custom_log_add("haproxy", "success")
 
-    return nauthilus.ACTION_RESULT_OK
+    return nauthilus_builtin.ACTION_RESULT_OK
 end

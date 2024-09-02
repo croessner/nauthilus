@@ -40,8 +40,8 @@ function nauthilus_run_callback(logging)
         end
     end
 
-    local header = nauthilus.get_http_request_header("Content-Type")
-    local body = nauthilus.get_http_request_body()
+    local header = nauthilus_builtin.get_http_request_header("Content-Type")
+    local body = nauthilus_builtin.get_http_request_body()
 
     if nauthilus_util.table_length(header) == 0 or header[1] ~= "application/json" then
         print_result("HTTP request header: Wrong 'Content-Type'")
@@ -109,11 +109,11 @@ function nauthilus_run_callback(logging)
                 result.cmd = "NOOP"
                 result.state = "client session refreshed"
 
-                local _, err_redis_expire = nauthilus.redis_expire(redis_key, 3600)
+                local _, err_redis_expire = nauthilus_builtin.redis_expire(redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
             else
                 -- Cleanup dovecot session
-                local deleted, err_redis_hdel = nauthilus.redis_hdel(redis_key, result.dovecot_session)
+                local deleted, err_redis_hdel = nauthilus_builtin.redis_hdel(redis_key, result.dovecot_session)
                 if err_redis_hdel then
                     result.remove_dovecot_session_status = err_redis_hdel
                 else

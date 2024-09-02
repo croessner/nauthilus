@@ -32,13 +32,13 @@ function nauthilus_call_filter(request)
     end
 
     if skip_and_accept_filter then
-        nauthilus.remove_from_backend_result({ "Proxy-Host" })
+        nauthilus_builtin.remove_from_backend_result({ "Proxy-Host" })
 
-        return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     local function get_dovecot_session()
-        local header = nauthilus.get_http_request_header("X-Dovecot-Session")
+        local header = nauthilus_builtin.get_http_request_header("X-Dovecot-Session")
         if nauthilus_util.table_length(header) == 1 then
             return header[1]
         end
@@ -50,7 +50,7 @@ function nauthilus_call_filter(request)
         local length, err_redis_hlen = nauthilus_redis.redis_hlen(redis_key)
         if err_redis_hlen then
             if err_redis_hlen ~= "redis: nil" then
-                nauthilus.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
+                nauthilus_builtin.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
             end
         else
             if length == 1 then
@@ -69,13 +69,13 @@ function nauthilus_call_filter(request)
 
         local _, err_redis_hset = nauthilus_redis.redis_hset(redis_key, session, server)
         if err_redis_hset then
-            nauthilus.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
+            nauthilus_builtin.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
 
             return
         end
 
         set_initial_expiry(redis_key)
-        nauthilus.custom_log_add(N .. "_dovecot_session", session)
+        nauthilus_builtin.custom_log_add(N .. "_dovecot_session", session)
     end
 
     local function get_server_from_sessions(session)
@@ -84,7 +84,7 @@ function nauthilus_call_filter(request)
         local server_from_session, err_redis_hget = nauthilus_redis.redis_hget(redis_key, session)
         if err_redis_hget then
             if err_redis_hget ~= "redis: nil" then
-                nauthilus.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
+                nauthilus_builtin.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
             end
 
             return nil
@@ -97,7 +97,7 @@ function nauthilus_call_filter(request)
         local all_sessions, err_redis_hgetall = nauthilus_redis.redis_hgetall(redis_key)
         if err_redis_hgetall then
             if err_redis_hgetall ~= "redis: nil" then
-                nauthilus.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
+                nauthilus_builtin.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)
             end
 
             return nil
@@ -114,7 +114,7 @@ function nauthilus_call_filter(request)
     if request.authenticated and not request.no_auth then
         local num_of_bs = 0
 
-        local backend_servers = nauthilus.get_backend_servers()
+        local backend_servers = nauthilus_builtin.get_backend_servers()
         if nauthilus_util.is_table(backend_servers) then
             num_of_bs = nauthilus_util.table_length(backend_servers)
 
@@ -132,7 +132,7 @@ function nauthilus_call_filter(request)
             if num_of_bs > 0 then
                 local attributes = {}
 
-                local b = backend_result.new()
+                local b = nauthilus_backend_result.new()
 
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
@@ -141,10 +141,10 @@ function nauthilus_call_filter(request)
                         attributes["Proxy-Host"] = server_ip
 
                         add_session(session, server_ip)
-                        nauthilus.custom_log_add(N .. "_backend_server_current", server_ip)
+                        nauthilus_builtin.custom_log_add(N .. "_backend_server_current", server_ip)
 
                         b:attributes(attributes)
-                        nauthilus.apply_backend_result(b)
+                        nauthilus_builtin.apply_backend_result(b)
 
                         break
                     end
@@ -156,26 +156,26 @@ function nauthilus_call_filter(request)
                     attributes["Proxy-Host"] = new_server_ip
 
                     add_session(session, new_server_ip)
-                    nauthilus.custom_log_add(N .. "_backend_server_new", new_server_ip)
+                    nauthilus_builtin.custom_log_add(N .. "_backend_server_new", new_server_ip)
 
                     b:attributes(attributes)
-                    nauthilus.apply_backend_result(b)
+                    nauthilus_builtin.apply_backend_result(b)
                 end
             end
         end
 
         if num_of_bs == 0 then
-            nauthilus.custom_log_add(N .. "_backend_server", "failed")
-            nauthilus.status_message_set("No backend servers are available")
+            nauthilus_builtin.custom_log_add(N .. "_backend_server", "failed")
+            nauthilus_builtin.status_message_set("No backend servers are available")
 
-            return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
+            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         else
-            nauthilus.custom_log_add(N .. "_backend_server", "success")
+            nauthilus_builtin.custom_log_add(N .. "_backend_server", "success")
         end
 
-        return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- Anything else must be a rejected request
-    return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
+    return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
 end

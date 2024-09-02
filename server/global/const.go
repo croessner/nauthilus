@@ -901,7 +901,7 @@ const SamePasswordsDifferentAccountLimit = 5
 const LuaMaxExecutionTime = 120
 
 // LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
-const LuaBackendResultTypeName = "backend_result"
+const LuaBackendResultTypeName = "nauthilus_backend_result"
 
 // LuaPackagePath represents the path to search for Lua modules.
 const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
@@ -939,11 +939,17 @@ const (
 	// LuaFnBackendAddTOTPSecret represents the function name for "nauthilus_backend_add_totp" in Lua
 	LuaFnBackendAddTOTPSecret = "nauthilus_backend_add_totp"
 
+	// LuaModMail represents the module name for "nauthilus_mail" in Lua
+	LuaModMail = "nauthilus_mail"
+
 	// LuaModPassword represents the module name for "nauthilus_password" in Lua
 	LuaModPassword = "nauthilus_password"
 
 	// LuaModRedis is the constant representing the module name "nauthilus_redis" in Lua.
 	LuaModRedis = "nauthilus_redis"
+
+	// LuaModMisc is the constant representing the module "nauthilus_misc" in Lua.
+	LuaModMisc = "nauthilus_misc"
 
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
@@ -1064,7 +1070,7 @@ const (
 
 const (
 	// LuaDefaultTable represents the default table name in Lua
-	LuaDefaultTable = "nauthilus"
+	LuaDefaultTable = "nauthilus_builtin"
 
 	// LuaSuccess represents the success status in Lua
 	LuaSuccess = "success"

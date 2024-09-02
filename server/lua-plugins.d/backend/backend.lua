@@ -17,9 +17,9 @@
 ]]--
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_password = require("nauthilus_password")
 
 local db = require("db")
-local pw = require("nauthilus_password")
 
 local config = {
     shared = true,
@@ -28,7 +28,7 @@ local config = {
 }
 
 function nauthilus_backend_verify_password(request)
-    local b = backend_result.new()
+    local b = nauthilus_backend_result.new()
 
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
     nauthilus_util.if_error_raise(err_open)
@@ -59,7 +59,7 @@ function nauthilus_backend_verify_password(request)
             if name == "password" then
                 if not request.no_auth then
                     -- The example assumes crypted passwords in the database.
-                    local match, err = pw.compare_passwords(row[id], request.password)
+                    local match, err = nauthilus_password.compare_passwords(row[id], request.password)
                     nauthilus_util.if_error_raise(err)
 
                     b:authenticated(match)
@@ -96,9 +96,9 @@ function nauthilus_backend_verify_password(request)
 
     b:attributes(attributes)
 
-    nauthilus.custom_log_add("backend_lua", "success")
+    nauthilus_builtin.custom_log_add("backend_lua", "success")
 
-    return nauthilus.BACKEND_RESULT_OK, b
+    return nauthilus_builtin.BACKEND_RESULT_OK, b
 end
 
 function nauthilus_backend_list_accounts()
@@ -116,7 +116,7 @@ function nauthilus_backend_list_accounts()
         end
     end
 
-    return nauthilus.BACKEND_RESULT_OK, accounts
+    return nauthilus_builtin.BACKEND_RESULT_OK, accounts
 end
 
 function nauthilus_backend_add_totp(request)
@@ -126,5 +126,5 @@ function nauthilus_backend_add_totp(request)
     local _, err_exec = mysql:exec("UPDATE nauthilus SET totp_secret=\"" .. request.totp_secret .. "\" WHERE username=\"" .. request.username .. "\";")
     nauthilus_util.if_error_raise(err_exec)
 
-    return nauthilus.BACKEND_RESULT_OK
+    return nauthilus_builtin.BACKEND_RESULT_OK
 end
