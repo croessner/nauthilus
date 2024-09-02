@@ -114,10 +114,13 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	L := LuaPool.Get()
 
 	defer LuaPool.Put(L)
+	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
 	L.SetContext(luaCtx)
 
 	defer luaCancel()
+
+	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(luaRequest.Context))
 
 	globals := setupGlobals(luaRequest, L, logs)
 	request := L.NewTable()
@@ -155,8 +158,6 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(luaRequest.HTTPClientContext.Request)))
-
-	lualib.SetupContextFunctions(luaRequest.Context, globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(LuaLDAPSearch(luaRequest.HTTPClientContext)))

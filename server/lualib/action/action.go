@@ -213,6 +213,8 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
 
+	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(aw.luaActionRequest.Context))
+
 	logs := new(lualib.CustomLogKeyValue)
 	globals := aw.setupGlobals(L, logs, httpRequest)
 	request := aw.setupRequest(L)
@@ -250,8 +252,6 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(httpRequest)))
-
-	lualib.SetupContextFunctions(aw.luaActionRequest.Context, globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(context.Background())))

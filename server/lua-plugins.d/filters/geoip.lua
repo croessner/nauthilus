@@ -1,4 +1,5 @@
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_context = require("nauthilus_context")
 
 local http = require("http")
 local json = require("json")
@@ -91,23 +92,23 @@ function nauthilus_call_filter(request)
                         end
                     end
 
-                    nauthilus_builtin.context_set(N .. "_iso_codes_seen", result_iso_codes)
+                    nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
                 end
             end
 
             if not response.result then
-                nauthilus_builtin.context_set(N, "ok")
+                nauthilus_context.context_set(N, "ok")
                 nauthilus_builtin.custom_log_add(N, "blocked")
 
                 -- Get result table
-                local rt = nauthilus_builtin.context_get("rt")
+                local rt = nauthilus_context.context_get("rt")
                 if rt == nil then
                     rt = {}
                 end
                 if nauthilus_util.is_table(rt) then
                     rt.filter_geoippolicyd = true
 
-                    nauthilus_builtin.context_set("rt", rt)
+                    nauthilus_context.context_set("rt", rt)
                 end
 
                 return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
@@ -116,7 +117,7 @@ function nauthilus_call_filter(request)
             return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
 
-        nauthilus_builtin.context_set(N, "ok")
+        nauthilus_context.context_set(N, "ok")
         nauthilus_builtin.custom_log_add(N, "success")
     else
         -- We must restore a failed authentication flag!

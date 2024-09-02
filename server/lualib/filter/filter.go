@@ -373,8 +373,6 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
-	lualib.SetupContextFunctions(r.Context, globals, L)
-
 	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
 		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
 		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
@@ -547,6 +545,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	defer LuaFilters.Mu.RUnlock()
 
 	L := LuaPool.Get()
+
+	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
 
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
