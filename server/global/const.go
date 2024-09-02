@@ -965,6 +965,9 @@ const (
 	// LuaModBackend is a constant that holds the name of the Lua module for the Nauthilus backend.
 	LuaModBackend = "nauthilus_backend"
 
+	// LuaModHTTPRequest is a constant representing the value "nauthilus_http_request".
+	LuaModHTTPRequest = "nauthilus_http_request"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 

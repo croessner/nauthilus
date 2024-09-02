@@ -1,6 +1,8 @@
 package lualib
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"strings"
 
@@ -127,6 +129,28 @@ type CommonRequest struct {
 
 	// XSSLCipher is the encryption cipher used in the SSL protocol.
 	XSSLCipher string
+}
+
+// LoaderModHTTPRequest is a function that returns a LGFunction which sets up a Lua module for handling HTTP requests.
+// The module creates Lua functions that can be used to retrieve HTTP request headers and body.
+//
+// Parameters:
+// - httpRequest: A pointer to the http.Request object.
+//
+// Returns:
+// - A LGFunction that creates the Lua module and sets up the Lua functions.
+func LoaderModHTTPRequest(httpRequest *http.Request) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeaders(httpRequest),
+			global.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeader(httpRequest),
+			global.LuaFnGetHTTPRequestBody:       GetHTTPRequestBody(httpRequest),
+		})
+
+		L.Push(mod)
+
+		return 1
+	}
 }
 
 // SetupRequest sets up the request object with the common request properties
@@ -259,6 +283,30 @@ func GetHTTPRequestHeader(httpRequest *http.Request) lua.LGFunction {
 		}
 
 		L.Push(headerValueTable)
+
+		return 1
+	}
+}
+
+// GetHTTPRequestBody reads the HTTP request body and returns it as a Lua string.
+// The function expects one parameter: the HTTP request object.
+// It returns the request body as a Lua string.
+// If an error occurs, it raises a Lua error with the error message and returns 0.
+// The read request body is then assigned back to the request's body for the next handler.
+func GetHTTPRequestBody(httpRequest *http.Request) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Read the HTTP body
+		bodyBytes, err := io.ReadAll(httpRequest.Body)
+		if err != nil {
+			L.RaiseError("failed to read request body: %v", err)
+
+			return 0
+		}
+
+		// Make sure the body is readable for the next handler...
+		httpRequest.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		L.Push(lua.LString(bodyBytes))
 
 		return 1
 	}

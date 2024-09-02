@@ -1,8 +1,6 @@
 package lualib
 
 import (
-	"sync"
-
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/yuin/gopher-lua"
@@ -42,34 +40,9 @@ type LuaBackendResult struct {
 	Logs *CustomLogKeyValue
 }
 
-// LuaBackendResultStatePool embeds the LuaStatePool type.
-// It provides methods for retrieving, returning, and shutting down Lua states.
-type LuaBackendResultStatePool struct {
-	*LuaStatePool
-}
-
-// NewLuaBackendResultStatePool creates a new instance of LuaBackendResultStatePool that implements the LuaBaseStatePool
-// interface. It initializes a LuaStatePool with a New function
-func NewLuaBackendResultStatePool(methods ...string) LuaBaseStatePool {
-	lp := &LuaStatePool{
-		New: func() *lua.LState {
-			L := NewLStateWithDefaultLibraries()
-
-			registerBackendResultType(L, methods...)
-
-			return L
-		},
-		MaxStates: global.MaxLuaStatePoolSize,
-	}
-
-	lp.Cond = sync.Cond{L: &lp.Mu}
-
-	return &LuaBackendResultStatePool{lp.InitializeStatePool()}
-}
-
-// registerBackendResultType registers the Lua type "backend_result" in the given Lua state.
+// RegisterBackendResultType registers the Lua type "nauthilus_backend_result" in the given Lua state.
 // It sets the type metatable with the given name and creates the necessary static attributes and methods.
-func registerBackendResultType(L *lua.LState, methods ...string) {
+func RegisterBackendResultType(L *lua.LState, methods ...string) {
 	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
 
 	L.SetGlobal(global.LuaBackendResultTypeName, mt)

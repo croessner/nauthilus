@@ -1,5 +1,6 @@
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_http_request = require("nauthilus_http_request")
 
 local crypto = require("crypto")
 local json = require("json")
@@ -41,8 +42,8 @@ function nauthilus_run_callback(logging)
         end
     end
 
-    local header = nauthilus_builtin.get_http_request_header("Content-Type")
-    local body = nauthilus_builtin.get_http_request_body()
+    local header = nauthilus_http_request.get_http_request_header("Content-Type")
+    local body = nauthilus_http_request.get_http_request_body()
 
     if nauthilus_util.table_length(header) == 0 or header[1] ~= "application/json" then
         print_result("HTTP request header: Wrong 'Content-Type'")

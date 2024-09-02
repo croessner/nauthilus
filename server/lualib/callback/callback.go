@@ -1,10 +1,7 @@
 package callback
 
 import (
-	"bytes"
 	"context"
-	"io"
-	"net/http"
 	"sync"
 	"time"
 
@@ -19,15 +16,6 @@ import (
 )
 
 var (
-
-	// luaPool represents a variable of type LuaBaseStatePool that holds a pool of Lua state instances.
-	// It is created using the NewLuaStatePool function from the lualib package.
-	// The pool allows safe concurrent access to the Lua states and provides methods for retrieving and returning states,
-	// as well as shutting down the pool and logging pool statistics.
-	// Example usage:
-	//   luaPool := lualib.NewLuaStatePool()
-	luaPool = lualib.NewLuaStatePool()
-
 	// LuaCallback represents a variable that holds a precompiled Lua script and allows safe concurrent access to the script.
 	LuaCallback *PreCompiledLuaCallback
 )
@@ -186,30 +174,6 @@ func PreCompileLuaCallback() (err error) {
 	return nil
 }
 
-// getHTTPRequestBody reads the HTTP request body and returns it as a Lua string.
-// The function expects one parameter: the HTTP request object.
-// It returns the request body as a Lua string.
-// If an error occurs, it raises a Lua error with the error message and returns 0.
-// The read request body is then assigned back to the request's body for the next handler.
-func getHTTPRequestBody(httpRequest *http.Request) lua.LGFunction {
-	return func(L *lua.LState) int {
-		// Read the HTTP body
-		bodyBytes, err := io.ReadAll(httpRequest.Body)
-		if err != nil {
-			L.RaiseError("failed to read request body: %v", err)
-
-			return 0
-		}
-
-		// Make sure the body is readable for the next handler...
-		httpRequest.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-		L.Push(lua.LString(bodyBytes))
-
-		return 1
-	}
-}
-
 // setupLogging creates a Lua table and sets up the "log_format" and "log_level" global variables based on the
 // configuration settings in the LoadableConfig.Server.Log.JSON and LoadableConfig.Server.Log.Level.Get values.
 // It returns the created Lua table.
@@ -235,40 +199,6 @@ func setupLogging(L *lua.LState) *lua.LTable {
 	return logTable
 }
 
-// setupGlobals creates a Lua table and sets up global variables for the Lua state.
-// The global variables represent various Redis and HTTP request functions that can be called from Lua.
-// The function expects two parameters: ctx *gin.Context, L *lua.LState.
-// It returns a pointer to the Lua table that contains the global variables.
-//
-// The global variables are set using the `RawSetString` method of the Lua table.
-// The key is a constant representing the function name, and the value is a new Lua function.
-//
-// The global Redis functions are:
-// - "redis_get_str": lualib.RedisGet
-// - "redis_set_str": lualib.RedisSet
-// - "redis_incr": lualib.RedisIncr
-// - "redis_del": lualib.RedisDel
-// - "redis_expire": lualib.RedisExpire
-//
-// The global HTTP request functions are:
-// - "get_all_http_request_headers": lualib.GetAllHTTPRequestHeaders(ctx.Request)
-// - "get_http_request_body": getHTTPRequestBody(ctx.Request)
-//
-// The Lua table is then set as a global variable using the `SetGlobal` method of the Lua state.
-//
-// Finally, the Lua table is returned.
-func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
-	globals := L.NewTable()
-
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
-
-	L.SetGlobal(global.LuaDefaultTable, globals)
-
-	return globals
-}
-
 // RunCallbackLuaRequest is a function that runs a Lua callback request in a Gin context.
 // It creates a new context with a specified timeout taken from the "lua_script_timeout" configuration.
 // The function fetches a Lua State object from a pool of Lua states and ensures its safe return to the pool upon completion.
@@ -285,22 +215,19 @@ func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
-	L := luaPool.Get()
-
-	defer luaPool.Put(L)
-
-	L.SetContext(luaCtx)
-
 	defer luaCancel()
 
+	L := lua.NewState()
+
+	defer L.Close()
+
+	lualib.RegisterLibraries(L)
+	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
+	L.SetContext(luaCtx)
+
 	logTable := setupLogging(L)
-	globals := setupGlobals(ctx, L)
 
 	err = executeAndHandleError(LuaCallback.GetPrecompiledScript(), logTable, L)
-
-	lualib.CleanupLTable(globals)
-
-	globals = nil
 
 	return
 }

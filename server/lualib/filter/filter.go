@@ -25,11 +25,6 @@ import (
 // It allows faster access and execution of frequently used scripts.
 var LuaFilters *PreCompiledLuaFilters
 
-// LuaPool is a pool of Lua state instances.
-var LuaPool = lualib.NewLuaBackendResultStatePool(
-	global.LuaBackendResultAttributes,
-)
-
 // LoaderModBackend is a higher-order function that takes a pointer to a Request struct as a parameter.
 // It returns a Lua LGFunction.
 // The returned LGFunction creates a new Lua table and populates it with Lua functions.
@@ -364,27 +359,14 @@ func removeFromBackendResult(attributes *[]string) lua.LGFunction {
 	}
 }
 
-// setGlobals is a function that initializes a set of global variables in the provided lua.LState.
-// The globals are set using the provided context (r) and lua table (globals).
-// The following lua variables are set:
-//   - FILTER_ACCEPT: a boolean flag set to false
-//   - FILTER_REJECT: a boolean flag set to true
-//   - FILTER_RESULT_OK: a number set to 0
-//   - FILTER_RESULT_FAIL: a number set to 1
-//
-// Further, functions related to Context and Logging are also set as lua functions in the globals table.
-//
-// Params:
-//
-//		r *Request : The request context which includes logs and other context specific data
-//		L *lua.LState : The lua state onto which the globals are being set
-//	 httpRequest *http.Request : A pointer to http.Request to deliver all HTTP headers to Lua scripts
-//	 backendResult **lualib.LuaBackendResult : Double pointer to a lualib.BackendResult to change attributes
-//
-// Returns:
-//
-//	A new request table
-func setGlobals(ctx *gin.Context, r *Request, L *lua.LState) *lua.LTable {
+// setGlobals sets up the necessary global variables in the Lua state.
+// It initializes the global table 'globals' and adds key-value pairs to it.
+// It adds keys representing filter accept, filter reject, filter result ok,
+// and filter result fail, with their respective values.
+// It adds Lua functions 'custom_log_add' and 'status_message_set' to the global table,
+// along with their corresponding implementations.
+// Finally, it sets the global variable 'nauthilus_builtin' to the 'globals' table.
+func setGlobals(r *Request, L *lua.LState) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -396,12 +378,8 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState) *lua.LTable {
 
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
-
-	return globals
 }
 
 // setRequest constructs a new lua.LTable and assigns fields based on the supplied Request struct 'r'.
@@ -560,9 +538,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer LuaFilters.Mu.RUnlock()
 
-	L := LuaPool.Get()
+	L := lua.NewState()
 
+	defer L.Close()
+
+	lualib.RegisterLibraries(L)
+	lualib.RegisterBackendResultType(L, global.LuaBackendResultAttributes)
 	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
+	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
@@ -572,10 +555,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		L.PreloadModule(global.LuaModBackend, LoaderModBackend(r, &backendResult, &removeAttributes))
 	}
 
-	defer LuaPool.Put(L)
-	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
+	setGlobals(r, L)
 
-	globals := setGlobals(ctx, r, L)
 	request := setRequest(r, L)
 
 	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
@@ -612,12 +593,6 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	backendResult = mergedBackendResult
 	removeAttributes = mergedRemoveAttributes.GetStringSlice()
-
-	lualib.CleanupLTable(request)
-	lualib.CleanupLTable(globals)
-
-	request = nil
-	globals = nil
 
 	return
 }

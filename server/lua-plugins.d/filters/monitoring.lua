@@ -1,6 +1,7 @@
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_backend = require("nauthilus_backend")
+local nauthilus_http_request = require("nauthilus_http_request")
 
 local crypto = require("crypto")
 
@@ -39,7 +40,7 @@ function nauthilus_call_filter(request)
     end
 
     local function get_dovecot_session()
-        local header = nauthilus_builtin.get_http_request_header("X-Dovecot-Session")
+        local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
         if nauthilus_util.table_length(header) == 1 then
             return header[1]
         end

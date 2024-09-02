@@ -24,18 +24,6 @@ var LuaRequestChan chan *LuaRequest
 // LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
 var LuaMainWorkerEndChan chan Done
 
-// LuaPool is a pool of Lua state instances.
-var LuaPool = lualib.NewLuaBackendResultStatePool(
-	global.LuaBackendResultAuthenticated,
-	global.LuaBackendResultUserFound,
-	global.LuaBackendResultAccountField,
-	global.LuaBackendResultTOTPSecretField,
-	global.LuaBackendResultTOTPRecoveryField,
-	global.LuaBAckendResultUniqueUserIDField,
-	global.LuaBackendResultDisplayNameField,
-	global.LuaBackendResultAttributes,
-)
-
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
 type LuaRequest struct {
@@ -114,14 +102,15 @@ func LuaMainWorker(ctx context.Context) {
 	}
 }
 
-// handleLuaRequest handles a Lua request by executing the compiled script and handling any errors.
-// It registers libraries and globals, sets Lua request parameters, and calls the Lua command function.
-// It then handles the specific return types based on the Lua request function.
+// handleLuaRequest is a function that handles a Lua request. It takes a context, a LuaRequest object, and a compiled Lua script as parameters.
+// It sets up the Lua state, registers libraries, and preloads modules. It sets up global variables and creates a Lua table for the request.
+// It sets the Lua request parameters based on the LuaRequest object and the Lua table. Then it executes the Lua script and handles any errors.
+// Finally, it handles the specific return types based on the result of the Lua script execution.
 //
 // Parameters:
+// - ctx: The context.Context object.
 // - luaRequest: The LuaRequest object containing the request parameters.
-// - ctx: The Context object.
-// - compiledScript: The compiled Lua script function.
+// - compiledScript: The compiled Lua script.
 //
 // Returns: None.
 func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScript *lua.FunctionProto) {
@@ -133,32 +122,40 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	logs := new(lualib.CustomLogKeyValue)
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
-	L := LuaPool.Get()
-
-	defer LuaPool.Put(L)
-	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
-
-	L.SetContext(luaCtx)
-
 	defer luaCancel()
 
+	L := lua.NewState()
+
+	defer L.Close()
+
+	L.SetContext(luaCtx)
+	lualib.RegisterLibraries(L)
 	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(luaRequest.Context))
+	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
+
+	lualib.RegisterBackendResultType(
+		L,
+		global.LuaBackendResultAuthenticated,
+		global.LuaBackendResultUserFound,
+		global.LuaBackendResultAccountField,
+		global.LuaBackendResultTOTPSecretField,
+		global.LuaBackendResultTOTPRecoveryField,
+		global.LuaBAckendResultUniqueUserIDField,
+		global.LuaBackendResultDisplayNameField,
+		global.LuaBackendResultAttributes,
+	)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		L.PreloadModule(global.LuaModLDAP, LoaderModLDAP(ctx))
 	}
 
-	globals := setupGlobals(luaRequest, L, logs)
+	setupGlobals(luaRequest, L, logs)
+
 	request := L.NewTable()
 
 	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
 
 	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
-
-	lualib.CleanupLTable(globals)
-
-	request = nil
-	globals = nil
 
 	// Handle the specific return types
 	if err == nil {
@@ -166,15 +163,17 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	}
 }
 
-// setupGlobals registers global variables and functions used in Lua scripts.
-// Registers the backend result types LuaBackendResultOk and LuaBackendResultFail with global variables 0 and 1 respectively.
-// Registers the lua function ctx.Set with name "context_set" which sets a value in the LuaRequest.Context.
-// Registers the lua function ctx.Get with name "context_get" which retrieves a value from the LuaRequest.Context.
-// Registers the lua function ctx.Delete with name "context_delete" which deletes a value from the LuaRequest.Context.
-// Registers the lua function AddCustomLog with name "custom_log_add" which adds a custom log entry to the LuaRequest.Logs.
-// The registered global table is assigned to the global variable LuaDefaultTable.
-// The generated table is returned from the function.
-func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) *lua.LTable {
+// setupGlobals sets up global variables for the Lua state. It creates a new Lua table to hold the global variables,
+// and assigns values to the predefined global variables. It also registers Lua functions for custom log addition and
+// setting the status message. Finally, it sets the global table in the Lua state.
+//
+// Parameters:
+// - luaRequest: The LuaRequest object containing the request parameters.
+// - L: The Lua state.
+// - logs: The custom log key-value pairs.
+//
+// Returns: None.
+func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
@@ -182,12 +181,8 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(luaRequest.HTTPClientContext.Request)))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
-
-	return globals
 }
 
 // setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
@@ -255,8 +250,6 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 	}, request); err != nil {
 		processError(err, luaRequest, logs)
 	}
-
-	lualib.CleanupLTable(request)
 
 	return err
 }
