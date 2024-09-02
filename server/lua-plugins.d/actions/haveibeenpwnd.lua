@@ -1,6 +1,7 @@
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_mail = require("nauthilus_mail")
+local nauthilus_misc = require("nauthilus_misc")
 
 local http = require("http")
 local crypto = require('crypto')
@@ -32,7 +33,7 @@ Postmaster
 
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
-        nauthilus.wait_random(500, 3000)
+        nauthilus_misc.wait_random(500, 3000)
 
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))

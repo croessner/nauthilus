@@ -16,6 +16,47 @@ import (
 	"github.com/yuin/gopher-lua/parse"
 )
 
+// exportsModMisc is a variable of type map[string]lua.LGFunction that holds the mappings
+// between Lua function names and their corresponding Go implementations.
+// It contains two key-value pairs:
+// 1. Key: global.LuaFnGetCountryName, Value: getCountryName
+// 2. Key: global.LuaFnWaitRandom, Value: waitRandom
+var exportsModMisc = map[string]lua.LGFunction{
+	global.LuaFnGetCountryName: getCountryName,
+	global.LuaFnWaitRandom:     waitRandom,
+}
+
+var exportsModPassword = map[string]lua.LGFunction{
+	global.LuaFnComparePasswords:    comparePasswords,
+	global.LuaFnCheckPasswordPolicy: validatePassword,
+}
+
+// LoaderModMisc initializes a new module for the "nauthilus_misc" module in Lua.
+// It sets the functions from the "exportsModMisc" map into a new lua.LTable.
+// The module table is then pushed onto the top of the stack.
+// Finally, it returns 1 to indicate that one value has been returned to Lua.
+func LoaderModMisc(L *lua.LState) int {
+	mod := L.SetFuncs(L.NewTable(), exportsModMisc)
+
+	L.Push(mod)
+
+	return 1
+}
+
+// LoaderModPassword takes a *lua.LState as input and initializes a new module by setting the functions from `exportsModPassword`
+// into a new lua.LTable. The module table is then pushed onto the top of the stack.
+// Finally, it returns 1 to indicate that one value has been returned to Lua.
+func LoaderModPassword(L *lua.LState) int {
+	mod := L.SetFuncs(L.NewTable(), exportsModPassword)
+
+	L.Push(mod)
+
+	return 1
+}
+
+// toInt converts the given Lua value to an integer.
+// If the value is a Lua number, it is converted to an integer and returned.
+// If the value is not a Lua number, 0 is returned.
 func toInt(lv lua.LValue) int {
 	if num, ok := lv.(lua.LNumber); ok {
 		return int(num)
@@ -159,16 +200,6 @@ func getCryptoRandomInt(min, max int64) (int64, error) {
 	return nBig.Int64() + min, nil
 }
 
-// SetupMiscFunctions sets up miscellaneous Lua functions in the given Lua table.
-// It adds the Lua functions "check_password_policy", "get_country_name", and "wait_random"
-// to the table, using the respective function implementations as callbacks.
-// The table is expected to be a Lua table object, and the Lua state parameter is used
-// to create new Lua function objects and add them to the table.
-func SetupMiscFunctions(table *lua.LTable, L *lua.LState) {
-	table.RawSetString(global.LuaFnGetCountryName, L.NewFunction(getCountryName))
-	table.RawSetString(global.LuaFnWaitRandom, L.NewFunction(waitRandom))
-}
-
 // CompileLua reads the passed lua file from disk and compiles it.
 func CompileLua(filePath string) (*lua.FunctionProto, error) {
 	file, err := os.Open(filePath)
@@ -214,22 +245,6 @@ func CleanupLTable(table *lua.LTable) {
 	table.ForEach(func(key lua.LValue, value lua.LValue) {
 		table.RawSet(key, lua.LNil)
 	})
-}
-
-// LoaderModPassword takes a *lua.LState as input and initializes a new module by setting the functions from `exportsModPassword`
-// into a new lua.LTable. The module table is then pushed onto the top of the stack.
-// Finally, it returns 1 to indicate that one value has been returned to Lua.
-func LoaderModPassword(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModPassword)
-
-	L.Push(mod)
-
-	return 1
-}
-
-var exportsModPassword = map[string]lua.LGFunction{
-	global.LuaFnComparePasswords:    comparePasswords,
-	global.LuaFnCheckPasswordPolicy: validatePassword,
 }
 
 // comparePasswords takes two strings, `hashPassword` and `plainPassword`, as input parameters.

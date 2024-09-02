@@ -948,6 +948,9 @@ const (
 	// LuaModRedis is the constant representing the module name "nauthilus_redis" in Lua.
 	LuaModRedis = "nauthilus_redis"
 
+	// LuaModMisc is the constant representing the module "nauthilus_misc" in Lua.
+	LuaModMisc = "nauthilus_misc"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 

@@ -218,7 +218,6 @@ func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
 	lualib.SetupContextFunctions(r.Context, globals, L)
-	lualib.SetupMiscFunctions(globals, L)
 
 	if config.LoadableConfig.HaveLDAPBackend() {
 		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(ctx)))
