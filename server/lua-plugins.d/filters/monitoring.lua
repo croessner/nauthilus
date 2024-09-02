@@ -132,7 +132,7 @@ function nauthilus_call_filter(request)
             if num_of_bs > 0 then
                 local attributes = {}
 
-                local b = backend_result.new()
+                local b = nauthilus_backend_result.new()
 
                 for _, server in ipairs(backend_servers) do
                     new_server_ip = server.ip
