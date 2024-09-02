@@ -261,19 +261,6 @@ func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contex
 	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
 
-// terminateLuaStatePools shuts down the Lua state pools used by various modules.
-// It calls the Shutdown method on each pool to gracefully terminate all active Lua states.
-// This function should be called before exiting the application to ensure proper cleanup of resources.
-// Example usage:
-//
-//	terminateLuaStatePools()
-func terminateLuaStatePools() {
-	filter.LuaPool.Shutdown()
-	feature.LuaPool.Shutdown()
-	action.LuaPool.Shutdown()
-	backend.LuaPool.Shutdown()
-}
-
 // closeChannels closes the HTTPEndChan and WorkerEndChan channels.
 func closeChannels() {
 	close(core.HTTPEndChan)
@@ -327,7 +314,6 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 
 	level.Debug(log.Logger).Log(global.LogKeyMsg, "Shutdown complete")
 
-	terminateLuaStatePools()
 	closeChannels()
 
 	statsTicker.Stop()
@@ -739,15 +725,6 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 	go core.HTTPApp(store.server.ctx)
 }
 
-// logLuaStatePoolDebug logs the statistics of different Lua state pools.
-// It calls the LogStatistics function of each Lua state pool.
-func logLuaStatePoolDebug() {
-	feature.LuaPool.LogStatistics("feature")
-	backend.LuaPool.LogStatistics("backend")
-	filter.LuaPool.LogStatistics("filter")
-	action.LuaPool.LogStatistics("action")
-}
-
 // startStatsLoop runs a continuous loop that periodically executes core.PrintStats(), core.SaveStatsToRedis(), and logLuaStatePoolDebug().
 // It uses a ticker to determine the interval between executions. The loop continues executing until the done channel receives a value.
 //
@@ -775,8 +752,6 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 		case <-ticker.C:
 			stats.PrintStats()
 			core.SaveStatsToRedis()
-
-			logLuaStatePoolDebug()
 		case <-ctx.Done():
 			return ctx.Err()
 		}

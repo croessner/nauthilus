@@ -24,9 +24,6 @@ var (
 	RequestChan chan *Action
 )
 
-// LuaPool is a pool of Lua state instances.
-var LuaPool = lualib.NewLuaStatePool()
-
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
 
@@ -63,7 +60,7 @@ type Action struct {
 // Worker struct holds the data required for a worker process.
 type Worker struct {
 	// ctx is a pointer to a Context object used for managing and carrying context deadlines, cancel signals, and other request-scoped values across API boundaries and between processes.
-	ctx *context.Context
+	ctx context.Context
 
 	// luaActionRequest is a pointer to an Action. This specifies the action to be performed by the Lua scripting environment.
 	luaActionRequest *Action
@@ -100,7 +97,7 @@ func NewWorker() *Worker {
 // If a request is received, it handles the request by running the corresponding script.
 // If the context is cancelled, it sends a WorkerEndChan signal to indicate that the worker has ended.
 func (aw *Worker) Work(ctx context.Context) {
-	aw.ctx = &ctx
+	aw.ctx = ctx
 
 	if !config.LoadableConfig.HaveLuaActions() {
 		return
@@ -208,36 +205,41 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	L := LuaPool.Get()
+	L := lua.NewState()
 
-	defer LuaPool.Put(L)
-	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
+	defer L.Close()
+
+	lualib.RegisterLibraries(L)
+	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(aw.luaActionRequest.Context))
+	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(httpRequest))
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
+	}
 
 	logs := new(lualib.CustomLogKeyValue)
-	globals := aw.setupGlobals(L, logs, httpRequest)
+
+	aw.setupGlobals(L, logs)
+
 	request := aw.setupRequest(L)
 
 	for index := range aw.actionScripts {
-		if aw.actionScripts[index].LuaAction == aw.luaActionRequest.LuaAction && !errors.Is((*aw.ctx).Err(), context.Canceled) {
+		if aw.actionScripts[index].LuaAction == aw.luaActionRequest.LuaAction && !errors.Is((aw.ctx).Err(), context.Canceled) {
 			aw.runScript(index, L, request, logs)
 		}
 	}
 
-	lualib.CleanupLTable(request)
-	lualib.CleanupLTable(globals)
-
-	request = nil
-	globals = nil
-
 	aw.luaActionRequest.FinishedChan <- Done{}
 }
 
-// setupGlobals sets up global Lua variables for the Worker.
-// It creates a new Lua table to hold the global variables.
-// If the DevMode flag is true in the EnvConfig, it calls the DebugModule function to log debug information.
-// It sets the global variables LString(global.LuaActionResultOk) and LString(global.LuaActionResultFail) with the corresponding values.
-// It sets the global functions LString(global.LuaFnCtxSet), LString(global.LuaFnCtxGet), LString(global.LuaFnCtxDelete), and LString(global.LuaFnAddCustomLog) to their respective Lua functions
-func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, httpRequest *http.Request) *lua.LTable {
+// setupGlobals initializes the global variables in the Lua state.
+// It creates a new Lua table and sets the necessary variables and functions.
+// If the DevMode configuration is enabled, it logs the Lua action request.
+// The Lua table includes two variables, LuaActionResultOk and LuaActionResultFail,
+// which are set to 0 and 1 respectively.
+// It also includes a function LuaFnAddCustomLog, which is set to the AddCustomLog function
+// from the lualib package. Finally, it sets the LuaDefaultTable global variable to the created table.
+func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	if config.EnvConfig.DevMode {
@@ -248,18 +250,8 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue, ht
 	globals.RawSet(lua.LString(global.LuaActionResultFail), lua.LNumber(1))
 
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(httpRequest)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(httpRequest)))
-
-	lualib.SetupContextFunctions(aw.luaActionRequest.Context, globals, L)
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(context.Background())))
-	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
-
-	return globals
 }
 
 // setupRequest creates a Lua table representing the request data.
@@ -298,7 +290,8 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 	defer stopTimer()
 
-	luaCtx, luaCancel := context.WithTimeout(*(aw.ctx), viper.GetDuration("lua_script_timeout")*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(aw.ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+
 	L.SetContext(luaCtx)
 
 	if err = aw.executeScript(L, index, request); err != nil {

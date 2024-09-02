@@ -12,6 +12,20 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+func LoaderModContext(ctx *Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnCtxSet:    ContextSet(ctx),
+			global.LuaFnCtxGet:    ContextGet(ctx),
+			global.LuaFnCtxDelete: ContextDelete(ctx),
+		})
+
+		L.Push(mod)
+
+		return 1
+	}
+}
+
 // Context is a system-wide Lua context designed to exchange Lua LValues between all Lua levels. Even it implements all
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
@@ -152,15 +166,4 @@ func ContextDelete(ctx *Context) lua.LGFunction {
 
 		return 0
 	}
-}
-
-// SetupContextFunctions sets up the Lua functions for working with the Context. The functions include:
-// - `context_set`: A function that sets a value in the Context.
-// - `context_get`: A function that retrieves a value from the Context.
-// - `context_delete`: A function that deletes a value from the Context.
-// The functions are added to the specified Lua table using the specified Lua state.
-func SetupContextFunctions(ctx *Context, table *lua.LTable, L *lua.LState) {
-	table.RawSetString(global.LuaFnCtxSet, L.NewFunction(ContextSet(ctx)))
-	table.RawSetString(global.LuaFnCtxGet, L.NewFunction(ContextGet(ctx)))
-	table.RawSetString(global.LuaFnCtxDelete, L.NewFunction(ContextDelete(ctx)))
 }

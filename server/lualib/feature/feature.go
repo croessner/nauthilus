@@ -39,9 +39,6 @@ import (
 // If a script triggers or aborts the execution of features, the execution is halted and the method returns the appropriate values.
 var LuaFeatures *PreCompiledLuaFeatures
 
-// LuaPool is a pool of Lua state instances.
-var LuaPool = lualib.NewLuaStatePool()
-
 // PreCompileLuaFeatures pre-compiles Lua features.
 // It checks if the configuration for Lua features is loaded and if the LuaFeatures variable is already set.
 // If the LuaFeatures variable is not set, it creates a new instance of PreCompiledLuaFeatures.
@@ -161,47 +158,31 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := LuaPool.Get()
+	L := lua.NewState()
 
-	defer LuaPool.Put(L)
-	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
+	defer L.Close()
 
-	globals := r.setGlobals(ctx, L)
+	lualib.RegisterLibraries(L)
+	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
+	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
 
-	L.SetGlobal(global.LuaDefaultTable, globals)
+	if config.LoadableConfig.HaveLDAPBackend() {
+		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
+	}
+
+	r.setGlobals(L)
 
 	request := r.setRequest(L)
 
 	triggered, abortFeatures, err = r.executeScripts(ctx, L, request)
 
-	lualib.CleanupLTable(request)
-	lualib.CleanupLTable(globals)
-
-	request = nil
-	globals = nil
-
 	return
 }
 
-// setGlobals initializes and returns a new Lua table containing global variables for the Lua state L.
-// The method also assigns a new instance of lualib.CustomLogKeyValue to r.Logs.
-//
-// The following global variables are set in the table:
-// - `FEATURE_TRIGGER_NO`: false
-// - `FEATURE_TRIGGER_YES`: true
-// - `FEATURES_ABORT_NO`: false
-// - `FEATURES_ABORT_YES`: true
-// - `FEATURE_RESULT_OK`: 0
-// - `FEATURE_RESULT_FAIL`: 1
-//
-// The following functions are also added to the table:
-// - `context_set`: A function that sets a value in the request's Context.
-// - `context_get`: A function that retrieves a value from the request's Context.
-// - `context_delete`: A function that deletes a value from the request's Context.
-// - `custom_log_add`: A function that adds a key-value pair to the request's Logs.
-//
-// The method returns the initialized table.
-func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
+// setGlobals sets the global variables in the Lua state for the request. It initializes a new table,
+// sets the predefined Lua global variables, and adds custom functions to the table. Finally,
+// it sets the table as the global variable in the Lua state.
+func (r *Request) setGlobals(L *lua.LState) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
 
@@ -214,16 +195,8 @@ func (r *Request) setGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
-	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 
-	lualib.SetupContextFunctions(r.Context, globals, L)
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(ctx)))
-	}
-
-	return globals
+	L.SetGlobal(global.LuaDefaultTable, globals)
 }
 
 // setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.

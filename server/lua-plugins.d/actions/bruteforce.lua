@@ -1,4 +1,5 @@
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_context = require("nauthilus_context")
 
 local tcp = require("tcp")
 
@@ -18,19 +19,19 @@ function nauthilus_call_action(request)
         nauthilus_util.if_error_raise(err)
 
         -- Get result table
-        local rt = nauthilus_builtin.context_get("rt")
+        local rt = nauthilus_context.context_get("rt")
         if rt == nil then
             rt = {}
         end
         if nauthilus_util.is_table(rt) then
             rt.brute_force_haproxy = true
 
-            nauthilus_builtin.context_set("rt", rt)
+            nauthilus_context.context_set("rt", rt)
         end
     end
 
     -- Required by telegram.lua
-    nauthilus_builtin.context_set("haproxy", "ok")
+    nauthilus_context.context_set("haproxy", "ok")
 
     nauthilus_builtin.custom_log_add("haproxy", "success")
 

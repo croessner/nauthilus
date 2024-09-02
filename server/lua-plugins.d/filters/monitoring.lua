@@ -1,5 +1,7 @@
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_backend = require("nauthilus_backend")
+local nauthilus_http_request = require("nauthilus_http_request")
 
 local crypto = require("crypto")
 
@@ -32,13 +34,13 @@ function nauthilus_call_filter(request)
     end
 
     if skip_and_accept_filter then
-        nauthilus_builtin.remove_from_backend_result({ "Proxy-Host" })
+        nauthilus_backend.remove_from_backend_result({ "Proxy-Host" })
 
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     local function get_dovecot_session()
-        local header = nauthilus_builtin.get_http_request_header("X-Dovecot-Session")
+        local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
         if nauthilus_util.table_length(header) == 1 then
             return header[1]
         end
@@ -114,7 +116,7 @@ function nauthilus_call_filter(request)
     if request.authenticated and not request.no_auth then
         local num_of_bs = 0
 
-        local backend_servers = nauthilus_builtin.get_backend_servers()
+        local backend_servers = nauthilus_backend.get_backend_servers()
         if nauthilus_util.is_table(backend_servers) then
             num_of_bs = nauthilus_util.table_length(backend_servers)
 
@@ -144,7 +146,7 @@ function nauthilus_call_filter(request)
                         nauthilus_builtin.custom_log_add(N .. "_backend_server_current", server_ip)
 
                         b:attributes(attributes)
-                        nauthilus_builtin.apply_backend_result(b)
+                        nauthilus_backend.apply_backend_result(b)
 
                         break
                     end
@@ -159,7 +161,7 @@ function nauthilus_call_filter(request)
                     nauthilus_builtin.custom_log_add(N .. "_backend_server_new", new_server_ip)
 
                     b:attributes(attributes)
-                    nauthilus_builtin.apply_backend_result(b)
+                    nauthilus_backend.apply_backend_result(b)
                 end
             end
         end

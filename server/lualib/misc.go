@@ -243,18 +243,6 @@ func DoCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
 	return L.PCall(0, lua.MultRet, nil)
 }
 
-// CleanupLTable cleans up the given Lua table by setting all its values to nil.
-// It iterates through the key-value pairs of the table and sets each value to nil using the RawSet method.
-// This function is typically used to release resources associated with a Lua table and prevent memory leaks.
-// Parameters:
-// - table: A pointer to the Lua table that needs to be cleaned up.
-// Returns: None.
-func CleanupLTable(table *lua.LTable) {
-	table.ForEach(func(key lua.LValue, value lua.LValue) {
-		table.RawSet(key, lua.LNil)
-	})
-}
-
 // comparePasswords takes two strings, `hashPassword` and `plainPassword`, as input parameters.
 // It checks if the number of arguments passed is equal to 2. If not, it returns false and an error message.
 // It then uses the `util.ComparePasswords` function to compare the hashed and plain passwords.

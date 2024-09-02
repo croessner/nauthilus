@@ -900,8 +900,13 @@ const SamePasswordsDifferentAccountLimit = 5
 //	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
 const LuaMaxExecutionTime = 120
 
-// LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
-const LuaBackendResultTypeName = "nauthilus_backend_result"
+const (
+	// LuaBackendResultTypeName represents the constant name used as the Lua type name for the nauthilus_backend_result type.
+	LuaBackendResultTypeName = "nauthilus_backend_result"
+
+	// LuaBackendServerTypeName represents the constant name used as the Lua type name for the nauthilus_backend_server type.
+	LuaBackendServerTypeName = "nauthilus_backend_server"
+)
 
 // LuaPackagePath represents the path to search for Lua modules.
 const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
@@ -945,11 +950,23 @@ const (
 	// LuaModPassword represents the module name for "nauthilus_password" in Lua
 	LuaModPassword = "nauthilus_password"
 
-	// LuaModRedis is the constant representing the module name "nauthilus_redis" in Lua.
+	// LuaModRedis is the constant representing the module name "nauthilus_redis" in Lua
 	LuaModRedis = "nauthilus_redis"
 
-	// LuaModMisc is the constant representing the module "nauthilus_misc" in Lua.
+	// LuaModMisc is the constant representing the module "nauthilus_misc" in Lua
 	LuaModMisc = "nauthilus_misc"
+
+	// LuaModContext represents the module name "nauthilus_context" in Lua
+	LuaModContext = "nauthilus_context"
+
+	// LuaModLDAP is a constant representing the name of the Lua module for LDAP integration
+	LuaModLDAP = "nauthilus_ldap"
+
+	// LuaModBackend is a constant that holds the name of the Lua module for the Nauthilus backend.
+	LuaModBackend = "nauthilus_backend"
+
+	// LuaModHTTPRequest is a constant representing the value "nauthilus_http_request".
+	LuaModHTTPRequest = "nauthilus_http_request"
 
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
