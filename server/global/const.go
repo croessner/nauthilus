@@ -900,8 +900,13 @@ const SamePasswordsDifferentAccountLimit = 5
 //	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
 const LuaMaxExecutionTime = 120
 
-// LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
-const LuaBackendResultTypeName = "nauthilus_backend_result"
+const (
+	// LuaBackendResultTypeName represents the constant name used as the Lua type name for the nauthilus_backend_result type.
+	LuaBackendResultTypeName = "nauthilus_backend_result"
+
+	// LuaBackendServerTypeName represents the constant name used as the Lua type name for the nauthilus_backend_server type.
+	LuaBackendServerTypeName = "nauthilus_backend_server"
+)
 
 // LuaPackagePath represents the path to search for Lua modules.
 const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
@@ -956,6 +961,9 @@ const (
 
 	// LuaModLDAP is a constant representing the name of the Lua module for LDAP integration
 	LuaModLDAP = "nauthilus_ldap"
+
+	// LuaModBackend is a constant that holds the name of the Lua module for the Nauthilus backend.
+	LuaModBackend = "nauthilus_backend"
 
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"

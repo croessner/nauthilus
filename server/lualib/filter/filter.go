@@ -30,6 +30,33 @@ var LuaPool = lualib.NewLuaBackendResultStatePool(
 	global.LuaBackendResultAttributes,
 )
 
+// LoaderModBackend is a higher-order function that takes a pointer to a Request struct as a parameter.
+// It returns a Lua LGFunction.
+// The returned LGFunction creates a new Lua table and populates it with Lua functions.
+// Each Lua function corresponds to a specific functionality related to the backend servers.
+// The LGFunction sets up the necessary global variables and request context, and then pushes the created Lua table onto the Lua stack.
+//
+// Params:
+//   - request *Request : A pointer to a Request struct.
+//
+// Returns:
+//   - lua.LGFunction : A Lua LGFunction that creates a Lua table and populates it with functions related to backend servers.
+func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnGetBackendServers:       getBackendServers(request.BackendServers),
+			global.LuaFnSelectBackendServer:     selectBackendServer(&request.UsedBackendAddress, &request.UsedBackendPort),
+			global.LuaFnCheckBackendConnection:  lualib.CheckBackendConnection(monitoring.NewMonitor()),
+			global.LuaFnApplyBackendResult:      applyBackendResult(backendResult),
+			global.LuaFnRemoveFromBackendResult: removeFromBackendResult(removeAttributes),
+		})
+
+		L.Push(mod)
+
+		return 1
+	}
+}
+
 // PreCompileLuaFilters is a function that pre-compiles Lua filters.
 // It iterates over the filters available in the configuration. For each filter,
 // it creates a new LuaFilter instance passing the filter name and script path, and then adds it to the LuaFilters.
@@ -222,7 +249,8 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 		servers := L.NewTable()
 
 		// Create the metatable
-		mt := L.NewTypeMetatable("backend_server")
+		mt := L.NewTypeMetatable(global.LuaBackendServerTypeName)
+
 		L.SetField(mt, "__index", L.NewFunction(indexMethod))
 
 		for _, backendServer := range backendServers {
@@ -241,7 +269,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 				TLS:       backendServer.TLS,
 			}
 
-			L.SetMetatable(serverUserData, L.GetTypeMetatable("backend_server"))
+			L.SetMetatable(serverUserData, L.GetTypeMetatable(global.LuaBackendServerTypeName))
 
 			// Add userdata into the servers table
 			servers.Append(serverUserData)
@@ -356,7 +384,7 @@ func removeFromBackendResult(attributes *[]string) lua.LGFunction {
 // Returns:
 //
 //	A new request table
-func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) *lua.LTable {
+func setGlobals(ctx *gin.Context, r *Request, L *lua.LState) *lua.LTable {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
 	globals := L.NewTable()
@@ -368,16 +396,8 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 
 	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-	globals.RawSetString(global.LuaFnApplyBackendResult, L.NewFunction(applyBackendResult(backendResult)))
-	globals.RawSetString(global.LuaFnRemoveFromBackendResult, L.NewFunction(removeFromBackendResult(removeAttributes)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
-
-	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
-		globals.RawSetString(global.LuaFnGetBackendServers, L.NewFunction(getBackendServers(r.BackendServers)))
-		globals.RawSetString(global.LuaFnSelectBackendServer, L.NewFunction(selectBackendServer(&r.UsedBackendAddress, &r.UsedBackendPort)))
-		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection(monitoring.NewMonitor())))
-	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
@@ -544,14 +564,18 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
 
-	defer LuaPool.Put(L)
-	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
-
 	if config.LoadableConfig.HaveLDAPBackend() {
 		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
 	}
 
-	globals := setGlobals(ctx, r, L, &backendResult, &removeAttributes)
+	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+		L.PreloadModule(global.LuaModBackend, LoaderModBackend(r, &backendResult, &removeAttributes))
+	}
+
+	defer LuaPool.Put(L)
+	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
+
+	globals := setGlobals(ctx, r, L)
 	request := setRequest(r, L)
 
 	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
