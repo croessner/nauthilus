@@ -1,5 +1,6 @@
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_mail = require("nauthilus_mail")
 
 local http = require("http")
 local crypto = require('crypto')
@@ -103,7 +104,7 @@ function nauthilus_call_action(request)
                         website = os.environ("SSP_WEBSITE")
                     }
 
-                    local err_smtp = nauthilus.send_mail({
+                    local err_smtp = nauthilus_mail.send_mail({
                         lmtp = smtp_use_lmtp,
                         server = smtp_server,
                         port = tonumber(smtp_port),

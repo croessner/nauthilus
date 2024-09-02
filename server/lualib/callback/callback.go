@@ -12,7 +12,6 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -264,7 +263,6 @@ func setupGlobals(ctx *gin.Context, L *lua.LState) *lua.LTable {
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(ctx.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestBody, L.NewFunction(getHTTPRequestBody(ctx.Request)))
-	globals.RawSetString(global.LuaFnSendMail, L.NewFunction(lualib.SendMail(&smtp.EmailClient{})))
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

@@ -939,6 +939,9 @@ const (
 	// LuaFnBackendAddTOTPSecret represents the function name for "nauthilus_backend_add_totp" in Lua
 	LuaFnBackendAddTOTPSecret = "nauthilus_backend_add_totp"
 
+	// LuaModMail represents the module name for "nauthilus_mail" in Lua
+	LuaModMail = "nauthilus_mail"
+
 	// LuaModPassword represents the module name for "nauthilus_password" in Lua
 	LuaModPassword = "nauthilus_password"
 
