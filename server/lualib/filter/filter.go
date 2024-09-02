@@ -379,10 +379,6 @@ func setGlobals(ctx *gin.Context, r *Request, L *lua.LState, backendResult **lua
 		globals.RawSetString(global.LuaFnCheckBackendConnection, L.NewFunction(lualib.CheckBackendConnection(monitoring.NewMonitor())))
 	}
 
-	if config.LoadableConfig.HaveLDAPBackend() {
-		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(backend.LuaLDAPSearch(ctx)))
-	}
-
 	L.SetGlobal(global.LuaDefaultTable, globals)
 
 	return globals
@@ -550,6 +546,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer LuaPool.Put(L)
 	defer L.SetGlobal(global.LuaDefaultTable, lua.LNil)
+
+	if config.LoadableConfig.HaveLDAPBackend() {
+		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
+	}
 
 	globals := setGlobals(ctx, r, L, &backendResult, &removeAttributes)
 	request := setRequest(r, L)

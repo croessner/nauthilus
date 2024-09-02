@@ -66,6 +66,28 @@ type LuaRequest struct {
 	LuaReplyChan chan *lualib.LuaBackendResult
 }
 
+// LoaderModLDAP is a function that returns a LGFunction.
+// The returned LGFunction sets up a table with the function name global.LuaFnLDAPSearch
+// and its corresponding LuaLDAPSearch function.
+// It then pushes the table onto the Lua stack and returns 1.
+// The function is intended to be used as a loader for the LDAP module in Lua scripts.
+//
+// Parameters:
+// - ctx: The context.Context object.
+//
+// Returns: The LGFunction that sets up the LDAP module table.
+func LoaderModLDAP(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnLDAPSearch: LuaLDAPSearch(ctx),
+		})
+
+		L.Push(mod)
+
+		return 1
+	}
+}
+
 // LuaMainWorker is responsible for executing Lua scripts using the provided context.
 // It compiles a Lua script from the specified path and waits for incoming requests.
 // When a request is received, it spawns a goroutine to handle the request asynchronously,
@@ -122,6 +144,10 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 
 	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(luaRequest.Context))
 
+	if config.LoadableConfig.HaveLDAPBackend() {
+		L.PreloadModule(global.LuaModLDAP, LoaderModLDAP(ctx))
+	}
+
 	globals := setupGlobals(luaRequest, L, logs)
 	request := L.NewTable()
 
@@ -158,10 +184,6 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 	globals.RawSetString(global.LuaFnGetAllHTTPRequestHeaders, L.NewFunction(lualib.GetAllHTTPRequestHeaders(luaRequest.HTTPClientContext.Request)))
 	globals.RawSetString(global.LuaFnGetHTTPRequestHeader, L.NewFunction(lualib.GetHTTPRequestHeader(luaRequest.HTTPClientContext.Request)))
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		globals.RawSetString(global.LuaFnLDAPSearch, L.NewFunction(LuaLDAPSearch(luaRequest.HTTPClientContext)))
-	}
 
 	L.SetGlobal(global.LuaDefaultTable, globals)
 

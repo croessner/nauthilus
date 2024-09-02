@@ -954,6 +954,9 @@ const (
 	// LuaModContext represents the module name "nauthilus_context" in Lua
 	LuaModContext = "nauthilus_context"
 
+	// LuaModLDAP is a constant representing the name of the Lua module for LDAP integration
+	LuaModLDAP = "nauthilus_ldap"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 
