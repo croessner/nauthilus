@@ -23,7 +23,7 @@ function nauthilus_call_filter(request)
                         log_str = log_str .. "," .. value
                     end
 
-                    nauthilus.custom_log_add(N .. "_" .. item, log_str)
+                    nauthilus_builtin.custom_log_add(N .. "_" .. item, log_str)
                 end
             end
         end
@@ -70,7 +70,7 @@ function nauthilus_call_filter(request)
         nauthilus_util.if_error_raise(err_jdec)
 
         if response.err == nil then
-            nauthilus.custom_log_add(N .. "_guid", response.guid)
+            nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
 
             if response.object then
                 add_custom_logs(response.object)
@@ -91,40 +91,40 @@ function nauthilus_call_filter(request)
                         end
                     end
 
-                    nauthilus.context_set(N .. "_iso_codes_seen", result_iso_codes)
+                    nauthilus_builtin.context_set(N .. "_iso_codes_seen", result_iso_codes)
                 end
             end
 
             if not response.result then
-                nauthilus.context_set(N, "ok")
-                nauthilus.custom_log_add(N, "blocked")
+                nauthilus_builtin.context_set(N, "ok")
+                nauthilus_builtin.custom_log_add(N, "blocked")
 
                 -- Get result table
-                local rt = nauthilus.context_get("rt")
+                local rt = nauthilus_builtin.context_get("rt")
                 if rt == nil then
                     rt = {}
                 end
                 if nauthilus_util.is_table(rt) then
                     rt.filter_geoippolicyd = true
 
-                    nauthilus.context_set("rt", rt)
+                    nauthilus_builtin.context_set("rt", rt)
                 end
 
-                return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
+                return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
             end
         else
-            return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_FAIL
+            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
 
-        nauthilus.context_set(N, "ok")
-        nauthilus.custom_log_add(N, "success")
+        nauthilus_builtin.context_set(N, "ok")
+        nauthilus_builtin.custom_log_add(N, "success")
     else
         -- We must restore a failed authentication flag!
         if not request.authenticated then
-            return nauthilus.FILTER_REJECT, nauthilus.FILTER_RESULT_OK
+            return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
         end
     end
 
     -- The request should be accepted
-    return nauthilus.FILTER_ACCEPT, nauthilus.FILTER_RESULT_OK
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

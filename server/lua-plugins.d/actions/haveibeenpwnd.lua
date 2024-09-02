@@ -45,15 +45,15 @@ function nauthilus_call_action(request)
             if nauthilus_util.is_number(redis_hash_count) then
                 if redis_hash_count > 0 then
                     -- Required by telegram.lua
-                    nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. redis_hash_count)
+                    nauthilus_builtin.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. redis_hash_count)
 
-                    nauthilus.custom_log_add("action_haveibeenpwnd", "leaked")
+                    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "leaked")
 
-                    return nauthilus.ACTION_RESULT_OK
+                    return nauthilus_builtin.ACTION_RESULT_OK
                 else
-                    nauthilus.custom_log_add("action_haveibeenpwnd", "success")
+                    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "success")
 
-                    return nauthilus.ACTION_RESULT_OK
+                    return nauthilus_builtin.ACTION_RESULT_OK
                 end
             end
         end
@@ -77,8 +77,8 @@ function nauthilus_call_action(request)
                 nauthilus_util.if_error_raise(err_redis_expire)
 
                 -- Required by telegram.lua
-                nauthilus.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
-                nauthilus.custom_log_add("action_haveibeenpwnd", "leaked")
+                nauthilus_builtin.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
+                nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "leaked")
 
                 local already_sent_mail, err_redis_hget2 = nauthilus_redis.redis_hget(redis_key, "send_mail")
                 nauthilus_util.if_error_raise(err_redis_hget2)
@@ -128,18 +128,18 @@ function nauthilus_call_action(request)
                     nauthilus_util.if_error_raise(err_redis_expire)
 
                     -- Get result table
-                    local rt = nauthilus.context_get("rt")
+                    local rt = nauthilus_builtin.context_get("rt")
                     if rt == nil then
                         rt = {}
                     end
                     if nauthilus_util.is_table(rt) then
                         rt.action_haveibeenpwnd = true
 
-                        nauthilus.context_set("rt", rt)
+                        nauthilus_builtin.context_set("rt", rt)
                     end
                 end
 
-                return nauthilus.ACTION_RESULT_OK
+                return nauthilus_builtin.ACTION_RESULT_OK
             end
         end
 
@@ -150,7 +150,7 @@ function nauthilus_call_action(request)
         nauthilus_util.if_error_raise(err_redis_expire)
     end
 
-    nauthilus.custom_log_add("action_haveibeenpwnd", "success")
+    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "success")
 
-    return nauthilus.ACTION_RESULT_OK
+    return nauthilus_builtin.ACTION_RESULT_OK
 end

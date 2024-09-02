@@ -901,7 +901,7 @@ const SamePasswordsDifferentAccountLimit = 5
 const LuaMaxExecutionTime = 120
 
 // LuaBackendResultTypeName represents the constant name used as the Lua type name for the backend_result type.
-const LuaBackendResultTypeName = "backend_result"
+const LuaBackendResultTypeName = "nauthilus_backend_result"
 
 // LuaPackagePath represents the path to search for Lua modules.
 const LuaPackagePath = "/usr/local/share/nauthilus/lua/?.lua"
@@ -1070,7 +1070,7 @@ const (
 
 const (
 	// LuaDefaultTable represents the default table name in Lua
-	LuaDefaultTable = "nauthilus"
+	LuaDefaultTable = "nauthilus_builtin"
 
 	// LuaSuccess represents the success status in Lua
 	LuaSuccess = "success"

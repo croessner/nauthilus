@@ -72,7 +72,7 @@ func NewLuaBackendResultStatePool(methods ...string) LuaBaseStatePool {
 func registerBackendResultType(L *lua.LState, methods ...string) {
 	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
 
-	L.SetGlobal("backend_result", mt)
+	L.SetGlobal(global.LuaBackendResultTypeName, mt)
 
 	// Static attributes
 	L.SetField(mt, "new", L.NewFunction(newBackendResult))

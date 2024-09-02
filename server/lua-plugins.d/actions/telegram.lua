@@ -18,7 +18,7 @@ function nauthilus_call_action(request)
     local ts
 
     -- Get result table
-    local rt = nauthilus.context_get("rt")
+    local rt = nauthilus_builtin.context_get("rt")
     if rt == nil then
         rt = {}
     end
@@ -63,7 +63,7 @@ function nauthilus_call_action(request)
         end
     end
 
-    local pwnd = nauthilus.context_get("haveibeenpwnd_hash_info")
+    local pwnd = nauthilus_builtin.context_get("haveibeenpwnd_hash_info")
     if pwnd then
         pwnd_info = pwnd
     end
@@ -152,10 +152,10 @@ function nauthilus_call_action(request)
     end
 
     rt.post_telegram = true
-    nauthilus.context_set("rt", rt)
+    nauthilus_builtin.context_set("rt", rt)
 
-    nauthilus.context_set("action_telegram", "ok")
-    nauthilus.custom_log_add("action_" .. log_prefix .. "telegram", "success")
+    nauthilus_builtin.context_set("action_telegram", "ok")
+    nauthilus_builtin.custom_log_add("action_" .. log_prefix .. "telegram", "success")
 
-    return nauthilus.ACTION_RESULT_OK
+    return nauthilus_builtin.ACTION_RESULT_OK
 end

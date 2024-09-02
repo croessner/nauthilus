@@ -26,6 +26,14 @@ var exportsModMisc = map[string]lua.LGFunction{
 	global.LuaFnWaitRandom:     waitRandom,
 }
 
+// `exportsModPassword` is a variable of type map[string]lua.LGFunction that contains the exported Lua functions for the module.
+// It maps the names of the Lua functions to their corresponding Go functions.
+// The module provides two functions: `comparePasswords` and `validatePassword`.
+// `comparePasswords` compares two passwords and returns a boolean value indicating whether they match.
+// `validatePassword` validates a password against a set of policy requirements and returns a boolean value indicating whether the password is valid.
+// Both functions are used as Lua function callbacks and interact with the Lua stack to push the results.
+// The module is typically used by the `LoaderModPassword` function to initialize a new Lua module.
+// The `exportsModPassword` variable itself is not mentioned in the surrounding code example.
 var exportsModPassword = map[string]lua.LGFunction{
 	global.LuaFnComparePasswords:    comparePasswords,
 	global.LuaFnCheckPasswordPolicy: validatePassword,
