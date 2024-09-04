@@ -142,6 +142,61 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
+// registerDynamicLoader creates a new Lua function `dynamic_loader` and registers it as a global variable in the Lua state.
+// The `dynamic_loader` function is used to load and register modules in the Lua state based on the provided module name.
+//
+// Parameters:
+// - L *lua.LState: the Lua state in which the module is to be registered
+// - ctx *gin.Context: the gin Context containing the request data
+//
+// Returns: none
+func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
+	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
+		modName := L.CheckString(1)
+
+		registry := make(map[string]bool)
+		if _, found := registry[modName]; found {
+			return 0
+		}
+
+		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		r.registerModule(L, ctx, modName, registry)
+
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", dynamicLoader)
+}
+
+// registerModule registers a module in the LuaState based on the provided module name.
+// The module is loaded using a corresponding loader function and added to the registry.
+//
+// Parameters:
+// - L *lua.LState: the Lua state in which the module is to be registered
+// - ctx *gin.Context: the gin Context containing the request data
+// - modName string: the name of the module to be registered
+// - registry map[string]bool: a map containing the registered modules
+//
+// Returns: none
+func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
+	switch modName {
+	case global.LuaModContext:
+		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
+	case global.LuaModHTTPRequest:
+		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
+	case global.LuaModLDAP:
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
+	default:
+		return
+	}
+
+	registry[modName] = true
+}
+
 // CallFeatureLua executes Lua scripts for a given request context.
 // It acquires a read lock on the LuaFeatures mutex.
 // It creates a new Lua state and preloads necessary libraries.
@@ -162,14 +217,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer L.Close()
 
-	lualib.RegisterLibraries(L)
-	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
-	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
-	}
-
+	r.registerDynamicLoader(L, ctx)
 	r.setGlobals(L)
 
 	request := r.setRequest(L)

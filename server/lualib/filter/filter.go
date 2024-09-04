@@ -21,6 +21,68 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// registerDynamicLoader registers a dynamic loader function in the Lua state.
+// The dynamic loader function allows loading Lua modules on-demand based on their names.
+// It takes an *lua.LState, *gin.Context, *Request, **lualib.LuaBackendResult, and *[]string as input parameters.
+// Inside the function, it creates a new Lua function using Lua's NewFunction function, which takes a function as a parameter.
+// The created function takes a string parameter representing the module name.
+// First, it checks if the module name is already registered in the registry map.
+// If it is, the function returns without registering the module.
+// If the module name is not registered, it calls lualib.RegisterCommonLuaLibraries to register common Lua libraries.
+// Then, it calls registerModule to register module-specific libraries based on the module name.
+// After registering the libraries, it sets the global variable "dynamic_loader" in the Lua state to the created function.
+// The function does not return any value.
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
+	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
+		modName := L.CheckString(1)
+
+		registry := make(map[string]bool)
+		if _, found := registry[modName]; found {
+			return 0
+		}
+
+		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		registerModule(L, ctx, r, modName, registry, backendResult, removeAttributes)
+
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", dynamicLoader)
+}
+
+// registerModule registers a Lua module based on the given modName. It loads and preloads the respective Lua functions
+// based on the modName using the provided Lua state (L). The modName and its respective Lua functions are taken from
+// the lualib package and registered using the L.PreloadModule function. The registry map is used to keep track of
+// the registered modules. If the modName is not recognized, the function returns without registering any module.
+// The modName parameter specifies the name of the module.
+// The L parameter is a pointer to the Lua state.
+// The ctx parameter is a pointer to the gin.Context object.
+// The r parameter is a pointer to the Request struct.
+// The registry parameter is a map[string]bool that keeps track of all registered modules.
+// The backendResult parameter is a pointer to a pointer of the LuaBackendResult struct.
+// The removeAttributes parameter is a pointer to a slice of strings.
+// The function does not return any value.
+func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string, registry map[string]bool, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
+	switch modName {
+	case global.LuaModContext:
+		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
+	case global.LuaModHTTPRequest:
+		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
+	case global.LuaModLDAP:
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
+	case global.LuaModBackend:
+		L.PreloadModule(modName, LoaderModBackend(r, backendResult, removeAttributes))
+	default:
+		return
+	}
+
+	registry[modName] = true
+}
+
 // LuaFilters holds pre-compiled Lua scripts for use across the application.
 // It allows faster access and execution of frequently used scripts.
 var LuaFilters *PreCompiledLuaFilters
@@ -542,19 +604,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer L.Close()
 
-	lualib.RegisterLibraries(L)
+	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
 	lualib.RegisterBackendResultType(L, global.LuaBackendResultAttributes)
-	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(r.Context))
-	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
-	}
-
-	if config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
-		L.PreloadModule(global.LuaModBackend, LoaderModBackend(r, &backendResult, &removeAttributes))
-	}
-
 	setGlobals(r, L)
 
 	request := setRequest(r, L)

@@ -1,12 +1,27 @@
 local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
+
+dynamic_loader("nauthilus_mail")
 local nauthilus_mail = require("nauthilus_mail")
+
+dynamic_loader("nauthilus_misc")
 local nauthilus_misc = require("nauthilus_misc")
+
+dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
 
-local http = require("http")
+dynamic_loader("nauthilus_gluacrypto")
 local crypto = require('crypto')
+
+dynamic_loader("nauthilus_gll_http")
+local http = require("http")
+
+dynamic_loader("nauthilus_gll_strings")
 local strings = require("strings")
+
+dynamic_loader("nauthilus_gll_template")
 local template = require("template")
 
 local client = http.client({

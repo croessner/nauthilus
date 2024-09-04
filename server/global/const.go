@@ -268,9 +268,6 @@ const (
 	// MaxChannelSize is the maximum size of message channels
 	MaxChannelSize = 500
 
-	// MaxLuaStatePoolSize is the maximum size of the Lua state pool
-	MaxLuaStatePoolSize = 10000
-
 	// MaxActionWorkers is the maximum number of action workers
 	MaxActionWorkers = 10
 )
@@ -967,6 +964,116 @@ const (
 
 	// LuaModHTTPRequest is a constant representing the value "nauthilus_http_request".
 	LuaModHTTPRequest = "nauthilus_http_request"
+
+	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
+	LuaModGLuaCrypto = "nauthilus_gluacrypto"
+
+	// LuaModGLLPlugin is a constant that represents the name of the GLL plugin module in Lua.
+	LuaModGLLPlugin = "nauthilus_gll_plugin"
+
+	// LuaModGLLArgParse represents the constant for the "nauthilus_gll_argparse" module.
+	// It provides functions for parsing command-line arguments.
+	LuaModGLLArgParse = "nauthilus_gll_argparse"
+
+	// LuaModGLLBase64 represents the name of the package containing the base64 utility functions.
+	LuaModGLLBase64 = "nauthilus_gll_base64"
+
+	// LuaModGLLCertUtil is a constant that represents the name of the Lua module for certificate utilities in a software system.
+	LuaModGLLCertUtil = "nauthilus_gll_cert_util"
+
+	// LuaModGLLChef represents the name of the Lua module "nauthilus_gll_chef".
+	// This module provides functionality related to the GLACIER Lua Chef library.
+	LuaModGLLChef = "nauthilus_gll_chef"
+
+	// LuaModGLLCloudWatch is a constant used to identify the "nauthilus_gll_cloudwatch" module.
+	LuaModGLLCloudWatch = "nauthilus_gll_cloudwatch"
+
+	// LuaModGLLCmd is a constant used to identify the GLL command module in Lua scripts.
+	LuaModGLLCmd = "nauthilus_gll_cmd"
+
+	// LuaModGLLCrypto is a constant string representing the name of the Lua module "nauthilus_gll_crypto".
+	LuaModGLLCrypto = "nauthilus_gll_crypto"
+
+	// LuaModGLLDB specifies the constant value for the Lua module "nauthilus_gll_db".
+	LuaModGLLDB = "nauthilus_gll_db"
+
+	// LuaModGLLFilePath represents the constant string "nauthilus_gll_filepath".
+	LuaModGLLFilePath = "nauthilus_gll_filepath"
+
+	// LuaModGLLGOOS is a constant that represents the Lua module name for operating system related functions and utilities.
+	LuaModGLLGOOS = "nauthilus_gll_goos"
+
+	// LuaModGLLHTTP is a constant that represents the name of the Lua module for
+	// HTTP related operations in the Nauthilus software.
+	LuaModGLLHTTP = "nauthilus_gll_http"
+
+	// LuaModGLLHumanize is a constant that represents the Lua module name for the "nauthilus_gll_humanize" module.
+	LuaModGLLHumanize = "nauthilus_gll_humanize"
+
+	// LuaModGLLInspect is the constant value representing the name of the module "nauthilus_gll_inspect".
+	LuaModGLLInspect = "nauthilus_gll_inspect"
+
+	// LuaModGLLIOUtil is a constant representing the module name "nauthilus_gll_ioutil".
+	// It is used for input/output utility functions in the Lua environment.
+	LuaModGLLIOUtil = "nauthilus_gll_ioutil"
+
+	// LuaModGLLJSON represents the constant string for the "nauthilus_gll_json" module.
+	LuaModGLLJSON = "nauthilus_gll_json"
+
+	// LuaModGLLLog is a constant representing the log module in the LuaModGLL package.
+	LuaModGLLLog = "nauthilus_gll_log"
+
+	// LuaModGLLPb is a constant representing the name of the Lua module "nauthilus_gll_pb".
+	LuaModGLLPb = "nauthilus_gll_pb"
+
+	// LuaModGLLPProf is a constant variable representing the name of the Lua module "nauthilus_gll_pprof".
+	LuaModGLLPProf = "nauthilus_gll_pprof"
+
+	// LuaModGLLPrometheus is a constant representing the name of the Prometheus module in the Lua scripting language.
+	LuaModGLLPrometheus = "nauthilus_gll_prometheus"
+
+	// LuaModGLLRegExp represents the constant string "nauthilus_gll_regexp".
+	LuaModGLLRegExp = "nauthilus_gll_regexp"
+
+	// LuaModGLLRuntime is a constant that represents the name of the GLL runtime Lua module.
+	LuaModGLLRuntime = "nauthilus_gll_runtime"
+
+	// LuaModGLLShellEscape is a constant representing the module "nauthilus_gll_shellescape" in Lua.
+	LuaModGLLShellEscape = "nauthilus_gll_shellescape"
+
+	// LuaModGLLStats is the constant that represents the module name for GLL Stats.
+	LuaModGLLStats = "nauthilus_gll_stats"
+
+	// LuaModGLLStorage is the constant representing the Lua module name for "nauthilus_gll_storage".
+	LuaModGLLStorage = "nauthilus_gll_storage"
+
+	// LuaModGLLStrings is a constant string used to represent the module name "nauthilus_gll_strings".
+	LuaModGLLStrings = "nauthilus_gll_strings"
+
+	// LuaModGLLTAC is a constant that represents the name of the GLL module "nauthilus_gll_tac".
+	LuaModGLLTAC = "nauthilus_gll_tac"
+
+	// LuaModGLLTCP is the constant value representing the name of the Lua module for TCP operations.
+	LuaModGLLTCP = "nauthilus_gll_tcp"
+
+	// LuaModGLLTelegram is the constant value representing the package name for the GLL Telegram module.
+	LuaModGLLTelegram = "nauthilus_gll_telegram"
+
+	// LuaModGLLTemplate is a constant that represents the name of the GLL template module in Lua.
+	LuaModGLLTemplate = "nauthilus_gll_template"
+
+	// LuaModGLLTime is a constant representing a Lua module named "nauthilus_gll_time".
+	LuaModGLLTime = "nauthilus_gll_time"
+
+	// LuaModGLLXMLPath is a constant variable that represents the name of the GLL XMLPath module in Lua.
+	// It is used to import the module and access its functions and features.
+	LuaModGLLXMLPath = "nauthilus_gll_xmlpath"
+
+	// LuaModGLLYAML is a constant representing the package name of "nauthilus_gll_yaml".
+	LuaModGLLYAML = "nauthilus_gll_yaml"
+
+	// LuaModGLLZabbix is a constant that represents the name of the Lua module for Zabbix integration.
+	LuaModGLLZabbix = "nauthilus_gll_zabbix"
 
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"

@@ -1,34 +1,29 @@
-PROJECT_NAME := "nauthilus"
-PKG := "$(PROJECT_NAME)"
+OUTPUT := nauthilus/bin/nauthilus
+PKG_LIST := $(shell go list ./... | grep -v /vendor/)
+GIT_TAG=$(shell git describe --tags --abbrev=0)
+GIT_COMMIT=$(shell git rev-parse --short HEAD)
 
-PKG_LIST := $(shell go list ${PKG}/... | grep -v /vendor/)
-GO_FILES := $(shell find . -name '*.go' | grep -v /vendor/ | grep -v _test.go)
-
-.PHONY: all dep build clean test coverage coverhtml lint
+.PHONY: all test race msan dep build clean
 
 all: build
 
-lint: ## Lint the files
-	@golangci-lint run
+$(OUTPUT):
+	mkdir -p $(dir $(OUTPUT))
 
-test: ## Run unittests
-	@go test -short ${PKG_LIST}
+test:
+	go test -short ${PKG_LIST}
 
-race: dep ## Run data race detector
-	@go test -race -short ${PKG_LIST}
+race: dep
+	go test -race -short ${PKG_LIST}
 
-msan: dep ## Run memory sanitizer
-	@go test -msan -short ${PKG_LIST}
+msan: dep
+	go test -msan -short ${PKG_LIST}
 
-dep: ## Get the dependencies
-	@go get -v -d ./...
+dep:
+	go get -v -d ./...
 
-build: dep ## Build the binary file
-	@go build -v -o $(PKG)/$(PROJECT_NAME) $(PKG)/$(PROJECT_NAME)
+build: dep
+	go build -v -ldflags "-X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) .
 
 clean: ## Remove previous build
-	@rm -f $(PROJECT_NAME)
-
-help: ## Display this help screen
-	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
-
+	[ -x $(OUTPUT) ] && rm -f $(OUTPUT)

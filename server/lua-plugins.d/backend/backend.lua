@@ -17,8 +17,11 @@
 ]]--
 
 local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_password")
 local nauthilus_password = require("nauthilus_password")
 
+dynamic_loader("nauthilus_gll_db")
 local db = require("db")
 
 local config = {

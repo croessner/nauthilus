@@ -102,6 +102,67 @@ func LuaMainWorker(ctx context.Context) {
 	}
 }
 
+// registerDynamicLoader registers a dynamic loader function in the Lua state.
+// The dynamic loader function is responsible for registering common Lua libraries
+// and modules based on the modName value. It also sets a global variable "dynamic_loader"
+// with the dynamic loader function.
+//
+// Parameters:
+// - L: The *lua.LState representing the Lua state.
+// - ctx: The context.Context object.
+// - luaRequest: The *LuaRequest object containing the request parameters.
+//
+// Returns: None.
+func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) {
+	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
+		modName := L.CheckString(1)
+
+		registry := make(map[string]bool)
+		if _, found := registry[modName]; found {
+			return 0
+		}
+
+		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		registerModule(L, ctx, luaRequest, modName, registry)
+
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", dynamicLoader)
+}
+
+// registerModule registers a module in the Lua state based on the given modName.
+// It uses the Lua state L, the context.Context ctx, the *LuaRequest luaRequest, and the map[string]bool registry.
+// If modName is global.LuaModHTTPRequest, it preloads the Lua module with the given modName and the lualib.LoaderModHTTPRequest function.
+// If modName is global.LuaModLDAP and the LDAP backend is activated, it preloads the Lua module with the given modName and the LoaderModLDAP function.
+// If modName is not global.LuaModHTTPRequest or global.LuaModLDAP, it does nothing and returns.
+// It marks the modName key in the registry as true.
+//
+// Parameters:
+// - L: The *lua.LState representing the Lua state.
+// - ctx: The context.Context object.
+// - luaRequest: The *LuaRequest object containing the request parameters.
+// - modName: The name of the module to register.
+// - registry: A map containing the registered modules.
+//
+// Returns: None.
+func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, modName string, registry map[string]bool) {
+	switch modName {
+	case global.LuaModHTTPRequest:
+		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
+	case global.LuaModLDAP:
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(modName, LoaderModLDAP(ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
+	default:
+		return
+	}
+
+	registry[modName] = true
+}
+
 // handleLuaRequest is a function that handles a Lua request. It takes a context, a LuaRequest object, and a compiled Lua script as parameters.
 // It sets up the Lua state, registers libraries, and preloads modules. It sets up global variables and creates a Lua table for the request.
 // It sets the Lua request parameters based on the LuaRequest object and the Lua table. Then it executes the Lua script and handles any errors.
@@ -129,9 +190,6 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	defer L.Close()
 
 	L.SetContext(luaCtx)
-	lualib.RegisterLibraries(L)
-	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(luaRequest.Context))
-	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
 
 	lualib.RegisterBackendResultType(
 		L,
@@ -145,10 +203,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultAttributes,
 	)
 
-	if config.LoadableConfig.HaveLDAPBackend() {
-		L.PreloadModule(global.LuaModLDAP, LoaderModLDAP(ctx))
-	}
-
+	registerDynamicLoader(L, ctx, luaRequest)
 	setupGlobals(luaRequest, L, logs)
 
 	request := L.NewTable()

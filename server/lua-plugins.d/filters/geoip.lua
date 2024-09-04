@@ -1,7 +1,12 @@
 local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
 
+dynamic_loader("nauthilus_gll_http")
 local http = require("http")
+
+dynamic_loader("nauthilus_gll_json")
 local json = require("json")
 
 local client = http.client({

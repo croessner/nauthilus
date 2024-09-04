@@ -1,3 +1,4 @@
+dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
 local nauthilus_util = {}

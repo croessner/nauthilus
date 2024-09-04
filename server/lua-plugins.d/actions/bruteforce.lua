@@ -1,6 +1,9 @@
 local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
 
+dynamic_loader("nauthilus_gll_tcp")
 local tcp = require("tcp")
 
 function nauthilus_call_action(request)
