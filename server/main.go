@@ -37,7 +37,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-const version = "@@gittag@@-@@gitcommit@@"
+const version = "dev"
 
 var versionFlag = flag.Bool("version", false, "print version and exit")
 
