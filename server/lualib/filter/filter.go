@@ -21,7 +21,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// RegisterDynamicLoader registers a dynamic loader function in the Lua state.
+// registerDynamicLoader registers a dynamic loader function in the Lua state.
 // The dynamic loader function allows loading Lua modules on-demand based on their names.
 // It takes an *lua.LState, *gin.Context, *Request, **lualib.LuaBackendResult, and *[]string as input parameters.
 // Inside the function, it creates a new Lua function using Lua's NewFunction function, which takes a function as a parameter.
@@ -32,7 +32,7 @@ import (
 // Then, it calls registerModule to register module-specific libraries based on the module name.
 // After registering the libraries, it sets the global variable "dynamic_loader" in the Lua state to the created function.
 // The function does not return any value.
-func RegisterDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -604,7 +604,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer L.Close()
 
-	RegisterDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
+	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
 	lualib.RegisterBackendResultType(L, global.LuaBackendResultAttributes)
 	setGlobals(r, L)
 

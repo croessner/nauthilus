@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
@@ -34,43 +35,6 @@ type PreCompiledLuaCallback struct {
 // with the LuaScript of luaCallback. The method locks the read/write mutex of the PreCompiledLuaCallback
 // using Lock() before assigning the new LuaScript to the target PreCompiledLuaCallback.
 // It then unlocks the mutex using Unlock() in a deferred statement.
-//
-// Parameters:
-//   - luaCallback *PreCompiledLuaCallback: The PreCompiledLuaCallback with the LuaScript to replace the existing one.
-//
-// Example usage:
-//
-//	newLuaCallback := &PreCompiledLuaCallback{
-//	  LuaScript: compiledScript,
-//	}
-//	currentLuaCallback.Replace(newLuaCallback)
-//
-// PreCompiledLuaCallback declaration:
-//
-//	type PreCompiledLuaCallback struct {
-//	  LuaScript *lua.FunctionProto
-//	  Mu        sync.RWMutex
-//	}
-//
-// PreCompiledLuaCallback.GetPrecompiledScript declaration:
-//
-//	func (p *PreCompiledLuaCallback) GetPrecompiledScript() *lua.FunctionProto
-//
-// config.LoadableConfig declaration:
-//
-//	var LoadableConfig *File
-//
-// LuaCallback declaration:
-//
-//	var LuaCallback *PreCompiledLuaCallback
-//
-// NewLuaCallback declaration:
-//
-//	func NewLuaCallback() (*PreCompiledLuaCallback, error)
-//
-// lualib.CompileLua declaration:
-//
-//	func CompileLua(filePath string) (*lua.FunctionProto, error)
 func (p *PreCompiledLuaCallback) Replace(luaCallback *PreCompiledLuaCallback) {
 	p.Mu.Lock()
 
@@ -102,42 +66,6 @@ func (p *PreCompiledLuaCallback) GetPrecompiledScript() *lua.FunctionProto {
 // of PreCompiledLuaCallback with the compiled script. If there is an error during the compilation,
 // the function returns nil and the error. The returned PreCompiledLuaCallback can be used to replace the
 // LuaScript of the current LuaCallback.
-//
-// Example usage:
-//
-//	compiledScript, err := NewLuaCallback()
-//	if err != nil {
-//	    fmt.Println("Error:", err)
-//	    return
-//	}
-//	LuaCallback.Replace(compiledScript)
-//
-// PreCompiledLuaCallback declaration:
-//
-//	type PreCompiledLuaCallback struct {
-//	    LuaScript *lua.FunctionProto
-//	    Mu        sync.RWMutex
-//	}
-//
-// PreCompiledLuaCallback.Replace declaration:
-//
-//	func (p *PreCompiledLuaCallback) Replace(luaCallback *PreCompiledLuaCallback)
-//
-// PreCompiledLuaCallback.GetPrecompiledScript declaration:
-//
-//	func (p *PreCompiledLuaCallback) GetPrecompiledScript() *lua.FunctionProto
-//
-// lualib.CompileLua declaration:
-//
-//	func CompileLua(filePath string) (*lua.FunctionProto, error)
-//
-// config.LoadableConfig declaration:
-//
-//	var LoadableConfig *File
-//
-// LuaCallback declaration:
-//
-//	var LuaCallback *PreCompiledLuaCallback
 func NewLuaCallback() (*PreCompiledLuaCallback, error) {
 	compiledScript, err := lualib.CompileLua(config.LoadableConfig.GetLuaCallbackScriptPath())
 	if err != nil {
@@ -199,6 +127,64 @@ func setupLogging(L *lua.LState) *lua.LTable {
 	return logTable
 }
 
+// registerDynamicLoader registers a dynamic loader function in the Lua state (L)
+// that can load Lua modules on demand. It creates a new Lua function that takes
+// a module name as its argument and registers the module if it hasn't been
+// registered before. The function uses the registry map to keep track of registered
+// modules. The registry map is updated after successfully registering a module.
+// The function also sets the global variable "dynamic_loader" to the created
+// dynamic loader function.
+// Parameters:
+//   - L: The Lua state on which the dynamic loader function will be registered.
+//   - ctx: The Gin context object associated with the request. This is used by
+//     certain module loaders.
+//
+// Note: The implementation of the dynamic loader function is not shown in this
+// documentation. Please refer to the source code for more details on the
+// implementation of the dynamic loader function.
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
+	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
+		modName := L.CheckString(1)
+
+		registry := make(map[string]bool)
+		if _, found := registry[modName]; found {
+			return 0
+		}
+
+		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		registerModule(L, ctx, modName, registry)
+
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", dynamicLoader)
+}
+
+// registerModule registers a Lua module in the provided Lua state (L).
+// The module name (modName) is used as a key in the registry map to indicate that it has been registered.
+// The function also takes a *gin.Context object (ctx) to be used by certain module loaders.
+// The registry map is updated to include the registered module.
+// If the module name is unknown, the function returns immediately.
+// If the module name is "nauthilus_http_request", it preloads the module using the lualib.LoaderModHTTPRequest function.
+// If the module name is "nauthilus_ldap" and the LDAP backend is activated, it preloads the module using the backend.LoaderModLDAP function.
+// If the LDAP backend is not activated, it raises an error.
+func registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
+	switch modName {
+	case global.LuaModHTTPRequest:
+		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
+	case global.LuaModLDAP:
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
+	default:
+		return
+	}
+
+	registry[modName] = true
+}
+
 // RunCallbackLuaRequest is a function that runs a Lua callback request in a Gin context.
 // It creates a new context with a specified timeout taken from the "lua_script_timeout" configuration.
 // The function fetches a Lua State object from a pool of Lua states and ensures its safe return to the pool upon completion.
@@ -221,8 +207,7 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 
 	defer L.Close()
 
-	lualib.RegisterLibraries(L)
-	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(ctx.Request))
+	registerDynamicLoader(L, ctx)
 	L.SetContext(luaCtx)
 
 	logTable := setupLogging(L)
