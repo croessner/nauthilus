@@ -69,7 +69,11 @@ func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string,
 	case global.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
 	case global.LuaModLDAP:
-		L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
 	case global.LuaModBackend:
 		L.PreloadModule(modName, LoaderModBackend(r, backendResult, removeAttributes))
 	default:

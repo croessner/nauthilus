@@ -191,6 +191,71 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 	aw.actionScripts = append(aw.actionScripts, luaAction)
 }
 
+// registerDynamicLoader registers a dynamic loader function in the Lua state. The dynamic loader function
+// is called when a Lua module is required or imported, and it loads the module into the Lua environment.
+// The function takes the Lua state and an HTTP request as input parameters. It creates a new Lua function
+// that acts as the dynamic loader. The dynamic loader function checks if the module name is already present
+// in the registry. If it is, the function returns. Otherwise, it registers common Lua libraries, such as
+// lualib.RegisterCommonLuaLibraries, in the Lua state and calls the worker's registerModule method to register
+// the module in the Lua environment. Finally, it sets the global variable "dynamic_loader" to the created
+// dynamic loader function.
+//
+// Note that this documentation assumes familiarity with the Lua programming language and its module system.
+func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request) {
+	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
+		modName := L.CheckString(1)
+
+		registry := make(map[string]bool)
+		if _, found := registry[modName]; found {
+			return 0
+		}
+
+		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		aw.registerModule(L, httpRequest, modName, registry)
+
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", dynamicLoader)
+}
+
+// registerModule registers a Lua module in the given Lua state.
+// The modules are preloaded based on the module name and the provided registry.
+// The available module names are `modName`.
+// Once the module is registered, it will be added to the registry to track its availability.
+//
+// Only specific modules are supported, depending on the `modName` value,
+// the appropriate preload module function is called to load the module.
+// If the module name is not recognized, the function returns without any action.
+//
+// For module "ModContext", the `lualib.LoaderModContext` function is used to preload the module.
+// For module "ModHTTPRequest", the `lualib.LoaderModHTTPRequest` function is used to preload the module.
+// For module "ModLDAP", if the LDAP backend is activated, the `backend.LoaderModLDAP` function is used to preload the module.
+// Otherwise, an error is raised indicating that the LDAP backend is not activated.
+//
+// The `registry` parameter is a map of module names to booleans.
+// Once a module is registered, its name is added to the registry with a true value to indicate its availability.
+//
+// This function does not return any value.
+func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
+	switch modName {
+	case global.LuaModContext:
+		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
+	case global.LuaModHTTPRequest:
+		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(httpRequest))
+	case global.LuaModLDAP:
+		if config.LoadableConfig.HaveLDAPBackend() {
+			L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
+		} else {
+			L.RaiseError("LDAP backend not activated")
+		}
+	default:
+		return
+	}
+
+	registry[modName] = true
+}
+
 // handleRequest handles a Lua action request by running the corresponding script.
 // It creates a new Lua state and loads necessary Lua libraries.
 // Then, it sets up global variables and creates a Lua table for the request.
@@ -209,13 +274,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	defer L.Close()
 
-	lualib.RegisterLibraries(L)
-	L.PreloadModule(global.LuaModContext, lualib.LoaderModContext(aw.luaActionRequest.Context))
-	L.PreloadModule(global.LuaModHTTPRequest, lualib.LoaderModHTTPRequest(httpRequest))
-
-	if config.LoadableConfig.HaveLDAPBackend() {
-		L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
-	}
+	aw.registerDynamicLoader(L, httpRequest)
 
 	logs := new(lualib.CustomLogKeyValue)
 
