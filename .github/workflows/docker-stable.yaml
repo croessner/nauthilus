@@ -3,7 +3,7 @@ name: Production Docker Build
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
 
 jobs:
   build:
