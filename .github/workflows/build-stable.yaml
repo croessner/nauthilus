@@ -3,41 +3,170 @@ name: Release Build
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
+
+env:
+  APP_NAME: 'nauthilus'
+  MAINTAINER: 'croessner'
+  DESC: 'Multi purpose authentication server'
+  CHGELOG_VERSION: '0.15.4'
 
 jobs:
-  build:
-    name: Release Build on ${{ matrix.goos }} / ${{ matrix.goarch }}
+  build-artifact:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         goos: [linux]
         goarch: [amd64, arm64]
-
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: 1.22.x
-
-      - name: Build project
-        run: |
+      - run: |
           cd server && \
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -ldflags="-s -X main.version=${GITHUB_REF#refs/heads/})-${GITHUB_SHA:0:8}" -o nauthilus-${{ matrix.goos }}-${{ matrix.goarch }} .
+          go build -mod=vendor -ldflags="-s -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .
+      - name: Create artifact
+        run: |
+          os="${{ runner.os }}"
+          assets="${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          echo "$assets"
+          mkdir -p "dist/$assets"
+          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} LICENSE README.md NOTICE.md "dist/$assets/"
+          cp systemd/${{ env.APP_NAME }}.service "dist/$assets/"
+          (
+            cd dist
+            tar czf "$assets.tar.gz" "$assets"
+            ls -lah *.*
+          )
+        shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}-binary
-          path: server/nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
 
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+  build-linux-packages:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [ linux ]
+        goarch: [ amd64, arm64 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          token: ${{ secrets.NAUTHILUS_RELEASE }}
-          files: server/nauthilus-${{ matrix.goos }}-${{ matrix.goarch }}
+          go-version: 1.22.x
+      - run: |
+          cd server && \
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -mod=vendor -ldflags="-s -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Copy binaries
+        run: |
+          mkdir -p .debpkg/usr/sbin
+          mkdir -p .debpkg/usr/lib/systemd/system
+          mkdir -p .debpkg/usr/share/doc/${{ env.APP_NAME }}
+          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .debpkg/usr/sbin/${{ env.APP_NAME }}
+          cp systemd/${{ env.APP_NAME }}.service .debpkg/usr/lib/systemd/system/
+          cp LICENSE README.md NOTICE.md .debpkg/usr/share/doc/${{ env.APP_NAME }}/
+
+      - uses: jiro4989/build-deb-action@v3
+        with:
+          package: ${{ env.APP_NAME }}
+          package_root: .debpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ github.ref }}
+          arch: '${{ matrix.goarch }}'
+          desc: '${{ env.DESC }}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-deb
+          path: |
+            ./*.deb
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-artifact
+      - build-linux-packages
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        run: |
+          wget https://github.com/git-chglog/git-chglog/releases/download/v${{ env.CHGELOG_VERSION }}/git-chglog_${{ env.CHGELOG_VERSION }}_linux_amd64.tar.gz
+          tar xzf git-chglog_${{ env.CHGELOG_VERSION }}_linux_amd64.tar.gz
+          chmod +x git-chglog
+          ./git-chglog --output ./changelog $(git describe --tags $(git rev-list --tags --max-count=1))
+
+      - name: Install GitHub CLI
+        run: sudo apt update && sudo apt install -y gh
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+        run: gh release create ${{ github.ref_name }} ./changelog --title "Release ${{ github.ref_name }}" --notes-file ./changelog --draft=false --prerelease=false
+
+  upload-release:
+    runs-on: ubuntu-latest
+    needs: create-release
+    strategy:
+      matrix:
+        goos: [ linux ]
+        goarch: [ amd64, arm64 ]
+        include:
+          - os: ubuntu-latest
+            asset_suffix: .tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        run: sudo apt update && sudo apt install -y gh
+
+      - name: Download Artifact
+        env:
+          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload Asset
+        env:
+          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+        run: gh release upload ${{ github.ref_name }} ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.asset_suffix }}
+
+  upload-linux-packages:
+    runs-on: ubuntu-latest
+    needs: create-release
+    strategy:
+      matrix:
+        goos: [ linux ]
+        goarch: [ amd64, arm64 ]
+        include:
+          - pkg: deb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        run: sudo apt update && sudo apt install -y gh
+
+      - name: Download Artifact
+        env:
+          GH_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+        run: gh run download --name artifact-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.pkg }}
+
+      - run: echo "ASSET_NAME=$(ls *.${{ matrix.pkg }} | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Upload Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.NAUTHILUS_RELEASE }}
+        run: gh release upload ${{ github.ref_name }} $ASSET_NAME
