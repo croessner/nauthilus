@@ -33,4 +33,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/nauthilus:dev
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description="Multi purpose authentication server"
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Multi purpose authentication server
