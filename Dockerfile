@@ -19,7 +19,9 @@ RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 FROM --platform=$BUILDPLATFORM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
+LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
 LABEL org.opencontainers.image.description="Multi purpose authentication server"
+LABEL org.opencontainers.image.licenses=AGPL-3
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
