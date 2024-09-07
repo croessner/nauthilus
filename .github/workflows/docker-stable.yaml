@@ -3,7 +3,7 @@ name: Production Docker Build
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
 
 jobs:
   build:
@@ -33,3 +33,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/nauthilus:latest
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Multi purpose authentication server

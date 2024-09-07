@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine3.20 AS builder
 
 WORKDIR /build
 
@@ -16,10 +16,12 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 
-FROM alpine:3.20
+FROM --platform=$BUILDPLATFORM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
+LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
 LABEL org.opencontainers.image.description="Multi purpose authentication server"
+LABEL org.opencontainers.image.licenses=AGPL-3
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
