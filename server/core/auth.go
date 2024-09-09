@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
@@ -115,6 +116,9 @@ type JSONRequest struct {
 
 // AuthState represents a struct that holds information related to authentication process.
 type AuthState struct {
+	// StartTime represents the starting time of a client request.
+	StartTime time.Time
+
 	// HaveAccountField is a flag that is set, if a user account field was found in a Database.
 	HaveAccountField bool
 
@@ -418,6 +422,7 @@ func (a *AuthState) LogLineMail(status string, endpoint string) []any {
 		global.LogKeyStatusMessage, util.WithNotAvailable(a.StatusMessage),
 		global.LogKeyUriPath, endpoint,
 		global.LogKeyStatus, util.WithNotAvailable(status),
+		global.LogKeyLatency, fmt.Sprintf("%v", time.Now().Sub(a.StartTime)),
 	}
 
 	if len(a.AdditionalLogs) > 0 {
@@ -2104,6 +2109,7 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 // Finally, it returns the created AuthState struct.
 func NewAuthState(ctx *gin.Context) *AuthState {
 	auth := &AuthState{
+		StartTime:         time.Now(),
 		HTTPClientContext: ctx.Copy(),
 	}
 
