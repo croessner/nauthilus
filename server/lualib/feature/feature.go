@@ -273,6 +273,10 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 // err error: an error that might have occurred during the execution of the scripts.
 func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.LTable) (triggered bool, abortFeatures bool, err error) {
 	for index := range LuaFeatures.LuaScripts {
+		if L.GetTop() != 0 {
+			L.SetTop(0)
+		}
+
 		stopTimer := stats.PrometheusTimer(global.PromFeature, LuaFeatures.LuaScripts[index].Name)
 
 		if stderrors.Is(ctx.Err(), context.Canceled) {

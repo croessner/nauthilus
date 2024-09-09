@@ -284,6 +284,10 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	for index := range aw.actionScripts {
 		if aw.actionScripts[index].LuaAction == aw.luaActionRequest.LuaAction && !errors.Is((aw.ctx).Err(), context.Canceled) {
+			if L.GetTop() != 0 {
+				L.SetTop(0)
+			}
+
 			aw.runScript(index, L, request, logs)
 		}
 	}
