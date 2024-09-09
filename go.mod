@@ -3,7 +3,6 @@ module github.com/croessner/nauthilus
 go 1.22.2
 
 require (
-	github.com/DmitriyVTitov/size v1.5.0
 	github.com/biter777/countries v1.7.5
 	github.com/coreos/go-oidc/v3 v3.10.0
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
@@ -34,6 +33,7 @@ require (
 	github.com/simia-tech/crypt v0.5.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.18.2
+	github.com/stretchr/testify v1.9.0
 	github.com/tengattack/gluacrypto v0.0.0-20240324200146-54b58c95c255
 	github.com/vadv/gopher-lua-libs v0.5.0
 	github.com/yuin/gopher-lua v1.1.1
@@ -59,6 +59,7 @@ require (
 	github.com/cheggaaa/pb/v3 v3.1.5 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emersion/go-message v0.18.0 // indirect
@@ -100,6 +101,7 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/onsi/ginkgo/v2 v2.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/common v0.53.0 // indirect
 	github.com/prometheus/procfs v0.14.0 // indirect
 	github.com/quic-go/qpack v0.4.0 // indirect

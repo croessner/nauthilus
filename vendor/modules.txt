@@ -5,9 +5,6 @@ filippo.io/edwards25519/field
 # github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
 ## explicit
 github.com/Azure/go-ntlmssp
-# github.com/DmitriyVTitov/size v1.5.0
-## explicit; go 1.14
-github.com/DmitriyVTitov/size
 # github.com/VividCortex/ewma v1.2.0
 ## explicit; go 1.12
 github.com/VividCortex/ewma
@@ -121,6 +118,9 @@ github.com/cloudwego/iasm/x86_64
 # github.com/coreos/go-oidc/v3 v3.10.0
 ## explicit; go 1.21
 github.com/coreos/go-oidc/v3/oidc
+# github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
+## explicit
+github.com/davecgh/go-spew/spew
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
@@ -366,6 +366,9 @@ github.com/pelletier/go-toml/v2/unstable
 # github.com/pires/go-proxyproto v0.7.0
 ## explicit; go 1.18
 github.com/pires/go-proxyproto
+# github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
+## explicit
+github.com/pmezard/go-difflib/difflib
 # github.com/pquerna/otp v1.4.0
 ## explicit; go 1.12
 github.com/pquerna/otp
@@ -466,6 +469,9 @@ github.com/spf13/viper/internal/encoding/json
 github.com/spf13/viper/internal/encoding/toml
 github.com/spf13/viper/internal/encoding/yaml
 github.com/spf13/viper/internal/features
+# github.com/stretchr/testify v1.9.0
+## explicit; go 1.17
+github.com/stretchr/testify/assert
 # github.com/subosito/gotenv v1.6.0
 ## explicit; go 1.18
 github.com/subosito/gotenv
@@ -500,7 +506,6 @@ github.com/twitchyliquid64/golang-asm/unsafeheader
 github.com/ugorji/go/codec
 # github.com/vadv/gopher-lua-libs v0.5.0
 ## explicit; go 1.16
-github.com/vadv/gopher-lua-libs
 github.com/vadv/gopher-lua-libs/argparse
 github.com/vadv/gopher-lua-libs/aws/cloudwatch
 github.com/vadv/gopher-lua-libs/base64
