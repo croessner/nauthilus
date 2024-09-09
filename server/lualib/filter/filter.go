@@ -614,6 +614,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	mergedRemoveAttributes := config.NewStringSet()
 
 	for _, script := range LuaFilters.LuaScripts {
+		if L.GetTop() != 0 {
+			L.SetTop(0)
+		}
+
 		if stderrors.Is(ctx.Err(), context.Canceled) {
 			return
 		}
