@@ -17,6 +17,10 @@ local client = http.client({
 local N = "feature_blocklist"
 
 function nauthilus_call_feature(request)
+    if request.no_auth then
+        return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
+    end
+
     if not request.client_ip then
         nauthilus_builtin.custom_log_add(N, "no client IP found")
 
