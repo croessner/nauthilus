@@ -1,0 +1,39 @@
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine3.20 AS builder
+
+WORKDIR /build
+
+COPY . ./
+
+# Set necessarry environment vairables and compile the app
+ENV CGO_ENABLED=0
+
+RUN pwd && ls -a
+RUN cd blocklist && go build -mod=vendor -ldflags="-s" -o blocklist .
+
+FROM --platform=$BUILDPLATFORM alpine:3.20
+
+LABEL org.opencontainers.image.authors="christian@roessner.email"
+LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
+LABEL org.opencontainers.image.description="Blocklist HZZP server"
+LABEL org.opencontainers.image.licenses=AGPL-3
+LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
+
+WORKDIR /usr/app
+
+RUN addgroup -S blocklist; \
+    adduser -S blocklist -G blocklist -D -H -s /bin/nologin
+
+RUN apk --no-cache --upgrade add ca-certificates bash curl
+
+# Copy binary to destination image
+COPY --from=builder ["/build/blocklist", "./"]
+COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
+
+ENV ZONEINFO=/zoneinfo.zip
+ENV TERM=xterm-256color
+
+EXPOSE 8080
+
+USER blocklist
+
+CMD ["/usr/app/blocklist"]
