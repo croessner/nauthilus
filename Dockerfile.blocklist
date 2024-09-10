@@ -20,8 +20,8 @@ LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
 
-RUN addgroup -S nauthilus; \
-    adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
+RUN addgroup -S blocklist; \
+    adduser -S blocklist -G blocklist -D -H -s /bin/nologin
 
 RUN apk --no-cache --upgrade add ca-certificates bash curl
 

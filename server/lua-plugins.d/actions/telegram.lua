@@ -58,6 +58,13 @@ function nauthilus_call_action(request)
             end
         end
 
+        -- feature_blocklist
+        if rt.feature_blocklist then
+            send_message = true
+            headline = "Feature triggered"
+            log_prefix = "feature_"
+        end
+
         -- filter_geoippolicyd
         if rt.filter_geoippolicyd then
             send_message = true
