@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -100,14 +101,14 @@ func main() {
 
 	// Initial load
 	if err := checkAndUpdateBlocklist(); err != nil {
-		println("Error loading initial blocklist:", err.Error())
+		fmt.Println("Error loading initial blocklist:", err.Error())
 	}
 
 	// Periodically check for updates, e.g., every 60 seconds
 	go func() {
 		for {
 			if err := checkAndUpdateBlocklist(); err != nil {
-				println("Error checking/updating blocklist:", err.Error())
+				fmt.Println("Error checking/updating blocklist:", err.Error())
 			}
 
 			time.Sleep(time.Minute)
@@ -132,6 +133,6 @@ func main() {
 	})
 
 	if err := r.Run(serverAddress); err != nil {
-		println("Error starting the server:", err.Error())
+		fmt.Println("Error starting the server:", err.Error())
 	}
 }
