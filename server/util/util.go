@@ -447,14 +447,10 @@ func ValidateUsername(username string) bool {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.LoadableConfig.Server.DNS.Resolver == "" {
-		level.Debug(log.Logger).Log(global.LogKeyMsg, "Using default DNS resolver")
-
 		resolver = &net.Resolver{
 			PreferGo: true,
 		}
 	} else {
-		level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Using DNS resolver %s", config.LoadableConfig.Server.DNS.Resolver))
-
 		resolver = &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {

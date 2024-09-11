@@ -960,13 +960,14 @@ func (f *File) validateSecrets() error {
 // - global.PromPostAction
 // - global.PromRequest
 // - global.PromStoreTOTP
+// - global.PromDNS
 // If any label is unknown, it returns an error with a message indicating the unknown label.
 // If the Prometheus timer is not enabled, it returns nil.
 func (f *File) validatePrometheusLabels() error {
 	if f.Server.PrometheusTimer.Enabled {
 		for _, label := range f.Server.PrometheusTimer.Labels {
 			switch label {
-			case global.PromAction, global.PromAccount, global.PromBackend, global.PromBruteForce, global.PromFeature, global.PromFilter, global.PromPostAction, global.PromRequest, global.PromStoreTOTP:
+			case global.PromAction, global.PromAccount, global.PromBackend, global.PromBruteForce, global.PromFeature, global.PromFilter, global.PromPostAction, global.PromRequest, global.PromStoreTOTP, global.PromDNS:
 				continue
 			}
 
