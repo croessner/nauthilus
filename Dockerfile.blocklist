@@ -10,12 +10,6 @@ ENV CGO_ENABLED=0
 RUN pwd && ls -a
 RUN cd blocklist && go build -mod=vendor -ldflags="-s" -o blocklist .
 
-# Create the SBOM using Syft
-RUN apk --no-cache add curl
-RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-RUN chmod +x /usr/local/bin/syft
-RUN syft dir:/build -o json > /build/sbom.json
-
 FROM --platform=$BUILDPLATFORM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
@@ -33,7 +27,6 @@ RUN apk --no-cache --upgrade add ca-certificates bash curl
 
 # Copy binary to destination image
 COPY --from=builder ["/build/blocklist", "./"]
-COPY --from=builder ["/build/sbom.json", "./"]
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
 ENV ZONEINFO=/zoneinfo.zip

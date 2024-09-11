@@ -18,16 +18,29 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/gin-gonic/gin"
 )
+
+func init() {
+	// Set log format to include colors
+	term := os.Getenv("TERM")
+
+	if term == "xterm-256color" {
+		log.SetFlags(0)
+		log.SetOutput(color.Output)
+	} else {
+		log.SetFlags(log.LstdFlags)
+	}
+}
 
 type Request struct {
 	IP string `json:"ip" binding:"required,ip"`
@@ -91,7 +104,7 @@ func loadBlocklist() error {
 
 	blocklistMu.Unlock()
 
-	fmt.Println("Loading IP list done")
+	color.Yellow("Loading IP list done")
 
 	return nil
 }
@@ -125,8 +138,8 @@ func loggingMiddleware(c *gin.Context) {
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBodyBytes)) // Reset request body for further use
 	}
 
-	fmt.Printf("Request: %s %s %s\n", c.Request.Method, c.Request.URL.Path, c.Request.Proto)
-	fmt.Printf("Request Body: %s\n", string(requestBodyBytes))
+	color.Cyan("Request: %s %s %s\n", c.Request.Method, c.Request.URL.Path, c.Request.Proto)
+	color.Cyan("Request Body: %s\n", string(requestBodyBytes))
 
 	// Capture the response body
 	responseBody := new(bytes.Buffer)
@@ -139,9 +152,9 @@ func loggingMiddleware(c *gin.Context) {
 	c.Next()
 
 	// Log the response body
-	fmt.Printf("Response: %d %s\n", c.Writer.Status(), http.StatusText(c.Writer.Status()))
-	fmt.Printf("Response Body: %s\n", responseBody.String())
-	fmt.Printf("Duration: %v\n", time.Since(startTime))
+	color.Cyan("Response: %d %s\n", c.Writer.Status(), http.StatusText(c.Writer.Status()))
+	color.Cyan("Response Body: %s\n", responseBody.String())
+	color.Cyan("Duration: %v\n", time.Since(startTime))
 }
 
 type responseBodyWriter struct {
@@ -156,22 +169,24 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
-	r := gin.Default()
+	gin.SetMode(gin.ReleaseMode)
 
+	r := gin.New()
+
+	r.Use(gin.Logger())
 	r.SetTrustedProxies(nil)
-
 	r.Use(loggingMiddleware)
 
 	// Initial load
 	if err := checkAndUpdateBlocklist(); err != nil {
-		fmt.Println("Error loading initial blocklist:", err.Error())
+		color.Red("Error loading initial blocklist:", err.Error())
 	}
 
 	// Periodically check for updates, e.g., every 60 seconds
 	go func() {
 		for {
 			if err := checkAndUpdateBlocklist(); err != nil {
-				fmt.Println("Error checking/updating blocklist:", err.Error())
+				color.Red("Error checking/updating blocklist:", err.Error())
 			}
 
 			time.Sleep(time.Minute)
@@ -196,6 +211,6 @@ func main() {
 	})
 
 	if err := r.Run(serverAddress); err != nil {
-		fmt.Println("Error starting the server:", err.Error())
+		color.Red("Error starting the server:", err.Error())
 	}
 }
