@@ -161,8 +161,8 @@ github.com/gabriel-vasile/mimetype/internal/magic
 # github.com/gin-contrib/pprof v1.4.0
 ## explicit; go 1.14
 github.com/gin-contrib/pprof
-# github.com/gin-contrib/sessions v1.0.0
-## explicit; go 1.18
+# github.com/gin-contrib/sessions v1.0.1
+## explicit; go 1.19
 github.com/gin-contrib/sessions
 github.com/gin-contrib/sessions/cookie
 # github.com/gin-contrib/sse v0.1.0

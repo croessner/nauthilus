@@ -11,7 +11,7 @@ require (
 	github.com/emersion/go-smtp v0.21.3
 	github.com/fatih/color v1.16.0
 	github.com/gin-contrib/pprof v1.4.0
-	github.com/gin-contrib/sessions v1.0.0
+	github.com/gin-contrib/sessions v1.0.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-kit/log v0.2.1
 	github.com/go-ldap/ldap/v3 v3.4.8
