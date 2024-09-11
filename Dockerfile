@@ -16,12 +16,18 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 
+# Create the SBOM using Syft
+RUN apk --no-cache add curl
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+RUN chmod +x /usr/local/bin/syft
+RUN syft dir:/build -o json > /build/sbom.json
+
 FROM --platform=$BUILDPLATFORM alpine:3.20
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
 LABEL org.opencontainers.image.description="Multi purpose authentication server"
-LABEL org.opencontainers.image.licenses=AGPL-3
+LABEL org.opencontainers.image.licenses=GPL3
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
 WORKDIR /usr/app
@@ -39,6 +45,8 @@ COPY --from=builder ["/build/docker-healthcheck/healthcheck", "./"]
 COPY --from=builder ["/build/contrib/smtp-server/fakesmtp", "./"]
 COPY --from=builder ["/build/contrib/imap-server/fakeimap", "./"]
 COPY --from=builder ["/build/static/", "./static/"]
+COPY --from=builder ["/build/sbom.json", "./"]
+
 COPY --from=builder ["/usr/local/go/lib/time/zoneinfo.zip", "/"]
 
 # set up nsswitch.conf for Go's "netgo" implementation
