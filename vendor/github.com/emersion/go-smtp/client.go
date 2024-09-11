@@ -29,6 +29,8 @@ type Client struct {
 	lmtp       bool
 	ext        map[string]string // supported extensions
 	localName  string            // the name to use in HELO/EHLO/LHLO
+	didGreet   bool              // whether we've received greeting from server
+	greetError error             // the error from the greeting
 	didHello   bool              // whether we've said HELO/EHLO/LHLO
 	helloError error             // the error from the hello
 	rcpts      []string          // recipients accumulated for the current session
@@ -179,30 +181,42 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) greet() error {
+	if c.didGreet {
+		return c.greetError
+	}
+
 	// Initial greeting timeout. RFC 5321 recommends 5 minutes.
 	c.conn.SetDeadline(time.Now().Add(c.CommandTimeout))
 	defer c.conn.SetDeadline(time.Time{})
 
-	_, _, err := c.text.ReadResponse(220)
+	c.didGreet = true
+	_, _, err := c.readResponse(220)
 	if err != nil {
+		c.greetError = err
 		c.text.Close()
-		if protoErr, ok := err.(*textproto.Error); ok {
-			return toSMTPErr(protoErr)
-		}
-		return err
 	}
 
-	return nil
+	return c.greetError
 }
 
 // hello runs a hello exchange if needed.
 func (c *Client) hello() error {
-	if !c.didHello {
-		c.didHello = true
-		if err := c.greet(); err != nil {
-			c.helloError = err
-		} else if err := c.ehlo(); err != nil {
+	if c.didHello {
+		return c.helloError
+	}
+
+	if err := c.greet(); err != nil {
+		return err
+	}
+
+	c.didHello = true
+	if err := c.ehlo(); err != nil {
+		var smtpError *SMTPError
+		if errors.As(err, &smtpError) && (smtpError.Code == 500 || smtpError.Code == 502) {
+			// The server doesn't support EHLO, fallback to HELO
 			c.helloError = c.helo()
+		} else {
+			c.helloError = err
 		}
 	}
 	return c.helloError
@@ -226,6 +240,14 @@ func (c *Client) Hello(localName string) error {
 	return c.hello()
 }
 
+func (c *Client) readResponse(expectCode int) (int, string, error) {
+	code, msg, err := c.text.ReadResponse(expectCode)
+	if protoErr, ok := err.(*textproto.Error); ok {
+		err = toSMTPErr(protoErr)
+	}
+	return code, msg, err
+}
+
 // cmd is a convenience function that sends a command and returns the response
 // textproto.Error returned by c.text.ReadResponse is converted into SMTPError.
 func (c *Client) cmd(expectCode int, format string, args ...interface{}) (int, string, error) {
@@ -238,15 +260,8 @@ func (c *Client) cmd(expectCode int, format string, args ...interface{}) (int, s
 	}
 	c.text.StartResponse(id)
 	defer c.text.EndResponse(id)
-	code, msg, err := c.text.ReadResponse(expectCode)
-	if err != nil {
-		if protoErr, ok := err.(*textproto.Error); ok {
-			smtpErr := toSMTPErr(protoErr)
-			return code, smtpErr.Message, smtpErr
-		}
-		return code, msg, err
-	}
-	return code, msg, nil
+
+	return c.readResponse(expectCode)
 }
 
 // helo sends the HELO greeting to the server. It should be used only when the
@@ -312,7 +327,8 @@ func (c *Client) startTLS(config *tls.Config) error {
 		testHookStartTLS(config)
 	}
 	c.setConn(tls.Client(c.conn, config))
-	return c.ehlo()
+	c.didHello = false
+	return nil
 }
 
 // TLSConnectionState returns the client's TLS connection state.
@@ -544,10 +560,10 @@ func (d *dataCloser) Close() error {
 	if d.c.lmtp {
 		for expectedResponses > 0 {
 			rcpt := d.c.rcpts[len(d.c.rcpts)-expectedResponses]
-			if _, _, err := d.c.text.ReadResponse(250); err != nil {
-				if protoErr, ok := err.(*textproto.Error); ok {
+			if _, _, err := d.c.readResponse(250); err != nil {
+				if smtpErr, ok := err.(*SMTPError); ok {
 					if d.statusCb != nil {
-						d.statusCb(rcpt, toSMTPErr(protoErr))
+						d.statusCb(rcpt, smtpErr)
 					}
 				} else {
 					return err
@@ -558,11 +574,8 @@ func (d *dataCloser) Close() error {
 			expectedResponses--
 		}
 	} else {
-		_, _, err := d.c.text.ReadResponse(250)
+		_, _, err := d.c.readResponse(250)
 		if err != nil {
-			if protoErr, ok := err.(*textproto.Error); ok {
-				return toSMTPErr(protoErr)
-			}
 			return err
 		}
 	}

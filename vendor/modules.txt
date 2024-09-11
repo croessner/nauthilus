@@ -118,9 +118,6 @@ github.com/cloudwego/iasm/x86_64
 # github.com/coreos/go-oidc/v3 v3.10.0
 ## explicit; go 1.21
 github.com/coreos/go-oidc/v3/oidc
-# github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
-## explicit
-github.com/davecgh/go-spew/spew
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
@@ -143,7 +140,7 @@ github.com/emersion/go-imap/utf7
 # github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43
 ## explicit; go 1.12
 github.com/emersion/go-sasl
-# github.com/emersion/go-smtp v0.21.1
+# github.com/emersion/go-smtp v0.21.3
 ## explicit; go 1.13
 github.com/emersion/go-smtp
 # github.com/fatih/color v1.16.0
@@ -164,14 +161,14 @@ github.com/gabriel-vasile/mimetype/internal/magic
 # github.com/gin-contrib/pprof v1.4.0
 ## explicit; go 1.14
 github.com/gin-contrib/pprof
-# github.com/gin-contrib/sessions v1.0.0
-## explicit; go 1.18
+# github.com/gin-contrib/sessions v1.0.1
+## explicit; go 1.19
 github.com/gin-contrib/sessions
 github.com/gin-contrib/sessions/cookie
 # github.com/gin-contrib/sse v0.1.0
 ## explicit; go 1.12
 github.com/gin-contrib/sse
-# github.com/gin-gonic/gin v1.9.1
+# github.com/gin-gonic/gin v1.10.0
 ## explicit; go 1.20
 github.com/gin-gonic/gin
 github.com/gin-gonic/gin/binding
@@ -350,7 +347,7 @@ github.com/onsi/ginkgo/v2/internal/interrupt_handler
 github.com/onsi/ginkgo/v2/internal/parallel_support
 github.com/onsi/ginkgo/v2/reporters
 github.com/onsi/ginkgo/v2/types
-# github.com/ory/hydra-client-go/v2 v2.2.0
+# github.com/ory/hydra-client-go/v2 v2.2.1
 ## explicit; go 1.17
 github.com/ory/hydra-client-go/v2
 # github.com/patrickmn/go-cache v2.1.0+incompatible
@@ -366,9 +363,6 @@ github.com/pelletier/go-toml/v2/unstable
 # github.com/pires/go-proxyproto v0.7.0
 ## explicit; go 1.18
 github.com/pires/go-proxyproto
-# github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
-## explicit
-github.com/pmezard/go-difflib/difflib
 # github.com/pquerna/otp v1.4.0
 ## explicit; go 1.12
 github.com/pquerna/otp
@@ -394,11 +388,11 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/quic-go/qpack v0.4.0
-## explicit; go 1.18
+# github.com/quic-go/qpack v0.5.1
+## explicit; go 1.22
 github.com/quic-go/qpack
-# github.com/quic-go/quic-go v0.46.0
-## explicit; go 1.21
+# github.com/quic-go/quic-go v0.47.0
+## explicit; go 1.22
 github.com/quic-go/quic-go
 github.com/quic-go/quic-go/http3
 github.com/quic-go/quic-go/internal/ackhandler
@@ -469,9 +463,6 @@ github.com/spf13/viper/internal/encoding/json
 github.com/spf13/viper/internal/encoding/toml
 github.com/spf13/viper/internal/encoding/yaml
 github.com/spf13/viper/internal/features
-# github.com/stretchr/testify v1.9.0
-## explicit; go 1.17
-github.com/stretchr/testify/assert
 # github.com/subosito/gotenv v1.6.0
 ## explicit; go 1.18
 github.com/subosito/gotenv
@@ -578,7 +569,7 @@ go.uber.org/zap/internal/exit
 go.uber.org/zap/internal/pool
 go.uber.org/zap/internal/stacktrace
 go.uber.org/zap/zapcore
-# golang.org/x/arch v0.7.0
+# golang.org/x/arch v0.8.0
 ## explicit; go 1.18
 golang.org/x/arch/x86/x86asm
 # golang.org/x/crypto v0.26.0
@@ -610,7 +601,7 @@ golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/modfile
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.25.0
+# golang.org/x/net v0.28.0
 ## explicit; go 1.18
 golang.org/x/net/bpf
 golang.org/x/net/context
@@ -625,7 +616,7 @@ golang.org/x/net/internal/iana
 golang.org/x/net/internal/socket
 golang.org/x/net/ipv4
 golang.org/x/net/ipv6
-# golang.org/x/oauth2 v0.19.0
+# golang.org/x/oauth2 v0.21.0
 ## explicit; go 1.18
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
@@ -634,7 +625,7 @@ golang.org/x/oauth2/internal
 golang.org/x/sys/cpu
 golang.org/x/sys/unix
 golang.org/x/sys/windows
-# golang.org/x/text v0.17.0
+# golang.org/x/text v0.18.0
 ## explicit; go 1.18
 golang.org/x/text/cases
 golang.org/x/text/encoding
@@ -669,7 +660,7 @@ golang.org/x/tools/internal/gocommand
 golang.org/x/tools/internal/gopathwalk
 golang.org/x/tools/internal/imports
 golang.org/x/tools/internal/stdlib
-# google.golang.org/protobuf v1.34.0
+# google.golang.org/protobuf v1.34.1
 ## explicit; go 1.17
 google.golang.org/protobuf/encoding/protodelim
 google.golang.org/protobuf/encoding/prototext
