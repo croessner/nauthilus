@@ -2201,7 +2201,11 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
+		stopTimer := stats.PrometheusTimer(global.PromDNS, global.DNSResolvePTR)
+
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
+
+		stopTimer()
 	}
 
 	if a.ClientHost == "" {

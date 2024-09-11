@@ -197,8 +197,11 @@ const (
 	NotAvailable = "N/A"
 )
 
-// Defaults.
 const (
+
+	// Localhost represents the hostname for the local machine. It is a constant with the value "localhost".
+	Localhost = "localhost"
+
 	// Localhost4 is a shorthand for IPv4 localhost address
 	Localhost4 = "127.0.0.1"
 

@@ -35,7 +35,6 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/stats"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/simia-tech/crypt"
@@ -193,10 +192,6 @@ func GetHash(value string) string {
 
 // ResolveIPAddress returns the hostname for a given IP address.
 func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
-	stopTimer := stats.PrometheusTimer(global.PromDNS, global.DNSResolvePTR)
-
-	defer stopTimer()
-
 	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
 
 	defer cancel()
