@@ -220,27 +220,40 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 //
 // dnsResolverErr - is an atomic boolean to indicate if a DNS resolver error occurred
 func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, waitGroup *sync.WaitGroup, dnsResolverErr *atomic.Bool) {
-	defer waitGroup.Done()
-
-	isListed, rblName, errRBL := a.isListed(ctx, rbl)
-
-	if errRBL != nil {
-		handleRBLError(*a.GUID, errRBL, rbl, dnsResolverErr)
-
-		rblChan <- 0
+	isListed, rblName, rblErr := a.isListed(ctx, rbl)
+	if rblErr != nil {
+		handleRBLError(*a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLOutcome(waitGroup, rblChan, 0)
 
 		return
 	}
 
 	if isListed {
 		logMatchedRBL(*a.GUID, a.ClientIP, rblName, rbl.Weight)
-
-		rblChan <- rbl.Weight
+		handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
 
 		return
 	}
 
-	rblChan <- 0
+	handleRBLOutcome(waitGroup, rblChan, 0)
+}
+
+// handleRBLOutcome handles the outcome of the RBL processing by sending the weight to the rblChan channel.
+// It decreases the wait group counter by calling the Done() method on the wait group.
+//
+// Parameters:
+//
+//	waitGroup - is used to synchronize the goroutines by decreasing the counter
+//	rblChan - is the channel to send the RBL weight
+//	weight - is the weight associated with the RBL
+//
+// Usage example:
+//
+//	handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
+func handleRBLOutcome(waitGroup *sync.WaitGroup, rblChan chan int, weight int) {
+	waitGroup.Done()
+
+	rblChan <- weight
 }
 
 // handleRBLError handles errors that occur during RBL processing.
@@ -280,9 +293,10 @@ func logMatchedRBL(guid, clientIP, rblName string, weight int) {
 // checkRBLs checks the remote client IP address against a list of realtime blocklists.
 func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 	var (
-		waitGroup      sync.WaitGroup
 		dnsResolverErr atomic.Bool
 	)
+
+	waitGroup := &sync.WaitGroup{}
 
 	dnsResolverErr.Store(false)
 	rblChan := make(chan int)
@@ -291,10 +305,11 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 	for _, rbl := range config.LoadableConfig.RBLs.Lists {
 		waitGroup.Add(1)
 
-		go a.processRBL(ctx, &rbl, rblChan, &waitGroup, &dnsResolverErr)
+		go a.processRBL(ctx, &rbl, rblChan, waitGroup, &dnsResolverErr)
 	}
 
 	waitGroup.Wait()
+
 	if dnsResolverErr.Load() {
 		err = errors.ErrDNSResolver
 
@@ -339,6 +354,8 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		level.Info(log.Logger).Log(
 			global.LogKeyGUID, a.GUID, global.FeatureRBL, "Client is whitelisted", global.LogKeyClientIP, a.ClientIP,
 		)
+
+		//return
 	}
 
 	totalRBLScore, err = a.checkRBLs(ctx)
