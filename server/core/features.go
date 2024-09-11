@@ -49,7 +49,7 @@ func isLocalOrEmptyIP(ip string) bool {
 	return ip == global.Localhost4 || ip == global.Localhost6 || ip == ""
 }
 
-// logIsLocalMessage logs a message with the specified parameters using the global logger. It is intended to be a generic logging function.
+// logMessage logs a message with the specified parameters using the global logger. It is intended to be a generic logging function.
 //
 // Parameters:
 //   - message: The message to log.
@@ -59,15 +59,15 @@ func isLocalOrEmptyIP(ip string) bool {
 //
 // Example usage:
 //
-//	logIsLocalMessage("This is a log message", "12345", "feature", "192.168.0.1")
-func logIsLocalMessage(message, guid, feature, clientIP string) {
+//	logMessage("This is a log message", "12345", "feature", "192.168.0.1")
+func logMessage(message, guid, feature, clientIP string) {
 	level.Info(log.Logger).Log(global.LogKeyGUID, guid, feature, message, global.LogKeyClientIP, clientIP)
 }
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logIsLocalMessage(global.Localhost, *a.GUID, global.FeatureLua, a.ClientIP)
+		logMessage(global.Localhost, *a.GUID, global.FeatureLua, a.ClientIP)
 
 		return
 	}
@@ -137,7 +137,7 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logIsLocalMessage(global.Localhost, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+		logMessage(global.Localhost, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
 
 		return
 	}
@@ -150,23 +150,15 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 
 	defer stopTimer()
 
-	matchIP := a.isInNetwork(config.LoadableConfig.ClearTextList)
-	if !matchIP {
-		level.Info(log.Logger).Log(
-			global.LogKeyGUID, a.GUID,
-			global.FeatureTLSEncryption, "Client has no transport security",
-			global.LogKeyClientIP, a.ClientIP,
-		)
+	if a.isInNetwork(config.LoadableConfig.ClearTextList) {
+		logMessage("Client has no transport security", *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
 
 		triggered = true
 
 		return
 	}
 
-	level.Info(log.Logger).Log(
-		global.LogKeyGUID, a.GUID,
-		global.FeatureTLSEncryption, "Client is whitelisted",
-		global.LogKeyClientIP, a.ClientIP)
+	logMessage("Client is whitelisted", *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
 
 	return
 }
@@ -183,7 +175,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logIsLocalMessage(global.Localhost, *a.GUID, global.FeatureRelayDomains, a.ClientIP)
+		logMessage(global.Localhost, *a.GUID, global.FeatureRelayDomains, a.ClientIP)
 
 		return
 	}
@@ -196,7 +188,6 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 
 	if strings.Contains(username, "@") {
 		split := strings.Split(username, "@")
-		//nolint:gomnd // Username may be an email address, which has two parts
 		if len(split) != 2 {
 			return
 		}
@@ -207,7 +198,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 			}
 		}
 
-		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.FeatureRelayDomains, fmt.Sprintf("%s not our domain", split[1]))
+		logMessage(fmt.Sprintf("%s not our domain", split[1]), *a.GUID, global.FeatureRelayDomains, a.ClientIP)
 
 		triggered = true
 	}
@@ -337,7 +328,7 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logIsLocalMessage(global.Localhost, *a.GUID, global.FeatureRBL, a.ClientIP)
+		logMessage(global.Localhost, *a.GUID, global.FeatureRBL, a.ClientIP)
 
 		return
 	}
