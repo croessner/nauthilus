@@ -23,3 +23,11 @@ The documentation is found on [https://nauthilus.org](https://nauthilus.org).
 
 The documentation itself is another project at [https://github.com/croessner/nauthilus-website](https://github.com/croessner/nauthilus-website).
 Feel free to make it better! :-)
+
+## License
+
+This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
+
+> Note
+> 
+> The license has changed from AGPL-3 to GPL-3! This step is required to provide docker images.
