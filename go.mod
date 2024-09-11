@@ -8,7 +8,7 @@ require (
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43
-	github.com/emersion/go-smtp v0.21.1
+	github.com/emersion/go-smtp v0.21.3
 	github.com/fatih/color v1.16.0
 	github.com/gin-contrib/pprof v1.4.0
 	github.com/gin-contrib/sessions v1.0.0
