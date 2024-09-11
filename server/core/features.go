@@ -16,9 +16,7 @@
 package core
 
 import (
-	stderrors "errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,7 +248,7 @@ func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan i
 // Otherwise, if AllowFailure is false, it sets dnsResolverErr to true.
 // Finally, it logs the error at the error level.
 func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
-	if stderrors.Is(err, &net.DNSError{}) && strings.Contains(err.Error(), "no such host") {
+	if strings.Contains(err.Error(), "no such host") {
 		util.DebugModule(global.DbgRBL, global.LogKeyGUID, guid, global.LogKeyMsg, err)
 	} else {
 		if !rbl.AllowFailure {
