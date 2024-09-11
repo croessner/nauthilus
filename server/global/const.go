@@ -1494,4 +1494,10 @@ const (
 
 	// PromPostAction represents the constant value "post_action".
 	PromPostAction = "post_action"
+
+	// PromDNS is a constant string representing the "dns" metric in a Prometheus monitoring system.
+	PromDNS = "dns"
 )
+
+// DNSResolvePTR is a constant string representing the value "resolve". It is used in the context of DNS resolution.
+const DNSResolvePTR = "ptr"

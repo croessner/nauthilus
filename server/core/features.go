@@ -185,7 +185,7 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		totalRBLScore int
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRBL)
+	stopTimer := stats.PrometheusTimer(global.PromDNS, global.FeatureRBL)
 
 	defer stopTimer()
 
