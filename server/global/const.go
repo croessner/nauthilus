@@ -1502,5 +1502,13 @@ const (
 	PromDNS = "dns"
 )
 
-// DNSResolvePTR is a constant string representing the value "resolve". It is used in the context of DNS resolution.
-const DNSResolvePTR = "ptr"
+const (
+	// DNSResolvePTR is a constant string representing the value "resolve". It is used in the context of DNS resolution.
+	DNSResolvePTR = "ptr"
+
+	// Whitelisted is a constant string representing the status of a client being whitelisted.
+	Whitelisted = "Client is whitelisted"
+
+	// NoTLS represents a constant string indicating that the client does not have transport security.
+	NoTLS = "Client has no transport security"
+)

@@ -149,14 +149,14 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	defer stopTimer()
 
 	if a.isInNetwork(config.LoadableConfig.ClearTextList) {
-		logMessage("Client has no transport security", *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+		logMessage(global.NoTLS, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
 
 		triggered = true
 
 		return
 	}
 
-	logMessage("Client is whitelisted", *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+	logMessage(global.Whitelisted, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
 
 	return
 }
@@ -351,11 +351,9 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	defer stopTimer()
 
 	if a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
-		level.Info(log.Logger).Log(
-			global.LogKeyGUID, a.GUID, global.FeatureRBL, "Client is whitelisted", global.LogKeyClientIP, a.ClientIP,
-		)
+		logMessage(global.Whitelisted, *a.GUID, global.FeatureRBL, a.ClientIP)
 
-		//return
+		return
 	}
 
 	totalRBLScore, err = a.checkRBLs(ctx)
