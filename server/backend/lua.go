@@ -163,6 +163,8 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 // Returns: None.
 func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, modName string, registry map[string]bool) {
 	switch modName {
+	case global.LuaModContext:
+		L.PreloadModule(modName, lualib.LoaderModContext(luaRequest.Context))
 	case global.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
 	case global.LuaModLDAP:
