@@ -271,6 +271,39 @@ func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modNa
 	registry[modName] = true
 }
 
+// logActionsSummary logs a summary of the Lua actions that have been finished.
+// It creates a log entry with the session identifier and a message indicating that Lua actions have finished.
+// The log entry also includes any additional key-value pairs provided in the logs parameter.
+// The log entry is logged at the Info level using the global Logger.
+//
+// Parameters:
+//   - logs: A pointer to a CustomLogKeyValue instance representing additional key-value pairs to include in the log entry.
+//     Each key-value pair is specified by calling the Set method on the CustomLogKeyValue instance.
+//     The key-value pairs will be appended to the log entry in the order they were set.
+//     If logs is nil or empty, no additional key-value pairs will be included in the log entry.
+//
+// Example:
+//
+//	aw := &Worker{}
+//	logs := lualib.CustomLogKeyValue{}
+//	logs.Set("key1", "value1")
+//	logs.Set("key2", "value2")
+//	aw.logActionsSummary(&logs)
+//	// The log entry will include the session identifier, message, as well as the additional key-value pairs "key1: value1" and "key2: value2"
+//
+// Note:
+//
+//	The logActionsSummary method is typically called after executing a sequence of Lua actions to provide a summary of the actions that were performed.
+//	The method is called internally within the handleRequest method, which handles a Lua action request.
+func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
+	level.Info(log.Logger).Log(
+		append([]any{
+			global.LogKeyGUID, aw.luaActionRequest.Session,
+			global.LogKeyMsg, "Lua actions finished",
+		}, toLoggable(logs)...)...,
+	)
+}
+
 // handleRequest handles a Lua action request by running the corresponding script.
 // It creates a new Lua state and loads necessary Lua libraries.
 // Then, it sets up global variables and creates a Lua table for the request.
@@ -303,9 +336,12 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 				L.SetTop(0)
 			}
 
-			aw.runScript(index, L, request, logs)
+			ret := aw.runScript(index, L, request, logs)
+			logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
 		}
 	}
+
+	aw.logActionsSummary(logs)
 
 	aw.luaActionRequest.FinishedChan <- Done{}
 }
@@ -361,7 +397,7 @@ func getTaskName(action *LuaScriptAction) string {
 // - logs: the custom log key-value data
 //
 // Returns: none
-func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) {
+func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) (result int) {
 	var err error
 
 	stopTimer := stats.PrometheusTimer(global.PromAction, getTaskName(aw.actionScripts[index]))
@@ -372,36 +408,27 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 	L.SetContext(luaCtx)
 
+	result = -1
+
 	if err = aw.executeScript(L, index, request); err != nil {
 		aw.logScriptFailure(index, err, logs)
 		luaCancel()
-	} else {
-		ret := L.ToInt(-1)
 
-		L.Pop(1)
-		util.DebugModule(
-			global.DbgAction,
-			"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
-		)
-
-		level.Info(log.Logger).Log(
-			append([]any{
-				global.LogKeyGUID, aw.luaActionRequest.Session,
-				"script", aw.actionScripts[index].ScriptPath,
-				"feature", func() string {
-					if aw.luaActionRequest.FeatureName != "" {
-						return aw.luaActionRequest.FeatureName
-					}
-
-					return global.NotAvailable
-				}(),
-				global.LogKeyMsg, "Lua action finished",
-				"result", aw.createResultLogMessage(ret),
-			}, toLoggable(logs)...)...,
-		)
+		return
 	}
 
+	ret := L.ToInt(-1)
+
+	L.Pop(1)
+
+	util.DebugModule(
+		global.DbgAction,
+		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
+	)
+
 	luaCancel()
+
+	return ret
 }
 
 // executeScript executes a Lua script by loading and calling a compiled Lua function.
@@ -446,7 +473,7 @@ func (aw *Worker) createResultLogMessage(resultCode int) string {
 		return aw.resultMap[resultCode]
 	}
 
-	return "undefined result"
+	return "unknown result"
 }
 
 // toLoggable is a function that takes a reference to log entries (type CustomLogKeyValue from lualib)

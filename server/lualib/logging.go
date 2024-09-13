@@ -19,6 +19,17 @@ import lua "github.com/yuin/gopher-lua"
 
 type CustomLogKeyValue []any
 
+// Set appends a key-value pair to the CustomLogKeyValue slice. If the receiver pointer c is nil, no action is taken.
+// The key is appended to the slice followed by the value.
+func (c *CustomLogKeyValue) Set(key string, value any) {
+	if c == nil {
+		return
+	}
+
+	*c = append(*c, key)
+	*c = append(*c, value)
+}
+
 func AddCustomLog(keyval *CustomLogKeyValue) lua.LGFunction {
 	return func(L *lua.LState) int {
 		key := L.CheckString(1)
