@@ -894,60 +894,7 @@ func (a *AuthState) isMasterUser() bool {
 
 // isInNetwork checks an IP address against a network and returns true if it matches.
 func (a *AuthState) isInNetwork(networkList []string) (matchIP bool) {
-	ipAddress := net.ParseIP(a.ClientIP)
-
-	for _, ipOrNet := range networkList {
-		if net.ParseIP(ipOrNet) == nil {
-			_, network, err := net.ParseCIDR(ipOrNet)
-			if err != nil {
-				a.logNetworkError(ipOrNet, err)
-
-				continue
-			}
-
-			a.checkAndLogNetwork(network)
-
-			if network.Contains(ipAddress) {
-				matchIP = true
-
-				break
-			}
-		} else {
-			a.checkAndLogIP(ipOrNet)
-			if a.ClientIP == ipOrNet {
-				matchIP = true
-
-				break
-			}
-		}
-	}
-
-	return
-}
-
-// logNetworkError logs a network error message.
-//
-// Parameters:
-// - ipOrNet (string): The IP or network causing the error.
-// - err (error): The error information.
-//
-// Usage example:
-// a.logNetworkError(ipOrNet, err)
-func (a *AuthState) logNetworkError(ipOrNet string, err error) {
-	level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
-}
-
-// checkAndLogNetwork logs the information about checking a network for the given authentication object.
-func (a *AuthState) checkAndLogNetwork(network *net.IPNet) {
-	util.DebugModule(
-		global.DbgWhitelist,
-		global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, network.String()),
-	)
-}
-
-// checkAndLogIP logs the IP address of the client along with the IP address or network being checked.
-func (a *AuthState) checkAndLogIP(ipOrNet string) {
-	util.DebugModule(global.DbgWhitelist, global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", a.ClientIP, ipOrNet))
+	return util.IsInNetwork(networkList, *a.GUID, a.ClientIP)
 }
 
 // verifyPassword takes in an array of PassDBMap and performs the following steps:
@@ -2197,7 +2144,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, a.ClientIP, a.XClientPort)
+		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, *a.GUID, a.ClientIP, a.XClientPort)
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {

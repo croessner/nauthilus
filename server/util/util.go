@@ -336,42 +336,133 @@ func CheckStrings(elements ...any) string {
 	return value
 }
 
-func GetProxyAddress(request *http.Request, clientIP string, clientPort string) (string, string) {
-	fwdAddress := request.Header.Get("X-Forwarded-For")
+// logNetworkError logs a network error message.
+// a.logNetworkError(ipOrNet, err)
+func logNetworkError(guid, ipOrNet string, err error) {
+	level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
+}
 
-	if fwdAddress != "" {
-		DebugModule(
-			global.DbgAuth,
-			global.LogKeyMsg, "Found header X-Forwarded-For",
-		)
+// logNetworkChecking logs the information about checking a network for the given authentication object.
+func logNetworkChecking(guid, clientIP string, network *net.IPNet) {
+	DebugModule(
+		global.DbgWhitelist,
+		global.LogKeyGUID, guid, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, network.String()),
+	)
+}
 
-		for _, trustedProxy := range viper.GetStringSlice("trusted_proxies") {
-			if clientIP != trustedProxy {
-				DebugModule(
-					global.DbgAuth,
-					global.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching '%s'", clientIP, trustedProxy),
-				)
+// logIPChecking logs the IP address of the client along with the IP address or network being checked.
+func logIPChecking(guid, ipOrNet, clientIP string) {
+	DebugModule(global.DbgWhitelist, global.LogKeyGUID, guid, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, ipOrNet))
+}
+
+// IsInNetwork checks if an IP address is part of a list of networks.
+// It iterates through the networkList and checks each network if it contains the given IP address.
+// The function returns true if there is a match.
+// The function logs any network errors encountered during the process.
+// The function logs the information about checking a network for the given authentication object.
+// The function logs the IP address of the client along with the IP address or network being checked.
+func IsInNetwork(networkList []string, guid, clientIP string) (matchIP bool) {
+	ipAddress := net.ParseIP(clientIP)
+
+	for _, ipOrNet := range networkList {
+		if net.ParseIP(ipOrNet) == nil {
+			_, network, err := net.ParseCIDR(ipOrNet)
+			if err != nil {
+				logNetworkError(guid, ipOrNet, err)
 
 				continue
 			}
 
-			DebugModule(
-				global.DbgAuth,
-				global.LogKeyMsg, fmt.Sprintf(
-					"Client IP '%s' matching, forwarded for '%s'", clientIP, fwdAddress),
-			)
+			logNetworkChecking(guid, clientIP, network)
 
-			clientIP = fwdAddress
+			if network.Contains(ipAddress) {
+				matchIP = true
 
-			multipleIPs := strings.Split(fwdAddress, ", ")
-			if len(multipleIPs) > 1 {
-				clientIP = multipleIPs[0]
+				break
 			}
+		} else {
+			logIPChecking(guid, ipOrNet, clientIP)
+			if clientIP == ipOrNet {
+				matchIP = true
 
-			clientPort = global.NotAvailable
-
-			break
+				break
+			}
 		}
+	}
+
+	return
+}
+
+// logForwarderFound logs the finding of the header "X-Forwarded-For" in the debug module.
+func logForwarderFound(guid string) {
+	DebugModule(
+		global.DbgAuth,
+		global.LogKeyGUID, guid,
+		global.LogKeyMsg, "Found header X-Forwarded-For",
+	)
+}
+
+// logNoTrustedProxies logs a warning message indicating that the client IP
+// does not match the trusted proxies. The function uses the level.Warn
+// function from the log package to log the warning message. The message
+// includes the client IP and the list of trusted proxies. The log entry is
+// created with the LogKeyGUID key set to the value of the guid parameter,
+// and the LogKeyWarning key set to the formatted warning message.
+func logNoTrustedProxies(guid, clientIP string) {
+	level.Warn(
+		log.Logger).Log(
+		global.LogKeyGUID, guid,
+		global.LogKeyWarning, fmt.Sprintf("Client IP '%s' not matching %v", clientIP, viper.GetStringSlice("trusted_proxies")),
+	)
+}
+
+// logTrustedProxy logs the client IP matching with the forwarded address.
+func logTrustedProxy(guid string, fwdAddress, clientIP string) {
+	DebugModule(
+		global.DbgAuth,
+		global.LogKeyGUID, guid,
+		global.LogKeyMsg, fmt.Sprintf(
+			"Client IP '%s' matching, forwarded for '%s'", clientIP, fwdAddress),
+	)
+}
+
+// GetProxyAddress extracts the client IP address and port from the request headers.
+// If the X-Forwarded-For header is present, the function checks if the client IP is in the list
+// of trusted proxies. If it is not, the function returns the client IP and port unchanged.
+// If the client IP is in the list of trusted proxies, the function logs the forwarding address
+// and updates the client IP with the first IP address from X-Forwarded-For header, and sets
+// the client port to "N/A". The function returns the updated client IP and port.
+//
+// The function uses the following helper functions:
+// - logForwarderFound: Logs the finding of the X-Forwarded-For header in the debug module.
+// - IsInNetwork: Checks if an IP address is part of a list of networks.
+// - logNoTrustedProxies: Logs a warning indicating that the client IP does not match the trusted proxies.
+// - logTrustedProxy: Logs the client IP matching with the forwarded address.
+// - global.NotAvailable: A constant used when data for a particular field is not available.
+//
+// The function does not mutate the request or any other external state.
+func GetProxyAddress(request *http.Request, guid, clientIP, clientPort string) (string, string) {
+	fwdAddress := request.Header.Get("X-Forwarded-For")
+
+	if fwdAddress != "" {
+		logForwarderFound(guid)
+
+		if !IsInNetwork(viper.GetStringSlice("trusted_proxies"), guid, clientIP) {
+			logNoTrustedProxies(guid, clientIP)
+
+			return clientIP, clientPort
+		}
+
+		logTrustedProxy(guid, fwdAddress, clientIP)
+
+		clientIP = fwdAddress
+
+		multipleIPs := strings.Split(fwdAddress, ", ")
+		if len(multipleIPs) > 1 {
+			clientIP = multipleIPs[0]
+		}
+
+		clientPort = global.NotAvailable
 	}
 
 	return clientIP, clientPort
