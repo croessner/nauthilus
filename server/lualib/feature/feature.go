@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -404,7 +405,7 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		}
 	}
 
-	level.Info(log.Logger).Log(logs...)
+	util.DebugModule(global.DbgFeature, logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.
