@@ -186,8 +186,5 @@ function nauthilus_call_action(request)
     rt.post_telegram = true
     nauthilus_context.context_set("rt", rt)
 
-    nauthilus_context.context_set("action_telegram", "ok")
-    nauthilus_builtin.custom_log_add("action_" .. log_prefix .. "telegram", "success")
-
     return nauthilus_builtin.ACTION_RESULT_OK
 end

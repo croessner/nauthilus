@@ -79,13 +79,9 @@ function nauthilus_call_action(request)
                     nauthilus_context.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. redis_hash_count)
 
                     nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "leaked")
-
-                    return nauthilus_builtin.ACTION_RESULT_OK
-                else
-                    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "success")
-
-                    return nauthilus_builtin.ACTION_RESULT_OK
                 end
+
+                return nauthilus_builtin.ACTION_RESULT_OK
             end
         end
 
@@ -180,8 +176,6 @@ function nauthilus_call_action(request)
         local _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 86400)
         nauthilus_util.if_error_raise(err_redis_expire)
     end
-
-    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "success")
 
     return nauthilus_builtin.ACTION_RESULT_OK
 end
