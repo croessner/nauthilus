@@ -2144,7 +2144,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, *a.GUID, a.ClientIP, a.XClientPort)
+		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, ctx.GetString(global.CtxGUIDKey), a.ClientIP, a.XClientPort)
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
