@@ -536,29 +536,24 @@ func logError(r *Request, script *LuaFilter, err error) {
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	resultMap := map[int]string{global.ResultOk: "ok", global.ResultFail: "fail"}
 
+	logs := []any{
+		global.LogKeyGUID, r.Session,
+		"name", script.Name,
+		global.LogKeyMsg, "Lua filter finished",
+		"action", action,
+		"result", resultMap[ret],
+	}
+
 	if ret != 0 {
-		logs := []any{
-			global.LogKeyGUID, r.Session,
-			"name", script.Name,
-		}
 
 		if r.Logs != nil {
 			for index := range *r.Logs {
 				logs = append(logs, (*r.Logs)[index])
 			}
 		}
-
-		level.Info(log.Logger).Log(logs...)
 	}
 
-	util.DebugModule(
-		global.DbgFilter,
-		global.LogKeyGUID, r.Session,
-		"name", script.Name,
-		global.LogKeyMsg, "Lua filter finished",
-		"action", action,
-		"result", resultMap[ret],
-	)
+	util.DebugModule(global.DbgFilter, logs...)
 }
 
 // mergeMaps merges 2 maps into one. If same key exists in both maps, value from m2 is used.
