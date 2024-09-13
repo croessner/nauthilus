@@ -144,6 +144,7 @@ var (
 // common.
 
 var (
+	ErrClosedChannel  = errors.New("channel closed")
 	ErrNoPassDBResult = errors.New("no pass Database result")
 	ErrUnknownCause   = errors.New("something went wrong")
 )

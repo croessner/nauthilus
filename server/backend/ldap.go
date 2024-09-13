@@ -1196,7 +1196,10 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 // Then it sets the state of the connection to global.LDAPStateFree.
 // Finally, it unlocks the state of the connection using the ldapPool.conn[index].Mu.Unlock() method.
 func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *LDAPPool, index int, request T, ldapReply *LDAPReply) {
-	request.GetLDAPReplyChan() <- ldapReply
+	select {
+	case request.GetLDAPReplyChan() <- ldapReply:
+	default:
+	}
 
 	ldapPool.conn[index].Mu.Lock()
 
@@ -1294,7 +1297,10 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 	ldapReply := &LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapRequest.GUID, index); ldapReply.Err != nil {
-		ldapRequest.LDAPReplyChan <- ldapReply
+		select {
+		case ldapRequest.LDAPReplyChan <- ldapReply:
+		default:
+		}
 
 		return
 	}
@@ -1356,7 +1362,10 @@ func LDAPMainWorker(ctx context.Context) {
 		case ldapRequest := <-LDAPRequestChan:
 			// Check that we have enough idle connections.
 			if err := ldapPool.setIdleConnections(true); err != nil {
-				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+				select {
+				case ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}:
+				default:
+				}
 			}
 
 			ldapPool.handleLookupRequest(ldapRequest, &ldapWaitGroup)
@@ -1405,7 +1414,10 @@ func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthReques
 	ldapReply := &LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapAuthRequest.GUID, index); ldapReply.Err != nil {
-		ldapAuthRequest.LDAPReplyChan <- ldapReply
+		select {
+		case ldapAuthRequest.LDAPReplyChan <- ldapReply:
+		default:
+		}
 
 		return
 	}
@@ -1460,7 +1472,10 @@ func LDAPAuthWorker(ctx context.Context) {
 		case ldapAuthRequest := <-LDAPAuthRequestChan:
 			// Check that we have enough idle connections.
 			if err := ldapPool.setIdleConnections(false); err != nil {
-				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+				select {
+				case ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}:
+				default:
+				}
 			}
 
 			ldapPool.handleAuthRequest(ldapAuthRequest, &ldapWaitGroup)
@@ -1512,7 +1527,13 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(fieldValues, scope, ctx)
 
-		LDAPRequestChan <- ldapRequest
+		select {
+		case LDAPRequestChan <- ldapRequest:
+		default:
+			L.RaiseError(errors.ErrClosedChannel.Error())
+
+			return 1
+		}
 
 		return processReply(L, ldapRequest.GetLDAPReplyChan())
 	}
