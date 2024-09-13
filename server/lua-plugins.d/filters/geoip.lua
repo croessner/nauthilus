@@ -117,7 +117,6 @@ function nauthilus_call_filter(request)
             end
 
             if not response.result then
-                nauthilus_context.context_set(N, "ok")
                 nauthilus_builtin.custom_log_add(N, "blocked")
 
                 -- Get result table
@@ -136,9 +135,6 @@ function nauthilus_call_filter(request)
         else
             return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
-
-        nauthilus_context.context_set(N, "ok")
-        nauthilus_builtin.custom_log_add(N, "success")
     else
         -- We must restore a failed authentication flag!
         if not request.authenticated then

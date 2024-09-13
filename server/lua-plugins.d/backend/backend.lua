@@ -114,8 +114,6 @@ function nauthilus_backend_verify_password(request)
 
     b:attributes(attributes)
 
-    nauthilus_builtin.custom_log_add("backend_lua", "success")
-
     return nauthilus_builtin.BACKEND_RESULT_OK, b
 end
 

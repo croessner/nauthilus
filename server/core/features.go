@@ -47,25 +47,48 @@ func isLocalOrEmptyIP(ip string) bool {
 	return ip == global.Localhost4 || ip == global.Localhost6 || ip == ""
 }
 
-// logMessage logs a message with the specified parameters using the global logger. It is intended to be a generic logging function.
+// logAddMessage logs a message with the specified parameters using the global logger. It is intended to be a generic logging function.
 //
 // Parameters:
+//   - auth: Pointer to AuthState
 //   - message: The message to log.
-//   - guid: The session identifier used in log entries.
 //   - feature: The feature name.
-//   - clientIP: The IP address of the client.
 //
 // Example usage:
 //
-//	logMessage("This is a log message", "12345", "feature", "192.168.0.1")
-func logMessage(message, guid, feature, clientIP string) {
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, feature, message, global.LogKeyClientIP, clientIP)
+//	logAddMessage("This is a log message", "12345", "feature", "192.168.0.1")
+func logAddMessage(auth *AuthState, message, feature string) {
+	if auth == nil {
+		return
+	}
+
+	auth.AdditionalLogs = append(auth.AdditionalLogs, feature)
+	auth.AdditionalLogs = append(auth.AdditionalLogs, message)
+}
+
+// logAddLocalhost adds the given feature to the whitelist of additional logs
+// in the AuthState struct. It appends the feature name and "localhost" to the
+// AdditionalLogs slice.
+//
+// Parameters:
+//   - a: A pointer to an AuthState instance.
+//   - feature: The name of the feature to be added to the whitelist.
+//
+// Returns:
+//   - None.
+func logAddLocalhost(auth *AuthState, feature string) {
+	if auth == nil {
+		return
+	}
+
+	auth.AdditionalLogs = append(auth.AdditionalLogs, fmt.Sprintf("%s_%s", global.LogKeyFeatureName, feature))
+	auth.AdditionalLogs = append(auth.AdditionalLogs, global.Localhost)
 }
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logMessage(global.Localhost, *a.GUID, global.FeatureLua, a.ClientIP)
+		logAddLocalhost(a, global.FeatureLua)
 
 		return
 	}
@@ -135,7 +158,7 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logMessage(global.Localhost, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+		logAddLocalhost(a, global.FeatureTLSEncryption)
 
 		return
 	}
@@ -149,14 +172,14 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	defer stopTimer()
 
 	if a.isInNetwork(config.LoadableConfig.ClearTextList) {
-		logMessage(global.NoTLS, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+		logAddMessage(a, global.NoTLS, global.FeatureTLSEncryption)
 
 		triggered = true
 
 		return
 	}
 
-	logMessage(global.Whitelisted, *a.GUID, global.FeatureTLSEncryption, a.ClientIP)
+	logAddMessage(a, global.Whitelisted, global.FeatureTLSEncryption)
 
 	return
 }
@@ -173,7 +196,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logMessage(global.Localhost, *a.GUID, global.FeatureRelayDomains, a.ClientIP)
+		logAddLocalhost(a, global.FeatureRelayDomains)
 
 		return
 	}
@@ -196,7 +219,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 			}
 		}
 
-		logMessage(fmt.Sprintf("%s not our domain", split[1]), *a.GUID, global.FeatureRelayDomains, a.ClientIP)
+		logAddMessage(a, fmt.Sprintf("%s not our domain", split[1]), global.FeatureRelayDomains)
 
 		triggered = true
 	}
@@ -229,7 +252,7 @@ func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan i
 	}
 
 	if isListed {
-		logMatchedRBL(*a.GUID, a.ClientIP, rblName, rbl.Weight)
+		logMatchedRBL(a, rblName, rbl.Weight)
 		handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
 
 		return
@@ -276,18 +299,16 @@ func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *ato
 //
 // Parameters:
 //
-//	guid - the session identifier
-//	clientIP - the IP address of the client
-//	rblName - the name of the RBL that was matched
-//	weight - the weight associated with the RBL
-func logMatchedRBL(guid, clientIP, rblName string, weight int) {
-	level.Info(log.Logger).Log(
-		global.LogKeyGUID, guid,
-		global.FeatureRBL, "RBL matched",
-		global.LogKeyClientIP, clientIP,
-		"rbl_name", rblName,
-		"weight", weight,
-	)
+//	 auth - pointer to AuthState
+//		rblName - the name of the RBL that was matched
+//		weight - the weight associated with the RBL
+func logMatchedRBL(auth *AuthState, rblName string, weight int) {
+	if auth == nil {
+		return
+	}
+
+	auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
+	auth.AdditionalLogs = append(auth.AdditionalLogs, weight)
 }
 
 // checkRBLs checks the remote client IP address against a list of realtime blocklists.
@@ -341,7 +362,7 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logMessage(global.Localhost, *a.GUID, global.FeatureRBL, a.ClientIP)
+		logAddLocalhost(a, global.FeatureRBL)
 
 		return
 	}
@@ -351,7 +372,7 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	defer stopTimer()
 
 	if a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
-		logMessage(global.Whitelisted, *a.GUID, global.FeatureRBL, a.ClientIP)
+		logAddMessage(a, global.Whitelisted, global.FeatureRBL)
 
 		return
 	}

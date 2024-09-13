@@ -253,7 +253,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 
-		clientIP, clientPort = util.GetProxyAddress(ctx.Request, clientIP, clientPort)
+		clientIP, clientPort = util.GetProxyAddress(ctx.Request, *auth.GUID, clientIP, clientPort)
 
 		if clientIP == "" {
 			clientIP = global.NotAvailable

@@ -650,8 +650,9 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		a.BruteForceCounter = make(map[string]uint)
 	}
 
-	if a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == global.NotAvailable {
-		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyBruteForce, "localhost")
+	if isLocalOrEmptyIP(a.ClientIP) {
+		a.AdditionalLogs = append(a.AdditionalLogs, global.LogKeyBruteForce)
+		a.AdditionalLogs = append(a.AdditionalLogs, global.Localhost)
 
 		return false
 	}
@@ -677,10 +678,8 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
 		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
-			level.Info(log.Logger).Log(
-				global.LogKeyGUID, a.GUID,
-				global.LogKeyBruteForce, "Client is whitelisted",
-				global.LogKeyClientIP, a.ClientIP)
+			a.AdditionalLogs = append(a.AdditionalLogs, global.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, global.Whitelisted)
 
 			return false
 		}

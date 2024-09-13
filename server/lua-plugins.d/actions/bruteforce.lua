@@ -48,10 +48,5 @@ function nauthilus_call_action(request)
         end
     end
 
-    -- Required by telegram.lua
-    nauthilus_context.context_set("haproxy", "ok")
-
-    nauthilus_builtin.custom_log_add("haproxy", "success")
-
     return nauthilus_builtin.ACTION_RESULT_OK
 end
