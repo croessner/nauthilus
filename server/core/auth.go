@@ -414,6 +414,10 @@ func (a *AuthState) String() string {
 func (a *AuthState) LogLineMail(status string, endpoint string) []any {
 	var keyvals []any
 
+	if a.StatusMessage == "" {
+		a.StatusMessage = "OK"
+	}
+
 	keyvals = []any{
 		global.LogKeyGUID, util.WithNotAvailable(*a.GUID),
 		global.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
