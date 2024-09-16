@@ -158,8 +158,8 @@ github.com/gabriel-vasile/mimetype
 github.com/gabriel-vasile/mimetype/internal/charset
 github.com/gabriel-vasile/mimetype/internal/json
 github.com/gabriel-vasile/mimetype/internal/magic
-# github.com/gin-contrib/pprof v1.4.0
-## explicit; go 1.14
+# github.com/gin-contrib/pprof v1.5.0
+## explicit; go 1.18
 github.com/gin-contrib/pprof
 # github.com/gin-contrib/sessions v1.0.1
 ## explicit; go 1.19
