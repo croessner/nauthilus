@@ -2055,7 +2055,7 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		return
 	}
 
-	if ctx.Query("mode") != "list-accounts" {
+	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != global.ServBasicAuth {
 		if !util.ValidateUsername(auth.Username) {
 			auth.Username = ""
 
