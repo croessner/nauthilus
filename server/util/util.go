@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"hash"
 	"net"
-	"net/http"
 	"regexp"
 	"runtime"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/simia-tech/crypt"
@@ -426,46 +426,38 @@ func logTrustedProxy(guid string, fwdAddress, clientIP string) {
 	)
 }
 
-// GetProxyAddress extracts the client IP address and port from the request headers.
-// If the X-Forwarded-For header is present, the function checks if the client IP is in the list
-// of trusted proxies. If it is not, the function returns the client IP and port unchanged.
-// If the client IP is in the list of trusted proxies, the function logs the forwarding address
-// and updates the client IP with the first IP address from X-Forwarded-For header, and sets
-// the client port to "N/A". The function returns the updated client IP and port.
-//
-// The function uses the following helper functions:
-// - logForwarderFound: Logs the finding of the X-Forwarded-For header in the debug module.
-// - IsInNetwork: Checks if an IP address is part of a list of networks.
-// - logNoTrustedProxies: Logs a warning indicating that the client IP does not match the trusted proxies.
-// - logTrustedProxy: Logs the client IP matching with the forwarded address.
-// - global.NotAvailable: A constant used when data for a particular field is not available.
-//
-// The function does not mutate the request or any other external state.
-func GetProxyAddress(request *http.Request, guid, clientIP, clientPort string) (string, string) {
-	fwdAddress := request.Header.Get("X-Forwarded-For")
+// ProcessXForwardedFor processes the X-Forwarded-For header in the given Gin context,
+// extracting the forwarded address and updating the client IP and port accordingly.
+// If the forwarded address is not empty, the function checks if the client IP is in the list
+// of trusted proxies. If it is not, a warning message is logged and the function returns.
+// If the client IP is in the list of trusted proxies, the function logs the matching of
+// the client IP with the forwarded address and updates the client IP to the forwarded address.
+// If the forwarded address contains multiple IP addresses separated by a comma, the first
+// IP address is used as the client IP. The client port is set to "N/A".
+func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string) {
+	fwdAddress := ctx.GetHeader("X-Forwarded-For")
+	guid := ctx.GetString(global.CtxGUIDKey)
 
 	if fwdAddress != "" {
 		logForwarderFound(guid)
 
-		if !IsInNetwork(viper.GetStringSlice("trusted_proxies"), guid, clientIP) {
-			logNoTrustedProxies(guid, clientIP)
+		if !IsInNetwork(viper.GetStringSlice("trusted_proxies"), guid, *clientIP) {
+			logNoTrustedProxies(guid, *clientIP)
 
-			return clientIP, clientPort
+			return
 		}
 
-		logTrustedProxy(guid, fwdAddress, clientIP)
+		logTrustedProxy(guid, fwdAddress, *clientIP)
 
-		clientIP = fwdAddress
+		*clientIP = fwdAddress
 
 		multipleIPs := strings.Split(fwdAddress, ", ")
 		if len(multipleIPs) > 1 {
-			clientIP = multipleIPs[0]
+			*clientIP = multipleIPs[0]
 		}
 
-		clientPort = global.NotAvailable
+		*clientPort = global.NotAvailable
 	}
-
-	return clientIP, clientPort
 }
 
 // ComparePasswords takes a plain password and creates a hash. Then it compares the hashed passwords and returns true, if

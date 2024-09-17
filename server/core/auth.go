@@ -2110,6 +2110,10 @@ func (a *AuthState) withDefaults(ctx *gin.Context) *AuthState {
 	a.Service = ctx.Param("service")
 	a.Context = ctx.MustGet(global.CtxDataExchangeKey).(*lualib.Context)
 
+	if a.Service == global.ServBasicAuth {
+		a.Protocol.Set(global.ProtoHTTP)
+	}
+
 	if a.Protocol.Get() == "" {
 		a.Protocol.Set(global.ProtoDefault)
 	}
@@ -2142,13 +2146,13 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 	a.XClientID = ctx.GetHeader("X-Client-Id")
 
 	if a.ClientIP == "" {
-		// This might be valid, if HAproxy v2 support is enabled
+		// This might be valid if HAproxy v2 support is enabled
 		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 		if err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, ctx.GetString(global.CtxGUIDKey), a.ClientIP, a.XClientPort)
+		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort)
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
