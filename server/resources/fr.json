@@ -39,5 +39,6 @@
   "Home": "Accueil",
   "Please make a selection": "Veuillez faire une sélection",
   "Register TOTP": "Enregistrer TOTP",
-  "Register WebAuthn": "Enregistrer WebAuthn"
+  "Register WebAuthn": "Enregistrer WebAuthn",
+  "No active session for user found": "Aucune session active trouvée pour l'utilisateur"
 }
