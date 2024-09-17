@@ -542,7 +542,12 @@ func notifyGETHandler(ctx *gin.Context) {
 	}
 
 	if value, found = ctx.Get("message"); found {
-		msg = getLocalized(ctx, "An error occurred:") + " " + value.(error).Error()
+		switch what := value.(type) {
+		case error:
+			msg = getLocalized(ctx, "An error occurred:") + " " + what.Error()
+		case string:
+			msg = getLocalized(ctx, what)
+		}
 	} else {
 		msg = getLocalized(ctx, ctx.Query("message"))
 	}
@@ -2534,21 +2539,23 @@ func logoutGETHandler(ctx *gin.Context) {
 		httpResponse *http.Response
 	)
 
-	logoutChallenge := ctx.Query("logout_challenge")
-	if logoutChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
-
-		return
-	}
-
+	// Skip logout request, if there does not exist any session for the user
 	postLogout := ctx.Query("logout")
 	if postLogout == "1" {
 		redirectTo := viper.GetString("homepage")
 		if redirectTo != "" {
 			ctx.Redirect(http.StatusFound, redirectTo)
 		} else {
-			ctx.AbortWithStatus(http.StatusOK)
+			ctx.Set("message", "No active session for user found")
+			notifyGETHandler(ctx)
 		}
+
+		return
+	}
+
+	logoutChallenge := ctx.Query("logout_challenge")
+	if logoutChallenge == "" {
+		handleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}

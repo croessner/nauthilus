@@ -27,13 +27,13 @@ jobs:
       - name: Extract tag versions
         id: extract_version
         run: |
-          tag=${GITHUB_REF##*/}  # gets the tag name, e.g., v1.2.3
+          tag=${GITHUB_REF##*/}
           major=$(echo $tag | cut -d'.' -f1)
           minor=$(echo $tag | cut -d'.' -f2)
           patch=$(echo $tag | cut -d'.' -f3)
           echo "major=${major}" >> $GITHUB_ENV
           echo "minor=${minor}" >> $GITHUB_ENV
-          echo "patch=${patch}" >> $GITHUB_ENV- name: Build and push
+          echo "patch=${patch}" >> $GITHUB_ENV
 
       - name: Build and push
         uses: docker/build-push-action@v5

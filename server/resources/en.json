@@ -39,5 +39,6 @@
   "Home": "Home",
   "Please make a selection": "Please make a selection",
   "Register TOTP": "Register TOTP",
-  "Register WebAuthn": "Register WebAuthn"
+  "Register WebAuthn": "Register WebAuthn",
+  "No active session for user found": "No active session for user found"
 }

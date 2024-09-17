@@ -39,5 +39,6 @@
   "Home": "Startseite",
   "Please make a selection": "Bitte treffen Sie eine Auswahl",
   "Register TOTP": "Registration TOTP",
-  "Register WebAuthn": "Registration WebAuthn"
+  "Register WebAuthn": "Registration WebAuthn",
+  "No active session for user found": "Keine aktive Sitzung für den Benutzer gefunden"
 }

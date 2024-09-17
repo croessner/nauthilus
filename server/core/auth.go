@@ -365,7 +365,7 @@ var BackendServers = NewBackendServer()
 func (a *AuthState) String() string {
 	var result string
 
-	value := reflect.ValueOf(a)
+	value := reflect.ValueOf(*a)
 	typeOfValue := value.Type()
 
 	for index := range value.NumField() {
@@ -2068,6 +2068,21 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 	auth.setOperationMode(ctx)
 }
 
+// logNewAuthState logs the initialization of an AuthState object.
+// It takes a GUID string and an AuthState pointer as parameters.
+// It creates a debug log entry using util.DebugModule function, passing
+// DbgAuth as the module parameter, and the GUID and "AuthState initialized"
+// as the key-value pairs. Additionally, it includes the string representation
+// of the auth parameter in the log entry.
+func logNewAuthState(guid string, auth *AuthState) {
+	util.DebugModule(
+		global.DbgAuth,
+		global.LogKeyGUID, guid,
+		global.LogKeyMsg, "AuthState initialized",
+		"auth_state", fmt.Sprintf("%v", auth),
+	)
+}
+
 // NewAuthState creates a new instance of the AuthState struct.
 // It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the AuthState struct.
 // If an error occurs while setting the StatusCode field using the setStatusCodes function, it logs the error and returns nil.
@@ -2079,8 +2094,9 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 		HTTPClientContext: ctx.Copy(),
 	}
 
+	guid := ctx.GetString(global.CtxGUIDKey)
+
 	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
-		guid := ctx.GetString(global.CtxGUIDKey)
 
 		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
@@ -2088,6 +2104,8 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 	}
 
 	setupAuth(ctx, auth)
+
+	logNewAuthState(guid, auth)
 
 	if ctx.Errors.Last() != nil {
 		return nil
@@ -2109,6 +2127,10 @@ func (a *AuthState) withDefaults(ctx *gin.Context) *AuthState {
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.Param("service")
 	a.Context = ctx.MustGet(global.CtxDataExchangeKey).(*lualib.Context)
+
+	if a.Service == global.ServBasicAuth {
+		a.Protocol.Set(global.ProtoHTTP)
+	}
 
 	if a.Protocol.Get() == "" {
 		a.Protocol.Set(global.ProtoDefault)
@@ -2142,13 +2164,13 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 	a.XClientID = ctx.GetHeader("X-Client-Id")
 
 	if a.ClientIP == "" {
-		// This might be valid, if HAproxy v2 support is enabled
+		// This might be valid if HAproxy v2 support is enabled
 		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 		if err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		a.ClientIP, a.XClientPort = util.GetProxyAddress(ctx.Request, ctx.GetString(global.CtxGUIDKey), a.ClientIP, a.XClientPort)
+		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort)
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
