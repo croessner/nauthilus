@@ -51,6 +51,7 @@ func (l *LuaSection) GetProtocols() any {
 
 type LuaAction struct {
 	ActionType string `mapstructure:"type"`
+	ScriptName string `mapstructure:"name"`
 	ScriptPath string `mapstructure:"script_path"`
 }
 
@@ -58,9 +59,14 @@ func (l *LuaAction) String() string {
 	return fmt.Sprintf("{ActionType: %s}, {ScriptPath: %s}", l.ActionType, l.ScriptPath)
 }
 
-// GetAction returns the action type and a path to a Lua script as defined in the LuaAction struct.
-func (l *LuaAction) GetAction() (string, string) {
-	return l.ActionType, l.ScriptPath
+// GetAction returns the ActionType, ScriptName, and ScriptPath of a LuaAction.
+// It is a method of the LuaAction struct.
+// The ActionType field represents the type of the Lua action.
+// The ScriptName field represents the name of the Lua script.
+// The ScriptPath field represents the path to the Lua script file.
+// It returns these values as strings.
+func (l *LuaAction) GetAction() (string, string, string) {
+	return l.ActionType, l.ScriptName, l.ScriptPath
 }
 
 type LuaFeature struct {
