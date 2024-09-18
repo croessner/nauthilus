@@ -453,7 +453,7 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string) {
 
 		multipleIPs := strings.Split(fwdAddress, ",")
 		if len(multipleIPs) > 1 {
-			*clientIP = strings.TrimSpace(multipleIPs[len(multipleIPs)-1])
+			*clientIP = strings.TrimSpace(multipleIPs[0])
 		}
 
 		*clientPort = global.NotAvailable
