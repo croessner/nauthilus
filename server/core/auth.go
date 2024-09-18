@@ -1130,6 +1130,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
 				Account:             "", // unavailable
+				AccountField:        "", // unavailable
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,
@@ -1219,6 +1220,16 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 	return global.AuthResultOK
 }
 
+// getAccountField returns the value of the AccountField field in the AuthState struct.
+// If the AccountField field is nil, it returns an empty string.
+func (a *AuthState) getAccountField() string {
+	if a.AccountField == nil {
+		return ""
+	}
+
+	return *a.AccountField
+}
+
 // postLuaAction sends a Lua action to be executed asynchronously.
 func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 	if !config.LoadableConfig.HaveLuaActions() {
@@ -1262,6 +1273,7 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 
 					return ""
 				}(),
+				AccountField:        a.getAccountField(),
 				UniqueUserID:        a.getUniqueUserID(),
 				DisplayName:         a.getDisplayName(),
 				Password:            a.Password,
@@ -1625,6 +1637,7 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 
 				return ""
 			}(),
+			AccountField:        a.getAccountField(),
 			UniqueUserID:        a.getUniqueUserID(),
 			DisplayName:         a.getDisplayName(),
 			Password:            a.Password,

@@ -63,9 +63,10 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			LocalIP:             auth.XLocalIP,
 			LocalPort:           auth.XPort,
 			Username:            auth.Username,
-			Account:             "", // set by backend_result
-			UniqueUserID:        "", // set by backend_result
-			DisplayName:         "", // set by backend_result
+			Account:             "", // set by nauthilus_backend_result
+			AccountField:        "", // set by nauthilus_backend_result
+			UniqueUserID:        "", // set by nauthilus_backend_result
+			DisplayName:         "", // set by nauthilus_backend_result
 			Password:            auth.Password,
 			Protocol:            auth.Protocol.Get(),
 			BruteForceName:      "", // unavailable

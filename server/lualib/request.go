@@ -82,6 +82,9 @@ type CommonRequest struct {
 	// Account stores the user's account information.
 	Account string
 
+	// AccountField stores the user's account field.
+	AccountField string
+
 	// UniqueUserID stores the unique user identifier.
 	UniqueUserID string
 
@@ -197,6 +200,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(global.LuaRequestLocalPort, lua.LString(c.LocalPort))
 	request.RawSetString(global.LuaRequestUsername, lua.LString(c.Username))
 	request.RawSetString(global.LuaRequestAccount, lua.LString(c.Account))
+	request.RawSetString(global.LuaRequestAccountField, lua.LString(c.AccountField))
 	request.RawSetString(global.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
 	request.RawSetString(global.LuaRequestDisplayName, lua.LString(c.DisplayName))
 	request.RawSetString(global.LuaRequestPassword, lua.LString(c.Password))

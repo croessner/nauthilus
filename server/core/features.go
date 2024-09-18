@@ -118,6 +118,7 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 			LocalPort:           a.XPort,
 			Username:            a.Username,
 			Account:             "", // unavailable
+			AccountField:        "", // unavailable
 			UniqueUserID:        "", // unavailable
 			DisplayName:         "", // unavailable
 			Password:            a.Password,
