@@ -50,6 +50,9 @@ type LuaScriptAction struct {
 	// ScriptCompiled is the compiled Lua function.
 	ScriptCompiled *lua.FunctionProto
 
+	// ScriptName is the descriptive name of the script
+	ScriptName string
+
 	// LuaAction is the type of Lua action.
 	LuaAction global.LuaAction
 }
@@ -173,12 +176,12 @@ func (aw *Worker) loadActionScriptsFromConfiguration() {
 //	aw.loadScriptAction(actionConfig)
 func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 	luaAction := &LuaScriptAction{}
-	actionType, scriptPath := actionConfig.GetAction()
+	actionType, scriptName, scriptPath := actionConfig.GetAction()
 
 	luaAction.LuaAction = getLuaActionType(actionType)
 
 	if luaAction.LuaAction != global.LuaActionNone {
-		aw.loadScript(luaAction, scriptPath)
+		aw.loadScript(luaAction, scriptName, scriptPath)
 	}
 }
 
@@ -189,7 +192,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 // Parameters:
 // - luaAction: a pointer to a LuaScriptAction object.
 // - scriptPath: the path to the Lua script file.
-func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
+func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scriptPath string) {
 	var (
 		err            error
 		scriptCompiled *lua.FunctionProto
@@ -202,6 +205,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptPath string) {
 	}
 
 	luaAction.ScriptPath = scriptPath
+	luaAction.ScriptName = scriptName
 	luaAction.ScriptCompiled = scriptCompiled
 	aw.actionScripts = append(aw.actionScripts, luaAction)
 }
@@ -382,7 +386,7 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 func getTaskName(action *LuaScriptAction) string {
 	actionName := getLuaActionName(action)
 
-	return fmt.Sprintf("%s:%s", actionName, action.ScriptPath)
+	return fmt.Sprintf("%s:%s", actionName, action.ScriptName)
 }
 
 // runScript executes the Lua script at the specified index.
