@@ -1349,6 +1349,9 @@ const (
 	// LuaRequestAccount signifies the account of the user making the request.
 	LuaRequestAccount = "account"
 
+	// LuaRequestAccountField is a constant representing the key for the account field in a Lua request.
+	LuaRequestAccountField = "account_field"
+
 	// LuaRequestUniqueUserID signifies the unique user ID of the user making the request.
 	LuaRequestUniqueUserID = "unique_user_id"
 

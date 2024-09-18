@@ -818,6 +818,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 					UserAgent:           *a.UserAgent,
 					Username:            a.Username,
 					Account:             "", // unavailable
+					AccountField:        "", // unavailable
 					UniqueUserID:        "", // unavailable
 					DisplayName:         "", // unavailable
 					Password:            a.Password,
