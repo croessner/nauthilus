@@ -130,6 +130,8 @@ function nauthilus_call_filter(request)
                     nauthilus_context.context_set("rt", rt)
                 end
 
+                nauthilus_builtin.status_message_set("Policy violation")
+
                 return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
             end
         else
