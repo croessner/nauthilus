@@ -840,6 +840,8 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 					XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
 					XSSLProtocol:        a.XSSLProtocol,
 					XSSLCipher:          a.XSSLCipher,
+					SSLSerial:           a.SSLSerial,
+					SSLFingerprint:      a.SSLFingerprint,
 				},
 			}
 

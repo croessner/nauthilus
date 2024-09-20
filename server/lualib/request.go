@@ -147,6 +147,12 @@ type CommonRequest struct {
 
 	// XSSLCipher is the encryption cipher used in the SSL protocol.
 	XSSLCipher string
+
+	// SSLSerial is the serial number of the SSL certificate used for secure communication.
+	SSLSerial string
+
+	// SSLFingerprint represents the SSL certificate's fingerprint for the client in the request.
+	SSLFingerprint string
 }
 
 // LoaderModHTTPRequest is a function that returns a LGFunction which sets up a Lua module for handling HTTP requests.
@@ -222,6 +228,8 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(c.XSSLClientIssuerDN))
 	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(c.XSSLProtocol))
 	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
+	request.RawSetString(global.LuaRequestSSLSerial, lua.LString(c.SSLSerial))
+	request.RawSetString(global.LuaRequestSSLFingerprint, lua.LString(c.SSLFingerprint))
 
 	request.RawSetString(global.LuaRequestLogFormat, lua.LString(logFormat))
 	request.RawSetString(global.LuaRequestLogLevel, lua.LString(logLevel))

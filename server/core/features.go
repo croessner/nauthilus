@@ -140,6 +140,8 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
 			XSSLProtocol:        a.XSSLProtocol,
 			XSSLCipher:          a.XSSLCipher,
+			SSLSerial:           a.SSLSerial,
+			SSLFingerprint:      a.SSLFingerprint,
 		},
 	}
 

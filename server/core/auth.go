@@ -208,6 +208,12 @@ type AuthState struct {
 	XSSLProtocol        string // %[ssl_fc_protocol]
 	XSSLCipher          string // %[ssl_fc_cipher]
 
+	// SSLSerial represents the serial number of an SSL certificate as a string.
+	SSLSerial string
+
+	// SSLFingerprint represents the fingerprint of an SSL certificate.
+	SSLFingerprint string
+
 	// XClientID is delivered by some mail user agents when using IMAP. This value is set by the HTTP request header
 	// "X-Client-Id".
 	XClientID string
@@ -428,13 +434,13 @@ func (a *AuthState) LogLineMail(status string, endpoint string) []any {
 		global.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
 		global.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
 		global.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		global.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
+		global.LogKeyAuthMethod, util.WithNotAvailable(*a.Method),
 		global.LogKeyUsername, util.WithNotAvailable(a.Username),
 		global.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
 		global.LogKeyLoginAttempts, a.LoginAttempts,
 		global.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
 		global.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
-		global.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
+		global.LogKeyUserAgent, util.WithNotAvailable(*a.UserAgent),
 		global.LogKeyClientID, util.WithNotAvailable(a.XClientID),
 		global.LogKeyBruteForceName, util.WithNotAvailable(a.BruteForceName),
 		global.LogKeyFeatureName, util.WithNotAvailable(a.FeatureName),
@@ -1152,6 +1158,8 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
 				XSSLProtocol:        a.XSSLProtocol,
 				XSSLCipher:          a.XSSLCipher,
+				SSLSerial:           a.SSLSerial,
+				SSLFingerprint:      a.SSLFingerprint,
 			},
 		}
 
@@ -1295,6 +1303,8 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
 				XSSLProtocol:        a.XSSLProtocol,
 				XSSLCipher:          a.XSSLCipher,
+				SSLSerial:           a.SSLSerial,
+				SSLFingerprint:      a.SSLFingerprint,
 			},
 		}
 
@@ -1659,6 +1669,8 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
 			XSSLProtocol:        a.XSSLProtocol,
 			XSSLCipher:          a.XSSLCipher,
+			SSLSerial:           a.SSLSerial,
+			SSLFingerprint:      a.SSLFingerprint,
 		},
 	}
 
@@ -1872,10 +1884,10 @@ func (a *AuthState) setOperationMode(ctx *gin.Context) {
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	auth.Username = ctx.GetHeader("Auth-User")
-	auth.Password = ctx.GetHeader("Auth-Pass")
+	auth.Username = ctx.GetHeader(config.LoadableConfig.GetUsername())
+	auth.Password = ctx.GetHeader(config.LoadableConfig.GetPassword())
 
-	encoded := ctx.GetHeader("X-Auth-Password-Encoded")
+	encoded := ctx.GetHeader(config.LoadableConfig.GetPasswordEncoded())
 	if encoded == "1" {
 		padding := len(auth.Password) % 4
 		if padding > 0 {
@@ -1891,10 +1903,10 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 		}
 	}
 
-	auth.Protocol.Set(ctx.GetHeader("Auth-Protocol"))
+	auth.Protocol.Set(ctx.GetHeader(config.LoadableConfig.GetProtocol()))
 
 	auth.LoginAttempts = func() uint {
-		loginAttempts, err := strconv.Atoi(ctx.GetHeader("Auth-Login-Attempt"))
+		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.LoadableConfig.GetLoginAttempt()))
 		if err != nil {
 			return 0
 		}
@@ -1906,7 +1918,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 		return uint(loginAttempts)
 	}()
 
-	method := ctx.GetHeader("Auth-Method")
+	method := ctx.GetHeader(config.LoadableConfig.GetAuthMethod())
 
 	auth.Method = &method
 
@@ -2158,8 +2170,8 @@ func (a *AuthState) withLocalInfo(ctx *gin.Context) *AuthState {
 		return nil
 	}
 
-	a.XLocalIP = ctx.GetHeader("X-Local-IP")
-	a.XPort = ctx.GetHeader("X-Auth-Port")
+	a.XLocalIP = ctx.GetHeader(config.LoadableConfig.GetLocalIP())
+	a.XPort = ctx.GetHeader(config.LoadableConfig.GetLocalPort())
 
 	return a
 }
@@ -2172,9 +2184,9 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 		return nil
 	}
 
-	a.ClientIP = ctx.GetHeader("Client-IP")
-	a.XClientPort = ctx.GetHeader("X-Client-Port")
-	a.XClientID = ctx.GetHeader("X-Client-Id")
+	a.ClientIP = ctx.GetHeader(config.LoadableConfig.GetClientIP())
+	a.XClientPort = ctx.GetHeader(config.LoadableConfig.GetClientPort())
+	a.XClientID = ctx.GetHeader(config.LoadableConfig.GetClientID())
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
@@ -2196,7 +2208,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 
 	if a.ClientHost == "" {
 		// Fallback to environment variable
-		a.ClientHost = ctx.GetHeader("Client-Host")
+		a.ClientHost = ctx.GetHeader(config.LoadableConfig.GetClientHost())
 	}
 
 	return a
@@ -2221,28 +2233,22 @@ func (a *AuthState) withXSSL(ctx *gin.Context) *AuthState {
 		return nil
 	}
 
-	a.XSSL = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL"), ctx.GetHeader("X-SSL"))
-	a.XSSLSessionID = util.CheckStrings(ctx.GetHeader("X-SSL-Session-ID"))
-	a.XSSLClientVerify = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL-Verify"), ctx.GetHeader("X-SSL-Client-Verify"))
-	a.XSSLClientDN = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL-Subject"), ctx.GetHeader("X-SSL-Client-DN"))
-	a.XSSLClientCN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-CN"))
-	a.XSSLIssuer = util.CheckStrings(ctx.GetHeader("X-SSL-Issuer"))
-	a.XSSLClientNotBefore = util.CheckStrings(ctx.GetHeader("X-SSL-Client-NotBefore"))
-	a.XSSLClientNotAfter = util.CheckStrings(ctx.GetHeader("X-SSL-Client-NotAfter"))
-	a.XSSLSubjectDN = util.CheckStrings(ctx.GetHeader("X-SSL-Subject-DN"))
-	a.XSSLIssuerDN = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL-Issuer"), ctx.GetHeader("X-SSL-Issuer-DN"))
-	a.XSSLClientSubjectDN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-Subject-DN"))
-	a.XSSLClientIssuerDN = util.CheckStrings(ctx.GetHeader("X-SSL-Client-Issuer-DN"))
-	a.XSSLCipher = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL-Cipher"), ctx.GetHeader("X-SSL-Cipher"))
-	a.XSSLProtocol = util.CheckStrings(
-		ctx.GetHeader("Auth-SSL-Protocol"), ctx.GetHeader("X-SSL-Protocol"))
-
-	// TODO: Nginx: Auth-SSL-Serial, Auth-SSL-Fingerprint
+	a.XSSL = ctx.GetHeader(config.LoadableConfig.GetSSL())
+	a.XSSLSessionID = ctx.GetHeader(config.LoadableConfig.GetSSLSessionID())
+	a.XSSLClientVerify = ctx.GetHeader(config.LoadableConfig.GetSSLVerify())
+	a.XSSLClientDN = ctx.GetHeader(config.LoadableConfig.GetSSLSubject())
+	a.XSSLClientCN = ctx.GetHeader(config.LoadableConfig.GetSSLClientCN())
+	a.XSSLIssuer = ctx.GetHeader(config.LoadableConfig.GetSSLIssuer())
+	a.XSSLClientNotBefore = ctx.GetHeader(config.LoadableConfig.GetSSLClientNotBefore())
+	a.XSSLClientNotAfter = ctx.GetHeader(config.LoadableConfig.GetSSLClientNotAfter())
+	a.XSSLSubjectDN = ctx.GetHeader(config.LoadableConfig.GetSSLSubjectDN())
+	a.XSSLIssuerDN = ctx.GetHeader(config.LoadableConfig.GetSSLIssuerDN())
+	a.XSSLClientSubjectDN = ctx.GetHeader(config.LoadableConfig.GetSSLClientSubjectDN())
+	a.XSSLClientIssuerDN = ctx.GetHeader(config.LoadableConfig.GetSSLClientIssuerDN())
+	a.XSSLCipher = ctx.GetHeader(config.LoadableConfig.GetSSLCipher())
+	a.XSSLProtocol = ctx.GetHeader(config.LoadableConfig.GetSSLProtocol())
+	a.SSLSerial = ctx.GetHeader(config.LoadableConfig.GetSSLSerial())
+	a.SSLFingerprint = ctx.GetHeader(config.LoadableConfig.GetSSLFingerprint())
 
 	return a
 }
