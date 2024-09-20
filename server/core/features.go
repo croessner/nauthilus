@@ -166,7 +166,7 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 		return
 	}
 
-	if a.XSSL != global.NotAvailable {
+	if a.XSSL != "" {
 		return
 	}
 
