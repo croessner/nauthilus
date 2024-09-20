@@ -15,20 +15,18 @@ import (
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 )
 
-var tpmAttestationKey = "tpm"
-
 func init() {
-	RegisterAttestationFormat(tpmAttestationKey, verifyTPMFormat)
+	RegisterAttestationFormat(AttestationFormatTPM, verifyTPMFormat)
 }
 
-func verifyTPMFormat(att AttestationObject, clientDataHash []byte) (string, []interface{}, error) {
+func verifyTPMFormat(att AttestationObject, clientDataHash []byte, _ metadata.Provider) (string, []any, error) {
 	// Given the verification procedure inputs attStmt, authenticatorData
 	// and clientDataHash, the verification procedure is as follows
 
 	// Verify that attStmt is valid CBOR conforming to the syntax defined
 	// above and perform CBOR decoding on it to extract the contained fields
 
-	ver, present := att.AttStatement["ver"].(string)
+	ver, present := att.AttStatement[stmtVersion].(string)
 	if !present {
 		return "", nil, ErrAttestationFormat.WithDetails("Error retrieving ver value")
 	}
@@ -37,35 +35,35 @@ func verifyTPMFormat(att AttestationObject, clientDataHash []byte) (string, []in
 		return "", nil, ErrAttestationFormat.WithDetails("WebAuthn only supports TPM 2.0 currently")
 	}
 
-	alg, present := att.AttStatement["alg"].(int64)
+	alg, present := att.AttStatement[stmtAlgorithm].(int64)
 	if !present {
 		return "", nil, ErrAttestationFormat.WithDetails("Error retrieving alg value")
 	}
 
 	coseAlg := webauthncose.COSEAlgorithmIdentifier(alg)
 
-	x5c, x509present := att.AttStatement["x5c"].([]interface{})
+	x5c, x509present := att.AttStatement[stmtX5C].([]any)
 	if !x509present {
 		// Handle Basic Attestation steps for the x509 Certificate
 		return "", nil, ErrNotImplemented
 	}
 
-	_, ecdaaKeyPresent := att.AttStatement["ecdaaKeyId"].([]byte)
+	_, ecdaaKeyPresent := att.AttStatement[stmtECDAAKID].([]byte)
 	if ecdaaKeyPresent {
 		return "", nil, ErrNotImplemented
 	}
 
-	sigBytes, present := att.AttStatement["sig"].([]byte)
+	sigBytes, present := att.AttStatement[stmtSignature].([]byte)
 	if !present {
 		return "", nil, ErrAttestationFormat.WithDetails("Error retrieving sig value")
 	}
 
-	certInfoBytes, present := att.AttStatement["certInfo"].([]byte)
+	certInfoBytes, present := att.AttStatement[stmtCertInfo].([]byte)
 	if !present {
 		return "", nil, ErrAttestationFormat.WithDetails("Error retrieving certInfo value")
 	}
 
-	pubAreaBytes, present := att.AttStatement["pubArea"].([]byte)
+	pubAreaBytes, present := att.AttStatement[stmtPubArea].([]byte)
 	if !present {
 		return "", nil, ErrAttestationFormat.WithDetails("Error retrieving pubArea value")
 	}
@@ -343,23 +341,31 @@ var tpmManufacturers = []struct {
 	code string
 }{
 	{"414D4400", "AMD", "AMD"},
+	{"414E5400", "Ant Group", "ANT"},
 	{"41544D4C", "Atmel", "ATML"},
 	{"4252434D", "Broadcom", "BRCM"},
+	{"4353434F", "Cisco", "CSCO"},
+	{"464C5953", "Flyslice Technologies", "FLYS"},
+	{"524F4343", "Fuzhou Rockchip", "ROCC"},
+	{"474F4F47", "Google", "GOOG"},
+	{"48504900", "HPI", "HPI"},
+	{"48504500", "HPE", "HPE"},
+	{"48495349", "Huawei", "HISI"},
 	{"49424d00", "IBM", "IBM"},
 	{"49465800", "Infineon", "IFX"},
 	{"494E5443", "Intel", "INTC"},
 	{"4C454E00", "Lenovo", "LEN"},
+	{"4D534654", "Microsoft", "MSFT"},
 	{"4E534D20", "National Semiconductor", "NSM"},
 	{"4E545A00", "Nationz", "NTZ"},
 	{"4E544300", "Nuvoton Technology", "NTC"},
 	{"51434F4D", "Qualcomm", "QCOM"},
-	{"534D5343", "SMSC", "SMSC"},
-	{"53544D20", "ST Microelectronics", "STM"},
 	{"534D534E", "Samsung", "SMSN"},
 	{"534E5300", "Sinosun", "SNS"},
+	{"534D5343", "SMSC", "SMSC"},
+	{"53544D20", "ST Microelectronics", "STM"},
 	{"54584E00", "Texas Instruments", "TXN"},
 	{"57454300", "Winbond", "WEC"},
-	{"524F4343", "Fuzhouk Rockchip", "ROCC"},
 	{"FFFFF1D0", "FIDO Alliance Conformance Testing", "FIDO"},
 }
 

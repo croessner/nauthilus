@@ -86,6 +86,8 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
 			XSSLProtocol:        auth.XSSLProtocol,
 			XSSLCipher:          auth.XSSLCipher,
+			SSLSerial:           auth.SSLSerial,
+			SSLFingerprint:      auth.SSLFingerprint,
 		},
 	}
 

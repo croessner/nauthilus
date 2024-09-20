@@ -295,42 +295,10 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 	}
 }
 
-// WithNotAvailable checks a list of string. If none of the strings does have a content, we return the global.NotAvailable string.
-func WithNotAvailable(elements ...any) string {
-	var value string
-
-	value = CheckStrings(elements...)
-
+// WithNotAvailable returns a default "not available" string if the given value is an empty string.
+func WithNotAvailable(value string) string {
 	if value == "" {
 		return global.NotAvailable
-	}
-
-	return value
-}
-
-// CheckStrings checks a list of strings and returns the first that is non-empty.
-func CheckStrings(elements ...any) string {
-	var value string
-
-	if elements == nil {
-		return ""
-	}
-
-	for index := range elements {
-		switch element := elements[index].(type) {
-		case string:
-			if element != "" {
-				return element
-			}
-		case *string:
-			if element == nil {
-				return ""
-			}
-
-			if *element != "" {
-				return *element
-			}
-		}
 	}
 
 	return value

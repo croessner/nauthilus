@@ -1409,6 +1409,12 @@ const (
 	// LuaRequestXSSLCipher indicates the SSL cipher used.
 	LuaRequestXSSLCipher = "ssl_cipher"
 
+	// LuaRequestSSLSerial represents the SSL serial number in the request context.
+	LuaRequestSSLSerial = "ssl_serial"
+
+	// LuaRequestSSLFingerprint is a constant that represents an SSL fingerprint identifier in a Lua request.
+	LuaRequestSSLFingerprint = "ssl_fingerprint"
+
 	// LuaRequestTOTPSecret signifies the TOTP secret of the user.
 	LuaRequestTOTPSecret = "totp_secret"
 

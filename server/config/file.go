@@ -809,6 +809,131 @@ func GetSkipConsent(clientId string) (skip bool) {
 	return
 }
 
+// GetUsername returns the HTTP request header for the username
+func (f *File) GetUsername() string {
+	return f.Server.DefaultHTTPRequestHeader.Username
+}
+
+// GetPassword returns the HTTP request header for the password
+func (f *File) GetPassword() string {
+	return f.Server.DefaultHTTPRequestHeader.Password
+}
+
+// GetPasswordEncoded returns the HTTP request header to indicate if the password was encoded
+func (f *File) GetPasswordEncoded() string {
+	return f.Server.DefaultHTTPRequestHeader.PasswordEncoded
+}
+
+// GetProtocol returns the HTTP request header for the used protocol
+func (f *File) GetProtocol() string {
+	return f.Server.DefaultHTTPRequestHeader.Protocol
+}
+
+// GetLoginAttempt returns the HTTP request header for login-attempts
+func (f *File) GetLoginAttempt() string {
+	return f.Server.DefaultHTTPRequestHeader.LoginAttempt
+}
+
+// GetAuthMethod returns the HTTP request header for the auth mechanism LOGIN or PLAIN
+func (f *File) GetAuthMethod() string {
+	return f.Server.DefaultHTTPRequestHeader.AuthMethod
+}
+
+// GetLocalIP returns the HTTP request header that represents the local IP address for the server that accepts client requests
+func (f *File) GetLocalIP() string {
+	return f.Server.DefaultHTTPRequestHeader.LocalIP
+}
+
+// GetLocalPort returns the HTTP request header that represents the local TCP port for the server that accepts client requests
+func (f *File) GetLocalPort() string {
+	return f.Server.DefaultHTTPRequestHeader.LocalPort
+}
+
+// GetClientIP returns the HTTP request header that holds the client IP of the request
+func (f *File) GetClientIP() string {
+	return f.Server.DefaultHTTPRequestHeader.ClientIP
+}
+
+// GetClientPort returns the HTTP request header that holds the client TCP port of the request
+func (f *File) GetClientPort() string {
+	return f.Server.DefaultHTTPRequestHeader.ClientPort
+}
+
+// GetClientHost returns the HTTP request header used to retrieve an optional client hostname
+func (f *File) GetClientHost() string {
+	return f.Server.DefaultHTTPRequestHeader.ClientHost
+}
+
+// GetClientID returns the HTTP request header used to retrieve an optional client ID
+func (f *File) GetClientID() string {
+	return f.Server.DefaultHTTPRequestHeader.ClientID
+}
+
+// GetSSL returns the HTTP request header used to indicate SSL security for the current client connection
+func (f *File) GetSSL() string {
+	return f.Server.DefaultHTTPRequestHeader.SSL
+}
+
+func (f *File) GetSSLSessionID() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLSessionID
+}
+
+func (f *File) GetSSLVerify() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLVerify
+}
+
+func (f *File) GetSSLSubject() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLSubject
+}
+
+func (f *File) GetSSLClientCN() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLClientCN
+}
+
+func (f *File) GetSSLIssuer() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLIssuer
+}
+
+func (f *File) GetSSLClientNotBefore() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLClientNotBefore
+}
+
+func (f *File) GetSSLClientNotAfter() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLClientNotAfter
+}
+
+func (f *File) GetSSLSubjectDN() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLSubjectDN
+}
+
+func (f *File) GetSSLIssuerDN() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLSubject
+}
+
+func (f *File) GetSSLClientSubjectDN() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLClientSubjectDN
+}
+
+func (f *File) GetSSLClientIssuerDN() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLClientIssuerDN
+}
+
+func (f *File) GetSSLCipher() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLCipher
+}
+
+func (f *File) GetSSLProtocol() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLProtocol
+}
+
+func (f *File) GetSSLSerial() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLSerial
+}
+
+func (f *File) GetSSLFingerprint() string {
+	return f.Server.DefaultHTTPRequestHeader.SSLFingerprint
+}
+
 // validateBackends is a method on the File struct.
 // It checks if the Server struct has any configured backends.
 // If there are no backends configured, it returns the error ErrNoBackendsConfigured.
@@ -1311,19 +1436,53 @@ func (f *File) validateMasterUserDelimiter() error {
 	return nil
 }
 
+// validateHTTPRequestHeaders ensures all default HTTP request headers are set. If any header is empty, it is replaced with its default value.
+func (f *File) validateHTTPRequestHeaders() error {
+	defaults := map[string]*string{
+		"Auth-User":            &f.Server.DefaultHTTPRequestHeader.Username,
+		"Auth-Pass":            &f.Server.DefaultHTTPRequestHeader.Password,
+		"Auth-Protocol":        &f.Server.DefaultHTTPRequestHeader.Protocol,
+		"Auth-Method":          &f.Server.DefaultHTTPRequestHeader.AuthMethod,
+		"Auth-Login-Attemp":    &f.Server.DefaultHTTPRequestHeader.LoginAttempt,
+		"Auth-SSL-Serial":      &f.Server.DefaultHTTPRequestHeader.SSLSerial,
+		"Auth-SSL-Fingerprint": &f.Server.DefaultHTTPRequestHeader.SSLFingerprint,
+		"Client-IP":            &f.Server.DefaultHTTPRequestHeader.ClientIP,
+
+		"X-Auth-Password-Encoded": &f.Server.DefaultHTTPRequestHeader.PasswordEncoded,
+		"X-Local-IP":              &f.Server.DefaultHTTPRequestHeader.LocalIP,
+		"X-Auth-Port":             &f.Server.DefaultHTTPRequestHeader.LocalPort,
+		"X-Client-Port":           &f.Server.DefaultHTTPRequestHeader.ClientPort,
+		"X-Client-ID":             &f.Server.DefaultHTTPRequestHeader.ClientID,
+
+		"X-SSL":                   &f.Server.DefaultHTTPRequestHeader.SSL,
+		"X-SSL-Session-ID":        &f.Server.DefaultHTTPRequestHeader.SSLSessionID,
+		"X-SSL-Client-Verify":     &f.Server.DefaultHTTPRequestHeader.SSLVerify,
+		"X-SSL-Client-DN":         &f.Server.DefaultHTTPRequestHeader.SSLSubject,
+		"X-SSL-Client-CN":         &f.Server.DefaultHTTPRequestHeader.SSLClientCN,
+		"X-SSL-Issuer":            &f.Server.DefaultHTTPRequestHeader.SSLIssuer,
+		"X-SSL-Client-NotBefore":  &f.Server.DefaultHTTPRequestHeader.SSLClientNotBefore,
+		"X-SSL-Client-NotAfter":   &f.Server.DefaultHTTPRequestHeader.SSLClientNotAfter,
+		"X-SSL-Subject-DN":        &f.Server.DefaultHTTPRequestHeader.SSLSubjectDN,
+		"X-SSL-Issuer-DN":         &f.Server.DefaultHTTPRequestHeader.SSLIssuerDN,
+		"X-SSL-Client-Subject-DN": &f.Server.DefaultHTTPRequestHeader.SSLClientSubjectDN,
+		"X-SSL-Client-Issuer-DN":  &f.Server.DefaultHTTPRequestHeader.SSLClientIssuerDN,
+		"X-SSL-Cipher":            &f.Server.DefaultHTTPRequestHeader.SSLCipher,
+		"X-SSL-Protocol":          &f.Server.DefaultHTTPRequestHeader.SSLProtocol,
+	}
+
+	for defaultHeader, field := range defaults {
+		if *field == "" {
+			*field = defaultHeader
+		}
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
 // If all validators pass, nil is returned.
-// The validators used in this method are:
-// - validateBackends
-// - validateRBLs
-// - validateBruteForce
-// - validateSecrets
-// - validatePassDBBackends
-// - validateOAuth2
-// - validateInstanceName
-// - validateDNSTimeout
 func (f *File) validate() (err error) {
 	validators := []func() error{
 		f.validateBackends,
@@ -1347,6 +1506,7 @@ func (f *File) validate() (err error) {
 		f.validateRedisPosCacheTTL,
 		f.validateRedisNegCacheTTL,
 		f.validateMasterUserDelimiter,
+		f.validateHTTPRequestHeaders,
 	}
 
 	for _, validator := range validators {
