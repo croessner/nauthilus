@@ -2644,10 +2644,12 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
 func (a *AuthState) generateLocalChacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s",
+	return fmt.Sprintf("%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
-		a.Service)
+		a.Service,
+		a.Protocol.Get(),
+	)
 }
 
 // getFromLocalCache retrieves the AuthState object from the local cache using the generateLocalChacheKey() as the key.
