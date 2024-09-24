@@ -47,6 +47,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
+	"github.com/spf13/viper"
 )
 
 // ClaimHandler represents a claim handler struct.
@@ -748,6 +749,13 @@ func (a *AuthState) increaseLoginAttempts() {
 	}
 }
 
+// calculateWaitDelay calculates the wait delay based on maxWaitDelay and loginAttempt using the hyperbolic tangent function.
+func calculateWaitDelay(maxWaitDelay, loginAttempt uint) int {
+	scale := 0.03
+
+	return int(float64(maxWaitDelay) * math.Tanh(scale*float64(loginAttempt)))
+}
+
 // setFailureHeaders sets the failure headers for the given authentication context.
 // It sets the "Auth-Status" header to the value of global.PasswordFail constant.
 // It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
@@ -768,7 +776,14 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 	ctx.Header("Auth-Status", a.StatusMessage)
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service == global.ServUserInfo {
+	if a.Service == global.ServNginx {
+		maxWaitDelay := viper.GetUint("nginx_wait_delay")
+		if maxWaitDelay > 0 {
+			waitDelay := calculateWaitDelay(maxWaitDelay, a.LoginAttempts)
+
+			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
+		}
+	} else if a.Service == global.ServUserInfo {
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
 		ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 

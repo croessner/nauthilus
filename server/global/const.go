@@ -251,7 +251,7 @@ const (
 	POP3BackendPort = 9951
 
 	// WaitDelay is the default delay (in seconds) between reconnection attempts
-	WaitDelay = 1
+	WaitDelay = 10
 
 	// MaxLoginAttempts is the maximum allowed number of login attempts
 	MaxLoginAttempts = 15
