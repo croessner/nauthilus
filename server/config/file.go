@@ -1443,7 +1443,7 @@ func (f *File) validateHTTPRequestHeaders() error {
 		"Auth-Pass":            &f.Server.DefaultHTTPRequestHeader.Password,
 		"Auth-Protocol":        &f.Server.DefaultHTTPRequestHeader.Protocol,
 		"Auth-Method":          &f.Server.DefaultHTTPRequestHeader.AuthMethod,
-		"Auth-Login-Attemp":    &f.Server.DefaultHTTPRequestHeader.LoginAttempt,
+		"Auth-Login-Attempt":   &f.Server.DefaultHTTPRequestHeader.LoginAttempt,
 		"Auth-SSL-Serial":      &f.Server.DefaultHTTPRequestHeader.SSLSerial,
 		"Auth-SSL-Fingerprint": &f.Server.DefaultHTTPRequestHeader.SSLFingerprint,
 		"Client-IP":            &f.Server.DefaultHTTPRequestHeader.ClientIP,
