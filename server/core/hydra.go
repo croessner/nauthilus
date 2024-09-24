@@ -877,7 +877,7 @@ func (a *ApiConfig) handleLoginSkip() {
 		Protocol:          config.NewProtocol(global.ProtoOryHydra),
 	}
 
-	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx)
+	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx).initMethodAndUserAgent()
 
 	auth.Username = a.loginRequest.GetSubject()
 
@@ -1174,7 +1174,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 		return nil, err
 	}
 
-	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
+	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx).initMethodAndUserAgent()
 
 	if _, reject := auth.preproccessAuthRequest(ctx); reject {
 		return nil, errors.ErrBruteForceAttack
