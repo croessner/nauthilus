@@ -2049,6 +2049,21 @@ func setupHTTPBasiAuth(ctx *gin.Context, auth *AuthState) {
 	auth.withXSSL(ctx)
 }
 
+// initMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
+func (a *AuthState) initMethodAndUserAgent() *AuthState {
+	if a.Method == nil {
+		method := ""
+		a.Method = &method
+	}
+
+	if a.UserAgent == nil {
+		userAgent := ""
+		a.UserAgent = &userAgent
+	}
+
+	return a
+}
+
 // setupAuth sets up the authentication based on the service parameter in the gin context.
 // It takes the gin context and an AuthState struct as input.
 //
@@ -2088,8 +2103,8 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		}
 	}
 
+	auth.initMethodAndUserAgent()
 	auth.withDefaults(ctx)
-
 	auth.setOperationMode(ctx)
 }
 
