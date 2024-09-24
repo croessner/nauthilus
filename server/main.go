@@ -52,7 +52,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-const version = "dev"
+var version = "dev"
 
 var versionFlag = flag.Bool("version", false, "print version and exit")
 
