@@ -129,7 +129,7 @@ func LuaMainWorker(ctx context.Context) {
 // - luaRequest: The *LuaRequest object containing the request parameters.
 //
 // Returns: None.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) (httpClient *http.Client) {
+func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -138,15 +138,13 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 			return 0
 		}
 
-		httpClient = lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		registerModule(L, ctx, luaRequest, modName, registry)
 
 		return 0
 	})
 
 	L.SetGlobal("dynamic_loader", dynamicLoader)
-
-	return httpClient
 }
 
 // registerModule registers a module in the Lua state based on the given modName.
@@ -223,9 +221,11 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultAttributes,
 	)
 
-	httpClient := registerDynamicLoader(L, ctx, luaRequest)
+	httpClient := util.NewHTTPClient()
 
 	defer util.CloseIdleHTTPConnections(httpClient)
+
+	registerDynamicLoader(L, ctx, luaRequest, httpClient)
 
 	setupGlobals(luaRequest, L, logs)
 

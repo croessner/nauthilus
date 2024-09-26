@@ -167,7 +167,7 @@ type Request struct {
 // - ctx *gin.Context: the gin Context containing the request data
 //
 // Returns: none
-func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) (httpClient *http.Client) {
+func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -176,15 +176,13 @@ func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) (httpCl
 			return 0
 		}
 
-		httpClient = lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		r.registerModule(L, ctx, modName, registry)
 
 		return 0
 	})
 
 	L.SetGlobal("dynamic_loader", dynamicLoader)
-
-	return httpClient
 }
 
 // registerModule registers a module in the LuaState based on the provided module name.
@@ -236,9 +234,11 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer L.Close()
 
-	httpClient := r.registerDynamicLoader(L, ctx)
+	httpClient := util.NewHTTPClient()
 
 	defer util.CloseIdleHTTPConnections(httpClient)
+
+	r.registerDynamicLoader(L, ctx, httpClient)
 
 	r.setGlobals(L)
 

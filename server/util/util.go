@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	stderrors "errors"
@@ -516,6 +517,18 @@ func NewDNSResolver() (resolver *net.Resolver) {
 	}
 
 	return
+}
+
+// NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
+func NewHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify,
+			},
+		},
+	}
 }
 
 // CloseIdleHTTPConnections closes any idle connections used by the provided HTTP client.

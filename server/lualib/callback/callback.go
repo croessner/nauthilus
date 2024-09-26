@@ -159,7 +159,7 @@ func setupLogging(L *lua.LState) *lua.LTable {
 // Note: The implementation of the dynamic loader function is not shown in this
 // documentation. Please refer to the source code for more details on the
 // implementation of the dynamic loader function.
-func registerDynamicLoader(L *lua.LState, ctx *gin.Context) (httpClient *http.Client) {
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -168,15 +168,13 @@ func registerDynamicLoader(L *lua.LState, ctx *gin.Context) (httpClient *http.Cl
 			return 0
 		}
 
-		httpClient = lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		registerModule(L, ctx, modName, registry)
 
 		return 0
 	})
 
 	L.SetGlobal("dynamic_loader", dynamicLoader)
-
-	return httpClient
 }
 
 // registerModule registers a Lua module in the provided Lua state (L).
@@ -226,9 +224,11 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 
 	defer L.Close()
 
-	httpClient := registerDynamicLoader(L, ctx)
+	httpClient := util.NewHTTPClient()
 
 	defer util.CloseIdleHTTPConnections(httpClient)
+
+	registerDynamicLoader(L, ctx, httpClient)
 
 	L.SetContext(luaCtx)
 
