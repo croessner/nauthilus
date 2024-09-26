@@ -403,11 +403,8 @@ func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyVa
 		global.LogKeyError, err,
 	)
 
-	select {
-	case luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
+	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 		Err:  err,
 		Logs: logs,
-	}:
-	default:
 	}
 }

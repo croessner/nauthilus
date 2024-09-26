@@ -18,7 +18,6 @@ package core
 import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
@@ -91,11 +90,7 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		},
 	}
 
-	select {
-	case backend.LuaRequestChan <- luaRequest:
-	default:
-		return passDBResult, errors.ErrClosedChannel
-	}
+	backend.LuaRequestChan <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -183,11 +178,7 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		},
 	}
 
-	select {
-	case backend.LuaRequestChan <- luaRequest:
-	default:
-		return accounts, errors.ErrClosedChannel
-	}
+	backend.LuaRequestChan <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -241,11 +232,7 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		},
 	}
 
-	select {
-	case backend.LuaRequestChan <- luaRequest:
-	default:
-		return errors.ErrClosedChannel
-	}
+	backend.LuaRequestChan <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
