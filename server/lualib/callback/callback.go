@@ -17,6 +17,7 @@ package callback
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -157,7 +159,7 @@ func setupLogging(L *lua.LState) *lua.LTable {
 // Note: The implementation of the dynamic loader function is not shown in this
 // documentation. Please refer to the source code for more details on the
 // implementation of the dynamic loader function.
-func registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -166,7 +168,7 @@ func registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		registerModule(L, ctx, modName, registry)
 
 		return 0
@@ -222,7 +224,12 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 
 	defer L.Close()
 
-	registerDynamicLoader(L, ctx)
+	httpClient := util.NewHTTPClient()
+
+	defer util.CloseIdleHTTPConnections(httpClient)
+
+	registerDynamicLoader(L, ctx, httpClient)
+
 	L.SetContext(luaCtx)
 
 	logTable := setupLogging(L)

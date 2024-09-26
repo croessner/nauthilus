@@ -18,7 +18,6 @@ package core
 // See the markdown documentation for the login-, two-factor-, consent- and logout pages for a brief description.
 
 import (
-	"crypto/tls"
 	stderrors "errors"
 	"fmt"
 	"net/http"
@@ -740,18 +739,6 @@ func withLanguageMiddleware() gin.HandlerFunc {
 	}
 }
 
-// createHttpClient creates an HTTP client with a custom configuration.
-// The client uses an http.Transport with a custom *tls.Config, which allows skipping TLS verification
-// based on the value of the "http_client_skip_tls_verify" configuration.
-// The client also has a Timeout of 30 seconds.
-// Returns the created http.Client.
-func createHttpClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify}},
-		Timeout:   30 * time.Second,
-	}
-}
-
 // createConfiguration returns a new instance of the openapi.Configuration struct with the provided httpClient and server configuration.
 // The httpClient parameter is used as the underlying HTTP client for API calls made by the openapi.client.
 // The server configuration is read from the "hydra_admin_uri" configuration value using viper.GetString() function.
@@ -828,7 +815,7 @@ func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []lan
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
 func (a *ApiConfig) initialize() {
-	a.httpClient = createHttpClient()
+	a.httpClient = util.NewHTTPClient()
 	a.guid = a.ctx.GetString(global.CtxGUIDKey)
 	configuration := createConfiguration(a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
@@ -1130,6 +1117,8 @@ func loginGETHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -1663,6 +1652,8 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = loginChallenge
 
 	auth, err := initializeAuthLogin(ctx)
@@ -1753,7 +1744,10 @@ func deviceGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := createHttpClient()
+	httpClient := util.NewHTTPClient()
+
+	defer util.CloseIdleHTTPConnections(httpClient)
+
 	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
@@ -2214,6 +2208,8 @@ func consentGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
@@ -2456,6 +2452,8 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = consentChallenge
 
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
@@ -2563,6 +2561,8 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig := ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -2711,6 +2711,8 @@ func logoutPOSTHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = logoutChallenge
 

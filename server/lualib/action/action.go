@@ -220,7 +220,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 // dynamic loader function.
 //
 // Note that this documentation assumes familiarity with the Lua programming language and its module system.
-func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request) {
+func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -229,7 +229,7 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		aw.registerModule(L, httpRequest, modName, registry)
 
 		return 0
@@ -326,7 +326,11 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	defer L.Close()
 
-	aw.registerDynamicLoader(L, httpRequest)
+	httpClient := util.NewHTTPClient()
+
+	defer util.CloseIdleHTTPConnections(httpClient)
+
+	aw.registerDynamicLoader(L, httpRequest, httpClient)
 
 	logs := new(lualib.CustomLogKeyValue)
 

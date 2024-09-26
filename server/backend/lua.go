@@ -18,6 +18,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -128,7 +129,7 @@ func LuaMainWorker(ctx context.Context) {
 // - luaRequest: The *LuaRequest object containing the request parameters.
 //
 // Returns: None.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) {
+func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -137,7 +138,7 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
 		registerModule(L, ctx, luaRequest, modName, registry)
 
 		return 0
@@ -220,7 +221,12 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultAttributes,
 	)
 
-	registerDynamicLoader(L, ctx, luaRequest)
+	httpClient := util.NewHTTPClient()
+
+	defer util.CloseIdleHTTPConnections(httpClient)
+
+	registerDynamicLoader(L, ctx, luaRequest, httpClient)
+
 	setupGlobals(luaRequest, L, logs)
 
 	request := L.NewTable()
@@ -403,11 +409,8 @@ func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyVa
 		global.LogKeyError, err,
 	)
 
-	select {
-	case luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
+	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 		Err:  err,
 		Logs: logs,
-	}:
-	default:
 	}
 }

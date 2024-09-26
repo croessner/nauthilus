@@ -175,11 +175,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	// Find user with account status enabled
-	select {
-	case backend.LDAPRequestChan <- ldapRequest:
-	default:
-		return passDBResult, errors.ErrClosedChannel
-	}
+	backend.LDAPRequestChan <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -238,11 +234,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			HTTPClientContext: auth.HTTPClientContext,
 		}
 
-		select {
-		case backend.LDAPAuthRequestChan <- ldapUserBindRequest:
-		default:
-			return passDBResult, errors.ErrClosedChannel
-		}
+		backend.LDAPAuthRequestChan <- ldapUserBindRequest
 
 		ldapReply = <-ldapReplyChan
 
@@ -341,11 +333,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	}
 
 	// Find user with account status enabled
-	select {
-	case backend.LDAPRequestChan <- ldapRequest:
-	default:
-		return accounts, errors.ErrClosedChannel
-	}
+	backend.LDAPRequestChan <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -436,11 +424,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	ldapRequest.ModifyAttributes = make(backend.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
-	select {
-	case backend.LDAPRequestChan <- ldapRequest:
-	default:
-		return errors.ErrClosedChannel
-	}
+	backend.LDAPRequestChan <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 

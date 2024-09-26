@@ -16,13 +16,12 @@
 package lualib
 
 import (
-	"crypto/tls"
 	stdhttp "net/http"
 
 	"github.com/cjoudrey/gluahttp"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
+	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/tengattack/gluacrypto"
 	"github.com/vadv/gopher-lua-libs/argparse"
 	"github.com/vadv/gopher-lua-libs/aws/cloudwatch"
@@ -72,7 +71,7 @@ import (
 // Please refer to the individual module documentations for more details on each Preload function.
 // Please also note that the declaration codes for the constants used in the switch cases are not shown here.
 // Refer to the module documentations for the declaration codes of the constants.
-func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[string]bool) {
+func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[string]bool, httpClient *stdhttp.Client) {
 	switch modName {
 	case global.LuaModGLLPlugin:
 		plugin.Preload(L)
@@ -145,15 +144,18 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	case global.LuaModGLuaCrypto:
 		gluacrypto.Preload(L)
 	case global.LuaModGLuaHTTP:
-		L.PreloadModule("glua_http", gluahttp.NewHttpModule(&stdhttp.Client{
-			Transport: &stdhttp.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify}},
-		}).Loader)
+		httpModule := gluahttp.NewHttpModule(httpClient)
+
+		L.PreloadModule("glua_http", httpModule.Loader)
 	case global.LuaModPassword:
 		L.PreloadModule(modName, LoaderModPassword)
 	case global.LuaModRedis:
 		L.PreloadModule(modName, redislib.LoaderModRedis)
 	case global.LuaModMail:
-		L.PreloadModule(modName, LoaderModMail)
+		smtpClient := &smtp.EmailClient{}
+		mailModule := NewMailModule(smtpClient)
+
+		L.PreloadModule(modName, mailModule.Loader)
 	case global.LuaModMisc:
 		L.PreloadModule(modName, LoaderModMisc)
 	default:
@@ -161,4 +163,6 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	}
 
 	registry[modName] = true
+
+	return
 }
