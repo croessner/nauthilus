@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.description="Multi purpose authentication server"
 LABEL org.opencontainers.image.licenses=GPL3
 LABEL com.roessner-network-solutions.vendor="Rößner-Network-Solutions"
 
-WORKDIR /build
+WORKDIR /usr/app
 
 COPY . ./
 
@@ -34,4 +34,4 @@ EXPOSE 8180
 
 USER nauthilus
 
-CMD ["/build/server/nauthilus"]
+CMD ["/usr/app/server/nauthilus"]
