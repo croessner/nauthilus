@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
+	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/tengattack/gluacrypto"
 	"github.com/vadv/gopher-lua-libs/argparse"
 	"github.com/vadv/gopher-lua-libs/aws/cloudwatch"
@@ -154,14 +155,17 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 				},
 			},
 		}
+		httpModule := gluahttp.NewHttpModule(httpClient)
 
-		L.PreloadModule("glua_http", gluahttp.NewHttpModule(httpClient).Loader)
+		L.PreloadModule("glua_http", httpModule.Loader)
 	case global.LuaModPassword:
 		L.PreloadModule(modName, LoaderModPassword)
 	case global.LuaModRedis:
 		L.PreloadModule(modName, redislib.LoaderModRedis)
 	case global.LuaModMail:
-		L.PreloadModule(modName, LoaderModMail)
+		mailModule := NewMailModule(&smtp.EmailClient{})
+
+		L.PreloadModule(modName, mailModule.Loader)
 	case global.LuaModMisc:
 		L.PreloadModule(modName, LoaderModMisc)
 	default:

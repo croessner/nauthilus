@@ -22,23 +22,24 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-// SmtpClient represents an instance of the EmailClient struct, which is a real SMTP client used for sending emails. SmtpClient is a variable of type *smtp.EmailClient.
-// The EmailClient struct has a SendMail method that sends an email using the provided MailOptions configuration. If the options parameter is nil, it returns an error; otherwise, it passes the non-nil options to the smtp.SendMail method and returns its result.
-// The SendMail method of the EmailClient struct is used to send emails with the EmailClient instance and the SendMail method from the smtp package.
-var SmtpClient *smtp.EmailClient
-
-// A mapping of Lua function names to the corresponding Go LGFunctions.
-// The "send_mail" function is mapped to the SendMail function.
-var exportsModMail = map[string]lua.LGFunction{
-	global.LuaFnSendMail: SendMail(SmtpClient),
+// MailModule provides functionalities for sending emails using an SMTP client.
+type MailModule struct {
+	// smtpClient is an implementation of the smtp.Client interface used for sending emails.
+	smtpClient smtp.Client
 }
 
-// LoaderModMail initializes a new module for the "nauthilus_mail" module in Lua.
-// It sets the functions from the "exportsModMail" map into a new lua.LTable.
-// The module table is then pushed onto the top of the stack.
-// Finally, it returns 1 to indicate that one value has been returned to Lua.
-func LoaderModMail(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModMail)
+// NewMailModule creates a new MailModule instance with the provided smtp.Client.
+func NewMailModule(smtpClient smtp.Client) *MailModule {
+	return &MailModule{smtpClient: smtpClient}
+}
+
+// Loader registers the mail module and its functions in Lua state L.
+// The module provides Lua bindings for sending emails using SMTP via the SendMail function.
+// Returns the number of results pushed onto the Lua stack, which is always 1 in this method.
+func (m *MailModule) Loader(L *lua.LState) int {
+	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+		global.LuaFnSendMail: SendMail(m.smtpClient),
+	})
 
 	L.Push(mod)
 
