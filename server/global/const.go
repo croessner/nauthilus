@@ -986,6 +986,9 @@ const (
 	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
 	LuaModGLuaCrypto = "nauthilus_gluacrypto"
 
+	// LuaModGLuaHTTP is a constant that represents the module name for Lua HTTP functionality.
+	LuaModGLuaHTTP = "nauthilus_gluahttp"
+
 	// LuaModGLLPlugin is a constant that represents the name of the GLL plugin module in Lua.
 	LuaModGLLPlugin = "nauthilus_gll_plugin"
 

@@ -13,22 +13,6 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_context")
-local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_gll_http")
-local http = require("http")
-
-dynamic_loader("nauthilus_gll_json")
-local json = require("json")
-
-local client = http.client({
-    timeout = 30,
-    user_agent = "Nauthilus"
-})
-
 local N = "feature_blocklist"
 
 function nauthilus_call_feature(request)
@@ -36,11 +20,16 @@ function nauthilus_call_feature(request)
         return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
     end
 
-    if not request.client_ip then
-        nauthilus_builtin.custom_log_add(N, "no client IP found")
+    local nauthilus_util = require("nauthilus_util")
 
-        return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_FAILURE
-    end
+    dynamic_loader("nauthilus_context")
+    local nauthilus_context = require("nauthilus_context")
+
+    dynamic_loader("nauthilus_gluahttp")
+    local http = require("glua_http")
+
+    dynamic_loader("nauthilus_gll_json")
+    local json = require("json")
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt")
@@ -55,14 +44,19 @@ function nauthilus_call_feature(request)
     local payload, json_encode_err = json.encode(t)
     nauthilus_util.if_error_raise(json_encode_err)
 
-    local blocklist_request = http.request("POST", os.getenv("BLOCKLIST_URL"), payload)
-    blocklist_request:header_set("Content-Type", "application/json")
-
-    local result, request_err = client:do_request(blocklist_request)
+    local result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
+        timeout = "10s",
+        headers = {
+            Accept = "*/*",
+            ["User-Agent"] = "Nauthilus",
+            ["Content-Type"] = "application/json",
+        },
+        body = payload,
+    })
     nauthilus_util.if_error_raise(request_err)
 
-    if result.code ~= 200 then
-        nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.code))
+    if result.status_code ~= 200 then
+        nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
     end
 
     local response, err_jdec = json.decode(result.body)

@@ -16,6 +16,11 @@
 package lualib
 
 import (
+	"crypto/tls"
+	stdhttp "net/http"
+
+	"github.com/cjoudrey/gluahttp"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/tengattack/gluacrypto"
@@ -139,6 +144,10 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 		zabbix.Preload(L)
 	case global.LuaModGLuaCrypto:
 		gluacrypto.Preload(L)
+	case global.LuaModGLuaHTTP:
+		L.PreloadModule("glua_http", gluahttp.NewHttpModule(&stdhttp.Client{
+			Transport: &stdhttp.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify}},
+		}).Loader)
 	case global.LuaModPassword:
 		L.PreloadModule(modName, LoaderModPassword)
 	case global.LuaModRedis:
