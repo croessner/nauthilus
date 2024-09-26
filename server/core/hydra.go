@@ -1131,6 +1131,8 @@ func loginGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
@@ -1662,6 +1664,8 @@ func loginPOSTHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = loginChallenge
 
@@ -2214,6 +2218,8 @@ func consentGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
@@ -2456,6 +2462,8 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+
 	apiConfig.challenge = consentChallenge
 
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
@@ -2563,6 +2571,8 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig := ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -2711,6 +2721,8 @@ func logoutPOSTHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
+
+	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
 
 	apiConfig.challenge = logoutChallenge
 

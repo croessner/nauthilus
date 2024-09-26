@@ -18,6 +18,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -128,7 +129,7 @@ func LuaMainWorker(ctx context.Context) {
 // - luaRequest: The *LuaRequest object containing the request parameters.
 //
 // Returns: None.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) {
+func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) (httpClient *http.Client) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -137,13 +138,15 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry)
+		httpClient = lualib.RegisterCommonLuaLibraries(L, modName, registry)
 		registerModule(L, ctx, luaRequest, modName, registry)
 
 		return 0
 	})
 
 	L.SetGlobal("dynamic_loader", dynamicLoader)
+
+	return httpClient
 }
 
 // registerModule registers a module in the Lua state based on the given modName.
@@ -220,7 +223,10 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultAttributes,
 	)
 
-	registerDynamicLoader(L, ctx, luaRequest)
+	httpClient := registerDynamicLoader(L, ctx, luaRequest)
+
+	defer util.CloseIdleHTTPConnections(httpClient)
+
 	setupGlobals(luaRequest, L, logs)
 
 	request := L.NewTable()

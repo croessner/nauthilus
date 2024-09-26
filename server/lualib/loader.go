@@ -74,7 +74,7 @@ import (
 // Please refer to the individual module documentations for more details on each Preload function.
 // Please also note that the declaration codes for the constants used in the switch cases are not shown here.
 // Refer to the module documentations for the declaration codes of the constants.
-func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[string]bool) {
+func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[string]bool) (httpClient *stdhttp.Client) {
 	switch modName {
 	case global.LuaModGLLPlugin:
 		plugin.Preload(L)
@@ -147,7 +147,7 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	case global.LuaModGLuaCrypto:
 		gluacrypto.Preload(L)
 	case global.LuaModGLuaHTTP:
-		httpClient := &stdhttp.Client{
+		httpClient = &stdhttp.Client{
 			Timeout: 60 * stdtime.Second,
 			Transport: &stdhttp.Transport{
 				TLSClientConfig: &tls.Config{
@@ -163,7 +163,8 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	case global.LuaModRedis:
 		L.PreloadModule(modName, redislib.LoaderModRedis)
 	case global.LuaModMail:
-		mailModule := NewMailModule(&smtp.EmailClient{})
+		smtpClient := &smtp.EmailClient{}
+		mailModule := NewMailModule(smtpClient)
 
 		L.PreloadModule(modName, mailModule.Loader)
 	case global.LuaModMisc:
@@ -173,4 +174,6 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	}
 
 	registry[modName] = true
+
+	return
 }

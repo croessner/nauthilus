@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"hash"
 	"net"
+	"net/http"
 	"regexp"
 	"runtime"
 	"strings"
@@ -515,4 +516,14 @@ func NewDNSResolver() (resolver *net.Resolver) {
 	}
 
 	return
+}
+
+// CloseIdleHTTPConnections closes any idle connections used by the provided HTTP client.
+// If the client is nil or the transport is not of type *http.Transport, it does nothing.
+func CloseIdleHTTPConnections(httpClient *http.Client) {
+	if httpClient != nil {
+		if transport, ok := httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
 }
