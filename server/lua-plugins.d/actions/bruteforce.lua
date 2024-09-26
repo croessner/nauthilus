@@ -13,16 +13,16 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_context")
-local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_gll_tcp")
-local tcp = require("tcp")
-
 function nauthilus_call_action(request)
     if not request.repeating then
+        local nauthilus_util = require("nauthilus_util")
+
+        dynamic_loader("nauthilus_context")
+        local nauthilus_context = require("nauthilus_context")
+
+        dynamic_loader("nauthilus_gll_tcp")
+        local tcp = require("tcp")
+
         -- Send IP/Mask
         local conn, err = tcp.open(os.getenv('HAPROXY_STATS'))
 

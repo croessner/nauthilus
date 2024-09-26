@@ -12,26 +12,15 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_context")
-local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_gll_http")
-local http = require("http")
-
-dynamic_loader("nauthilus_gll_json")
-local json = require("json")
-
-local client = http.client({
-    timeout = 30,
-    user_agent = "Nauthilus"
-})
-
-local N = "filter_geoippolicyd"
+local N = "geoippolicyd"
 
 function nauthilus_call_filter(request)
+    if request.no_auth then
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+    end
+
+    local nauthilus_util = require("nauthilus_util")
+
     local function add_custom_logs(object)
         for item, values in pairs(object) do
             if type(values) == "table" then
@@ -65,7 +54,16 @@ function nauthilus_call_filter(request)
         ts = "unknown"
     end
 
-    if request.user_found and request.authenticated and not (request.no_auth or request.client_ip == "127.0.0.1") then
+    if request.authenticated and request.client_ip ~= "127.0.0.1" then
+        dynamic_loader("nauthilus_context")
+        local nauthilus_context = require("nauthilus_context")
+
+        dynamic_loader("nauthilus_gluahttp")
+        local http = require("glua_http")
+
+        dynamic_loader("nauthilus_gll_json")
+        local json = require("json")
+
         local t = {}
 
         t.key = "client"
@@ -77,13 +75,18 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
-        local geoip_request = http.request("POST", os.getenv("GEOIP_POLICY_URL"), payload)
-        geoip_request:header_set("Content-Type", "application/json")
-
-        local result, request_err = client:do_request(geoip_request)
+        local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
+            timeout = "10s",
+            headers = {
+                Accept = "*/*",
+                ["User-Agent"] = "Nauthilus",
+                ["Content-Type"] = "application/json",
+            },
+            body = payload,
+        })
         nauthilus_util.if_error_raise(request_err)
 
-        if result.code ~= 202 then
+        if result.status_code ~= 202 then
             nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.code))
         end
 

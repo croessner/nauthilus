@@ -13,29 +13,18 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_context")
-local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_gll_http")
-local http = require("http")
-
-dynamic_loader("nauthilus_gll_telegram")
-local telegram = require("telegram")
-
-dynamic_loader("nauthilus_gll_json")
-local json = require("json")
-
-dynamic_loader("nauthilus_gll_template")
-local template = require("template")
-
-local client = http.client()
-local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
-
 local N = "telegram"
 
 function nauthilus_call_action(request)
+    if request.no_auth then
+        return nauthilus_builtin.ACTION_RESULT_OK
+    end
+
+    local nauthilus_util = require("nauthilus_util")
+
+    dynamic_loader("nauthilus_context")
+    local nauthilus_context = require("nauthilus_context")
+
     local send_message = false
     local pwnd_info = "n/a"
     local headline = "Information"
@@ -101,6 +90,21 @@ function nauthilus_call_action(request)
     end
 
     if send_message then
+        dynamic_loader("nauthilus_gll_http")
+        local http = require("http")
+
+        dynamic_loader("nauthilus_gll_telegram")
+        local telegram = require("telegram")
+
+        dynamic_loader("nauthilus_gll_template")
+        local template = require("template")
+
+        dynamic_loader("nauthilus_gll_json")
+        local json = require("json")
+
+        local client = http.client()
+        local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
+
         local result = request
 
         local proto = request.protocol

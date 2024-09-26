@@ -13,19 +13,8 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_redis")
-local nauthilus_redis = require("nauthilus_redis")
-
 dynamic_loader("nauthilus_backend")
 local nauthilus_backend = require("nauthilus_backend")
-
-dynamic_loader("nauthilus_http_request")
-local nauthilus_http_request = require("nauthilus_http_request")
-
-dynamic_loader("nauthilus_gluacrypto")
-local crypto = require("crypto")
 
 local N = "monitoring"
 
@@ -61,6 +50,11 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
+    local nauthilus_util = require("nauthilus_util")
+
+    dynamic_loader("nauthilus_http_request")
+    local nauthilus_http_request = require("nauthilus_http_request")
+
     local function get_dovecot_session()
         local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
         if nauthilus_util.table_length(header) == 1 then
@@ -69,6 +63,9 @@ function nauthilus_call_filter(request)
 
         return nil
     end
+
+    dynamic_loader("nauthilus_redis")
+    local nauthilus_redis = require("nauthilus_redis")
 
     local function set_initial_expiry(redis_key)
         local length, err_redis_hlen = nauthilus_redis.redis_hlen(redis_key)
@@ -83,6 +80,9 @@ function nauthilus_call_filter(request)
             end
         end
     end
+
+    dynamic_loader("nauthilus_gluacrypto")
+    local crypto = require("crypto")
 
     local function add_session(session, server)
         if session == nil then

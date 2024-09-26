@@ -13,37 +13,6 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_redis")
-local nauthilus_redis = require("nauthilus_redis")
-
-dynamic_loader("nauthilus_mail")
-local nauthilus_mail = require("nauthilus_mail")
-
-dynamic_loader("nauthilus_misc")
-local nauthilus_misc = require("nauthilus_misc")
-
-dynamic_loader("nauthilus_context")
-local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_gluacrypto")
-local crypto = require('crypto')
-
-dynamic_loader("nauthilus_gll_http")
-local http = require("http")
-
-dynamic_loader("nauthilus_gll_strings")
-local strings = require("strings")
-
-dynamic_loader("nauthilus_gll_template")
-local template = require("template")
-
-local client = http.client({
-    timeout = 30,
-    user_agent = "Nauthilus",
-})
-
 local smtp_message = [[
 Hello,
 
@@ -62,8 +31,36 @@ Regards
 Postmaster
 ]]
 
+local N = "haveibeenpwnd"
+
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
+        local nauthilus_util = require("nauthilus_util")
+
+        dynamic_loader("nauthilus_redis")
+        local nauthilus_redis = require("nauthilus_redis")
+
+        dynamic_loader("nauthilus_mail")
+        local nauthilus_mail = require("nauthilus_mail")
+
+        dynamic_loader("nauthilus_misc")
+        local nauthilus_misc = require("nauthilus_misc")
+
+        dynamic_loader("nauthilus_context")
+        local nauthilus_context = require("nauthilus_context")
+
+        dynamic_loader("nauthilus_gluacrypto")
+        local crypto = require('crypto')
+
+        dynamic_loader("nauthilus_gluahttp")
+        local http = require("glua_http")
+
+        dynamic_loader("nauthilus_gll_strings")
+        local strings = require("strings")
+
+        dynamic_loader("nauthilus_gll_template")
+        local template = require("template")
+
         nauthilus_misc.wait_random(500, 3000)
 
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
@@ -76,22 +73,26 @@ function nauthilus_call_action(request)
             if nauthilus_util.is_number(redis_hash_count) then
                 if redis_hash_count > 0 then
                     -- Required by telegram.lua
-                    nauthilus_context.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. redis_hash_count)
+                    nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. redis_hash_count)
 
-                    nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "leaked")
+                    nauthilus_builtin.custom_log_add(N .. "_result", "leaked")
                 end
 
                 return nauthilus_builtin.ACTION_RESULT_OK
             end
         end
 
-        local http_request = http.request("GET", "https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), "")
-
-        local result, err = client:do_request(http_request)
+        local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
+            timeout = "10s",
+            headers = {
+                Accept = "*/*",
+                ["User-Agent"] = "Nauthilus",
+            },
+        })
         nauthilus_util.if_error_raise(err)
 
-        if result.code ~= 200 then
-            nauthilus_util.if_error_raise("haveibeenpwnd did not return status code 200")
+        if result.status_code ~= 200 then
+            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
         end
 
         for line in result.body:gmatch("([^\n]*)\n?") do
@@ -104,8 +105,8 @@ function nauthilus_call_action(request)
                 nauthilus_util.if_error_raise(err_redis_expire)
 
                 -- Required by telegram.lua
-                nauthilus_context.context_set("haveibeenpwnd_hash_info", hash:sub(1, 5) .. cmp_hash[2])
-                nauthilus_builtin.custom_log_add("action_haveibeenpwnd", "leaked")
+                nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
+                nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
                 local already_sent_mail, err_redis_hget2 = nauthilus_redis.redis_hget(redis_key, "send_mail")
                 nauthilus_util.if_error_raise(err_redis_hget2)
