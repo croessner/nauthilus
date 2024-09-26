@@ -19,6 +19,9 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
 
+RUN ln -s ./server/lua-plugins.d .
+RUN ln -s ./server/resources .
+
 RUN addgroup -S nauthilus; \
     adduser -S nauthilus -G nauthilus -D -H -s /bin/nologin
 
