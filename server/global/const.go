@@ -288,6 +288,9 @@ const (
 
 	// MaxActionWorkers is the maximum number of action workers
 	MaxActionWorkers = 10
+
+	// MaxConnections represents the maximum number of simultaneous connections allowed.
+	MaxConnections = 3000
 )
 
 // Log level.

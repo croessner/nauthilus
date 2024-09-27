@@ -1479,6 +1479,19 @@ func (f *File) validateHTTPRequestHeaders() error {
 	return nil
 }
 
+// validateMaxConnections ensures that the MaxConnections parameter is set to a valid value.
+func (f *File) validateMaxConnections() error {
+	if f.Server.MaxConnections == 0 {
+		f.Server.MaxConnections = global.MaxConnections
+	}
+
+	if f.Server.MaxConnections < 0 {
+		f.Server.MaxConnections = global.MaxConnections
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1507,6 +1520,7 @@ func (f *File) validate() (err error) {
 		f.validateRedisNegCacheTTL,
 		f.validateMasterUserDelimiter,
 		f.validateHTTPRequestHeaders,
+		f.validateMaxConnections,
 	}
 
 	for _, validator := range validators {

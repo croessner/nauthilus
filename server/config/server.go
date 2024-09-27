@@ -23,6 +23,7 @@ import (
 // protocol handling, and integrations with other systems such as Redis and Prometheus.
 type ServerSection struct {
 	Address                  string                   `mapstructure:"address"`
+	MaxConnections           int32                    `mapstructure:"max_connections"`
 	HTTP3                    bool                     `mapstructure:"http3"`
 	HAproxyV2                bool                     `mapstructure:"haproxy_v2"`
 	TLS                      TLS                      `mapstructure:"tls"`
