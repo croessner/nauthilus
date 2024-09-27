@@ -221,9 +221,9 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultAttributes,
 	)
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHTTPClient()
 
 	registerDynamicLoader(L, ctx, luaRequest, httpClient)
 

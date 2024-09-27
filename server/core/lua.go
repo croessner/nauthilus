@@ -35,8 +35,6 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
-	defer close(luaReplyChan)
-
 	luaRequest := &backend.LuaRequest{
 		Function:          global.LuaCommandPassDB,
 		Service:           auth.Service,
@@ -160,8 +158,6 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
-	defer close(luaReplyChan)
-
 	luaRequest := &backend.LuaRequest{
 		Function:          global.LuaCommandListAccounts,
 		Protocol:          auth.Protocol,
@@ -211,8 +207,6 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	defer stopTimer()
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
-
-	defer close(luaReplyChan)
 
 	luaRequest := &backend.LuaRequest{
 		Function:          global.LuaCommandAddMFAValue,

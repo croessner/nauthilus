@@ -126,8 +126,6 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
-	defer close(ldapReplyChan)
-
 	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
 	}
@@ -286,8 +284,6 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
-	defer close(ldapReplyChan)
-
 	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
 	}
@@ -375,8 +371,6 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	defer stopTimer()
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
-
-	defer close(ldapReplyChan)
 
 	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return

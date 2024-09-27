@@ -224,9 +224,9 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 
 	defer L.Close()
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHHTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHHTPClient()
 
 	registerDynamicLoader(L, ctx, httpClient)
 

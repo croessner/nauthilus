@@ -415,6 +415,9 @@ type ApiConfig struct {
 	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-connect server.
 	httpClient *http.Client
 
+	// closeHTTPClient closes the HTTP client, releasing any resources associated with it.
+	closeHTTPClient func()
+
 	// apiClient holds the client information to interact with the OpenAPI.
 	apiClient *openapi.APIClient
 
@@ -815,7 +818,7 @@ func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []lan
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
 func (a *ApiConfig) initialize() {
-	a.httpClient = util.NewHTTPClient()
+	a.httpClient, a.closeHTTPClient = util.NewClosingHTTPClient()
 	a.guid = a.ctx.GetString(global.CtxGUIDKey)
 	configuration := createConfiguration(a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
@@ -1118,7 +1121,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -1652,7 +1655,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = loginChallenge
 
@@ -1744,9 +1747,9 @@ func deviceGETHandler(ctx *gin.Context) {
 		return
 	}
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHTTPClient()
 
 	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
@@ -2208,7 +2211,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -2452,7 +2455,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = consentChallenge
 
@@ -2562,7 +2565,7 @@ func logoutGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -2712,7 +2715,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer util.CloseIdleHTTPConnections(apiConfig.httpClient)
+	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = logoutChallenge
 
