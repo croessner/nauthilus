@@ -751,8 +751,8 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 		group.Use(basicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
-	group.POST("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
+	group.GET("/:category/:service", luaContextMiddleware(), httpQueryHandler)
+	group.POST("/:category/:service", luaContextMiddleware(), httpQueryHandler)
 	group.DELETE("/:category/:service", httpCacheHandler)
 }
 
