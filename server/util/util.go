@@ -519,9 +519,9 @@ func NewDNSResolver() (resolver *net.Resolver) {
 	return
 }
 
-// NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
-func NewHTTPClient() *http.Client {
-	return &http.Client{
+// NewClosingHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
+func NewClosingHTTPClient() (*http.Client, func()) {
+	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
@@ -529,14 +529,12 @@ func NewHTTPClient() *http.Client {
 			},
 		},
 	}
-}
 
-// CloseIdleHTTPConnections closes any idle connections used by the provided HTTP client.
-// If the client is nil or the transport is not of type *http.Transport, it does nothing.
-func CloseIdleHTTPConnections(httpClient *http.Client) {
-	if httpClient != nil {
-		if transport, ok := httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
+	return httpClient, func() {
+		if httpClient != nil {
+			if transport, ok := httpClient.Transport.(*http.Transport); ok {
+				transport.CloseIdleConnections()
+			}
 		}
 	}
 }

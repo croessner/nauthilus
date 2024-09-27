@@ -615,9 +615,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer L.Close()
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHTTPClient()
 
 	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes, httpClient)
 

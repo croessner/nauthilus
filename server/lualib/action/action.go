@@ -326,9 +326,9 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	defer L.Close()
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHTTPClient()
 
 	aw.registerDynamicLoader(L, httpRequest, httpClient)
 

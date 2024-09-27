@@ -234,9 +234,9 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer L.Close()
 
-	httpClient := util.NewHTTPClient()
+	httpClient, closeHHTPClient := util.NewClosingHTTPClient()
 
-	defer util.CloseIdleHTTPConnections(httpClient)
+	defer closeHHTPClient()
 
 	r.registerDynamicLoader(L, ctx, httpClient)
 
