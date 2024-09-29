@@ -306,6 +306,29 @@ func (a *AuthState) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 	return
 }
 
+// checkTooManyPasswordHashes checks if the number of password hashes for a given Redis key exceeds the configured limit.
+func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
+	if length, err := rediscli.ReadHandle.HLen(context.Background(), key).Result(); err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		} else {
+			stats.RedisReadCounter.Inc()
+		}
+
+		return true
+	} else {
+		if length > int64(config.LoadableConfig.Server.MaxPasswordHistoryEntries) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, fmt.Sprintf("too many entries in Redis hash key %s", key))
+
+			stats.RedisReadCounter.Inc()
+
+			return true
+		}
+	}
+
+	return false
+}
+
 // loadBruteForcePasswordHistoryFromRedis loads password history related to brute force attacks from Redis for a given key.
 // The function will fetch all associated passwords in the form of a hash along with a counter.
 // The Redis key is created for each unique user presented by the variable `key` which is a GUID,
@@ -323,6 +346,10 @@ func (a *AuthState) loadBruteForcePasswordHistoryFromRedis(key string) {
 	}
 
 	util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
+
+	if a.checkTooManyPasswordHashes(key) {
+		return
+	}
 
 	if passwordHistory, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
@@ -363,6 +390,10 @@ func (a *AuthState) loadBruteForcePasswordHistoryFromRedis(key string) {
 // This overall history is then used to compute the total number of seen passwords.
 // Each of these phases are independent and are executed if the Redis hash key retrieval and the password history fetch operations are successful.
 func (a *AuthState) getAllPasswordHistories() {
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		return
+	}
+
 	// Get password history for the current used username
 	if key := a.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
 		a.loadBruteForcePasswordHistoryFromRedis(key)
@@ -401,12 +432,20 @@ func (a *AuthState) getAllPasswordHistories() {
 //
 // The function concludes by logging that the process has finished.
 func (a *AuthState) saveBruteForcePasswordToRedis() {
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		return
+	}
+
 	var keys []string
 
 	keys = append(keys, a.getBruteForcePasswordHistoryRedisHashKey(true))
 	keys = append(keys, a.getBruteForcePasswordHistoryRedisHashKey(false))
 
 	for index := range keys {
+		if a.checkTooManyPasswordHashes(keys[index]) {
+			continue
+		}
+
 		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "incr_key", keys[index])
 
 		// We can increment a key/value, even it never existed before.
@@ -434,20 +473,7 @@ func (a *AuthState) saveBruteForcePasswordToRedis() {
 		} else {
 			stats.RedisWriteCounter.Inc()
 		}
-
-		util.DebugModule(
-			global.DbgBf,
-			global.LogKeyGUID, a.GUID,
-			"key", keys[index],
-			global.LogKeyMsg, "Set expire",
-		)
 	}
-
-	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, a.GUID,
-		global.LogKeyMsg, "Finished",
-	)
 }
 
 // loadBruteForceBucketCounterFromRedis is a method on the AuthState struct that loads the brute force
@@ -457,6 +483,10 @@ func (a *AuthState) saveBruteForcePasswordToRedis() {
 // If the BruteForceCounter is not initialized, it creates a new map.
 // Finally, it updates the BruteForceCounter map with the counter value retrieved from Redis using the rule name as the key.
 func (a *AuthState) loadBruteForceBucketCounterFromRedis(rule *config.BruteForceRule) {
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		return
+	}
+
 	cache := new(backend.BruteForceBucketCache)
 
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
@@ -607,6 +637,10 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		index            int
 		network          *net.IPNet
 	)
+
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		return
+	}
 
 	stopTimer := stats.PrometheusTimer(global.PromBruteForce, "brute_force_check_request_total")
 

@@ -22,25 +22,26 @@ import (
 // ServerSection represents the configuration for a server, including network settings, TLS, logging, backends, features,
 // protocol handling, and integrations with other systems such as Redis and Prometheus.
 type ServerSection struct {
-	Address                  string                   `mapstructure:"address"`
-	MaxConnections           int32                    `mapstructure:"max_connections"`
-	HTTP3                    bool                     `mapstructure:"http3"`
-	HAproxyV2                bool                     `mapstructure:"haproxy_v2"`
-	TLS                      TLS                      `mapstructure:"tls"`
-	BasicAuth                BasicAuth                `mapstructure:"basic_auth"`
-	InstanceName             string                   `mapstructure:"instance_name"`
-	Log                      Log                      `maptostructure:"log"`
-	Backends                 []*Backend               `mapstructure:"backends"`
-	Features                 []*Feature               `mapstructure:"features"`
-	BruteForceProtocols      []*Protocol              `mapstructure:"brute_force_protocols"`
-	HydraAdminUrl            string                   `mapstructure:"ory_hydra_admin_url"`
-	DNS                      DNS                      `mapstructure:"dns"`
-	Insights                 Insights                 `mapstructure:"insights"`
-	Redis                    Redis                    `mapstructure:"redis"`
-	MasterUser               MasterUser               `mapstructure:"master_user"`
-	Frontend                 Frontend                 `mapstructure:"frontend"`
-	PrometheusTimer          PrometheusTimer          `mapstructure:"prometheus_timer"`
-	DefaultHTTPRequestHeader DefaultHTTPRequestHeader `mapstructure:"default_http_request_header"`
+	Address                   string                   `mapstructure:"address"`
+	MaxConcurrentRequests     int32                    `mapstructure:"max_concurrent_requests"`
+	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries"`
+	HTTP3                     bool                     `mapstructure:"http3"`
+	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
+	TLS                       TLS                      `mapstructure:"tls"`
+	BasicAuth                 BasicAuth                `mapstructure:"basic_auth"`
+	InstanceName              string                   `mapstructure:"instance_name"`
+	Log                       Log                      `maptostructure:"log"`
+	Backends                  []*Backend               `mapstructure:"backends"`
+	Features                  []*Feature               `mapstructure:"features"`
+	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols"`
+	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url"`
+	DNS                       DNS                      `mapstructure:"dns"`
+	Insights                  Insights                 `mapstructure:"insights"`
+	Redis                     Redis                    `mapstructure:"redis"`
+	MasterUser                MasterUser               `mapstructure:"master_user"`
+	Frontend                  Frontend                 `mapstructure:"frontend"`
+	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer"`
+	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header"`
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.

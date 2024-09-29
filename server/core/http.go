@@ -1037,7 +1037,7 @@ func HTTPApp(ctx context.Context) {
 		pprof.Register(router)
 	}
 
-	limitCounter := NewLimitCounter(config.LoadableConfig.Server.MaxConnections)
+	limitCounter := NewLimitCounter(config.LoadableConfig.Server.MaxConcurrentRequests)
 
 	router.Use(limitCounter.Middleware())
 

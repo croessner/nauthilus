@@ -289,8 +289,11 @@ const (
 	// MaxActionWorkers is the maximum number of action workers
 	MaxActionWorkers = 10
 
-	// MaxConnections represents the maximum number of simultaneous connections allowed.
-	MaxConnections = 3000
+	// MaxConcurrentRequests represents the maximum number of simultaneous connections allowed.
+	MaxConcurrentRequests = 3000
+
+	// MaxPasswordHistoryEntries defines the maximum number of previous passwords to store for history and validation purposes.
+	MaxPasswordHistoryEntries = 100
 )
 
 // Log level.
@@ -362,6 +365,9 @@ const (
 
 	// FeatureBackendServersMonitoring enables a custom backend list with fail-state monitoring
 	FeatureBackendServersMonitoring = "backend_server_monitoring"
+
+	// FeatureBruteForce enables the brute force protection system
+	FeatureBruteForce = "brute_force"
 )
 
 // Statistics label for the loin counter.

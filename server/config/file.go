@@ -1479,14 +1479,23 @@ func (f *File) validateHTTPRequestHeaders() error {
 	return nil
 }
 
-// validateMaxConnections ensures that the MaxConnections parameter is set to a valid value.
+// validateMaxConnections ensures that the MaxConcurrentRequests parameter is set to a valid value.
 func (f *File) validateMaxConnections() error {
-	if f.Server.MaxConnections == 0 {
-		f.Server.MaxConnections = global.MaxConnections
+	if f.Server.MaxConcurrentRequests == 0 {
+		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
 	}
 
-	if f.Server.MaxConnections < 0 {
-		f.Server.MaxConnections = global.MaxConnections
+	if f.Server.MaxConcurrentRequests < 0 {
+		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
+	}
+
+	return nil
+}
+
+// validateMaxPasswordHistoryEntries sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
+func (f *File) validateMaxPasswordHistoryEntries() error {
+	if f.Server.MaxPasswordHistoryEntries <= 0 {
+		f.Server.MaxPasswordHistoryEntries = global.MaxPasswordHistoryEntries
 	}
 
 	return nil
@@ -1521,6 +1530,7 @@ func (f *File) validate() (err error) {
 		f.validateMasterUserDelimiter,
 		f.validateHTTPRequestHeaders,
 		f.validateMaxConnections,
+		f.validateMaxPasswordHistoryEntries,
 	}
 
 	for _, validator := range validators {
