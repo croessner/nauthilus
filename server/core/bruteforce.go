@@ -898,6 +898,10 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 //
 // Returns: none
 func (a *AuthState) updateBruteForceBucketsCounter() {
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		return
+	}
+
 	if config.LoadableConfig.BruteForce == nil {
 		return
 	}
