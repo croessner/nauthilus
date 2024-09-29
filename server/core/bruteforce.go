@@ -639,7 +639,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 	)
 
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
-		return
+		return false
 	}
 
 	stopTimer := stats.PrometheusTimer(global.PromBruteForce, "brute_force_check_request_total")
