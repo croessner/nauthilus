@@ -1479,6 +1479,28 @@ func (f *File) validateHTTPRequestHeaders() error {
 	return nil
 }
 
+// validateMaxConnections ensures that the MaxConcurrentRequests parameter is set to a valid value.
+func (f *File) validateMaxConnections() error {
+	if f.Server.MaxConcurrentRequests == 0 {
+		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
+	}
+
+	if f.Server.MaxConcurrentRequests < 0 {
+		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
+	}
+
+	return nil
+}
+
+// validateMaxPasswordHistoryEntries sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
+func (f *File) validateMaxPasswordHistoryEntries() error {
+	if f.Server.MaxPasswordHistoryEntries <= 0 {
+		f.Server.MaxPasswordHistoryEntries = global.MaxPasswordHistoryEntries
+	}
+
+	return nil
+}
+
 // validate is a method on the File struct that validates various aspects of the file.
 // It uses a list of validator functions and calls each of them in order.
 // If any of the validators return an error, the validation process stops and the error is returned.
@@ -1507,6 +1529,8 @@ func (f *File) validate() (err error) {
 		f.validateRedisNegCacheTTL,
 		f.validateMasterUserDelimiter,
 		f.validateHTTPRequestHeaders,
+		f.validateMaxConnections,
+		f.validateMaxPasswordHistoryEntries,
 	}
 
 	for _, validator := range validators {

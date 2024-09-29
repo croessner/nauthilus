@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -83,6 +84,41 @@ type RESTResult struct {
 	// Result represents the result field in the RESTResult struct. It can hold any type of value.
 	// The field is annotated with the json tag "result".
 	Result any `json:"result"`
+}
+
+// LimitCounter tracks the current number of active connections and limits them based on a specified maximum.
+type LimitCounter struct {
+	// MaxConnections defines the maximum number of concurrent connections allowed.
+	MaxConnections int32
+
+	// CurrentConnections tracks the current number of active connections in the LimitCounter middleware.
+	CurrentConnections int32
+}
+
+// NewLimitCounter creates a new LimitCounter instance with the specified maximum number of concurrent connections.
+func NewLimitCounter(maxConnections int32) *LimitCounter {
+	return &LimitCounter{
+		MaxConnections: maxConnections,
+	}
+}
+
+// Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
+func (lc *LimitCounter) Middleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if atomic.LoadInt32(&lc.CurrentConnections) >= lc.MaxConnections {
+			ctx.JSON(http.StatusTooManyRequests, gin.H{global.LogKeyError: "Too many requests"})
+
+			ctx.Abort()
+
+			return
+		}
+
+		atomic.AddInt32(&lc.CurrentConnections, 1)
+
+		defer atomic.AddInt32(&lc.CurrentConnections, -1)
+
+		ctx.Next()
+	}
 }
 
 // customWriter represents a type that logs data based on a specified log level.
@@ -715,8 +751,8 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 		group.Use(basicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
-	group.POST("/:category/:service", prometheusMiddleware(), luaContextMiddleware(), httpQueryHandler)
+	group.GET("/:category/:service", luaContextMiddleware(), httpQueryHandler)
+	group.POST("/:category/:service", luaContextMiddleware(), httpQueryHandler)
 	group.DELETE("/:category/:service", httpCacheHandler)
 }
 
@@ -1000,6 +1036,10 @@ func HTTPApp(ctx context.Context) {
 	if config.LoadableConfig.GetServerInsightsEnablePprof() {
 		pprof.Register(router)
 	}
+
+	limitCounter := NewLimitCounter(config.LoadableConfig.Server.MaxConcurrentRequests)
+
+	router.Use(limitCounter.Middleware())
 
 	// Wrap the GoKit logger
 	router.Use(loggerMiddleware())
