@@ -47,9 +47,9 @@ function nauthilus_call_feature(request)
     local payload, json_encode_err = json.encode(t)
     nauthilus_util.if_error_raise(json_encode_err)
 
-    nauthilus_prometheus.create_summary_vec(N .. "_counter", "HTTP request to the blocklist service", {"http"})
+    nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the blocklist service", {"http"})
 
-    local timer = nauthilus_prometheus.start_timer(N .. "_counter", {http="post"})
+    local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="post"})
     local result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
         timeout = "10s",
         headers = {

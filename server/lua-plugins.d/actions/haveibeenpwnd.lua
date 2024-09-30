@@ -86,9 +86,9 @@ function nauthilus_call_action(request)
         end
 
 
-        nauthilus_prometheus.create_summary_vec(N .. "_counter", "HTTP request to the haveibeenpwnd network", {"http"})
+        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", {"http"})
 
-        local timer = nauthilus_prometheus.start_timer(N .. "_counter", {http="get"})
+        local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="get"})
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
             timeout = "10s",
             headers = {
