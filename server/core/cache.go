@@ -74,8 +74,8 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if !passDBResult.Authenticated {
-		if key := auth.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
-			auth.loadBruteForcePasswordHistoryFromRedis(key)
+		if key := auth.getPasswordHistoryRedisHashKey(true); key != "" {
+			auth.loadPasswordHistoryFromRedis(key)
 		}
 
 		// Prevent password lookups for already known wrong passwords.
