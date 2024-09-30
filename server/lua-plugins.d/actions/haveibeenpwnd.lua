@@ -49,6 +49,9 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_context")
         local nauthilus_context = require("nauthilus_context")
 
+        dynamic_loader("nauthilus_prometheus")
+        local nauthilus_prometheus = require("nauthilus_prometheus")
+
         dynamic_loader("nauthilus_gluacrypto")
         local crypto = require('crypto')
 
@@ -82,6 +85,10 @@ function nauthilus_call_action(request)
             end
         end
 
+
+        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", {"http"})
+
+        local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="get"})
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
             timeout = "10s",
             headers = {
@@ -89,6 +96,7 @@ function nauthilus_call_action(request)
                 ["User-Agent"] = "Nauthilus",
             },
         })
+        nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(err)
 
         if result.status_code ~= 200 then

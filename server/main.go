@@ -613,6 +613,12 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	restartNgxMonitoring(ctx, store, ngxMonitoringTicker)
 
+	stats.ReloadMutex.Lock()
+
+	stats.LastReloadTime = time.Now()
+
+	stats.ReloadMutex.Unlock()
+
 	level.Debug(log.Logger).Log(
 		global.LogKeyMsg, "Reload complete",
 	)
@@ -1060,10 +1066,8 @@ func parseFlagsAndPrintVersion() {
 // Then, it retrieves the InstanceInfo metric using the labels and assigns it to infoMetric.
 // Finally, it sets the value of infoMetric to 1.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{
-		"instance": config.LoadableConfig.Server.InstanceName,
-		"version":  version,
-	})
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"version": version})
+
 	infoMetric.Set(1)
 }
 

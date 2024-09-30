@@ -58,6 +58,9 @@ function nauthilus_call_filter(request)
         dynamic_loader("nauthilus_context")
         local nauthilus_context = require("nauthilus_context")
 
+        dynamic_loader("nauthilus_prometheus")
+        local nauthilus_prometheus = require("nauthilus_prometheus")
+
         dynamic_loader("nauthilus_gluahttp")
         local http = require("glua_http")
 
@@ -75,6 +78,9 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
+        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {"http"})
+
+        local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="post"})
         local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
             timeout = "10s",
             headers = {
@@ -84,6 +90,7 @@ function nauthilus_call_filter(request)
             },
             body = payload,
         })
+        nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(request_err)
 
         if result.status_code ~= 202 then

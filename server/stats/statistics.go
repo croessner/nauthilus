@@ -18,6 +18,7 @@ package stats
 import (
 	"context"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -31,12 +32,59 @@ import (
 )
 
 var (
+	// LastReloadTime records the timestamp of the last successful configuration reload.
+	LastReloadTime time.Time
+
+	// ReloadMutex is used to coordinate access to shared resources during configuration reload operations.
+	ReloadMutex sync.RWMutex
+)
+
+func init() {
+	LastReloadTime = time.Now()
+
+	// Create the metric for the time since last reload
+	promauto.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "last_reload_timestamp",
+			Help: "Unix timestamp of the last reload",
+		},
+		func() float64 {
+			ReloadMutex.RLock()
+
+			defer ReloadMutex.RUnlock()
+
+			return float64(LastReloadTime.Unix())
+		},
+	)
+
+	startTime := time.Now()
+
+	promauto.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "start_timestamp",
+			Help: "Unix timestamp of the application start",
+		},
+		func() float64 {
+			return float64(startTime.Unix())
+		},
+	)
+}
+
+var (
+	// InstanceInfo provides metrics about the version information using a GaugeVec with a "version" label.
 	InstanceInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_instance_info",
-			Help: "Information about the instance.",
+			Name: "nauthilus_version_info",
+			Help: "Information about the version.",
 		},
-		[]string{"instance", "version"})
+		[]string{"version"})
+
+	// CurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
+	CurrentRequests = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "server_concurrent_requests",
+			Help: "Number of current requests.",
+		})
 
 	// HttpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	HttpRequestsTotalCounter = promauto.NewCounterVec(
@@ -92,31 +140,37 @@ var (
 		Help: "The total number of cache misses",
 	})
 
+	// RedisHits counts the total number of times a free connection was found in the pool, labeled by the type of connection.
 	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_pool_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
 	}, []string{"type"})
 
+	// RedisMisses tracks the total number of times a free connection was NOT found in the Redis pool. It is labeled by type.
 	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_pool_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
 	}, []string{"type"})
 
+	// RedisTimeouts counts the total number of Redis pool wait timeouts, categorized by type.
 	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_pool_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
 	}, []string{"type"})
 
+	// RedisTotalConns tracks the total number of connections in the Redis pool, labeled by connection type.
 	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_total_connections",
 		Help: "The total number of connections in the pool",
 	}, []string{"type"})
 
+	// RedisIdleConns is a Prometheus gauge that tracks the total number of idle connections in the Redis pool, labeled by "type".
 	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_idle_connections",
 		Help: "The total number of idle connections in the pool",
 	}, []string{"type"})
 
+	// RedisStaleConns is a Prometheus metric that tracks the total number of stale connections removed from the Redis pool.
 	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_stale_connections",
 		Help: "The total number of stale connections removed from the pool",

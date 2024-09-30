@@ -992,6 +992,9 @@ const (
 	// LuaModHTTPRequest is a constant representing the value "nauthilus_http_request".
 	LuaModHTTPRequest = "nauthilus_http_request"
 
+	// LuaModPrometheus is a constant that identifies the Prometheus module for monitoring and metrics collection.
+	LuaModPrometheus = "nauthilus_prometheus"
+
 	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
 	LuaModGLuaCrypto = "nauthilus_gluacrypto"
 
@@ -1220,6 +1223,21 @@ const (
 
 	// LuaFnWaitRandom represents the constant value for the Lua function name "wait_random".
 	LuaFnWaitRandom = "wait_random"
+
+	// LuaFnCreateSummaryVec represents the identifier for creating a Prometheus SummaryVec.
+	LuaFnCreateSummaryVec = "create_summary_vec"
+
+	// LuaFnCreateCounterVec represents the identifier for creating a Prometheus CounterVec.
+	LuaFnCreateCounterVec = "create_counter_vec"
+
+	// LuaFnStartTimer specifies the identifier for starting a Prometheus timer.
+	LuaFnStartTimer = "start_timer"
+
+	// LuaFnStopTimer defines the identifier for stopping a Prometheus timer.
+	LuaFnStopTimer = "stop_timer"
+
+	// LuaFnIncrementCounter represents the identifier for incrementing a Prometheus counter.
+	LuaFnIncrementCounter = "increment_counter"
 )
 
 const (

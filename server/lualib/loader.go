@@ -20,6 +20,7 @@ import (
 
 	"github.com/cjoudrey/gluahttp"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/lualib/metrics"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 	"github.com/tengattack/gluacrypto"
@@ -158,6 +159,8 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 		L.PreloadModule(modName, mailModule.Loader)
 	case global.LuaModMisc:
 		L.PreloadModule(modName, LoaderModMisc)
+	case global.LuaModPrometheus:
+		L.PreloadModule(modName, metrics.LoaderModPrometheus)
 	default:
 		return
 	}

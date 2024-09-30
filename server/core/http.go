@@ -21,10 +21,12 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	stderrors "errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -114,6 +116,8 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 		}
 
 		atomic.AddInt32(&lc.CurrentConnections, 1)
+
+		stats.CurrentRequests.Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
 
 		defer atomic.AddInt32(&lc.CurrentConnections, -1)
 
@@ -591,7 +595,12 @@ func prometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
-		stopTimer := stats.PrometheusTimer(global.PromRequest, "request_total")
+		mode := ctx.Query("mode")
+		if mode == "" {
+			mode = "auth"
+		}
+
+		stopTimer := stats.PrometheusTimer(global.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
