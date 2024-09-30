@@ -42,7 +42,7 @@ func init() {
 	// Create the metric for the time since last reload
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_last_reload_timestamp",
+			Name: "last_reload_timestamp",
 			Help: "Unix timestamp of the last reload",
 		},
 		func() float64 {
@@ -58,7 +58,7 @@ func init() {
 
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_start_timestamp",
+			Name: "start_timestamp",
 			Help: "Unix timestamp of the application start",
 		},
 		func() float64 {
@@ -77,7 +77,7 @@ var (
 
 	CurrentRequests = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_current_requests",
+			Name: "server_concurrent_requests",
 			Help: "Number of current requests.",
 		})
 
