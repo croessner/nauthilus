@@ -117,6 +117,7 @@ func (a *AuthState) generic(ctx *gin.Context) {
 			case global.AuthResultOK:
 			case global.AuthResultFail:
 			case global.AuthResultTempFail:
+				a.authTempFail(ctx, global.TempFailDefault)
 			case global.AuthResultEmptyUsername:
 			case global.AuthResultEmptyPassword:
 			}

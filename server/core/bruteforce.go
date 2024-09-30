@@ -240,6 +240,23 @@ func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key strin
 	return
 }
 
+// logBruteForceRuleRedisKeyDebug logs detailed information about a brute force rule execution for debugging purposes.
+func logBruteForceRuleRedisKeyDebug(auth *AuthState, rule *config.BruteForceRule, network *net.IPNet, key string) {
+	util.DebugModule(
+		global.DbgBf,
+		global.LogKeyGUID, auth.GUID,
+		global.LogKeyClientIP, auth.ClientIP,
+		"rule", rule.Name,
+		"period", rule.Period,
+		"cidr", rule.CIDR,
+		"ipv4", rule.IPv4,
+		"ipv6", rule.IPv6,
+		"failed_requests", rule.FailedRequests,
+		"rule_network", fmt.Sprintf("%v", network),
+		"key", key,
+	)
+}
+
 // This function belongs to the AuthState struct. It is used to generate a unique
 // Redis key for brute force rule tracking.
 //
@@ -289,19 +306,7 @@ func (a *AuthState) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 	key = config.LoadableConfig.Server.Redis.Prefix + "bf:" + fmt.Sprintf(
 		"%d:%d:%d:%s:%s", rule.Period, rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
-	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, a.GUID,
-		global.LogKeyClientIP, a.ClientIP,
-		"rule", rule.Name,
-		"period", rule.Period,
-		"cidr", rule.CIDR,
-		"ipv4", rule.IPv4,
-		"ipv6", rule.IPv6,
-		"failed_requests", rule.FailedRequests,
-		"rule_network", network.String(),
-		"key", key,
-	)
+	logBruteForceRuleRedisKeyDebug(a, rule, network, key)
 
 	return
 }
@@ -609,6 +614,207 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 	return nil
 }
 
+// logBruteForceDebug logs debug information related to brute force authentication attempts using the provided AuthState.
+func logBruteForceDebug(auth *AuthState) {
+	util.DebugModule(
+		global.DbgBf,
+		global.LogKeyGUID, *auth.GUID,
+		global.LogKeyClientIP, auth.ClientIP,
+		global.LogKeyClientPort, auth.XClientPort,
+		global.LogKeyClientHost, auth.ClientHost,
+		global.LogKeyClientID, auth.XClientID,
+		global.LogKeyLocalIP, auth.XLocalIP,
+		global.LogKeyPort, auth.XPort,
+		global.LogKeyUsername, auth.Username,
+		global.LogKeyProtocol, auth.Protocol.Get(),
+		"service", util.WithNotAvailable(auth.Service),
+		"no-auth", auth.NoAuth,
+		"list-accounts", auth.ListAccounts,
+	)
+}
+
+// logBucketRuleDebug logs debug information for a brute force rule, including client IP, rule details, and request counts.
+func logBucketRuleDebug(auth *AuthState, network *net.IPNet, rule *config.BruteForceRule) {
+	util.DebugModule(global.DbgBf,
+		global.LogKeyGUID, auth.GUID,
+		"limit", rule.FailedRequests,
+		global.LogKeyClientIP, auth.ClientIP,
+		"rule_network", fmt.Sprintf("%v", network),
+		"rule", rule.Name,
+		"counter", auth.BruteForceCounter[rule.Name],
+	)
+}
+
+// logBucketMatchingRule logs information about a matched brute force rule for a given authentication state.
+func logBucketMatchingRule(auth *AuthState, network *net.IPNet, rule *config.BruteForceRule, message string) {
+	level.Info(log.Logger).Log(
+		global.LogKeyGUID, auth.GUID,
+		global.LogKeyBruteForce, message,
+		global.LogKeyUsername, auth.Username,
+		global.LogKeyClientIP, auth.ClientIP,
+		"rule_network", fmt.Sprintf("%v", network),
+		"rule", rule.Name,
+	)
+}
+
+// checkBucketOverLimit checks if the given network exceeds the brute force allowed thresholds based on predefined rules.
+// It verifies the current network against the specified brute force rules and returns if any rule is triggered.
+func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, network *net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+	var err error
+
+	for ruleNumber = range rules {
+		// Skip, where the current IP address does not match the current rule
+		if network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+
+			return true, false, ruleNumber
+		} else if network == nil {
+			continue
+		}
+
+		auth.loadBruteForceBucketCounterFromRedis(&rules[ruleNumber])
+
+		// The counter goes from 0...N-1, but the 'failed_requests' setting from 1...N
+		if auth.BruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {
+			ruleTriggered = true
+			*message = "Brute force attack detected"
+
+			break
+		}
+	}
+
+	return withError, ruleTriggered, ruleNumber
+}
+
+// handleBruteForceLuaAction handles the brute force Lua action based on the provided authentication state and rule config.
+func handleBruteForceLuaAction(auth *AuthState, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
+	if config.LoadableConfig.HaveLuaActions() {
+		finished := make(chan action.Done)
+
+		action.RequestChan <- &action.Action{
+			LuaAction:    global.LuaActionBruteForce,
+			Context:      auth.Context,
+			FinishedChan: finished,
+			HTTPRequest:  auth.HTTPClientContext.Request,
+			CommonRequest: &lualib.CommonRequest{
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Repeating:           alreadyTriggered,
+				UserFound:           false, // unavailable
+				Authenticated:       false, // unavailable
+				NoAuth:              auth.NoAuth,
+				BruteForceCounter:   auth.BruteForceCounter[rule.Name],
+				Service:             auth.Service,
+				Session:             *auth.GUID,
+				ClientIP:            auth.ClientIP,
+				ClientPort:          auth.XClientPort,
+				ClientNet:           fmt.Sprintf("%v", network),
+				ClientHost:          auth.ClientHost,
+				ClientID:            auth.XClientID,
+				LocalIP:             auth.XLocalIP,
+				LocalPort:           auth.XPort,
+				UserAgent:           *auth.UserAgent,
+				Username:            auth.Username,
+				Account:             "", // unavailable
+				AccountField:        "", // unavailable
+				UniqueUserID:        "", // unavailable
+				DisplayName:         "", // unavailable
+				Password:            auth.Password,
+				Protocol:            auth.Protocol.Get(),
+				BruteForceName:      rule.Name,
+				FeatureName:         "", // unavailable
+				StatusMessage:       &auth.StatusMessage,
+				XSSL:                auth.XSSL,
+				XSSLSessionID:       auth.XSSLSessionID,
+				XSSLClientVerify:    auth.XSSLClientVerify,
+				XSSLClientDN:        auth.XSSLClientDN,
+				XSSLClientCN:        auth.XSSLClientCN,
+				XSSLIssuer:          auth.XSSLIssuer,
+				XSSLClientNotBefore: auth.XSSLClientNotBefore,
+				XSSLClientNotAfter:  auth.XSSLClientNotAfter,
+				XSSLSubjectDN:       auth.XSSLSubjectDN,
+				XSSLIssuerDN:        auth.XSSLIssuerDN,
+				XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
+				XSSLProtocol:        auth.XSSLProtocol,
+				XSSLCipher:          auth.XSSLCipher,
+				SSLSerial:           auth.SSLSerial,
+				SSLFingerprint:      auth.SSLFingerprint,
+			},
+		}
+
+		<-finished
+	}
+}
+
+// processBruteForce processes authentication state to handle brute force attempts based on rule triggers and network details.
+func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string) bool {
+	if alreadyTriggered || ruleTriggered {
+		var useCache bool
+
+		logBucketRuleDebug(auth, network, rule)
+
+		for _, backendType := range config.LoadableConfig.Server.Backends {
+			if backendType.Get() == global.BackendCache {
+				useCache = true
+
+				break
+			}
+		}
+
+		if useCache {
+			if needEnforce, err := auth.checkEnforceBruteForceComputation(); err != nil {
+				level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+
+				return false
+			} else if !needEnforce {
+				return false
+			}
+		}
+
+		auth.BruteForceName = rule.Name
+
+		auth.saveFailedPasswordCounterInRedis()
+		auth.getAllPasswordHistories()
+
+		if ruleTriggered {
+			auth.setPreResultBruteForceRedis(rule)
+		}
+
+		logBucketMatchingRule(auth, network, rule, message)
+
+		handleBruteForceLuaAction(auth, alreadyTriggered, rule, network)
+
+		return true
+	}
+
+	return false
+}
+
+// checkRepeatingBruteForcer analyzes if a network partakes in repeated brute force attempts according to specified rules.
+// It returns a boolean indicating an error, whether a brute force rule already triggered, and the rule number.
+func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, network *net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+	var err error
+
+	for ruleNumber = range rules {
+		if network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+
+			return true, false, ruleNumber
+		} else if network == nil {
+			continue
+		}
+
+		if ruleName, err := auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
+			alreadyTriggered = true
+			*message = "Brute force attack detected (cached result)"
+
+			break
+		}
+	}
+
+	return withError, alreadyTriggered, ruleNumber
+}
+
 // checkBruteForce is a method of the `AuthState` struct and is responsible for
 // ascertaining whether the client IP should be blocked due to unrestricted unauthorized access attempts
 // (i.e., a Brute Force attack on the system).
@@ -628,15 +834,14 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 // It returns 'true' if a Brute Force attack is detected, otherwise returns 'false'.
 func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 	var (
-		useCache         bool
-		needEnforce      bool
-		alreadyTriggered bool
-		ruleTriggered    bool
-		message          string
-		err              error
-		index            int
-		network          *net.IPNet
+		ruleTriggered bool
+		message       string
+		network       *net.IPNet
 	)
+
+	if a.NoAuth || a.ListAccounts {
+		return false
+	}
 
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
 		return false
@@ -646,66 +851,18 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 	defer stopTimer()
 
-	if config.LoadableConfig.BruteForce == nil {
+	// All rules
+	rules := config.LoadableConfig.GetBruteForceRules()
+
+	if len(rules) == 0 {
 		return false
 	}
 
-	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, *a.GUID,
-		global.LogKeyClientIP, a.ClientIP,
-		global.LogKeyClientPort, a.XClientPort,
-		global.LogKeyClientHost, a.ClientHost,
-		global.LogKeyClientID, a.XClientID,
-		global.LogKeyLocalIP, a.XLocalIP,
-		global.LogKeyPort, a.XPort,
-		global.LogKeyUsername, a.Username,
-		global.LogKeyProtocol, a.Protocol.Get(),
-		"service", util.WithNotAvailable(a.Service),
-		"no-auth", a.NoAuth,
-		"list-accounts", a.ListAccounts,
-	)
-
-	if a.ClientIP == "" {
-		level.Warn(log.Logger).Log(
-			global.LogKeyGUID, a.GUID,
-			global.LogKeyBruteForce, "No valid IP address found",
-			global.LogKeyClientIP, a.ClientIP,
-		)
-
-		return false
-	}
-
-	if a.NoAuth || a.ListAccounts {
-		return false
-	}
-
-	if a.BruteForceCounter == nil {
-		a.BruteForceCounter = make(map[string]uint)
-	}
+	logBruteForceDebug(a)
 
 	if isLocalOrEmptyIP(a.ClientIP) {
 		a.AdditionalLogs = append(a.AdditionalLogs, global.LogKeyBruteForce)
 		a.AdditionalLogs = append(a.AdditionalLogs, global.Localhost)
-
-		return false
-	}
-
-	bruteForceEnabled := false
-	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
-		if bruteForceService.Get() != a.Protocol.Get() {
-			continue
-		}
-
-		bruteForceEnabled = true
-
-		break
-	}
-
-	if !bruteForceEnabled {
-		level.Info(log.Logger).Log(
-			global.LogKeyGUID, a.GUID,
-			global.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
 		return false
 	}
@@ -719,173 +876,38 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		}
 	}
 
-	// All rules
-	rules := config.LoadableConfig.GetBruteForceRules()
-
-	if len(rules) == 0 {
-		return false
-	}
-
-	/*
-		An IP address is already known as brute force attacker
-	*/
-
-	index = 0
-	for index = range rules {
-		// Skip, where the current IP address does not match the current rule
-		if network, err = a.getNetwork(&rules[index]); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-
-			return false
-		} else if network == nil {
+	bruteForceProtocolEnabled := false
+	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
+		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
 
-		if ruleName, err := a.getPreResultBruteForceRedis(&rules[index]); ruleName != "" && err == nil {
-			alreadyTriggered = true
-			message = "Brute force attack detected (cached result)"
+		bruteForceProtocolEnabled = true
 
-			break
-		}
-
+		break
 	}
 
-	/*
-		A Bucket (some rule) is over limit
-	*/
+	if !bruteForceProtocolEnabled {
+		level.Warn(log.Logger).Log(
+			global.LogKeyGUID, a.GUID,
+			global.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
+
+		return false
+	}
+
+	abort, alreadyTriggered, ruleNumber := checkRepeatingBruteForcer(a, rules, network, &message)
+	if abort {
+		return false
+	}
 
 	if !alreadyTriggered {
-		index = 0
-		for index = range rules {
-			// Skip, where the current IP address does not match the current rule
-			if network, err = a.getNetwork(&rules[index]); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-
-				return false
-			} else if network == nil {
-				continue
-			}
-
-			a.loadBruteForceBucketCounterFromRedis(&rules[index])
-
-			// The counter goes from 0...N-1, but the 'failed_requests' setting from 1...N
-			if a.BruteForceCounter[rules[index].Name]+1 > rules[index].FailedRequests {
-				ruleTriggered = true
-				message = "Brute force attack detected"
-
-				break
-			}
+		abort, ruleTriggered, ruleNumber = checkBucketOverLimit(a, rules, network, &message)
+		if abort {
+			return false
 		}
 	}
 
-	util.DebugModule(global.DbgBf,
-		global.LogKeyGUID, a.GUID,
-		"failed_requests", a.BruteForceCounter[rules[index].Name],
-		"limit", rules[index].FailedRequests,
-		global.LogKeyClientIP, a.ClientIP,
-		"rule_network", network.String(),
-		"rule", rules[index].Name,
-		"counter", a.BruteForceCounter[rules[index].Name],
-	)
-
-	if alreadyTriggered || ruleTriggered {
-		for _, backendType := range config.LoadableConfig.Server.Backends {
-			if backendType.Get() == global.BackendCache {
-				useCache = true
-
-				break
-			}
-		}
-
-		if useCache {
-			if needEnforce, err = a.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-
-				return false
-			} else if !needEnforce {
-				return false
-			}
-		}
-
-		a.BruteForceName = rules[index].Name
-
-		a.saveFailedPasswordCounterInRedis()
-		a.getAllPasswordHistories()
-
-		if ruleTriggered {
-			a.setPreResultBruteForceRedis(&rules[index])
-		}
-
-		level.Info(log.Logger).Log(
-			global.LogKeyGUID, a.GUID,
-			global.LogKeyBruteForce, message,
-			global.LogKeyUsername, a.Username,
-			global.LogKeyClientIP, a.ClientIP,
-			"rule_network", network.String(),
-			"rule", rules[index].Name,
-		)
-
-		if config.LoadableConfig.HaveLuaActions() {
-			finished := make(chan action.Done)
-
-			action.RequestChan <- &action.Action{
-				LuaAction:    global.LuaActionBruteForce,
-				Context:      a.Context,
-				FinishedChan: finished,
-				HTTPRequest:  a.HTTPClientContext.Request,
-				CommonRequest: &lualib.CommonRequest{
-					Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
-					Repeating:           alreadyTriggered,
-					UserFound:           false, // unavailable
-					Authenticated:       false, // unavailable
-					NoAuth:              a.NoAuth,
-					BruteForceCounter:   a.BruteForceCounter[rules[index].Name],
-					Service:             a.Service,
-					Session:             *a.GUID,
-					ClientIP:            a.ClientIP,
-					ClientPort:          a.XClientPort,
-					ClientNet:           network.String(),
-					ClientHost:          a.ClientHost,
-					ClientID:            a.XClientID,
-					LocalIP:             a.XLocalIP,
-					LocalPort:           a.XPort,
-					UserAgent:           *a.UserAgent,
-					Username:            a.Username,
-					Account:             "", // unavailable
-					AccountField:        "", // unavailable
-					UniqueUserID:        "", // unavailable
-					DisplayName:         "", // unavailable
-					Password:            a.Password,
-					Protocol:            a.Protocol.Get(),
-					BruteForceName:      rules[index].Name,
-					FeatureName:         "", // unavailable
-					StatusMessage:       &a.StatusMessage,
-					XSSL:                a.XSSL,
-					XSSLSessionID:       a.XSSLSessionID,
-					XSSLClientVerify:    a.XSSLClientVerify,
-					XSSLClientDN:        a.XSSLClientDN,
-					XSSLClientCN:        a.XSSLClientCN,
-					XSSLIssuer:          a.XSSLIssuer,
-					XSSLClientNotBefore: a.XSSLClientNotBefore,
-					XSSLClientNotAfter:  a.XSSLClientNotAfter,
-					XSSLSubjectDN:       a.XSSLSubjectDN,
-					XSSLIssuerDN:        a.XSSLIssuerDN,
-					XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-					XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-					XSSLProtocol:        a.XSSLProtocol,
-					XSSLCipher:          a.XSSLCipher,
-					SSLSerial:           a.SSLSerial,
-					SSLFingerprint:      a.SSLFingerprint,
-				},
-			}
-
-			<-finished
-		}
-
-		return true
-	}
-
-	return false
+	return processBruteForce(a, ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
 }
 
 // updateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
