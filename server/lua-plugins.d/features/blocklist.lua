@@ -13,7 +13,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-local N = "feature_blocklist"
+local N = "blocklist"
 
 function nauthilus_call_feature(request)
     if request.no_auth then
@@ -24,6 +24,9 @@ function nauthilus_call_feature(request)
 
     dynamic_loader("nauthilus_context")
     local nauthilus_context = require("nauthilus_context")
+
+    dynamic_loader("nauthilus_prometheus")
+    local nauthilus_prometheus = require("nauthilus_prometheus")
 
     dynamic_loader("nauthilus_gluahttp")
     local http = require("glua_http")
@@ -44,6 +47,9 @@ function nauthilus_call_feature(request)
     local payload, json_encode_err = json.encode(t)
     nauthilus_util.if_error_raise(json_encode_err)
 
+    nauthilus_prometheus.create_summary_vec(N .. "_counter", "HTTP request to the blocklist service", {"http"})
+
+    local timer = nauthilus_prometheus.start_timer(N .. "_counter", {http="post"})
     local result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
         timeout = "10s",
         headers = {
@@ -53,6 +59,7 @@ function nauthilus_call_feature(request)
         },
         body = payload,
     })
+    nauthilus_prometheus.stop_timer(timer)
     nauthilus_util.if_error_raise(request_err)
 
     if result.status_code ~= 200 then
