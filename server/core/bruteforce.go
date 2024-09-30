@@ -47,8 +47,8 @@ import (
 // an information log is created and the function returns 'true', signifying the excessive usage of the same wrong password.
 // If none of these conditions are met, the function will return 'false', indicating the absence of repeated wrong password usage.
 func (a *AuthState) isRepeatingWrongPassword() (repeating bool, err error) {
-	if key := a.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
-		a.loadBruteForcePasswordHistoryFromRedis(key)
+	if key := a.getPasswordHistoryRedisHashKey(true); key != "" {
+		a.loadPasswordHistoryFromRedis(key)
 	}
 
 	passwordHash := util.GetHash(util.PreparePassword(a.Password))
@@ -56,8 +56,8 @@ func (a *AuthState) isRepeatingWrongPassword() (repeating bool, err error) {
 	if a.PasswordHistory != nil {
 		if counter, foundPassword := (*a.PasswordHistory)[passwordHash]; foundPassword {
 			if counter > 1 {
-				if key := a.getBruteForcePasswordHistoryRedisHashKey(false); key != "" {
-					a.loadBruteForcePasswordHistoryFromRedis(key)
+				if key := a.getPasswordHistoryRedisHashKey(false); key != "" {
+					a.loadPasswordHistoryFromRedis(key)
 				}
 
 				if a.PasswordHistory != nil {
@@ -215,7 +215,7 @@ func (a *AuthState) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) 
 	return network, nil
 }
 
-// This function 'getBruteForcePasswordHistoryRedisHashKey' belongs to the AuthState struct.
+// This function 'getPasswordHistoryRedisHashKey' belongs to the AuthState struct.
 // It is used to generate a unique Redis hash key based on whether a username is being included or not.
 // If the 'withUsername' boolean parameter is true, the Redis hash key is generated
 // using the Redis prefix, password hash key, the original username, and the client's IP address.
@@ -223,7 +223,7 @@ func (a *AuthState) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) 
 // password hash key, and the client's IP without the original username.
 // This key is used for storing and retrieving the history of password usage in the context of preventing brute force attacks.
 // An additional feature of this function is to log the generated key along with some context information (GUID and Client IP)
-func (a *AuthState) getBruteForcePasswordHistoryRedisHashKey(withUsername bool) (key string) {
+func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
 		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", a.Username, a.ClientIP)
 	} else {
@@ -318,7 +318,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 		return true
 	} else {
 		if length > int64(config.LoadableConfig.Server.MaxPasswordHistoryEntries) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, fmt.Sprintf("too many entries in Redis hash key %s", key))
+			level.Warn(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyWarning, fmt.Sprintf("too many entries in Redis hash key %s", key))
 
 			stats.RedisReadCounter.Inc()
 
@@ -329,7 +329,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 	return false
 }
 
-// loadBruteForcePasswordHistoryFromRedis loads password history related to brute force attacks from Redis for a given key.
+// loadPasswordHistoryFromRedis loads password history related to brute force attacks from Redis for a given key.
 // The function will fetch all associated passwords in the form of a hash along with a counter.
 // The Redis key is created for each unique user presented by the variable `key` which is a GUID,
 // This helps in keeping the track of the number of attempts a user has made for password authentication.
@@ -340,7 +340,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 //   - key: A string that represents the unique GUID of a user
 //
 // Note: If the passed key is an empty string, the function will return immediately.
-func (a *AuthState) loadBruteForcePasswordHistoryFromRedis(key string) {
+func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 	if key == "" {
 		return
 	}
@@ -395,8 +395,8 @@ func (a *AuthState) getAllPasswordHistories() {
 	}
 
 	// Get password history for the current used username
-	if key := a.getBruteForcePasswordHistoryRedisHashKey(true); key != "" {
-		a.loadBruteForcePasswordHistoryFromRedis(key)
+	if key := a.getPasswordHistoryRedisHashKey(true); key != "" {
+		a.loadPasswordHistoryFromRedis(key)
 	}
 
 	if a.PasswordHistory != nil {
@@ -409,8 +409,8 @@ func (a *AuthState) getAllPasswordHistories() {
 	}
 
 	// Get the overall password history
-	if key := a.getBruteForcePasswordHistoryRedisHashKey(false); key != "" {
-		a.loadBruteForcePasswordHistoryFromRedis(key)
+	if key := a.getPasswordHistoryRedisHashKey(false); key != "" {
+		a.loadPasswordHistoryFromRedis(key)
 	}
 
 	if a.PasswordHistory != nil {
@@ -418,7 +418,7 @@ func (a *AuthState) getAllPasswordHistories() {
 	}
 }
 
-// saveBruteForcePasswordToRedis is a method of the AuthState struct that is responsible for handling brute force attempts.
+// saveFailedPasswordCounterInRedis is a method of the AuthState struct that is responsible for handling brute force attempts.
 // It works by saving password attempts to Redis data store. When a password is entered incorrectly,
 // the function stores this incorrect password's hash within a Redis key that is specific to the account in question.
 //
@@ -431,15 +431,15 @@ func (a *AuthState) getAllPasswordHistories() {
 //  4. Logs an error message if there is an error setting expiry time
 //
 // The function concludes by logging that the process has finished.
-func (a *AuthState) saveBruteForcePasswordToRedis() {
+func (a *AuthState) saveFailedPasswordCounterInRedis() {
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
 		return
 	}
 
 	var keys []string
 
-	keys = append(keys, a.getBruteForcePasswordHistoryRedisHashKey(true))
-	keys = append(keys, a.getBruteForcePasswordHistoryRedisHashKey(false))
+	keys = append(keys, a.getPasswordHistoryRedisHashKey(true))
+	keys = append(keys, a.getPasswordHistoryRedisHashKey(false))
 
 	for index := range keys {
 		if a.checkTooManyPasswordHashes(keys[index]) {
@@ -809,7 +809,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 		a.BruteForceName = rules[index].Name
 
-		a.saveBruteForcePasswordToRedis()
+		a.saveFailedPasswordCounterInRedis()
 		a.getAllPasswordHistories()
 
 		if ruleTriggered {

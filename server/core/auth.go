@@ -1568,11 +1568,11 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 				global.DbgAuth,
 				global.LogKeyGUID, a.GUID,
 				"authenticated", false,
-				global.LogKeyMsg, "Calling saveBruteForcePasswordToRedis()",
+				global.LogKeyMsg, "Calling saveFailedPasswordCounterInRedis()",
 			)
 
 			// Increase counters
-			a.saveBruteForcePasswordToRedis()
+			a.saveFailedPasswordCounterInRedis()
 		}
 
 		a.getAllPasswordHistories()
