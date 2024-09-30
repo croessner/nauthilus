@@ -600,7 +600,7 @@ func prometheusMiddleware() gin.HandlerFunc {
 			mode = "auth"
 		}
 
-		stopTimer := stats.PrometheusTimer(global.PromRequest, fmt.Sprintf("request_total_%s", strings.ReplaceAll(mode, "-", "_")))
+		stopTimer := stats.PrometheusTimer(global.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
