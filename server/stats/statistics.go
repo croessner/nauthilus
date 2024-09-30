@@ -38,6 +38,12 @@ var (
 		},
 		[]string{"instance", "version"})
 
+	CurrentRequests = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "nauthilus_current_requests",
+			Help: "Number of current requests.",
+		})
+
 	// HttpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
 	HttpRequestsTotalCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
