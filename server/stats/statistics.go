@@ -18,6 +18,7 @@ package stats
 import (
 	"context"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -31,12 +32,48 @@ import (
 )
 
 var (
+	LastReloadTime time.Time
+	ReloadMutex    sync.RWMutex
+)
+
+func init() {
+	LastReloadTime = time.Now()
+
+	// Create the metric for the time since last reload
+	promauto.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "nauthilus_seconds_since_last_reload",
+			Help: "Number of seconds since the application was last reloaded",
+		},
+		func() float64 {
+			ReloadMutex.RLock()
+
+			defer ReloadMutex.RUnlock()
+
+			return time.Since(LastReloadTime).Seconds()
+		},
+	)
+
+	startTime := time.Now()
+
+	promauto.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "nauthilus_seconds_since_start",
+			Help: "Number of seconds since the application has started",
+		},
+		func() float64 {
+			return time.Since(startTime).Seconds()
+		},
+	)
+}
+
+var (
 	InstanceInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_instance_info",
-			Help: "Information about the instance.",
+			Name: "nauthilus_version_info",
+			Help: "Information about the version.",
 		},
-		[]string{"instance", "version"})
+		[]string{"version"})
 
 	CurrentRequests = promauto.NewGauge(
 		prometheus.GaugeOpts{
