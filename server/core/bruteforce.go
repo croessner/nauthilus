@@ -876,11 +876,18 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		}
 	}
 
+	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
 
+		bruteForceProtocolEnabled = true
+
+		break
+	}
+
+	if !bruteForceProtocolEnabled {
 		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.GUID,
 			global.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
