@@ -42,15 +42,15 @@ func init() {
 	// Create the metric for the time since last reload
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_seconds_since_last_reload",
-			Help: "Number of seconds since the application was last reloaded",
+			Name: "nauthilus_last_reload_timestamp",
+			Help: "Unix timestamp of the last reload",
 		},
 		func() float64 {
 			ReloadMutex.RLock()
 
 			defer ReloadMutex.RUnlock()
 
-			return time.Since(LastReloadTime).Seconds()
+			return float64(LastReloadTime.Unix())
 		},
 	)
 
@@ -58,11 +58,11 @@ func init() {
 
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "nauthilus_seconds_since_start",
-			Help: "Number of seconds since the application has started",
+			Name: "nauthilus_start_timestamp",
+			Help: "Unix timestamp of the application start",
 		},
 		func() float64 {
-			return time.Since(startTime).Seconds()
+			return float64(startTime.Unix())
 		},
 	)
 }
