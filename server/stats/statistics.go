@@ -76,8 +76,7 @@ var (
 		prometheus.GaugeOpts{
 			Name: "nauthilus_version_info",
 			Help: "Information about the version.",
-		},
-		[]string{"instance_name", "version"})
+		}, []string{"instance_name", "version"})
 
 	// CurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
 	CurrentRequests = promauto.NewGauge(
@@ -91,24 +90,21 @@ var (
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
 			Help: "Number of HTTP requests.",
-		},
-		[]string{"path"})
+		}, []string{"path"})
 
 	// HttpResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
 	HttpResponseTimeSecondsHist = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "http_response_time_seconds",
 			Help: "Duration of HTTP requests.",
-		},
-		[]string{"path"})
+		}, []string{"path"})
 
 	// LoginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
 	LoginsCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "logins_total",
 			Help: "Number of failed and successful login attempts.",
-		},
-		[]string{"logins"})
+		}, []string{"logins"})
 
 	// RedisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
 	RedisReadCounter = promauto.NewCounter(prometheus.CounterOpts{
@@ -193,6 +189,18 @@ var (
 		Name: "cpu_idle_usage_percent",
 		Help: "CPU idle usage in percent",
 	})
+
+	// BruteForceRejected tracks the total number of brute force rejected attempts, labeled by the respective bucket.
+	BruteForceRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bruteforce_rejected_total",
+		Help: "The total number of brute force rejected attempts",
+	}, []string{"bucket"})
+
+	// BruteForceHits is a prometheus counter that tracks the total number of brute force hits before rejection, categorized by bucket.
+	BruteForceHits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "brutefore_hits_total",
+		Help: "The total number of brute force hits before rejection",
+	}, []string{"bucket"})
 )
 
 var oldCpu cpu.Stats

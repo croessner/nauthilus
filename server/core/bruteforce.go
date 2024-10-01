@@ -572,7 +572,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 
 		return
-	} else if ruleName, err = rediscli.WriteHandle.HGet(context.Background(), key, network.String()).Result(); err != nil {
+	} else if ruleName, err = rediscli.ReadHandle.HGet(context.Background(), key, network.String()).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 		} else {
@@ -678,6 +678,7 @@ func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, networ
 		if auth.BruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {
 			ruleTriggered = true
 			*message = "Brute force attack detected"
+			stats.BruteForceRejected.WithLabelValues(rules[ruleNumber].Name).Inc()
 
 			break
 		}
@@ -767,6 +768,8 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 
 				return false
 			} else if !needEnforce {
+				stats.BruteForceHits.WithLabelValues(rule.Name).Inc()
+
 				return false
 			}
 		}
@@ -807,6 +810,7 @@ func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, n
 		if ruleName, err := auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
 			alreadyTriggered = true
 			*message = "Brute force attack detected (cached result)"
+			stats.BruteForceRejected.WithLabelValues(ruleName).Inc()
 
 			break
 		}
