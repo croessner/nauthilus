@@ -1066,7 +1066,7 @@ func parseFlagsAndPrintVersion() {
 // Then, it retrieves the InstanceInfo metric using the labels and assigns it to infoMetric.
 // Finally, it sets the value of infoMetric to 1.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"version": version})
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.LoadableConfig.Server.InstanceName, "version": version})
 
 	infoMetric.Set(1)
 }
