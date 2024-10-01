@@ -77,7 +77,7 @@ var (
 			Name: "nauthilus_version_info",
 			Help: "Information about the version.",
 		},
-		[]string{"version"})
+		[]string{"instance_name", "version"})
 
 	// CurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
 	CurrentRequests = promauto.NewGauge(
