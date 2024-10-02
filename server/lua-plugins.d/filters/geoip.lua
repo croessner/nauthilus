@@ -121,8 +121,8 @@ function nauthilus_call_filter(request)
 
                     for key, values in pairs(response.object) do
                         if key == "current_country_code" then
-                            if nauthilus_util.is_table(values) and nauthilus_util.table_length(values) == 1 then
-                                current_iso_code = values[1]
+                            if nauthilus_util.is_string(values) then
+                                current_iso_code = values
                             end
                         end
 
