@@ -577,8 +577,11 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 
 	handleLogging(ctx, a)
 
-	stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
-	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	// Only authentication attempts
+	if !(a.NoAuth || a.ListAccounts) {
+		stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
+		stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	}
 }
 
 // setCommonHeaders sets common headers for the given gin.Context and AuthState.
