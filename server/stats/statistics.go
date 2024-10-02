@@ -201,6 +201,18 @@ var (
 		Name: "brutefore_hits_total",
 		Help: "The total number of brute force hits before rejection",
 	}, []string{"bucket"})
+
+	// RejectedProtocols tracks the total number of rejects per protocol.
+	RejectedProtocols = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "rejected_protocols_total",
+		Help: "The total number of rejects per protocol",
+	}, []string{"protocol"})
+
+	// AcceptedProtocols counts the total number of acceptances per protocol.
+	AcceptedProtocols = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "accepted_protocols_total",
+		Help: "The total number of acceptances per protocol",
+	}, []string{"protocol"})
 )
 
 var oldCpu cpu.Stats

@@ -577,6 +577,7 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 
 	handleLogging(ctx, a)
 
+	stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
 	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
 }
 
@@ -809,6 +810,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	level.Info(log.Logger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 
+	stats.RejectedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
 	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 
