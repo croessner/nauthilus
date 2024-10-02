@@ -78,7 +78,14 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
-        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {"http"})
+        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {
+            "http",
+        })
+
+        nauthilus_prometheus.create_counter_vec(N .. "_count", "Count GeoIP countries", {
+            "country",
+            "status",
+        })
 
         local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="post"})
         local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
@@ -101,6 +108,8 @@ function nauthilus_call_filter(request)
         nauthilus_util.if_error_raise(err_jdec)
 
         if response.err == nil then
+            local current_iso_code= "unknown"
+
             nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
 
             if response.object then
@@ -111,6 +120,12 @@ function nauthilus_call_filter(request)
                     local result_iso_codes = {}
 
                     for key, values in pairs(response.object) do
+                        if key == "current_country_code" then
+                            if nauthilus_util.is_table(values) and nauthilus_util.table_length(values) == 1 then
+                                current_iso_code = values[1]
+                            end
+                        end
+
                         if key == "foreign_countries_seen" or key == "home_countries_seen" then
                             if nauthilus_util.is_table(values) then
                                 for _, iso_code in ipairs(values) do
@@ -126,7 +141,12 @@ function nauthilus_call_filter(request)
                 end
             end
 
-            if not response.result then
+            if response.object and nauthilus_util.is_table(response.object) and response.object.policy_reject then
+                nauthilus_prometheus.increment_counter(N .. "_count", {
+                    country = current_iso_code,
+                    status = "reject",
+                })
+
                 nauthilus_builtin.custom_log_add(N, "blocked")
 
                 -- Get result table
@@ -144,6 +164,11 @@ function nauthilus_call_filter(request)
 
                 return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
             end
+
+            nauthilus_prometheus.increment_counter(N .. "_count", {
+                country = current_iso_code,
+                status = "accept",
+            })
         else
             return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
