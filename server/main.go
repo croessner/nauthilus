@@ -846,6 +846,8 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	backendServersLiveness := &backendServersAlive{}
 
+	stats.BackendServerStatus.WithLabelValues("wanted").Set(float64(len(servers)))
+
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
 			err := monitoring.NewMonitor().CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
@@ -867,6 +869,8 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 	}
 
 	wg.Wait()
+
+	stats.BackendServerStatus.WithLabelValues("alive").Set(float64(len(backendServersLiveness.servers)))
 
 	if !compareBackendServers(backendServersLiveness.servers, oldBackendServers.servers) {
 		core.BackendServers.Update(backendServersLiveness.servers)

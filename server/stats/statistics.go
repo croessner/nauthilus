@@ -213,6 +213,12 @@ var (
 		Name: "accepted_protocols_total",
 		Help: "The total number of acceptances per protocol",
 	}, []string{"protocol"})
+
+	// BackendServerStatus provides a gauge metric representing the status of monitored backend servers categorized by server_status.
+	BackendServerStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "backend_servers_status",
+		Help: "Status of monitored backend servers",
+	}, []string{"server_status"})
 )
 
 var oldCpu cpu.Stats
