@@ -264,9 +264,7 @@ func MeasureCPU(ctx context.Context) {
 
 			total := float64(newCpu.Total - oldCpu.Total)
 
-			cpuUserUsage.Set(float64(newCpu.User-oldCpu.User) / total * 100)
-			cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
-			cpuIdleUsage.Set(float64(newCpu.Idle-oldCpu.Idle) / total * 100)
+			setNewStats(&oldCpu, newCpu, total)
 
 			oldCpu = *newCpu
 		}
