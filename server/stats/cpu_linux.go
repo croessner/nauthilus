@@ -33,16 +33,6 @@ var cpuIowaitUsage = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "CPU iowait usage in percent",
 })
 
-var cpuIRQUsage = promauto.NewGauge(prometheus.GaugeOpts{
-	Name: "cpu_irq_usage_percent",
-	Help: "CPU irq usage in percent",
-})
-
-var cpuSoftIRQUsage = promauto.NewGauge(prometheus.GaugeOpts{
-	Name: "cpu_softirq_usage_percent",
-	Help: "CPU softirq usage in percent",
-})
-
 var cpuStealUsage = promauto.NewGauge(prometheus.GaugeOpts{
 	Name: "cpu_steal_usage_percent",
 	Help: "CPU steal usage in percent",
@@ -53,8 +43,7 @@ func setNewStats(oldCpu, newCpu *cpu.Stats, total float64) {
 	cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
 	cpuIdleUsage.Set(float64(newCpu.Idle-oldCpu.Idle) / total * 100)
 
+	cpuNiceUsage.Set(float64(newCpu.Nice-oldCpu.Nice) / total * 100)
 	cpuIowaitUsage.Set(float64(newCpu.Iowait-oldCpu.Iowait) / total * 100)
-	cpuIRQUsage.Set(float64(newCpu.IRQ-oldCpu.IRQ) / total * 100)
-	cpuSoftIRQUsage.Set(float64(newCpu.SoftIRQ-oldCpu.SoftIRQ) / total * 100)
 	cpuStealUsage.Set(float64(newCpu.Steal-oldCpu.Steal) / total * 100)
 }
