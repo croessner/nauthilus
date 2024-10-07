@@ -577,7 +577,11 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 
 	handleLogging(ctx, a)
 
-	stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	// Only authentication attempts
+	if !(a.NoAuth || a.ListAccounts) {
+		stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
+		stats.LoginsCounter.WithLabelValues(global.LabelSuccess).Inc()
+	}
 }
 
 // setCommonHeaders sets common headers for the given gin.Context and AuthState.
@@ -809,6 +813,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	level.Info(log.Logger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
 
+	stats.RejectedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
 	stats.LoginsCounter.WithLabelValues(global.LabelFailure).Inc()
 }
 

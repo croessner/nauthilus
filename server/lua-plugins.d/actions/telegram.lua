@@ -37,11 +37,6 @@ function nauthilus_call_action(request)
         rt = {}
     end
 
-    ts = nauthilus_util.get_current_timestamp()
-    if ts == nil then
-        ts = "unknown"
-    end
-
     if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
         -- brute_force_haproxy
         if rt.brute_force_haproxy then
@@ -102,13 +97,13 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_gll_template")
         local template = require("template")
 
-        dynamic_loader("nauthilus_gll_json")
-        local json = require("json")
-
         local client = http.client()
         local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
 
-        local result = request
+        ts = nauthilus_util.get_current_timestamp()
+        if ts == nil then
+            ts = "unknown"
+        end
 
         local proto = request.protocol
         if proto == "" then
@@ -165,33 +160,6 @@ function nauthilus_call_action(request)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(err_bat)
-
-        result.caller = N .. ".lua"
-        result.action_class = "post"
-        result.password = nil
-
-        if request.log_level == "debug" or request.log_level == "info" then
-            if request.log_format == "json" then
-                local result_json, err_enc = json.encode(result)
-                nauthilus_util.if_error_raise(err_enc)
-
-                print(result_json)
-            else
-                local output_str = {}
-
-                for k, v in pairs(result) do
-                    if nauthilus_util.is_string(v) then
-                        if string.match(v, "%s") then
-                            v = '"' .. v .. '"'
-                        end
-                    end
-
-                    table.insert(output_str, k .. '=' .. tostring(v))
-                end
-
-                print(table.concat(output_str, " "))
-            end
-        end
     end
 
     rt.post_telegram = true

@@ -13,39 +13,37 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_context")
+local nauthilus_context = require("nauthilus_context")
+
+dynamic_loader("nauthilus_gll_tcp")
+local tcp = require("tcp")
+
 function nauthilus_call_action(request)
-    if not request.repeating then
-        local nauthilus_util = require("nauthilus_util")
+    -- Send IP/Mask
+    local conn, err = tcp.open(os.getenv('HAPROXY_STATS'))
 
-        dynamic_loader("nauthilus_context")
-        local nauthilus_context = require("nauthilus_context")
+    if request.protocol == "smtps" or request.protocol == "submission" then
+        -- Use smtp-sink
+        err = conn:write("add map " .. os.getenv('HAPROXY_SMTP_MAP') .. " " .. request.client_net .. " block_smtp\n")
+    else
+        -- Block connection
+        err = conn:write("add map " .. os.getenv('HAPROXY_GENERIC_MAP') .. " " .. request.client_net .. " block_" .. request.protocol .. "\n")
+    end
 
-        dynamic_loader("nauthilus_gll_tcp")
-        local tcp = require("tcp")
+    nauthilus_util.if_error_raise(err)
 
-        -- Send IP/Mask
-        local conn, err = tcp.open(os.getenv('HAPROXY_STATS'))
+    -- Get result table
+    local rt = nauthilus_context.context_get("rt")
+    if rt == nil then
+        rt = {}
+    end
+    if nauthilus_util.is_table(rt) then
+        rt.brute_force_haproxy = true
 
-        if request.protocol == "smtps" or request.protocol == "submission" then
-            -- Use smtp-sink
-            err = conn:write("add map " .. os.getenv('HAPROXY_SMTP_MAP') .. " " .. request.client_net .. " block_smtp\n")
-        else
-            -- Block connection
-            err = conn:write("add map " .. os.getenv('HAPROXY_GENERIC_MAP') .. " " .. request.client_net .. " block_" .. request.protocol .. "\n")
-        end
-
-        nauthilus_util.if_error_raise(err)
-
-        -- Get result table
-        local rt = nauthilus_context.context_get("rt")
-        if rt == nil then
-            rt = {}
-        end
-        if nauthilus_util.is_table(rt) then
-            rt.brute_force_haproxy = true
-
-            nauthilus_context.context_set("rt", rt)
-        end
+        nauthilus_context.context_set("rt", rt)
     end
 
     return nauthilus_builtin.ACTION_RESULT_OK
