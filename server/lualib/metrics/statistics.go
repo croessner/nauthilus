@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	summaries = make(map[string]*prometheus.SummaryVec)
-	counters  = make(map[string]*prometheus.CounterVec)
+	summaries  = make(map[string]*prometheus.SummaryVec)
+	counters   = make(map[string]*prometheus.CounterVec)
+	histograms = make(map[string]*prometheus.HistogramVec)
 )
 
 // createSummaryVec registers a new Prometheus SummaryVec metric with the provided name, help description, and label names.
@@ -73,8 +74,39 @@ func createCounterVec(L *lua.LState) int {
 	return 0
 }
 
-// startTimer starts a Prometheus timer for a specified SummaryVec metric with the provided label values.
-func startTimer(L *lua.LState) int {
+// createHistogramVec registers a new Prometheus HistogramVec with the specified name, help message, and optional label names.
+func createHistogramVec(L *lua.LState) int {
+	name := L.CheckString(1)
+	help := L.CheckString(2)
+
+	labelNames := make([]string, 0)
+
+	if L.GetTop() > 2 {
+		labelTable := L.CheckTable(3)
+		labelTable.ForEach(func(_ lua.LValue, value lua.LValue) {
+			labelNames = append(labelNames, value.String())
+		})
+	}
+
+	// Check if the histogram already exists
+	if _, exists := histograms[name]; exists {
+		return 0
+	}
+
+	histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: name,
+		Help: help,
+	}, labelNames)
+
+	prometheus.MustRegister(histogram)
+
+	histograms[name] = histogram
+
+	return 0
+}
+
+// startSumaryTimer starts a Prometheus timer for a specified SummaryVec metric with the provided label values.
+func startSumaryTimer(L *lua.LState) int {
 	name := L.CheckString(1)
 	labels := L.CheckTable(2)
 
@@ -91,6 +123,32 @@ func startTimer(L *lua.LState) int {
 	})
 
 	timer := prometheus.NewTimer(summary.With(labelValues))
+	ud := L.NewUserData()
+	ud.Value = timer
+
+	L.Push(ud)
+
+	return 1
+}
+
+// startHistogramTimer starts a timer for a Prometheus histogram with given name and labels.
+func startHistogramTimer(L *lua.LState) int {
+	name := L.CheckString(1)
+	labels := L.CheckTable(2)
+
+	histogram, exists := histograms[name]
+	if !exists {
+		L.ArgError(1, "HistogramVec not found")
+
+		return 0
+	}
+
+	labelValues := make(map[string]string)
+	labels.ForEach(func(key, value lua.LValue) {
+		labelValues[key.String()] = value.String()
+	})
+
+	timer := prometheus.NewTimer(histogram.With(labelValues))
 	ud := L.NewUserData()
 	ud.Value = timer
 
@@ -132,13 +190,18 @@ func incrementCounter(L *lua.LState) int {
 }
 
 var exportsModPrometheus = map[string]lua.LGFunction{
-	global.LuaFnCreateSummaryVec: createSummaryVec,
-	global.LuaFnCreateCounterVec: createCounterVec,
-	global.LuaFnStartTimer:       startTimer,
-	global.LuaFnStopTimer:        stopTimer,
-	global.LuaFnIncrementCounter: incrementCounter,
+	global.LuaFnCreateSummaryVec:    createSummaryVec,
+	global.LuaFnCreateCounterVec:    createCounterVec,
+	global.LuaFnCreateHistogramVec:  createHistogramVec,
+	global.LuaFnStartSummaryTimer:   startSumaryTimer,
+	global.LuaFnStartHistogramTimer: startHistogramTimer,
+	global.LuaFnStopTimer:           stopTimer,
+	global.LuaFnIncrementCounter:    incrementCounter,
 }
 
+// LoaderModPrometheus loads the Prometheus module into the given Lua state.
+// It sets up the module's functions and pushes the module onto the stack.
+// Returns 1 to indicate the number of return values for the Lua stack.
 func LoaderModPrometheus(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), exportsModPrometheus)
 

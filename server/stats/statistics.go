@@ -119,7 +119,7 @@ var (
 	})
 
 	// FunctionDuration variable declaration that creates a new Prometheus SummaryVec with the specified name and help message, and with "service" and "method" labels.
-	FunctionDuration = promauto.NewSummaryVec(prometheus.SummaryOpts{
+	FunctionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "function_duration_seconds",
 		Help: "Time spent in function",
 	}, []string{"service", "task"})

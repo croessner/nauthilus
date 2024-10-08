@@ -1230,8 +1230,14 @@ const (
 	// LuaFnCreateCounterVec represents the identifier for creating a Prometheus CounterVec.
 	LuaFnCreateCounterVec = "create_counter_vec"
 
-	// LuaFnStartTimer specifies the identifier for starting a Prometheus timer.
-	LuaFnStartTimer = "start_timer"
+	// LuaFnCreateHistogramVec is a constant representing the Lua function name for creating a HistogramVec in Prometheus.
+	LuaFnCreateHistogramVec = "create_histogram_vec"
+
+	// LuaFnStartSummaryTimer specifies the identifier for starting a Prometheus timer.
+	LuaFnStartSummaryTimer = "start_summary_timer"
+
+	// LuaFnStartHistogramTimer represents the function name for starting a histogram timer in Lua scripts.
+	LuaFnStartHistogramTimer = "start_histogram_timer"
 
 	// LuaFnStopTimer defines the identifier for stopping a Prometheus timer.
 	LuaFnStopTimer = "stop_timer"
