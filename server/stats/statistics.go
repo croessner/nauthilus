@@ -219,6 +219,18 @@ var (
 		Name: "backend_servers_status",
 		Help: "Status of monitored backend servers",
 	}, []string{"server_status"})
+
+	// LDAPPoolStatus provides a gauge metric representing the number of actively used connections in the LDAP pool.
+	LDAPPoolStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_connections_total",
+		Help: "Number of actively used connections in the LDAP pool",
+	}, []string{"pool"})
+
+	// LDAPPoolSize is a gauge metric that represents the size of the LDAP connection pool.
+	LDAPPoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_size",
+		Help: "Size of LDAP pool",
+	}, []string{"pool"})
 )
 
 var oldCpu cpu.Stats
