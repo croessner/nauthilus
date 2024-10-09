@@ -414,8 +414,10 @@ func (l *LDAPPool) updateStatsPoolSize() {
 	switch l.poolType {
 	case global.LDAPPoolLookup, global.LDAPPoolUnknown:
 		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()))
 	case global.LDAPPoolAuth:
 		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()))
 	}
 }
 

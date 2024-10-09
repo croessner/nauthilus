@@ -231,6 +231,12 @@ var (
 		Name: "ldap_pool_size",
 		Help: "Size of LDAP pool",
 	}, []string{"pool"})
+
+	// LDAPIdlePoolSize provides the number of idle connections in the LDAP pool, monitored as a Prometheus gauge metric.
+	LDAPIdlePoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_idle_pool_size",
+		Help: "Size of idle LDAP pool",
+	}, []string{"pool"})
 )
 
 var oldCpu cpu.Stats
