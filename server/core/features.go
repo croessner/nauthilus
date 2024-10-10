@@ -255,6 +255,7 @@ func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan i
 	}
 
 	if isListed {
+		stats.RBLRejected.WithLabelValues(rblName).Inc()
 		logMatchedRBL(a, rblName, rbl.Weight)
 		handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
 

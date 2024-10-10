@@ -237,6 +237,12 @@ var (
 		Name: "ldap_idle_pool_size",
 		Help: "Size of idle LDAP pool",
 	}, []string{"pool"})
+
+	// RBLRejected counts the total number of rejected RBL requests, categorized by the RBL that caused the rejection.
+	RBLRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "rbl_rejected_total",
+		Help: "The total number of rejected RBL requests",
+	}, []string{"rbl"})
 )
 
 var oldCpu cpu.Stats
