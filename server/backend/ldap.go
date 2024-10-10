@@ -443,6 +443,7 @@ func (l *LDAPPool) houseKeeper() {
 			return
 		case <-timer.C:
 			openConnections := l.updateConnectionsStatus(poolSize)
+			stats.LDAPOpenConnections.WithLabelValues(l.name).Set(float64(openConnections))
 
 			l.closeIdleConnections(openConnections, idlePoolSize, poolSize)
 			l.updateStatsPoolSize()

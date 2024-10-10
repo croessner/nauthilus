@@ -226,6 +226,12 @@ var (
 		Help: "Number of actively used connections in the LDAP pool",
 	}, []string{"pool"})
 
+	// LDAPOpenConnections counts the number of currently opened connections in the LDAP pool.
+	LDAPOpenConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_open_connections_total",
+		Help: "Number of currently opened connections",
+	}, []string{"pool"})
+
 	// LDAPPoolSize is a gauge metric that represents the size of the LDAP connection pool.
 	LDAPPoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ldap_pool_size",
