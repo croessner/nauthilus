@@ -251,10 +251,11 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 	}
 
 	return &LDAPPool{
-		ctx:  ctx,
-		name: name,
-		conn: conn,
-		conf: conf,
+		poolType: poolType,
+		ctx:      ctx,
+		name:     name,
+		conn:     conn,
+		conf:     conf,
 	}
 }
 
@@ -408,6 +409,18 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 	return true
 }
 
+// updateStatsPoolSize updates the LDAP pool size metric based on the pool type. It handles lookup, unknown, and auth pool types.
+func (l *LDAPPool) updateStatsPoolSize() {
+	switch l.poolType {
+	case global.LDAPPoolLookup, global.LDAPPoolUnknown:
+		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()))
+	case global.LDAPPoolAuth:
+		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()))
+	}
+}
+
 // houseKeeper is a method of the LDAPPool struct. It constantly updates the status of connections,
 // closes any idle connections, and stops if the context is done. It uses a ticker for regular updates.
 // This function ensures that the pool of connections remains thread-safe.
@@ -415,6 +428,8 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 func (l *LDAPPool) houseKeeper() {
 	idlePoolSize := l.getIdlePoolSize()
 	timer := time.NewTicker(30 * time.Second)
+
+	l.updateStatsPoolSize()
 
 	// List of connections is shared and must remain thread-safe. Length won't change inside this function.
 	poolSize := len(l.conn)
@@ -428,8 +443,10 @@ func (l *LDAPPool) houseKeeper() {
 			return
 		case <-timer.C:
 			openConnections := l.updateConnectionsStatus(poolSize)
+			stats.LDAPOpenConnections.WithLabelValues(l.name).Set(float64(openConnections))
 
 			l.closeIdleConnections(openConnections, idlePoolSize, poolSize)
+			l.updateStatsPoolSize()
 		}
 	}
 }
@@ -960,12 +977,12 @@ EndlessLoop:
 	return err
 }
 
-// exteranlBind binds to the LDAP server using the SASL EXTERNAL mechanism.
+// externalBind binds to the LDAP server using the SASL EXTERNAL mechanism.
 // It logs the action as "SASL/EXTERNAL" and then calls the ExternalBind() method on the LDAP connection.
 // If the ExternalBind() method returns an error, it is returned from this method.
 // If the verbosity level is set to LogLevelDebug, it calls the displayWhoAmI() method to display information about the bound user.
 // This method does not take any arguments.
-func (l *LDAPConnection) exteranlBind(guid *string) error {
+func (l *LDAPConnection) externalBind(guid *string) error {
 	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, global.LogKeyMsg, "SASL/EXTERNAL")
 
 	err := l.Conn.ExternalBind()
@@ -1035,7 +1052,7 @@ func (l *LDAPConnection) displayWhoAmI(guid *string) {
 // - error: An error if the bind operation fails, otherwise nil.
 func (l *LDAPConnection) bind(guid *string, ldapConf *config.LDAPConf) error {
 	if ldapConf.SASLExternal {
-		return l.exteranlBind(guid)
+		return l.externalBind(guid)
 	}
 
 	return l.simpleBind(guid, ldapConf)
@@ -1288,6 +1305,7 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 
 	defer func() {
 		stopTimer()
+		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()
 
@@ -1315,6 +1333,7 @@ func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *
 	connNumber := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
+	stats.LDAPPoolStatus.WithLabelValues(l.name).Inc()
 
 	go l.proccessLookupRequest(connNumber, ldapRequest, ldapWaitGroup)
 }
@@ -1399,6 +1418,7 @@ func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthReques
 
 	defer func() {
 		stopTimer()
+		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()
 
@@ -1422,6 +1442,7 @@ func (l *LDAPPool) handleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitG
 	connNumber := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
+	stats.LDAPPoolStatus.WithLabelValues(l.name).Inc()
 
 	l.processAuthRequest(connNumber, ldapAuthRequest, ldapWaitGroup)
 }

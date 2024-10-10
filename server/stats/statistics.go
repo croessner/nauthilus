@@ -119,7 +119,7 @@ var (
 	})
 
 	// FunctionDuration variable declaration that creates a new Prometheus SummaryVec with the specified name and help message, and with "service" and "method" labels.
-	FunctionDuration = promauto.NewSummaryVec(prometheus.SummaryOpts{
+	FunctionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "function_duration_seconds",
 		Help: "Time spent in function",
 	}, []string{"service", "task"})
@@ -219,6 +219,36 @@ var (
 		Name: "backend_servers_status",
 		Help: "Status of monitored backend servers",
 	}, []string{"server_status"})
+
+	// LDAPPoolStatus provides a gauge metric representing the number of actively used connections in the LDAP pool.
+	LDAPPoolStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_connections_total",
+		Help: "Number of actively used connections in the LDAP pool",
+	}, []string{"pool"})
+
+	// LDAPOpenConnections counts the number of currently opened connections in the LDAP pool.
+	LDAPOpenConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_open_connections_total",
+		Help: "Number of currently opened connections",
+	}, []string{"pool"})
+
+	// LDAPPoolSize is a gauge metric that represents the size of the LDAP connection pool.
+	LDAPPoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_size",
+		Help: "Size of LDAP pool",
+	}, []string{"pool"})
+
+	// LDAPIdlePoolSize provides the number of idle connections in the LDAP pool, monitored as a Prometheus gauge metric.
+	LDAPIdlePoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_idle_pool_size",
+		Help: "Size of idle LDAP pool",
+	}, []string{"pool"})
+
+	// RBLRejected counts the total number of rejected RBL requests, categorized by the RBL that caused the rejection.
+	RBLRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "rbl_rejected_total",
+		Help: "The total number of rejected RBL requests",
+	}, []string{"rbl"})
 )
 
 var oldCpu cpu.Stats

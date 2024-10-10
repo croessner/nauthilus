@@ -151,9 +151,9 @@ function nauthilus_call_action(request)
         values.username = username
         values.pwnd_info = pwnd_info
 
-        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the telegram network", {"bot"})
+        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the telegram network", {"bot"})
 
-        local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {bot="send"})
+        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", {bot="send"})
         local _, err_bat = bot:sendMessage({
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)

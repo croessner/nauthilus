@@ -28,7 +28,7 @@ func TestCreateAndUseSummaryVec(t *testing.T) {
 		prometheus.create_summary_vec("test_summary", "Test Summary", {"label1", "label2"})
 
 		-- Start timer
-		timer = prometheus.start_timer("test_summary", {label1="value1", label2="value2"})
+		timer = prometheus.start_summary_timer("test_summary", {label1="value1", label2="value2"})
 
 		-- Some operation...
 
@@ -79,4 +79,41 @@ func TestCreateAndUseCounterVec(t *testing.T) {
 	// Test whether the counter has the expected value
 	value := testutil.ToFloat64(counter.WithLabelValues("value1", "value2"))
 	assert.Equal(t, float64(1), value, "Counter value should be 1")
+}
+
+func TestCreateAndUseHistogramVec(t *testing.T) {
+	L := lua.NewState()
+
+	defer L.Close()
+
+	// Register the module
+	L.PreloadModule("prometheus", LoaderModPrometheus)
+
+	err := runLuaCode(L, `
+		local prometheus = require("prometheus")
+		
+		-- Create a HistogramVec
+		prometheus.create_histogram_vec("test_histogram", "Histogram test", {"label1", "label2"})
+		
+		-- Start timer
+		timer = prometheus.start_histogram_timer("test_histogram", {label1 = "value1", label2 = "value2"})
+		
+		-- Some operation...
+		
+		-- Stop timer
+		prometheus.stop_timer(timer)
+	`)
+
+	if err != nil {
+		t.Fatalf("Lua code execution failed: %v", err)
+	}
+
+	// Verify the histogram was created and contains the recorded value.
+	histogram, exists := histograms["test_histogram"]
+
+	assert.True(t, exists, "HistogramVec 'test_histogram' should exist")
+
+	// Test whether the histogram has recorded data
+	count := testutil.CollectAndCount(histogram)
+	assert.NotZero(t, count, "Expected non-zero count in HistogramVec")
 }

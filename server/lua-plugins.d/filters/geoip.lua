@@ -78,7 +78,7 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
-        nauthilus_prometheus.create_summary_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {
+        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {
             "http",
         })
 
@@ -87,7 +87,7 @@ function nauthilus_call_filter(request)
             "status",
         })
 
-        local timer = nauthilus_prometheus.start_timer(N .. "_duration_seconds", {http="post"})
+        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", {http="post"})
         local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
             timeout = "10s",
             headers = {
