@@ -53,7 +53,7 @@ func init() {
 
 			defer ReloadMutex.RUnlock()
 
-			return float64(LastReloadTime.Unix())
+			return float64(LastReloadTime.UnixMilli())
 		},
 	)
 
@@ -65,7 +65,7 @@ func init() {
 			Help: "Unix timestamp of the application start",
 		},
 		func() float64 {
-			return float64(startTime.Unix())
+			return float64(startTime.UnixMilli())
 		},
 	)
 }
