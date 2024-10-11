@@ -5,7 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // Helper function to run Lua code
@@ -116,4 +116,35 @@ func TestCreateAndUseHistogramVec(t *testing.T) {
 	// Test whether the histogram has recorded data
 	count := testutil.CollectAndCount(histogram)
 	assert.NotZero(t, count, "Expected non-zero count in HistogramVec")
+}
+
+func TestCreateAndUseGaugeVec(t *testing.T) {
+	L := lua.NewState()
+
+	defer L.Close()
+
+	// Register the module
+	L.PreloadModule("prometheus", LoaderModPrometheus)
+
+	err := runLuaCode(L, `
+		local prometheus = require("prometheus")
+		
+		-- Create a GaugeVec
+		prometheus.create_gauge_vec("test_gauge", "Test Gauge", {"label1", "label2"})
+		
+		-- Set gauge value
+		prometheus.set_gauge("test_gauge", 5.5, {label1 = "value1", label2 = "value2"})
+	`)
+
+	if err != nil {
+		t.Fatalf("Lua code execution failed: %v", err)
+	}
+
+	// Verify the gauge was set correctly
+	gauge, exists := gauges["test_gauge"]
+	assert.True(t, exists, "GaugeVec 'test_gauge' should exist")
+
+	// Test whether the gauge has the expected value
+	value := testutil.ToFloat64(gauge.WithLabelValues("value1", "value2"))
+	assert.Equal(t, 5.5, value, "Gauge value should be 5.5")
 }

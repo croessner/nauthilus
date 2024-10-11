@@ -12,7 +12,10 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 local N = "geoippolicyd"
+
+local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_filter(request)
     if request.no_auth then
@@ -78,16 +81,13 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", {
-            "http",
-        })
+        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
+        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the geoip-policyd service", { "http" })
+        nauthilus_prometheus.create_counter_vec(N .. "_count", "Count GeoIP countries", { "country", "status" })
 
-        nauthilus_prometheus.create_counter_vec(N .. "_count", "Count GeoIP countries", {
-            "country",
-            "status",
-        })
+        nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
-        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", {http="post"})
+        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
         local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
             timeout = "10s",
             headers = {
@@ -99,6 +99,7 @@ function nauthilus_call_filter(request)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(request_err)
+        nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
 
         if result.status_code ~= 202 then
             nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.code))

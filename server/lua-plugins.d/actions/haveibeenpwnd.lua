@@ -33,6 +33,8 @@ Postmaster
 
 local N = "haveibeenpwnd"
 
+local HCCR = "http_client_concurrent_requests_total"
+
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
         local nauthilus_util = require("nauthilus_util")
@@ -85,10 +87,12 @@ function nauthilus_call_action(request)
             end
         end
 
+        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
+        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", { "http" })
 
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", {"http"})
+        nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
-        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", {http="get"})
+        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
             timeout = "10s",
             headers = {
@@ -98,6 +102,7 @@ function nauthilus_call_action(request)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(err)
+        nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
 
         if result.status_code ~= 200 then
             nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))

@@ -1233,6 +1233,9 @@ const (
 	// LuaFnCreateHistogramVec is a constant representing the Lua function name for creating a HistogramVec in Prometheus.
 	LuaFnCreateHistogramVec = "create_histogram_vec"
 
+	// LuaFnCreateGaugeVec is a constant that holds the identifier for creating a gauge vector in Lua scripts.
+	LuaFnCreateGaugeVec = "create_gauge_vec"
+
 	// LuaFnStartSummaryTimer specifies the identifier for starting a Prometheus timer.
 	LuaFnStartSummaryTimer = "start_summary_timer"
 
@@ -1244,6 +1247,21 @@ const (
 
 	// LuaFnIncrementCounter represents the identifier for incrementing a Prometheus counter.
 	LuaFnIncrementCounter = "increment_counter"
+
+	// LuaFNAddGauge is a constant representing the Lua function name for adding a gauge value.
+	LuaFNAddGauge = "add_gauge"
+
+	// LuaFnSubGauge is used to decrement the value of a gauge metric in Prometheus.
+	LuaFnSubGauge = "sub_gauge"
+
+	// LuaFnSetGauge sets the value of a gauge metric.
+	LuaFnSetGauge = "set_gauge"
+
+	// LuaFnIncrementGauge is a constant representing the name of the Lua function used to increment a gauge metric.
+	LuaFnIncrementGauge = "increment_gauge"
+
+	// LuaFnDecrementGauge is used to decrement a gauge in Prometheus.
+	LuaFnDecrementGauge = "decrement_gauge"
 )
 
 const (

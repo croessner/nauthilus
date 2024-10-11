@@ -15,6 +15,8 @@
 
 local N = "telegram"
 
+local HCCR = "http_client_concurrent_requests_total"
+
 function nauthilus_call_action(request)
     if request.no_auth then
         return nauthilus_builtin.ACTION_RESULT_OK
@@ -151,15 +153,19 @@ function nauthilus_call_action(request)
         values.username = username
         values.pwnd_info = pwnd_info
 
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the telegram network", {"bot"})
+        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
+        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the telegram network", { "bot" })
 
-        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", {bot="send"})
+        nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+
+        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })
         local _, err_bat = bot:sendMessage({
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_util.if_error_raise(err_bat)
+        nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
     end
 
     rt.post_telegram = true
