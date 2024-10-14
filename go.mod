@@ -24,7 +24,7 @@ require (
 	github.com/justinas/nosurf v1.1.1
 	github.com/mackerelio/go-osstat v0.2.5
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/nicksnyder/go-i18n/v2 v2.4.0
+	github.com/nicksnyder/go-i18n/v2 v2.4.1
 	github.com/ory/hydra-client-go/v2 v2.2.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pires/go-proxyproto v0.7.0
@@ -44,7 +44,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.29.0
 	golang.org/x/oauth2 v0.23.0
-	golang.org/x/text v0.18.0
+	golang.org/x/text v0.19.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
