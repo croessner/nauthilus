@@ -1108,6 +1108,8 @@ const (
 	// LuaModGLLZabbix is a constant that represents the name of the Lua module for Zabbix integration.
 	LuaModGLLZabbix = "nauthilus_gll_zabbix"
 
+	LuaModPsnet = "nauthilus_psnet"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 
@@ -1262,6 +1264,10 @@ const (
 
 	// LuaFnDecrementGauge is used to decrement a gauge in Prometheus.
 	LuaFnDecrementGauge = "decrement_gauge"
+
+	LuaFnRegisterConnectionTarget = "register_connection_target"
+
+	LuaFnGetConnectionTarget = "get_connection_target"
 )
 
 const (

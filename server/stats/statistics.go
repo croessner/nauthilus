@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/mackerelio/go-osstat/cpu"
@@ -39,10 +40,10 @@ var (
 	ReloadMutex sync.RWMutex
 )
 
+// init initializes metrics for last reload timestamp, application start timestamp, and current server connections.
 func init() {
 	LastReloadTime = time.Now()
 
-	// Create the metric for the time since last reload
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Name: "last_reload_timestamp",
@@ -66,6 +67,21 @@ func init() {
 		},
 		func() float64 {
 			return float64(startTime.UnixMilli())
+		},
+	)
+
+	promauto.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "server_connections",
+			Help: "Current number of established connections to the server",
+		},
+		func() float64 {
+			manager := connmgr.GetConnectionManager()
+			if count, found := manager.GetCount(config.LoadableConfig.Server.Address); found {
+				return float64(count)
+			}
+
+			return 0
 		},
 	)
 }

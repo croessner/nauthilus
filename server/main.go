@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/callback"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -1075,6 +1076,15 @@ func initializeInstanceInfo() {
 	infoMetric.Set(1)
 }
 
+// runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
+func runConnectionManager() {
+	manager := connmgr.GetConnectionManager()
+
+	manager.Register(config.LoadableConfig.Server.Address, "local")
+
+	go manager.StartTicker(5 * time.Second)
+}
+
 // main initializes the application and manages the lifecycle of various components.
 //
 // It first sets up the environment and checks if any errors occurred during the process. If an error is encountered, it's logged and the application terminates.
@@ -1116,6 +1126,7 @@ func main() {
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
+	runConnectionManager()
 
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)
