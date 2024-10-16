@@ -27,6 +27,7 @@ import (
 	"hash"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strings"
@@ -500,18 +501,15 @@ func ValidateUsername(username string) bool {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.LoadableConfig.Server.DNS.Resolver == "" {
-		resolver = &net.Resolver{
-			PreferGo: true,
-		}
+		resolver = &net.Resolver{PreferGo: false}
 	} else {
 		resolver = &net.Resolver{
-			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
-					Timeout: time.Millisecond * time.Duration(10000),
+					Timeout: time.Duration(10) * time.Second,
 				}
 
-				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))
+				return dialer.DialContext(ctx, network, config.LoadableConfig.Server.DNS.Resolver)
 			},
 		}
 	}
@@ -519,22 +517,34 @@ func NewDNSResolver() (resolver *net.Resolver) {
 	return
 }
 
-// NewClosingHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
-func NewClosingHTTPClient() (*http.Client, func()) {
+// NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
+func NewHTTPClient() *http.Client {
+	var proxyFunc func(*http.Request) (*url.URL, error)
+
+	if config.LoadableConfig.Server.HTTPClient.Proxy != "" {
+		proxyURL, err := url.Parse(config.LoadableConfig.Server.HTTPClient.Proxy)
+		if err != nil {
+			proxyFunc = http.ProxyFromEnvironment
+		} else {
+			proxyFunc = http.ProxyURL(proxyURL)
+		}
+	} else {
+		proxyFunc = http.ProxyFromEnvironment
+	}
+
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
+			Proxy:               proxyFunc,
+			MaxConnsPerHost:     config.LoadableConfig.Server.HTTPClient.MaxConnsPerHost,
+			MaxIdleConns:        config.LoadableConfig.Server.HTTPClient.MaxIdleConns,
+			MaxIdleConnsPerHost: config.LoadableConfig.Server.HTTPClient.MaxIdleConnsPerHost,
+			IdleConnTimeout:     config.LoadableConfig.Server.HTTPClient.IdleConnTimeout,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify,
 			},
 		},
 	}
 
-	return httpClient, func() {
-		if httpClient != nil {
-			if transport, ok := httpClient.Transport.(*http.Transport); ok {
-				transport.CloseIdleConnections()
-			}
-		}
-	}
+	return httpClient
 }

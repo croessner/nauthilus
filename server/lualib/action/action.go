@@ -39,6 +39,14 @@ var (
 	RequestChan chan *Action
 )
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
 
@@ -229,7 +237,7 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
+		lualib.RegisterCommonLuaLibraries(L, aw.ctx, modName, registry, httpClient)
 		aw.registerModule(L, httpRequest, modName, registry)
 
 		return 0
@@ -325,10 +333,6 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	L := lua.NewState()
 
 	defer L.Close()
-
-	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
-
-	defer closeHTTPClient()
 
 	aw.registerDynamicLoader(L, httpRequest, httpClient)
 

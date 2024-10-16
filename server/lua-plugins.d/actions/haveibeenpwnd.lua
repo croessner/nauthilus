@@ -54,6 +54,9 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
+        dynamic_loader("nauthilus_psnet")
+        local nauthilus_psnet = require("nauthilus_psnet")
+
         dynamic_loader("nauthilus_gluacrypto")
         local crypto = require('crypto')
 
@@ -66,7 +69,7 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_gll_template")
         local template = require("template")
 
-        nauthilus_misc.wait_random(500, 3000)
+                nauthilus_misc.wait_random(500, 3000)
 
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
@@ -91,6 +94,8 @@ function nauthilus_call_action(request)
         nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", { "http" })
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+
+        nauthilus_psnet.register_connection_target("api.pwnedpasswords.com:443", "remote", N)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {

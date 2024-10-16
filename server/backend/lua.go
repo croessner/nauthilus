@@ -40,6 +40,14 @@ var LuaRequestChan chan *LuaRequest
 // LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
 var LuaMainWorkerEndChan chan Done
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // LuaRequest is a subset from the Authentication struct.
 // LuaRequest is a struct that includes various information for a request to Lua.
 type LuaRequest struct {
@@ -138,7 +146,7 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
+		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
 		registerModule(L, ctx, luaRequest, modName, registry)
 
 		return 0
@@ -220,10 +228,6 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 		global.LuaBackendResultDisplayNameField,
 		global.LuaBackendResultAttributes,
 	)
-
-	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
-
-	defer closeHTTPClient()
 
 	registerDynamicLoader(L, ctx, luaRequest, httpClient)
 

@@ -42,6 +42,7 @@ type ServerSection struct {
 	Frontend                  Frontend                 `mapstructure:"frontend"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header"`
+	HTTPClient                HTTPClient               `mapstructure:"http_client"`
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.
@@ -50,6 +51,14 @@ type TLS struct {
 	Cert                 string `mapstructure:"cert"`
 	Key                  string `mapstructure:"key"`
 	HTTPClientSkipVerify bool   `mapstructure:"http_client_skip_verify"`
+}
+
+type HTTPClient struct {
+	MaxConnsPerHost     int           `mapstructure:"max_connections_per_host"`
+	MaxIdleConns        int           `mapstructure:"max_idle_connections"`
+	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host"`
+	IdleConnTimeout     time.Duration `mapstructure:"idle_connection_timeout"`
+	Proxy               string        `mapstructure:"proxy"`
 }
 
 // BasicAuth represents the configuration for basic HTTP authentication.

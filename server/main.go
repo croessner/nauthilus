@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/callback"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -1075,6 +1076,28 @@ func initializeInstanceInfo() {
 	infoMetric.Set(1)
 }
 
+// initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
+func initializeHTTPClients() {
+	core.InitHTTPClient()
+	backend.InitHTTPClient()
+	action.InitHTTPClient()
+	callback.InitHTTPClient()
+	filter.InitHTTPClient()
+	feature.InitHTTPClient()
+}
+
+// runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
+func runConnectionManager(ctx context.Context) {
+	manager := connmgr.GetConnectionManager()
+
+	manager.Register(ctx, config.LoadableConfig.Server.Address, "local", "HTTP server")
+
+	go manager.StartTicker(5 * time.Second)
+	go stats.UpdateGenericConnections()
+
+	manager.StartMonitoring(ctx)
+}
+
 // main initializes the application and manages the lifecycle of various components.
 //
 // It first sets up the environment and checks if any errors occurred during the process. If an error is encountered, it's logged and the application terminates.
@@ -1111,11 +1134,13 @@ func main() {
 
 	actionWorkers := initializeActionWorkers()
 
+	initializeHTTPClients()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
+	runConnectionManager(ctx)
 
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)

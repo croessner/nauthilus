@@ -1288,6 +1288,29 @@ func (f *File) validateTLSCertAndKey() error {
 	return nil
 }
 
+// validateDNSResolver checks whether the provided DNS resolver in the Server configuration is valid.
+// It returns an error if the DNS resolver is not in the correct host:port format, or if either host or port is empty.
+func (f *File) validateDNSResolver() error {
+	if f.Server.DNS.Resolver == "" {
+		return nil
+	}
+
+	host, port, err := net.SplitHostPort(f.Server.DNS.Resolver)
+	if err != nil {
+		return fmt.Errorf("DNS resolver %s is not valid: %w", f.Server.DNS.Resolver, err)
+	}
+
+	if host == "" {
+		return fmt.Errorf("DNS resolver %s is not valid: host is empty", f.Server.DNS.Resolver)
+	}
+
+	if port == "" {
+		return fmt.Errorf("DNS resolver %s is not valid: port is empty", f.Server.DNS.Resolver)
+	}
+
+	return nil
+}
+
 // validateInstanceName is a method on the File struct.
 // It checks if the Server's InstanceName field is empty.
 // If it is empty, it sets the InstanceName to the global.InstanceName constant value.
@@ -1521,6 +1544,7 @@ func (f *File) validate() (err error) {
 		f.validateRedisDatabaseNumber,
 		f.validateRedisPoolSize,
 		f.validatePrometheusLabels,
+		f.validateDNSResolver,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,

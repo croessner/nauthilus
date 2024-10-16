@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/mackerelio/go-osstat/cpu"
@@ -39,10 +40,10 @@ var (
 	ReloadMutex sync.RWMutex
 )
 
+// init initializes metrics for last reload timestamp, application start timestamp, and current server connections.
 func init() {
 	LastReloadTime = time.Now()
 
-	// Create the metric for the time since last reload
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Name: "last_reload_timestamp",
@@ -249,6 +250,15 @@ var (
 		Name: "rbl_rejected_total",
 		Help: "The total number of rejected RBL requests",
 	}, []string{"rbl"})
+
+	// GenericConnections tracks the current number of established connections to a target.
+	GenericConnections = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "generic_connections",
+			Help: "Current number of established connections to a target",
+		},
+		[]string{"description", "target", "direction"},
+	)
 )
 
 var oldCpu cpu.Stats
@@ -376,4 +386,16 @@ func PrometheusTimer(serviceName string, taskName string) func() {
 	}
 
 	return func() {}
+}
+
+// UpdateGenericConnections reads from GenericConnectionChan and updates the GenericConnections metric for each connection.
+func UpdateGenericConnections() {
+	for {
+		conn, openConn := <-connmgr.GenericConnectionChan
+		if !openConn {
+			break
+		}
+
+		GenericConnections.WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+	}
 }
