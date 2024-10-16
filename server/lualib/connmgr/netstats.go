@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -51,6 +52,8 @@ type ConnectionManager struct {
 	// ipTargets stores a map of DNS targets to their corresponding IP addresses.
 	ipTargets map[string][]string
 
+	ticker *time.Ticker
+
 	// mu is a mutex used to synchronize access to targets map in ConnectionManager.
 	mu sync.Mutex
 }
@@ -81,6 +84,47 @@ func logError(message string, err error) {
 	}
 }
 
+// StartMonitoring begins monitoring IP updates at regular intervals using a ticker and a goroutine.
+func (m *ConnectionManager) StartMonitoring(ctx context.Context) {
+	m.ticker = time.NewTicker(time.Minute)
+
+	go func() {
+		for {
+			select {
+			case <-m.ticker.C:
+				m.checkForIPUpdates(ctx)
+			case <-ctx.Done():
+				m.ticker.Stop()
+
+				return
+			}
+		}
+	}()
+}
+
+// equalIPs compares two slices of IP address strings and returns true if they are equal, otherwise returns false.
+func equalIPs(ipListA, ipListB []string) bool {
+	if len(ipListA) != len(ipListB) {
+		return false
+	}
+
+	sort.Strings(ipListA)
+	sort.Strings(ipListB)
+
+	for i, v := range ipListA {
+		if ipListB[i] != v {
+			return false
+		}
+	}
+
+	return true
+}
+
+// createDeadlineContext sets a deadline for the provided context based on the server DNS timeout configuration.
+func createDeadlineContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
+}
+
 // NewConnectionManager returns a new instance of ConnectionManager with an initialized targets map.
 func NewConnectionManager() *ConnectionManager {
 	return &ConnectionManager{
@@ -92,6 +136,38 @@ func NewConnectionManager() *ConnectionManager {
 // GetConnectionManager returns the global instance of ConnectionManager, facilitating access to network connection management.
 func GetConnectionManager() *ConnectionManager {
 	return manager
+}
+
+// checkForIPUpdates updates the IP addresses for each target in the ConnectionManager.
+func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
+	m.mu.Lock()
+
+	defer m.mu.Unlock()
+
+	for target := range m.targets {
+		host, _, err := net.SplitHostPort(target)
+		if err != nil {
+			continue
+		}
+
+		ctxTimeout, cancel := createDeadlineContext(ctx)
+		resolver := util.NewDNSResolver()
+
+		ips, err := resolver.LookupHost(ctxTimeout, host)
+		if err != nil {
+			cancel()
+
+			continue
+		}
+
+		if !equalIPs(m.ipTargets[target], ips) {
+			m.ipTargets[target] = ips
+
+			level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Updated IPs for target '%s': %v\n", target, ips))
+		}
+
+		cancel()
+	}
 }
 
 // Register adds a new target with the specified description and  direction to the ConnectionManager if it does not already exist.
@@ -113,7 +189,7 @@ func (m *ConnectionManager) Register(ctx context.Context, target, direction stri
 		return
 	}
 
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
+	ctxTimeut, cancel := createDeadlineContext(ctx)
 
 	defer cancel()
 

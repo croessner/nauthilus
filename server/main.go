@@ -1094,6 +1094,8 @@ func runConnectionManager(ctx context.Context) {
 
 	go manager.StartTicker(5 * time.Second)
 	go stats.UpdateGenericConnections()
+
+	manager.StartMonitoring(ctx)
 }
 
 // main initializes the application and manages the lifecycle of various components.
