@@ -500,18 +500,15 @@ func ValidateUsername(username string) bool {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.LoadableConfig.Server.DNS.Resolver == "" {
-		resolver = &net.Resolver{
-			PreferGo: true,
-		}
+		resolver = &net.Resolver{PreferGo: false}
 	} else {
 		resolver = &net.Resolver{
-			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
 					Timeout: time.Duration(10) * time.Second,
 				}
 
-				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))
+				return dialer.DialContext(ctx, network, config.LoadableConfig.Server.DNS.Resolver)
 			},
 		}
 	}
