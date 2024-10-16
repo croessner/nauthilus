@@ -24,10 +24,11 @@ import (
 	"sync"
 	"time"
 
-	config "github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/go-kit/log/level"
 	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/yuin/gopher-lua"
@@ -254,6 +255,10 @@ func (m *ConnectionManager) UpdateCounts() {
 		count := 0
 		for _, conn := range connections {
 			var addr psnet.Addr
+
+			if conn.Status != "ESTABLISHED" {
+				continue
+			}
 
 			if info.Direction == "local" {
 				addr = conn.Laddr
