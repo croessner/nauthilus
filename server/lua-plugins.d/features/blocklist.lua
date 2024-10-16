@@ -30,6 +30,9 @@ function nauthilus_call_feature(request)
     dynamic_loader("nauthilus_prometheus")
     local nauthilus_prometheus = require("nauthilus_prometheus")
 
+    dynamic_loader("nauthilus_psnet")
+    local nauthilus_psnet = require("nauthilus_psnet")
+
     dynamic_loader("nauthilus_gluahttp")
     local http = require("glua_http")
 
@@ -53,6 +56,8 @@ function nauthilus_call_feature(request)
     nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the blocklist service", { "http" })
 
     nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+
+    nauthilus_psnet.register_connection_target(os.getenv("BLOCKLIST_SERVICE_ENDPOINT"), "remote", N)
 
     local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
     local result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {

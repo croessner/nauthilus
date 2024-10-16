@@ -64,6 +64,9 @@ function nauthilus_call_filter(request)
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
+        dynamic_loader("nauthilus_psnet")
+        local nauthilus_psnet = require("nauthilus_psnet")
+
         dynamic_loader("nauthilus_gluahttp")
         local http = require("glua_http")
 
@@ -86,6 +89,8 @@ function nauthilus_call_filter(request)
         nauthilus_prometheus.create_counter_vec(N .. "_count", "Count GeoIP countries", { "country", "status" })
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+
+        nauthilus_psnet.register_connection_target(os.getenv("GEOIP_POLICY_SERVICE_ENDPOINT"), "remote", N)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
         local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
