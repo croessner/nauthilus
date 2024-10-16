@@ -244,7 +244,7 @@ func (m *ConnectionManager) UpdateCounts() {
 			continue
 		}
 
-		port, err := strconv.Atoi(portStr)
+		port, err := strconv.ParseUint(portStr, 10, 32)
 		if err != nil {
 			logError(fmt.Sprintf("Invalid port number for destination '%s'", target), err)
 
