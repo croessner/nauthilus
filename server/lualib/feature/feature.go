@@ -176,7 +176,7 @@ func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context, httpCli
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
+		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
 		r.registerModule(L, ctx, modName, registry)
 
 		return 0

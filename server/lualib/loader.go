@@ -16,6 +16,7 @@
 package lualib
 
 import (
+	"context"
 	stdhttp "net/http"
 
 	"github.com/cjoudrey/gluahttp"
@@ -73,7 +74,7 @@ import (
 // Please refer to the individual module documentations for more details on each Preload function.
 // Please also note that the declaration codes for the constants used in the switch cases are not shown here.
 // Refer to the module documentations for the declaration codes of the constants.
-func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[string]bool, httpClient *stdhttp.Client) {
+func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, httpClient *stdhttp.Client) {
 	switch modName {
 	case global.LuaModGLLPlugin:
 		plugin.Preload(L)
@@ -163,7 +164,7 @@ func RegisterCommonLuaLibraries(L *lua.LState, modName string, registry map[stri
 	case global.LuaModPrometheus:
 		L.PreloadModule(modName, metrics.LoaderModPrometheus)
 	case global.LuaModPsnet:
-		L.PreloadModule(modName, connmgr.LoaderModPsnet)
+		L.PreloadModule(modName, connmgr.LoaderModPsnet(ctx))
 	default:
 		return
 	}

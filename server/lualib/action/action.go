@@ -229,7 +229,7 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
+		lualib.RegisterCommonLuaLibraries(L, aw.ctx, modName, registry, httpClient)
 		aw.registerModule(L, httpRequest, modName, registry)
 
 		return 0

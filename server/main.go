@@ -1077,12 +1077,13 @@ func initializeInstanceInfo() {
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
-func runConnectionManager() {
+func runConnectionManager(ctx context.Context) {
 	manager := connmgr.GetConnectionManager()
 
-	manager.Register(config.LoadableConfig.Server.Address, "local")
+	manager.Register(ctx, config.LoadableConfig.Server.Address, "local", "HTTP server")
 
 	go manager.StartTicker(5 * time.Second)
+	go stats.UpdateGenericConnections()
 }
 
 // main initializes the application and manages the lifecycle of various components.
@@ -1126,7 +1127,7 @@ func main() {
 	setupRedis()
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
-	runConnectionManager()
+	runConnectionManager(ctx)
 
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)

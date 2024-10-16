@@ -69,21 +69,6 @@ func init() {
 			return float64(startTime.UnixMilli())
 		},
 	)
-
-	promauto.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Name: "server_connections",
-			Help: "Current number of established connections to the server",
-		},
-		func() float64 {
-			manager := connmgr.GetConnectionManager()
-			if count, found := manager.GetCount(config.LoadableConfig.Server.Address); found {
-				return float64(count)
-			}
-
-			return 0
-		},
-	)
 }
 
 var (
@@ -265,6 +250,15 @@ var (
 		Name: "rbl_rejected_total",
 		Help: "The total number of rejected RBL requests",
 	}, []string{"rbl"})
+
+	// GenericConnections tracks the current number of established connections to a target.
+	GenericConnections = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "generic_connections",
+			Help: "Current number of established connections to a target",
+		},
+		[]string{"description", "target", "direction"},
+	)
 )
 
 var oldCpu cpu.Stats
@@ -392,4 +386,16 @@ func PrometheusTimer(serviceName string, taskName string) func() {
 	}
 
 	return func() {}
+}
+
+// UpdateGenericConnections reads from GenericConnectionChan and updates the GenericConnections metric for each connection.
+func UpdateGenericConnections() {
+	for {
+		conn, openConn := <-connmgr.GenericConnectionChan
+		if !openConn {
+			break
+		}
+
+		GenericConnections.WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+	}
 }

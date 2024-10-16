@@ -16,24 +16,40 @@
 package connmgr
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
+	config "github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
-
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/yuin/gopher-lua"
 )
 
+// GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.
+var GenericConnectionChan = make(chan GenericConnection)
+
+// GenericConnection represents a connection target along with its connection count.
+type GenericConnection struct {
+	// Target represents the endpoint address for a connection in the format host:port.
+	Target string
+
+	*TargetInfo
+}
+
 // ConnectionManager manages network connections, keeps track of targets and their connection counts, and handles synchronization.
 type ConnectionManager struct {
 	// targets stores a map of target addresses to their corresponding connection information.
 	targets map[string]TargetInfo
+
+	// ipTargets stores a map of DNS targets to their corresponding IP addresses.
+	ipTargets map[string][]string
 
 	// mu is a mutex used to synchronize access to targets map in ConnectionManager.
 	mu sync.Mutex
@@ -41,6 +57,9 @@ type ConnectionManager struct {
 
 // TargetInfo represents information about a target connection including its count and direction.
 type TargetInfo struct {
+	// Description provides a textual explanation of the target's purpose or other contextual information.
+	Description string
+
 	// Count represents the number of active connections to the target.
 	Count int
 
@@ -65,7 +84,8 @@ func logError(message string, err error) {
 // NewConnectionManager returns a new instance of ConnectionManager with an initialized targets map.
 func NewConnectionManager() *ConnectionManager {
 	return &ConnectionManager{
-		targets: make(map[string]TargetInfo),
+		targets:   make(map[string]TargetInfo),
+		ipTargets: make(map[string][]string),
 	}
 }
 
@@ -74,17 +94,45 @@ func GetConnectionManager() *ConnectionManager {
 	return manager
 }
 
-// Register adds a new target with the specified direction to the ConnectionManager if it does not already exist.
-func (m *ConnectionManager) Register(target, direction string) {
+// Register adds a new target with the specified description and  direction to the ConnectionManager if it does not already exist.
+func (m *ConnectionManager) Register(ctx context.Context, target, direction string, description string) {
 	m.mu.Lock()
 
 	defer m.mu.Unlock()
 
-	if _, exists := m.targets[target]; exists {
+	// Check if target is already registered with the same direction
+	if knownTarget, exists := m.targets[target]; exists && knownTarget.Direction == direction {
 		return
 	}
 
-	m.targets[target] = TargetInfo{Direction: direction}
+	// Resolve DNS name to IP addresses
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		logError("Error while proccessing the target", err)
+
+		return
+	}
+
+	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.LoadableConfig.Server.DNS.Timeout*time.Second))
+
+	defer cancel()
+
+	resolver := util.NewDNSResolver()
+
+	ips, err := resolver.LookupHost(ctxTimeut, host)
+	if err != nil {
+		logError(fmt.Sprintf("Unable to resolve DNS name '%s'", host), err)
+
+		return
+	}
+
+	// Store IP addresses for the DNS name
+	m.ipTargets[target] = ips
+
+	m.targets[target] = TargetInfo{
+		Description: description,
+		Direction:   direction,
+	}
 }
 
 // GetCount retrieves the connection count for the specified target.
@@ -113,7 +161,7 @@ func (m *ConnectionManager) UpdateCounts() {
 	defer m.mu.Unlock()
 
 	for target, info := range m.targets {
-		host, portStr, err := net.SplitHostPort(target)
+		_, portStr, err := net.SplitHostPort(target)
 		if err != nil {
 			logError(fmt.Sprintf("Error when processing the target '%s'", target), err)
 
@@ -137,15 +185,19 @@ func (m *ConnectionManager) UpdateCounts() {
 				addr = conn.Raddr
 			}
 
-			if host == "" || host == "0.0.0.0" || host == "::" || addr.IP == host {
-				if addr.Port == uint32(port) {
-					count++
+			for _, ip := range m.ipTargets[target] {
+				if ip == "0.0.0.0" || ip == "::" || ip == addr.IP {
+					if addr.Port == uint32(port) {
+						count++
+					}
 				}
 			}
 		}
 
 		info.Count = count
 		m.targets[target] = info
+
+		GenericConnectionChan <- GenericConnection{Target: target, TargetInfo: &info}
 	}
 }
 
@@ -179,29 +231,31 @@ func (m *ConnectionManager) luaCountOpenConnections(L *lua.LState) int {
 }
 
 // luaRegisterTarget registers a new target and its direction from Lua state into the ConnectionManager.
-func (m *ConnectionManager) luaRegisterTarget(L *lua.LState) int {
-	target := L.ToString(1)
-	direction := L.ToString(2)
+func (m *ConnectionManager) luaRegisterTarget(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		target := L.ToString(1)
+		direction := L.ToString(2)
+		description := L.ToString(3)
 
-	m.Register(target, direction)
+		m.Register(ctx, target, direction, description)
 
-	return 0
-}
-
-// exportsModPsnet contains mappings of Lua function names to their corresponding Go function implementations.
-var exportsModPsnet = map[string]lua.LGFunction{
-	global.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget,
-	global.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
+		return 0
+	}
 }
 
 // LoaderModPsnet is a function that registers the "psnet" module in the given Lua state.
 // It creates a new Lua table, assigns functions from exportsModPsnet to it,
 // and pushes it onto the Lua stack. It returns 1 to indicate that one value
 // has been pushed onto the stack.
-func LoaderModPsnet(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModPsnet)
+func LoaderModPsnet(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx),
+			global.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
+		})
 
-	L.Push(mod)
+		L.Push(mod)
 
-	return 1
+		return 1
+	}
 }

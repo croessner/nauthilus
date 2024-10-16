@@ -508,7 +508,7 @@ func NewDNSResolver() (resolver *net.Resolver) {
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
-					Timeout: time.Millisecond * time.Duration(10000),
+					Timeout: time.Duration(10) * time.Second,
 				}
 
 				return dialer.DialContext(ctx, network, fmt.Sprintf("%s:53", config.LoadableConfig.Server.DNS.Resolver))

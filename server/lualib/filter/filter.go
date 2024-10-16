@@ -57,7 +57,7 @@ func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendR
 			return 0
 		}
 
-		lualib.RegisterCommonLuaLibraries(L, modName, registry, httpClient)
+		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
 		registerModule(L, ctx, r, modName, registry, backendResult, removeAttributes)
 
 		return 0
