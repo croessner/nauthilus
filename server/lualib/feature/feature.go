@@ -56,6 +56,14 @@ import (
 // If a script triggers or aborts the execution of features, the execution is halted and the method returns the appropriate values.
 var LuaFeatures *PreCompiledLuaFeatures
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // PreCompileLuaFeatures pre-compiles Lua features.
 // It checks if the configuration for Lua features is loaded and if the LuaFeatures variable is already set.
 // If the LuaFeatures variable is not set, it creates a new instance of PreCompiledLuaFeatures.
@@ -233,10 +241,6 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	L := lua.NewState()
 
 	defer L.Close()
-
-	httpClient, closeHHTPClient := util.NewClosingHTTPClient()
-
-	defer closeHHTPClient()
 
 	r.registerDynamicLoader(L, ctx, httpClient)
 

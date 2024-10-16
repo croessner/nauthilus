@@ -38,6 +38,14 @@ var (
 	LuaCallback *PreCompiledLuaCallback
 )
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // PreCompiledLuaCallback represents a type that holds a precompiled Lua script and
 // allows safe concurrent access to the script.
 type PreCompiledLuaCallback struct {
@@ -223,10 +231,6 @@ func RunCallbackLuaRequest(ctx *gin.Context) (err error) {
 	L := lua.NewState()
 
 	defer L.Close()
-
-	httpClient, closeHHTPClient := util.NewClosingHTTPClient()
-
-	defer closeHHTPClient()
 
 	registerDynamicLoader(L, ctx, httpClient)
 

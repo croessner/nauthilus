@@ -27,6 +27,7 @@ import (
 	"hash"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strings"
@@ -516,22 +517,34 @@ func NewDNSResolver() (resolver *net.Resolver) {
 	return
 }
 
-// NewClosingHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
-func NewClosingHTTPClient() (*http.Client, func()) {
+// NewHTTPClient creates and returns a new http.Client with a timeout of 60 seconds and custom TLS configurations.
+func NewHTTPClient() *http.Client {
+	var proxyFunc func(*http.Request) (*url.URL, error)
+
+	if config.LoadableConfig.Server.HTTPClient.Proxy != "" {
+		proxyURL, err := url.Parse(config.LoadableConfig.Server.HTTPClient.Proxy)
+		if err != nil {
+			proxyFunc = http.ProxyFromEnvironment
+		} else {
+			proxyFunc = http.ProxyURL(proxyURL)
+		}
+	} else {
+		proxyFunc = http.ProxyFromEnvironment
+	}
+
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
+			Proxy:               proxyFunc,
+			MaxConnsPerHost:     config.LoadableConfig.Server.HTTPClient.MaxConnsPerHost,
+			MaxIdleConns:        config.LoadableConfig.Server.HTTPClient.MaxIdleConns,
+			MaxIdleConnsPerHost: config.LoadableConfig.Server.HTTPClient.MaxIdleConnsPerHost,
+			IdleConnTimeout:     config.LoadableConfig.Server.HTTPClient.IdleConnTimeout,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: config.LoadableConfig.Server.TLS.HTTPClientSkipVerify,
 			},
 		},
 	}
 
-	return httpClient, func() {
-		if httpClient != nil {
-			if transport, ok := httpClient.Transport.(*http.Transport); ok {
-				transport.CloseIdleConnections()
-			}
-		}
-	}
+	return httpClient
 }

@@ -47,6 +47,14 @@ import (
 	_ "golang.org/x/text/message/catalog"
 )
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // Scope represents a scope used in the ConsentPageData struct. It contains the name and description of the scope.
 // Scope represents the scope of an object.
 type Scope struct {
@@ -818,7 +826,7 @@ func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []lan
 //
 // Note: This method assumes that the `ApiConfig` object is properly initialized with the `ctx` field set.
 func (a *ApiConfig) initialize() {
-	a.httpClient, a.closeHTTPClient = util.NewClosingHTTPClient()
+	a.httpClient = httpClient
 	a.guid = a.ctx.GetString(global.CtxGUIDKey)
 	configuration := createConfiguration(a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
@@ -1746,10 +1754,6 @@ func deviceGETHandler(ctx *gin.Context) {
 
 		return
 	}
-
-	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
-
-	defer closeHTTPClient()
 
 	configuration := createConfiguration(httpClient)
 	apiClient := openapi.NewAPIClient(configuration)

@@ -1076,6 +1076,16 @@ func initializeInstanceInfo() {
 	infoMetric.Set(1)
 }
 
+// initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
+func initializeHTTPClients() {
+	core.InitHTTPClient()
+	backend.InitHTTPClient()
+	action.InitHTTPClient()
+	callback.InitHTTPClient()
+	filter.InitHTTPClient()
+	feature.InitHTTPClient()
+}
+
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
 func runConnectionManager(ctx context.Context) {
 	manager := connmgr.GetConnectionManager()
@@ -1122,6 +1132,7 @@ func main() {
 
 	actionWorkers := initializeActionWorkers()
 
+	initializeHTTPClients()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis()

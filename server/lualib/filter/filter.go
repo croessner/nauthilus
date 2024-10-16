@@ -37,6 +37,14 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
+var httpClient *http.Client
+
+// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
+
 // registerDynamicLoader registers a dynamic loader function in the Lua state.
 // The dynamic loader function allows loading Lua modules on-demand based on their names.
 // It takes an *lua.LState, *gin.Context, *Request, **lualib.LuaBackendResult, and *[]string as input parameters.
@@ -614,10 +622,6 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	L := lua.NewState()
 
 	defer L.Close()
-
-	httpClient, closeHTTPClient := util.NewClosingHTTPClient()
-
-	defer closeHTTPClient()
 
 	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes, httpClient)
 
