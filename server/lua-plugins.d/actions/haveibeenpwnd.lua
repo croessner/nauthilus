@@ -95,7 +95,7 @@ function nauthilus_call_action(request)
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
-        nauthilus_psnet.register_connection_target("api.pwnedpasswords.com", "remote", N)
+        nauthilus_psnet.register_connection_target("api.pwnedpasswords.com:443", "remote", N)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
