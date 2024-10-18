@@ -293,7 +293,7 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 
-		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort)
+		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort, &auth.XSSL)
 
 		if clientIP == "" {
 			clientIP = global.NotAvailable
@@ -499,8 +499,8 @@ func createMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
 		sessions.Sessions(global.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
 		luaContextMiddleware(),
-		protectEndpointMiddleware(),
 		withLanguageMiddleware(),
+		protectEndpointMiddleware(),
 	}
 }
 

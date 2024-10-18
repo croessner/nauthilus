@@ -423,9 +423,6 @@ type ApiConfig struct {
 	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-connect server.
 	httpClient *http.Client
 
-	// closeHTTPClient closes the HTTP client, releasing any resources associated with it.
-	closeHTTPClient func()
-
 	// apiClient holds the client information to interact with the OpenAPI.
 	apiClient *openapi.APIClient
 
@@ -1129,8 +1126,6 @@ func loginGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer apiConfig.closeHTTPClient()
-
 	apiConfig.challenge = loginChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
@@ -1662,8 +1657,6 @@ func loginPOSTHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
-
-	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = loginChallenge
 
@@ -2215,8 +2208,6 @@ func consentGETHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer apiConfig.closeHTTPClient()
-
 	apiConfig.challenge = consentChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
 
@@ -2459,8 +2450,6 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	apiConfig.initialize()
 
-	defer apiConfig.closeHTTPClient()
-
 	apiConfig.challenge = consentChallenge
 
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
@@ -2568,8 +2557,6 @@ func logoutGETHandler(ctx *gin.Context) {
 	apiConfig := ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
-
-	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = logoutChallenge
 	apiConfig.csrfToken = ctx.GetString(global.CtxCSRFTokenKey)
@@ -2718,8 +2705,6 @@ func logoutPOSTHandler(ctx *gin.Context) {
 	apiConfig := &ApiConfig{ctx: ctx}
 
 	apiConfig.initialize()
-
-	defer apiConfig.closeHTTPClient()
 
 	apiConfig.challenge = logoutChallenge
 

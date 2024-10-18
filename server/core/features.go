@@ -174,7 +174,7 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 
 	defer stopTimer()
 
-	if a.isInNetwork(config.LoadableConfig.ClearTextList) {
+	if !a.isInNetwork(config.LoadableConfig.ClearTextList) {
 		logAddMessage(a, global.NoTLS, global.FeatureTLSEncryption)
 
 		triggered = true

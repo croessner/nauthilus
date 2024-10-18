@@ -2230,7 +2230,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 		}
 
-		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort)
+		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {

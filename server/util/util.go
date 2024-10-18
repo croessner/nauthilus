@@ -405,7 +405,7 @@ func logTrustedProxy(guid string, fwdAddress, clientIP string) {
 // the client IP with the forwarded address and updates the client IP to the forwarded address.
 // If the forwarded address contains multiple IP addresses separated by a comma, the first
 // IP address is used as the client IP. The client port is set to "N/A".
-func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string) {
+func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *string) {
 	fwdAddress := ctx.GetHeader("X-Forwarded-For")
 	guid := ctx.GetString(global.CtxGUIDKey)
 
@@ -428,6 +428,13 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string) {
 		}
 
 		*clientPort = global.NotAvailable
+
+		if *xssl == "" {
+			proto := ctx.GetHeader("X-Forwarded-Proto")
+			if proto == "https" {
+				*xssl = "on"
+			}
+		}
 	}
 }
 
