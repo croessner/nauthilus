@@ -336,6 +336,11 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		case global.AuthResultOK:
 		case global.AuthResultFail:
 		case global.AuthResultTempFail:
+			auth.postLuaAction(&PassDBResult{})
+			auth.authTempFail(ctx, global.TempFailDefault)
+			ctx.Abort()
+
+			return
 		case global.AuthResultEmptyUsername:
 		case global.AuthResultEmptyPassword:
 		}

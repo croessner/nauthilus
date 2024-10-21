@@ -1715,6 +1715,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 		apiConfig.logFailedLoginAndRedirect(auth)
 	default:
+		handleErr(ctx, errors.ErrUnknownCause)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return
