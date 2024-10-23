@@ -67,6 +67,7 @@ var exportsModRedis = map[string]lua.LGFunction{
 	global.LuaFnRedisSMembers:     RedisSMembers,
 	global.LuaFnRedisSRem:         RedisSRem,
 	global.LuaFnRedisSCard:        RedisSCard,
+	global.LuaFnRedisRunScript:    RedisRunScript,
 }
 
 // LoaderModRedis initializes a new module for Redis in Lua by setting the functions from the "exportsModRedis" map into

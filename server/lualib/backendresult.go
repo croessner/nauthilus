@@ -249,13 +249,12 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
 	if L.GetTop() == 2 {
-		// XXX: We expect keys to be strings!
-		backendResult.Attributes = convert.LuaTableToMap(L.CheckTable(2))
+		backendResult.Attributes = convert.LuaValueToGo(L.CheckTable(2)).(map[any]any)
 
 		return 0
 	}
 
-	L.Push(convert.MapToLuaTable(L, backendResult.Attributes))
+	L.Push(convert.GoToLuaValue(L, backendResult.Attributes))
 
 	return 1
 }
