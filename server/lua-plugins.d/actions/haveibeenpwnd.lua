@@ -45,9 +45,6 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_mail")
         local nauthilus_mail = require("nauthilus_mail")
 
-        dynamic_loader("nauthilus_misc")
-        local nauthilus_misc = require("nauthilus_misc")
-
         dynamic_loader("nauthilus_context")
         local nauthilus_context = require("nauthilus_context")
 
@@ -68,8 +65,6 @@ function nauthilus_call_action(request)
 
         dynamic_loader("nauthilus_gll_template")
         local template = require("template")
-
-                nauthilus_misc.wait_random(500, 3000)
 
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
@@ -126,10 +121,23 @@ function nauthilus_call_action(request)
                 nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
                 nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
-                local already_sent_mail, err_redis_hget2 = nauthilus_redis.redis_hget(redis_key, "send_mail")
-                nauthilus_util.if_error_raise(err_redis_hget2)
+                local script = [[
+                    local redis_key = KEYS[1]
+                    local send_mail = redis.call('HGET', redis_key, 'send_mail')
 
-                if already_sent_mail == "" then
+                    if send_mail == false then
+                        redis.call('HSET', redis_key, 'send_mail', '1')
+
+                        return {'send_email', redis_key}
+                    else
+                        return {'email_already_sent'}
+                    end
+                ]]
+
+                local script_result, err_run_script = nauthilus_redis.redis_run_script(script, { redis_key })
+                nauthilus_util.if_error_raise(err_run_script)
+
+                if script_result[1] == "send_mail" then
                     local smtp_use_lmtp = os.environ("SMTP_USE_LMTP")
                     local smtp_server = os.environ("SMTP_SERVER")
                     local smtp_port = os.environ("SMTP_PORT")
@@ -166,9 +174,6 @@ function nauthilus_call_action(request)
                         body = mustache:render(smtp_message, tmpl_data)
                     })
                     nauthilus_util.if_error_raise(err_smtp)
-
-                    _, err_redis_hset = nauthilus_redis.redis_hset(redis_key, "send_mail", 1)
-                    nauthilus_util.if_error_raise(err_redis_hset)
 
                     _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 86400)
                     nauthilus_util.if_error_raise(err_redis_expire)

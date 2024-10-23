@@ -1199,6 +1199,9 @@ const (
 	// LuaFnRedisSCard represents a Lua function that returns the number of elements in a Redis set.
 	LuaFnRedisSCard = "redis_scard"
 
+	// LuaFnRedisRunScript is the constant used to denote the operation for running a Lua script in Redis.
+	LuaFnRedisRunScript = "redis_run_script"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 

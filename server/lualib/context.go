@@ -16,14 +16,11 @@
 package lualib
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -125,20 +122,9 @@ func (c *Context) Value(_ any) lua.LValue {
 func ContextSet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		key := L.CheckString(1)
+		value := L.CheckAny(2)
 
-		switch value := L.Get(2).(type) {
-		case lua.LString:
-			ctx.Set(key, string(value))
-		case lua.LBool:
-			ctx.Set(key, bool(value))
-		case lua.LNumber:
-			ctx.Set(key, float64(value))
-		case *lua.LTable:
-			ctx.Set(key, convert.LuaTableToMap(value))
-		default:
-			level.Warn(log.Logger).Log(
-				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
-		}
+		ctx.Set(key, convert.LuaValueToGo(value))
 
 		return 0
 	}
@@ -149,23 +135,9 @@ func ContextSet(ctx *Context) lua.LGFunction {
 func ContextGet(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		key := L.CheckString(1)
+		value := ctx.Get(key)
 
-		switch value := ctx.Get(key).(type) {
-		case string:
-			L.Push(lua.LString(value))
-		case bool:
-			L.Push(lua.LBool(value))
-		case float64:
-			L.Push(lua.LNumber(value))
-		case map[any]any:
-			L.Push(convert.MapToLuaTable(L, value))
-		case nil:
-			L.Push(lua.LNil)
-		default:
-			level.Warn(log.Logger).Log(
-				global.LogKeyWarning, fmt.Sprintf("Lua key='%v' value='%v' unsupported", key, value))
-			L.Push(lua.LNil)
-		}
+		L.Push(convert.GoToLuaValue(L, value))
 
 		return 1
 	}

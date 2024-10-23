@@ -1667,7 +1667,7 @@ func processReply(L *lua.LState, ldapReplyChan chan *LDAPReply) int {
 		convertedMap[key] = list
 	}
 
-	resultTable := convert.MapToLuaTable(L, convertedMap)
+	resultTable := convert.GoToLuaValue(L, convertedMap)
 
 	if resultTable == nil {
 		L.Push(lua.LString("no result"))

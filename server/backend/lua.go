@@ -351,7 +351,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 // with the custom logs to the LuaReplyChan channel.
 //
 // If the Lua request function is LuaCommandListAccounts, the function expects the return value
-// to be a Lua table. The function converts the table to a map using the LuaTableToMap function,
+// to be a Lua table. The function converts the table to a map using the LuaValueToGo function,
 // assigns it to the Attributes field of a new LuaBackendResult, and sends it to the LuaReplyChan channel.
 //
 // For all other Lua request functions, the function sends an empty LuaBackendResult with the custom logs
@@ -390,7 +390,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 
 	case global.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-			Attributes: convert.LuaTableToMap(L.ToTable(-1)),
+			Attributes: convert.LuaValueToGo(L.ToTable(-1)).(map[any]any),
 			Logs:       logs,
 		}
 
