@@ -36,10 +36,10 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/lualib/callback"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -214,6 +214,10 @@ func setupLuaScripts() error {
 		return err
 	}
 
+	if err := PreCompileInit(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -249,12 +253,32 @@ func PreCompileFilters() error {
 	return nil
 }
 
+// PreCompileCallback pre-compiles the Lua callback script if present in the configuration.
+// It checks if the Lua callback is enabled in the LoadableConfig.
+// If enabled, it pre-compiles the Lua callback script using hook.PreCompileLuaScript.
+// Returns an error if the pre-compilation fails, else returns nil.
 func PreCompileCallback() error {
 	if !config.LoadableConfig.HaveLuaCallback() {
 		return nil
 	}
 
-	if err := callback.PreCompileLuaCallback(); err != nil {
+	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaCallbackScriptPath()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PreCompileInit pre-compiles the Lua init script if present in the configuration.
+// It checks if the Lua init is enabled in the LoadableConfig.
+// If enabled, it pre-compiles the Lua init script using hook.PreCompileLuaScript.
+// Returns an error if the pre-compilation fails, else returns nil.
+func PreCompileInit() error {
+	if !config.LoadableConfig.HaveLuaInit() {
+		return nil
+	}
+
+	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaInitScriptPath()); err != nil {
 		return err
 	}
 
@@ -1117,7 +1141,7 @@ func initializeHTTPClients() {
 	core.InitHTTPClient()
 	backend.InitHTTPClient()
 	action.InitHTTPClient()
-	callback.InitHTTPClient()
+	hook.InitHTTPClient()
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
 }
@@ -1132,6 +1156,13 @@ func runConnectionManager(ctx context.Context) {
 	go stats.UpdateGenericConnections()
 
 	manager.StartMonitoring(ctx)
+}
+
+// runLuaaInitScript executes the Lua initialization script if it's present in the LoadableConfig.
+func runLuaaInitScript(ctx context.Context) {
+	if config.LoadableConfig.HaveLuaInit() {
+		hook.RunLuaInit(ctx, config.LoadableConfig.GetLuaInitScriptPath())
+	}
 }
 
 // main initializes the application and manages the lifecycle of various components.
@@ -1174,6 +1205,7 @@ func main() {
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis(ctx)
+	runLuaaInitScript(ctx)
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)

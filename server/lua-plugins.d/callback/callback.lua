@@ -29,7 +29,7 @@ local json = require("json")
 
 local N = "callback"
 
-function nauthilus_run_callback(logging)
+function nauthilus_run_hook(logging)
     local result = {}
 
     result.level = "info"

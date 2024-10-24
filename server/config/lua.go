@@ -56,7 +56,7 @@ type LuaAction struct {
 }
 
 func (l *LuaAction) String() string {
-	return fmt.Sprintf("{ActionType: %s}, {ScriptPath: %s}", l.ActionType, l.ScriptPath)
+	return fmt.Sprintf("{ActionType: %s}, {BackendScriptPath: %s}", l.ActionType, l.ScriptPath)
 }
 
 // GetAction returns the ActionType, ScriptName, and ScriptPath of a LuaAction.
@@ -75,7 +75,7 @@ type LuaFeature struct {
 }
 
 func (l *LuaFeature) String() string {
-	return fmt.Sprintf("{Name: %s}, {ScriptPath: %s}", l.Name, l.ScriptPath)
+	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
 type LuaFilter struct {
@@ -84,17 +84,18 @@ type LuaFilter struct {
 }
 
 func (l *LuaFilter) String() string {
-	return fmt.Sprintf("{Name: %s}, {ScriptPath: %s}", l.Name, l.ScriptPath)
+	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
 type LuaConf struct {
 	PackagePath        string `mapstructure:"package_path"`
-	ScriptPath         string `mapstructure:"backend_script_path"`
+	BackendScriptPath  string `mapstructure:"backend_script_path"`
 	CallbackScriptPath string `mapstructure:"callback_script_path"`
+	InitScriptPath     string `mapstructure:"init_script_path"`
 }
 
 func (l *LuaConf) String() string {
-	return l.ScriptPath
+	return l.BackendScriptPath
 }
 
 type LuaSearchProtocol struct {

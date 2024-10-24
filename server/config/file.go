@@ -438,7 +438,7 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
 // It first calls the GetConfig method with the global.BackendLua parameter to obtain the Lua configuration.
 // If the Lua configuration is nil, it returns an empty string.
 // If the Lua configuration is not nil, it asserts the retrieved configuration as a *LuaConf type.
-// If the assertion is successful, it returns the ScriptPath field from the Lua configuration.
+// If the assertion is successful, it returns the BackendScriptPath field from the Lua configuration.
 // If the assertion fails, it returns an empty string.
 func (f *File) GetLuaScriptPath() string {
 	getConfig := f.GetConfig(global.BackendLua)
@@ -447,12 +447,14 @@ func (f *File) GetLuaScriptPath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.ScriptPath
+		return luaConf.BackendScriptPath
 	}
 
 	return ""
 }
 
+// GetLuaCallbackScriptPath returns the path to the Lua callback script specified in the configuration.
+// If the configuration or LuaConf is nil, it returns an empty string.
 func (f *File) GetLuaCallbackScriptPath() string {
 	getConfig := f.GetConfig(global.BackendLua)
 	if getConfig == nil {
@@ -461,6 +463,21 @@ func (f *File) GetLuaCallbackScriptPath() string {
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
 		return luaConf.CallbackScriptPath
+	}
+
+	return ""
+}
+
+// GetLuaInitScriptPath returns the path to the Lua init script specified in the configuration.
+// If the configuration or LuaConf is nil, it returns an empty string.
+func (f *File) GetLuaInitScriptPath() string {
+	getConfig := f.GetConfig(global.BackendLua)
+	if getConfig == nil {
+		return ""
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.InitScriptPath
 	}
 
 	return ""
@@ -546,6 +563,9 @@ func (f *File) HaveLuaActions() bool {
 	return false
 }
 
+// HaveLuaCallback checks if the Lua backend has a callback script path defined in the configuration.
+// Returns true if the backend is Lua and the callback script path is not empty,
+// otherwise returns false.
 func (f *File) HaveLuaCallback() bool {
 	if f.HaveLua() {
 		getConfig := f.GetConfig(global.BackendLua)
@@ -554,6 +574,24 @@ func (f *File) HaveLuaCallback() bool {
 		}
 
 		return getConfig.(*LuaConf).CallbackScriptPath != ""
+	}
+
+	return false
+}
+
+// HaveLuaInit checks if the Lua initialization script path is set in the configuration.
+// It first confirms that the File instance supports Lua by invoking HaveLua method.
+// Then, it retrieves the Lua configuration using GetConfig with the global.BackendLua constant.
+// If the retrieved configuration is of type *LuaConf and the InitScriptPath is not empty, it returns true.
+// Otherwise, it returns false.
+func (f *File) HaveLuaInit() bool {
+	if f.HaveLua() {
+		getConfig := f.GetConfig(global.BackendLua)
+		if getConfig == nil {
+			return false
+		}
+
+		return getConfig.(*LuaConf).InitScriptPath != ""
 	}
 
 	return false

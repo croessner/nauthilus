@@ -1120,8 +1120,8 @@ const (
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
 
-	// LuaFnRunCallback represents the constant string "nauthilus_run_callback".
-	LuaFnRunCallback = "nauthilus_run_callback"
+	// LuaFnRunHook represents the constant string "nauthilus_run_callback".
+	LuaFnRunHook = "nauthilus_run_hook"
 
 	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
 	LuaFnGetBackendServers = "get_backend_servers"
