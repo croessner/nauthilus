@@ -61,6 +61,9 @@ func TestRedisRunScript(t *testing.T) {
 			// Set up script
 			L.Push(lua.LString(tc.script))
 
+			// No SHA1 hash
+			L.Push(lua.LBool(false))
+
 			// Set up keys
 			keys := L.CreateTable(len(tc.keys), 0)
 			for _, k := range tc.keys {
@@ -89,6 +92,70 @@ func TestRedisRunScript(t *testing.T) {
 				resReturned := L.Get(-1).String()
 
 				assert.Equal(t, tc.expectRes, resReturned, "")
+			}
+
+			// Check if everything expected was done
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestRedisUploadScript(t *testing.T) {
+	testCases := []struct {
+		name               string
+		script             string
+		expectErr          bool
+		expectedSHA        string
+		prepareRedisUpload func(mock redismock.ClientMock)
+	}{
+		{
+			name:        "CorrectScript",
+			script:      "return 1",
+			expectErr:   false,
+			expectedSHA: "mockSHA",
+			prepareRedisUpload: func(mock redismock.ClientMock) {
+				mock.ExpectScriptLoad("return 1").SetVal("mockSHA")
+			},
+		},
+		{
+			name:        "FaultyScript",
+			script:      "faulty script",
+			expectErr:   true,
+			expectedSHA: "",
+			prepareRedisUpload: func(mock redismock.ClientMock) {
+				mock.ExpectScriptLoad("faulty script").SetErr(errors.New("syntax error"))
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tc.prepareRedisUpload(mock)
+			rediscli.WriteHandle = db
+
+			L := lua.NewState()
+
+			defer L.Close()
+
+			// Set up script
+			L.Push(lua.LString(tc.script))
+
+			numReturned := RedisUploadScript(L)
+			errReturned := L.Get(-2).String() != "nil"
+
+			assert.Equal(t, tc.expectErr, errReturned, "")
+			assert.Equal(t, 2, numReturned, "")
+
+			// Check result if no error
+			if !tc.expectErr && numReturned > 0 {
+				shaReturned := L.Get(-1).String()
+
+				assert.Equal(t, tc.expectedSHA, shaReturned, "")
 			}
 
 			// Check if everything expected was done

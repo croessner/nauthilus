@@ -6,20 +6,40 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-// executeRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
-func executeRedisScript(script string, keys []string, args ...any) (any, error) {
+// evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
+func evaluateRedisScript(scriptOrSha1 string, useSha1 bool, keys []string, args ...any) (any, error) {
+	var (
+		err    error
+		result any
+	)
+
 	evalArgs := make([]any, len(args))
 
 	for i, arg := range args {
 		evalArgs[len(keys)+i] = arg
 	}
 
-	result, err := rediscli.WriteHandle.Eval(ctx, script, keys, evalArgs...).Result()
+	if useSha1 {
+		result, err = rediscli.WriteHandle.EvalSha(ctx, scriptOrSha1, keys, evalArgs...).Result()
+	} else {
+		result, err = rediscli.WriteHandle.Eval(ctx, scriptOrSha1, keys, evalArgs...).Result()
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// uploadRedisScript uploads a Lua script to Redis and returns its SHA1 hash or an error if the upload fails.
+func uploadRedisScript(script string) (any, error) {
+	sha1, err := rediscli.WriteHandle.ScriptLoad(ctx, script).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	return sha1, nil
 }
 
 // RedisRunScript executes a Redis script with the provided keys and arguments, returning the result or an error as Lua values.
@@ -30,9 +50,10 @@ func RedisRunScript(L *lua.LState) int {
 		argsList []any
 	)
 
-	script := L.CheckString(1)
-	keys := L.CheckTable(2)
-	args := L.CheckTable(3)
+	scriptOrSha1 := L.CheckString(1)
+	useSha1 := L.CheckBool(2)
+	keys := L.CheckTable(3)
+	args := L.CheckTable(4)
 
 	keys.ForEach(func(k, v lua.LValue) {
 		keyList = append(keyList, v.String())
@@ -42,7 +63,7 @@ func RedisRunScript(L *lua.LState) int {
 		argsList = append(argsList, v.String())
 	})
 
-	result, err := executeRedisScript(script, keyList, argsList...)
+	result, err := evaluateRedisScript(scriptOrSha1, useSha1, keyList, argsList...)
 	if err != nil {
 		L.Push(lua.LString(err.Error()))
 		L.Push(lua.LNil)
@@ -50,10 +71,25 @@ func RedisRunScript(L *lua.LState) int {
 		return 2
 	}
 
-	lResult := convert.GoToLuaValue(L, result)
+	L.Push(lua.LNil)
+	L.Push(convert.GoToLuaValue(L, result))
+
+	return 2
+}
+
+func RedisUploadScript(L *lua.LState) int {
+	script := L.CheckString(1)
+
+	sha1, err := uploadRedisScript(script)
+	if err != nil {
+		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LNil)
+
+		return 2
+	}
 
 	L.Push(lua.LNil)
-	L.Push(lResult)
+	L.Push(convert.GoToLuaValue(L, sha1))
 
 	return 2
 }
