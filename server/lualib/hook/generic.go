@@ -175,7 +175,12 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, useGin bool) {
 		}
 
 		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
-		registerModule(L, ctx.(*gin.Context), modName, registry, useGin)
+
+		if useGin {
+			registerModule(L, ctx.(*gin.Context), modName, registry, useGin)
+		} else {
+			registerModule(L, ctx, modName, registry, useGin)
+		}
 
 		return 0
 	})

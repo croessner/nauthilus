@@ -51,9 +51,6 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
-        dynamic_loader("nauthilus_psnet")
-        local nauthilus_psnet = require("nauthilus_psnet")
-
         dynamic_loader("nauthilus_gluacrypto")
         local crypto = require('crypto')
 
@@ -85,12 +82,7 @@ function nauthilus_call_action(request)
             end
         end
 
-        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", { "http" })
-
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
-
-        nauthilus_psnet.register_connection_target("api.pwnedpasswords.com:443", "remote", N)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {

@@ -35,8 +35,6 @@ function nauthilus_call_action(request)
     end
 
     if nauthilus_util.is_table(rt) and nauthilus_util.table_length(rt) > 0 then
-        nauthilus_prometheus.create_counter_vec(N .. "_count", "Count the criteria which caused rejection", {"feature"})
-
         -- brute_force_haproxy
         if rt.brute_force_haproxy then
             nauthilus_prometheus.increment_counter(N .. "_count", { feature = "brute_force" })
