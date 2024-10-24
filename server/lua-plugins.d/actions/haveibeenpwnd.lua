@@ -134,7 +134,7 @@ function nauthilus_call_action(request)
                     end
                 ]]
 
-                local script_result, err_run_script = nauthilus_redis.redis_run_script(script, { redis_key })
+                local script_result, err_run_script = nauthilus_redis.redis_run_script(script, { redis_key }, {})
                 nauthilus_util.if_error_raise(err_run_script)
 
                 if script_result[1] == "send_mail" then

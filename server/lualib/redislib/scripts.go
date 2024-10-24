@@ -8,11 +8,7 @@ import (
 
 // executeRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
 func executeRedisScript(script string, keys []string, args ...any) (any, error) {
-	evalArgs := make([]any, len(keys)+len(args))
-
-	for i, key := range keys {
-		evalArgs[i] = key
-	}
+	evalArgs := make([]any, len(args))
 
 	for i, arg := range args {
 		evalArgs[len(keys)+i] = arg
@@ -35,8 +31,8 @@ func RedisRunScript(L *lua.LState) int {
 	)
 
 	script := L.CheckString(1)
-	keys := L.ToTable(2)
-	args := L.ToTable(3)
+	keys := L.CheckTable(2)
+	args := L.CheckTable(3)
 
 	keys.ForEach(func(k, v lua.LValue) {
 		keyList = append(keyList, v.String())
