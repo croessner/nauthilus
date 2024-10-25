@@ -16,6 +16,9 @@
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
+dynamic_loader("nauthilus_gll_json")
+local json = require("json")
+
 local nauthilus_util = {}
 
 --- nauthilus_util.exists_in_table iterates over a flat Lua table (list) and checks, if a string was found in the values.
@@ -114,6 +117,41 @@ function nauthilus_util.generate_random_string(length)
     end
 
     return res
+end
+
+--- nauthilus_util.print_result is a helper function that creates a log line in different formats dependend on the logging object.
+--- The result table is a set of key/value pairs to log. If the err_string is set, an additional error message and flag is added.
+---@param logging table
+---@param result table
+---@param err_string string
+---@return void
+function nauthilus_util.print_result(logging, result, err_string)
+    result.ts = nauthilus_util.get_current_timestamp()
+
+    if err_string ~= nil and err_string ~= "" then
+        result.level = "error"
+
+        result.error = err_string
+    end
+
+    if logging.log_format == "json" then
+        local result_json, err_jenc = json.encode(result)
+        nauthilus_util.if_error_raise(err_jenc)
+
+        print(result_json)
+    else
+        local output_str = {}
+
+        for k, v in pairs(result) do
+            if string.match(v, "%s") then
+                v = '"' .. v .. '"'
+            end
+
+            table.insert(output_str, k .. '=' .. v)
+        end
+
+        print(table.concat(output_str, " "))
+    end
 end
 
 return nauthilus_util

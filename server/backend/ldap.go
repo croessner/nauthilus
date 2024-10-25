@@ -322,7 +322,7 @@ func (l *LDAPPool) updateConnectionsStatus(poolSize int) (openConnections int) {
 // updateSingleConnectionStatus updates the status of a single LDAP connection in the pool.
 // It takes an index parameter which indicates the index of the connection to be updated.
 // The function performs the following actions:
-//   - Locks the connection's mutex using `Mu.Lock()` to ensure thread safety.
+//   - Locks the connection's mutex using `mu.Lock()` to ensure thread safety.
 //   - Checks if the connection's state is not `LDAPStateFree` or if the connection is nil or closing.
 //     If any of these conditions are true, it sets the connection's state to `LDAPStateClosed`,
 //     logs a debug message indicating that the connection is busy or closed, and returns 0.
@@ -330,7 +330,7 @@ func (l *LDAPPool) updateConnectionsStatus(poolSize int) (openConnections int) {
 //     If there is an error during the search, it sets the connection to nil, sets the state to `LDAPStateClosed`,
 //     logs a debug message indicating that the connection is broken, and returns 0.
 //   - If the search operation is successful, it logs a debug message indicating that the connection is free and returns 1.
-//   - Unlocks the connection's mutex using `Mu.Unlock()` to release the lock.
+//   - Unlocks the connection's mutex using `mu.Unlock()` to release the lock.
 //
 // The function returns an integer indicating the updated status of the connection.
 func (l *LDAPPool) updateSingleConnectionStatus(index int) int {
@@ -1209,9 +1209,9 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 
 // sendLDAPReplyAndUnlockState sends the provided ldapReply to the request's GetLDAPReplyChan channel and unlocks the state of the connection at index in the ldapPool object.
 // It uses the provided request's GetLDAPReplyChan() method to send the ldapReply.
-// It first locks the state of the connection using the ldapPool.conn[index].Mu.Lock() method.
+// It first locks the state of the connection using the ldapPool.conn[index].mu.Lock() method.
 // Then it sets the state of the connection to global.LDAPStateFree.
-// Finally, it unlocks the state of the connection using the ldapPool.conn[index].Mu.Unlock() method.
+// Finally, it unlocks the state of the connection using the ldapPool.conn[index].mu.Unlock() method.
 func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *LDAPPool, index int, request T, ldapReply *LDAPReply) {
 	request.GetLDAPReplyChan() <- ldapReply
 

@@ -36,10 +36,10 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/lualib/callback"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -214,6 +214,10 @@ func setupLuaScripts() error {
 		return err
 	}
 
+	if err := PreCompileInit(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -249,12 +253,32 @@ func PreCompileFilters() error {
 	return nil
 }
 
+// PreCompileCallback pre-compiles the Lua callback script if present in the configuration.
+// It checks if the Lua callback is enabled in the LoadableConfig.
+// If enabled, it pre-compiles the Lua callback script using hook.PreCompileLuaScript.
+// Returns an error if the pre-compilation fails, else returns nil.
 func PreCompileCallback() error {
 	if !config.LoadableConfig.HaveLuaCallback() {
 		return nil
 	}
 
-	if err := callback.PreCompileLuaCallback(); err != nil {
+	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaCallbackScriptPath()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PreCompileInit pre-compiles the Lua init script if present in the configuration.
+// It checks if the Lua init is enabled in the LoadableConfig.
+// If enabled, it pre-compiles the Lua init script using hook.PreCompileLuaScript.
+// Returns an error if the pre-compilation fails, else returns nil.
+func PreCompileInit() error {
+	if !config.LoadableConfig.HaveLuaInit() {
+		return nil
+	}
+
+	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaInitScriptPath()); err != nil {
 		return err
 	}
 
@@ -462,14 +486,14 @@ func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTupl
 // Then, it calls the setupRedis function to reinitialize the Redis client.
 //
 //	stopAndRestartRedis()
-func stopAndRestartRedis() {
+func stopAndRestartRedis(ctx context.Context) {
 	rediscli.WriteHandle.Close()
 
 	if rediscli.ReadHandle != rediscli.WriteHandle {
 		rediscli.ReadHandle.Close()
 	}
 
-	setupRedis()
+	setupRedis(ctx)
 }
 
 // waitForActionWorkers waits for the completion of all action workers.
@@ -567,7 +591,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	}
 
 	stopAndRestartActionWorker(actionWorkers, store.action, ctx)
-	stopAndRestartRedis()
+	stopAndRestartRedis(ctx)
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(log.Logger).Log(
@@ -704,11 +728,31 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 	startLuaWorker(store)
 }
 
-// setupRedis initializes the Redis clients for the main and replica instances.
-// First, it sets the logger for redis to a new RedisLogger instance.
-// Then, it assigns a new RedisClient to WriteHandle, and a RedisReplicaClient to ReadHandle.
-// If the initialization of RedisReplicaClient fails, WriteHandle is used as a fallback.
-func setupRedis() {
+// checkRedisConnections checks the health of Redis read and write connections.
+// It pings both the write and read Redis handles. If any handle is nil or the ping fails, it returns false.
+// Otherwise, it returns true.
+func checkRedisConnections(ctx context.Context) bool {
+	if rediscli.WriteHandle == nil {
+		return false
+	}
+
+	if err := rediscli.WriteHandle.Ping(ctx).Err(); err != nil {
+		return false
+	}
+
+	if rediscli.ReadHandle == nil {
+		return false
+	}
+
+	if err := rediscli.ReadHandle.Ping(ctx).Err(); err != nil {
+		return false
+	}
+
+	return true
+}
+
+// setupRedis sets up the Redis client and its replicas. It ensures connections are valid with a retry mechanism on failure.
+func setupRedis(ctx context.Context) {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
@@ -718,6 +762,22 @@ func setupRedis() {
 	if rediscli.ReadHandle == nil {
 		rediscli.ReadHandle = rediscli.WriteHandle
 	}
+
+	// Retry mechanism to ensure the Redis connections are usable
+	maxRetries := 10
+	retryInterval := 5 * time.Second
+
+	for retries := 0; retries < maxRetries; retries++ {
+		if checkRedisConnections(ctx) {
+			return
+		}
+
+		level.Warn(log.Logger).Log(global.LogKeyWarning, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
+
+		time.Sleep(retryInterval)
+	}
+
+	panic("Failed to establish Redis connections after max retries")
 }
 
 // startHTTPServer is a function that starts the HTTP server.
@@ -1081,7 +1141,7 @@ func initializeHTTPClients() {
 	core.InitHTTPClient()
 	backend.InitHTTPClient()
 	action.InitHTTPClient()
-	callback.InitHTTPClient()
+	hook.InitHTTPClient()
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
 }
@@ -1096,6 +1156,13 @@ func runConnectionManager(ctx context.Context) {
 	go stats.UpdateGenericConnections()
 
 	manager.StartMonitoring(ctx)
+}
+
+// runLuaaInitScript executes the Lua initialization script if it's present in the LoadableConfig.
+func runLuaaInitScript(ctx context.Context) {
+	if config.LoadableConfig.HaveLuaInit() {
+		hook.RunLuaInit(ctx, config.LoadableConfig.GetLuaInitScriptPath())
+	}
 }
 
 // main initializes the application and manages the lifecycle of various components.
@@ -1137,7 +1204,8 @@ func main() {
 	initializeHTTPClients()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
-	setupRedis()
+	setupRedis(ctx)
+	runLuaaInitScript(ctx)
 	core.LoadStatsFromRedis()
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)

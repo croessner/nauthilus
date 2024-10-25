@@ -25,7 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/lualib/callback"
+	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
@@ -167,7 +167,9 @@ func (a *AuthState) saslAuthd(ctx *gin.Context) {
 
 // callback handles the execution of a Lua callback request in a Gin context.
 func (a *AuthState) callback(ctx *gin.Context) {
-	callback.RunCallbackLuaRequest(ctx)
+	if hookScript := config.LoadableConfig.GetLuaCallbackScriptPath(); hookScript != "" {
+		hook.RunLuaCallback(ctx, hookScript)
+	}
 }
 
 // healthCheck handles the health check functionality by logging a message and returning "pong" as the response.

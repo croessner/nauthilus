@@ -29,46 +29,17 @@ local json = require("json")
 
 local N = "callback"
 
-function nauthilus_run_callback(logging)
+function nauthilus_run_hook(logging)
     local result = {}
 
     result.level = "info"
     result.caller = N .. ".lua"
 
-    local function print_result(err_string)
-        result.ts = nauthilus_util.get_current_timestamp()
-
-        if err_string ~= nil and err_string ~= "" then
-            result.level = "error"
-
-            result.error = err_string
-        end
-
-        if logging.log_format == "json" then
-            local result_json, err_jenc = json.encode(result)
-            nauthilus_util.if_error_raise(err_jenc)
-
-            print(result_json)
-        else
-            local output_str = {}
-
-            for k, v in pairs(result) do
-                if string.match(v, "%s") then
-                    v = '"' .. v .. '"'
-                end
-
-                table.insert(output_str, k .. '=' .. v)
-            end
-
-            print(table.concat(output_str, " "))
-        end
-    end
-
     local header = nauthilus_http_request.get_http_request_header("Content-Type")
     local body = nauthilus_http_request.get_http_request_body()
 
     if nauthilus_util.table_length(header) == 0 or header[1] ~= "application/json" then
-        print_result("HTTP request header: Wrong 'Content-Type'")
+        nauthilus_util.print_result(logging, result, "HTTP request header: Wrong 'Content-Type'")
 
         return
     end
@@ -77,7 +48,7 @@ function nauthilus_run_callback(logging)
     nauthilus_util.if_error_raise(err_jdec)
 
     if not nauthilus_util.is_table(body_table) then
-        print_result("HTTP request body: Result is not a table")
+        nauthilus_util.print_result(logging, result, "HTTP request body: Result is not a table")
 
         return
     end
@@ -147,7 +118,7 @@ function nauthilus_run_callback(logging)
         end
 
         if logging.log_level == "debug" or logging.log_level == "info" then
-            print_result()
+           nauthilus_util.print_result(logging, result)
         end
     end
 end

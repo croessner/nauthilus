@@ -1120,8 +1120,8 @@ const (
 	// LuaFnCallFilter represents the function name for "nauthilus_call_filter" in Lua
 	LuaFnCallFilter = "nauthilus_call_filter"
 
-	// LuaFnRunCallback represents the constant string "nauthilus_run_callback".
-	LuaFnRunCallback = "nauthilus_run_callback"
+	// LuaFnRunHook represents the constant string "nauthilus_run_callback".
+	LuaFnRunHook = "nauthilus_run_hook"
 
 	// LuaFnGetBackendServers represents the Lua function name "get_backend_servers" that retrieves the backend servers.
 	LuaFnGetBackendServers = "get_backend_servers"
@@ -1201,6 +1201,9 @@ const (
 
 	// LuaFnRedisRunScript is the constant used to denote the operation for running a Lua script in Redis.
 	LuaFnRedisRunScript = "redis_run_script"
+
+	// LuaFnRedisUploadScript represents the function name for uploading a script in Redis.
+	LuaFnRedisUploadScript = "redis_upload_script"
 
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"

@@ -51,9 +51,6 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
-        dynamic_loader("nauthilus_psnet")
-        local nauthilus_psnet = require("nauthilus_psnet")
-
         dynamic_loader("nauthilus_gluacrypto")
         local crypto = require('crypto')
 
@@ -85,12 +82,7 @@ function nauthilus_call_action(request)
             end
         end
 
-        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the haveibeenpwnd network", { "http" })
-
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
-
-        nauthilus_psnet.register_connection_target("api.pwnedpasswords.com:443", "remote", N)
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })
         local result, err = http.get("https://api.pwnedpasswords.com/range/" .. hash:sub(1, 5), {
@@ -121,20 +113,7 @@ function nauthilus_call_action(request)
                 nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
                 nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
-                local script = [[
-                    local redis_key = KEYS[1]
-                    local send_mail = redis.call('HGET', redis_key, 'send_mail')
-
-                    if send_mail == false then
-                        redis.call('HSET', redis_key, 'send_mail', '1')
-
-                        return {'send_email', redis_key}
-                    else
-                        return {'email_already_sent'}
-                    end
-                ]]
-
-                local script_result, err_run_script = nauthilus_redis.redis_run_script(script, { redis_key })
+                local script_result, err_run_script = nauthilus_redis.redis_run_script("", "nauthilus_send_mail_hash", { redis_key }, {})
                 nauthilus_util.if_error_raise(err_run_script)
 
                 if script_result[1] == "send_mail" then

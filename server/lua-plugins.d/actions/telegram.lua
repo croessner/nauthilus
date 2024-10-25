@@ -153,9 +153,6 @@ function nauthilus_call_action(request)
         values.username = username
         values.pwnd_info = pwnd_info
 
-        nauthilus_prometheus.create_gauge_vec(HCCR, "Measure the number of total concurrent HTTP client requests", { "service" })
-        nauthilus_prometheus.create_histogram_vec(N .. "_duration_seconds", "HTTP request to the telegram network", { "bot" })
-
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })

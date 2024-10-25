@@ -36,9 +36,6 @@ local nauthilus_util = require("nauthilus_util")
 dynamic_loader("nauthilus_password")
 local nauthilus_password = require("nauthilus_password")
 
-dynamic_loader("nauthilus_psnet")
-local nauthilus_psnet = require("nauthilus_psnet")
-
 dynamic_loader("nauthilus_gll_db")
 local db = require("db")
 
@@ -50,8 +47,6 @@ local config = {
 
 function nauthilus_backend_verify_password(request)
     local b = nauthilus_backend_result.new()
-
-    nauthilus_psnet.register_connection_target("127.0.0.1:3306", "remote", "backend")
 
     local mysql, err_open = db.open("mysql", "nauthilus:nauthilus@tcp(127.0.0.1)/nauthilus", config)
     nauthilus_util.if_error_raise(err_open)

@@ -56,7 +56,7 @@ func InitHTTPClient() {
 // Then, it calls registerModule to register module-specific libraries based on the module name.
 // After registering the libraries, it sets the global variable "dynamic_loader" in the Lua state to the created function.
 // The function does not return any value.
-func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string, httpClient *http.Client) {
+func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -623,7 +623,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer L.Close()
 
-	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes, httpClient)
+	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
 
 	lualib.RegisterBackendResultType(L, global.LuaBackendResultAttributes)
 	setGlobals(r, L)
