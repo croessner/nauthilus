@@ -796,7 +796,10 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 // checkRepeatingBruteForcer analyzes if a network partakes in repeated brute force attempts according to specified rules.
 // It returns a boolean indicating an error, whether a brute force rule already triggered, and the rule number.
 func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, network *net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
-	var err error
+	var (
+		ruleName string
+		err      error
+	)
 
 	for ruleNumber = range rules {
 		if network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
@@ -807,7 +810,11 @@ func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, n
 			continue
 		}
 
-		if ruleName, err := auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
+		if ruleName, err = auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
+			if _, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", auth.ClientIP, rules[ruleNumber].CIDR)); err != nil {
+				withError = true
+			}
+
 			alreadyTriggered = true
 			*message = "Brute force attack detected (cached result)"
 			stats.BruteForceRejected.WithLabelValues(ruleName).Inc()
