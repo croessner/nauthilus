@@ -93,8 +93,8 @@ function nauthilus_call_action(request)
             },
         })
         nauthilus_prometheus.stop_timer(timer)
-        nauthilus_util.if_error_raise(err)
         nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
+        nauthilus_util.if_error_raise(err)
 
         if result.status_code ~= 200 then
             nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))

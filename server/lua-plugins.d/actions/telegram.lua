@@ -161,8 +161,8 @@ function nauthilus_call_action(request)
             text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)
-        nauthilus_util.if_error_raise(err_bat)
         nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
+        nauthilus_util.if_error_raise(err_bat)
     end
 
     rt.post_telegram = true
