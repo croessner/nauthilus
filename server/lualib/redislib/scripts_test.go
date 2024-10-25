@@ -82,14 +82,14 @@ func TestRedisRunScript(t *testing.T) {
 
 			// Call function and check error
 			numReturned := RedisRunScript(L)
-			errReturned := L.Get(-2).String() != "nil"
+			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")
 			assert.Equal(t, 2, numReturned, "")
 
 			// Check result if no error
 			if !tc.expectErr && numReturned > 0 {
-				resReturned := L.Get(-1).String()
+				resReturned := L.Get(-2).String()
 
 				assert.Equal(t, tc.expectRes, resReturned, "")
 			}
@@ -150,14 +150,14 @@ func TestRedisUploadScript(t *testing.T) {
 			L.Push(lua.LString(tc.uploadScriptName))
 
 			numReturned := RedisUploadScript(L)
-			errReturned := L.Get(-2).String() != "nil"
+			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")
 			assert.Equal(t, 2, numReturned, "")
 
 			// Check result if no error
 			if !tc.expectErr && numReturned > 0 {
-				shaReturned := L.Get(-1).String()
+				shaReturned := L.Get(-2).String()
 
 				assert.Equal(t, tc.expectedSHA, shaReturned, "")
 			}

@@ -109,14 +109,14 @@ func RedisRunScript(L *lua.LState) int {
 
 	result, err := evaluateRedisScript(script, uploadScriptName, keyList, argsList...)
 	if err != nil {
-		L.Push(lua.LString(err.Error()))
 		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
 
 		return 2
 	}
 
-	L.Push(lua.LNil)
 	L.Push(convert.GoToLuaValue(L, result))
+	L.Push(lua.LNil)
 
 	return 2
 }
@@ -128,8 +128,8 @@ func RedisUploadScript(L *lua.LState) int {
 
 	sha1, err := uploadRedisScript(script)
 	if err != nil {
-		L.Push(lua.LString(err.Error()))
 		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
 
 		return 2
 	}
@@ -137,14 +137,14 @@ func RedisUploadScript(L *lua.LState) int {
 	if scriptSha1, okay := sha1.(string); okay {
 		uploads.Set(uploadScriptName, scriptSha1)
 
-		L.Push(lua.LNil)
 		L.Push(lua.LString(scriptSha1))
+		L.Push(lua.LNil)
 
 		return 2
 	}
 
-	L.Push(lua.LString(fmt.Sprintf("Could not convert script SHA1 to string: %v", sha1)))
 	L.Push(lua.LNil)
+	L.Push(lua.LString(fmt.Sprintf("Could not convert script SHA1 to string: %v", sha1)))
 
 	return 2
 }

@@ -21,6 +21,9 @@ local nauthilus_prometheus = require("nauthilus_prometheus")
 dynamic_loader("nauthilus_psnet")
 local nauthilus_psnet = require("nauthilus_psnet")
 
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
 local N = "init"
 
 function nauthilus_run_hook(logging)
@@ -28,6 +31,26 @@ function nauthilus_run_hook(logging)
 
     result.level = "info"
     result.caller = N .. ".lua"
+
+    local script = [[
+        local redis_key = KEYS[1]
+        local send_mail = redis.call('HGET', redis_key, 'send_mail')
+
+        if send_mail == false then
+            redis.call('HSET', redis_key, 'send_mail', '1')
+
+            return {'send_email', redis_key}
+        else
+            return {'email_already_sent'}
+        end
+    ]]
+
+    local upload_script_name = "nauthilus_send_mail_hash"
+    local sha1, err_upload = nauthilus_redis.redis_upload_script(script, upload_script_name)
+
+    nauthilus_util.if_error_raise(err_upload)
+
+    result[upload_script_name] = sha1
 
     -- common
     nauthilus_prometheus.create_gauge_vec("http_client_concurrent_requests_total", "Measure the number of total concurrent HTTP client requests", { "service" })

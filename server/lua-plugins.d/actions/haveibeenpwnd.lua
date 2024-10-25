@@ -113,20 +113,7 @@ function nauthilus_call_action(request)
                 nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
                 nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
-                local script = [[
-                    local redis_key = KEYS[1]
-                    local send_mail = redis.call('HGET', redis_key, 'send_mail')
-
-                    if send_mail == false then
-                        redis.call('HSET', redis_key, 'send_mail', '1')
-
-                        return {'send_email', redis_key}
-                    else
-                        return {'email_already_sent'}
-                    end
-                ]]
-
-                local script_result, err_run_script = nauthilus_redis.redis_run_script(script, false, { redis_key }, {})
+                local script_result, err_run_script = nauthilus_redis.redis_run_script("", "nauthilus_send_mail_hash", { redis_key }, {})
                 nauthilus_util.if_error_raise(err_run_script)
 
                 if script_result[1] == "send_mail" then
