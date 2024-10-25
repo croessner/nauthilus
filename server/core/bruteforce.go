@@ -659,12 +659,12 @@ func logBucketMatchingRule(auth *AuthState, network *net.IPNet, rule *config.Bru
 
 // checkBucketOverLimit checks if the given network exceeds the brute force allowed thresholds based on predefined rules.
 // It verifies the current network against the specified brute force rules and returns if any rule is triggered.
-func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, network *net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	var err error
 
 	for ruleNumber = range rules {
 		// Skip, where the current IP address does not match the current rule
-		if network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
+		if *network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
 
 			return true, false, ruleNumber
@@ -795,11 +795,14 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 
 // checkRepeatingBruteForcer analyzes if a network partakes in repeated brute force attempts according to specified rules.
 // It returns a boolean indicating an error, whether a brute force rule already triggered, and the rule number.
-func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, network *net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
-	var err error
+func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+	var (
+		ruleName string
+		err      error
+	)
 
 	for ruleNumber = range rules {
-		if network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
+		if *network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
 
 			return true, false, ruleNumber
@@ -807,7 +810,7 @@ func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, n
 			continue
 		}
 
-		if ruleName, err := auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
+		if ruleName, err = auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
 			alreadyTriggered = true
 			*message = "Brute force attack detected (cached result)"
 			stats.BruteForceRejected.WithLabelValues(ruleName).Inc()
@@ -840,7 +843,6 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 	var (
 		ruleTriggered bool
 		message       string
-		network       *net.IPNet
 	)
 
 	if a.NoAuth || a.ListAccounts {
@@ -899,13 +901,15 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	abort, alreadyTriggered, ruleNumber := checkRepeatingBruteForcer(a, rules, network, &message)
+	network := &net.IPNet{}
+
+	abort, alreadyTriggered, ruleNumber := checkRepeatingBruteForcer(a, rules, &network, &message)
 	if abort {
 		return false
 	}
 
 	if !alreadyTriggered {
-		abort, ruleTriggered, ruleNumber = checkBucketOverLimit(a, rules, network, &message)
+		abort, ruleTriggered, ruleNumber = checkBucketOverLimit(a, rules, &network, &message)
 		if abort {
 			return false
 		}
