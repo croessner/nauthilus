@@ -61,8 +61,8 @@ func TestRedisRunScript(t *testing.T) {
 			// Set up script
 			L.Push(lua.LString(tc.script))
 
-			// No SHA1 hash
-			L.Push(lua.LBool(false))
+			// No script uploads
+			L.Push(lua.LString(""))
 
 			// Set up keys
 			keys := L.CreateTable(len(tc.keys), 0)
@@ -104,24 +104,27 @@ func TestRedisUploadScript(t *testing.T) {
 	testCases := []struct {
 		name               string
 		script             string
+		uploadScriptName   string
 		expectErr          bool
 		expectedSHA        string
 		prepareRedisUpload func(mock redismock.ClientMock)
 	}{
 		{
-			name:        "CorrectScript",
-			script:      "return 1",
-			expectErr:   false,
-			expectedSHA: "mockSHA",
+			name:             "CorrectScript",
+			script:           "return 1",
+			uploadScriptName: "mockScript1",
+			expectErr:        false,
+			expectedSHA:      "mockSHA",
 			prepareRedisUpload: func(mock redismock.ClientMock) {
 				mock.ExpectScriptLoad("return 1").SetVal("mockSHA")
 			},
 		},
 		{
-			name:        "FaultyScript",
-			script:      "faulty script",
-			expectErr:   true,
-			expectedSHA: "",
+			name:             "FaultyScript",
+			script:           "faulty script",
+			uploadScriptName: "mockScript2",
+			expectErr:        true,
+			expectedSHA:      "",
 			prepareRedisUpload: func(mock redismock.ClientMock) {
 				mock.ExpectScriptLoad("faulty script").SetErr(errors.New("syntax error"))
 			},
@@ -144,6 +147,7 @@ func TestRedisUploadScript(t *testing.T) {
 
 			// Set up script
 			L.Push(lua.LString(tc.script))
+			L.Push(lua.LString(tc.uploadScriptName))
 
 			numReturned := RedisUploadScript(L)
 			errReturned := L.Get(-2).String() != "nil"

@@ -1,13 +1,52 @@
 package redislib
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/yuin/gopher-lua"
 )
 
+// Uploads is a concurrency-safe type for managing script uploads, utilizing a map to store key-value pairs securely.
+type Uploads struct {
+	// scripts stores key-value pairs where the key is the name of the upload script, and the value is its associated SHA-1 hash.
+	scripts map[string]string
+
+	// mu provides mutual exclusion to ensure that concurrent access to the scripts map is synchronized.
+	mu sync.Mutex
+}
+
+// Set stores the provided SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
+func (u *Uploads) Set(uploadScriptName string, sha1 string) {
+	u.mu.Lock()
+
+	defer u.mu.Unlock()
+
+	u.scripts[uploadScriptName] = sha1
+}
+
+// Get retrieves the SHA-1 hash associated with the given upload script name in a concurrency-safe manner.
+func (u *Uploads) Get(uploadScriptName string) string {
+	u.mu.Lock()
+
+	defer u.mu.Unlock()
+
+	if sha1, okay := u.scripts[uploadScriptName]; okay {
+		return sha1
+	}
+
+	return ""
+}
+
+// uploads is an instance of the Uploads struct that manages script uploads with their associated SHA-1 hashes.
+var uploads = &Uploads{
+	scripts: make(map[string]string),
+}
+
 // evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
-func evaluateRedisScript(scriptOrSha1 string, useSha1 bool, keys []string, args ...any) (any, error) {
+func evaluateRedisScript(script string, uploadScriptName string, keys []string, args ...any) (any, error) {
 	var (
 		err    error
 		result any
@@ -19,10 +58,15 @@ func evaluateRedisScript(scriptOrSha1 string, useSha1 bool, keys []string, args 
 		evalArgs[len(keys)+i] = arg
 	}
 
-	if useSha1 {
-		result, err = rediscli.WriteHandle.EvalSha(ctx, scriptOrSha1, keys, evalArgs...).Result()
+	if uploadScriptName != "" {
+		script = uploads.Get(uploadScriptName)
+		if script == "" {
+			return fmt.Errorf("could not find script with name %s", uploadScriptName), nil
+		}
+
+		result, err = rediscli.WriteHandle.EvalSha(ctx, script, keys, evalArgs...).Result()
 	} else {
-		result, err = rediscli.WriteHandle.Eval(ctx, scriptOrSha1, keys, evalArgs...).Result()
+		result, err = rediscli.WriteHandle.Eval(ctx, script, keys, evalArgs...).Result()
 	}
 
 	if err != nil {
@@ -50,8 +94,8 @@ func RedisRunScript(L *lua.LState) int {
 		argsList []any
 	)
 
-	scriptOrSha1 := L.CheckString(1)
-	useSha1 := L.CheckBool(2)
+	script := L.CheckString(1)
+	uploadScriptName := L.CheckString(2)
 	keys := L.CheckTable(3)
 	args := L.CheckTable(4)
 
@@ -63,7 +107,7 @@ func RedisRunScript(L *lua.LState) int {
 		argsList = append(argsList, v.String())
 	})
 
-	result, err := evaluateRedisScript(scriptOrSha1, useSha1, keyList, argsList...)
+	result, err := evaluateRedisScript(script, uploadScriptName, keyList, argsList...)
 	if err != nil {
 		L.Push(lua.LString(err.Error()))
 		L.Push(lua.LNil)
@@ -77,8 +121,10 @@ func RedisRunScript(L *lua.LState) int {
 	return 2
 }
 
+// RedisUploadScript uploads a Lua script to Redis, returns the SHA1 hash of the script or an error message on failure.
 func RedisUploadScript(L *lua.LState) int {
 	script := L.CheckString(1)
+	uploadScriptName := L.CheckString(2)
 
 	sha1, err := uploadRedisScript(script)
 	if err != nil {
@@ -88,8 +134,17 @@ func RedisUploadScript(L *lua.LState) int {
 		return 2
 	}
 
+	if scriptSha1, okay := sha1.(string); okay {
+		uploads.Set(uploadScriptName, scriptSha1)
+
+		L.Push(lua.LNil)
+		L.Push(lua.LString(scriptSha1))
+
+		return 2
+	}
+
+	L.Push(lua.LString(fmt.Sprintf("Could not convert script SHA1 to string: %v", sha1)))
 	L.Push(lua.LNil)
-	L.Push(convert.GoToLuaValue(L, sha1))
 
 	return 2
 }
