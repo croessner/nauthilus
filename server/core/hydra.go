@@ -653,21 +653,22 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 //
 //goland:noinspection GoDfaConstantCondition
 func setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
-	if langFromURL == "" && langFromCookie == "" {
+	switch {
+	case langFromURL == "" && langFromCookie == "":
 		// 1. No language from URL and no cookie is set
 		needCookie = true
 		needRedirect = true
-	} else if langFromURL == "" && langFromCookie != "" {
+	case langFromURL == "" && langFromCookie != "":
 		// 2. No language from URL, but a cookie is set
 		lang = langFromCookie
 		needRedirect = true
-	} else if langFromURL != "" && langFromCookie == "" {
+	case langFromURL != "" && langFromCookie == "":
 		// 3. Language from URL and no cookie
 		lang = langFromURL
 		needCookie = true
-	} else if langFromURL != "" && langFromCookie != "" {
+	case langFromURL != "" && langFromCookie != "":
+		// 4. Langauge given from URL and cookie, but both differ
 		if langFromURL != langFromCookie {
-			// 4. Langauge given from URL and cookie, but both differ
 			needCookie = true
 		}
 
@@ -910,7 +911,7 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
 
-	a.logInfoLoginSkip(acceptRequest.GetRedirectTo())
+	a.logInfoLoginSkip()
 }
 
 // handleLoginNoSkip handles the login process when skip is false.
@@ -1082,17 +1083,15 @@ func (a *ApiConfig) handleLoginNoSkip() {
 }
 
 // logInfoLoginSkip logs the login skip event with the provided details.
-func (a *ApiConfig) logInfoLoginSkip(redirectTo string) {
+func (a *ApiConfig) logInfoLoginSkip() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, a.loginRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
 		global.LogKeyUriPath, viper.GetString("login_page"),
-		global.LogKeyRedirectTo, redirectTo,
 	)
 }
 
@@ -1103,7 +1102,6 @@ func (a *ApiConfig) logInfoLoginNoSkip() {
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyUriPath, viper.GetString("login_page"),
 	)
 }
@@ -1247,50 +1245,54 @@ func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
 //
 // Returns:
 // - err: an error if any occurred during the process
-func (a *ApiConfig) processAuthOkLogin(auth *AuthState, authResult global.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool) error {
-	var (
-		redirectFlag bool
-		redirectTo   string
-		err          error
-	)
+func (a *ApiConfig) processAuthOkLogin(ctx *gin.Context, auth *AuthState, oldAuthResult global.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool, needLuaFilterAndPost bool) (authResult global.AuthResult, err error) {
+	var redirectFlag bool
 
 	account, found := auth.getAccountOk()
 	if !found {
-		return errors.ErrNoAccount
+		return oldAuthResult, errors.ErrNoAccount
 	}
 
 	subject, claims := a.getSubjectAndClaims(account, auth)
 
 	if post2FA {
 		if recentSubject != subject {
-			return errors.ErrNoAccount
+			return oldAuthResult, errors.ErrNoAccount
 		}
 
 		err = a.handlePost2FA(auth, account)
 		if err != nil {
-			return err
+			return oldAuthResult, err
 		}
 	} else {
 		session := sessions.Default(a.ctx)
 
-		redirectFlag, err = a.handleNonPost2FA(auth, session, authResult, subject)
+		redirectFlag, err = a.handleNonPost2FA(auth, session, oldAuthResult, subject)
 		if err != nil {
-			return err
+			return oldAuthResult, err
 		}
 
 		if redirectFlag {
-			return nil
+			return oldAuthResult, nil
+		}
+
+		if needLuaFilterAndPost {
+			authResult = runLuaFilterAndPost(ctx, auth, oldAuthResult)
+
+			if oldAuthResult != authResult {
+				return authResult, nil
+			}
 		}
 	}
 
 	remember := a.isRemember(rememberPost2FA, post2FA)
-	if redirectTo, err = a.acceptLogin(claims, subject, remember); err != nil {
-		return err
+	if _, err = a.acceptLogin(claims, subject, remember); err != nil {
+		return oldAuthResult, err
 	}
 
-	a.logInfoLoginAccept(subject, redirectTo, auth)
+	a.logInfoLoginAccept(subject, auth)
 
-	return nil
+	return oldAuthResult, nil
 }
 
 // getSubjectAndClaims retrieves the subject and claims for a given account and authentication object.
@@ -1451,17 +1453,15 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 }
 
 // logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
-func (a *ApiConfig) logInfoLoginAccept(subject string, redirectTo string, auth *AuthState) {
+func (a *ApiConfig) logInfoLoginAccept(subject string, auth *AuthState) {
 	logs := []any{
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, subject,
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyUsername, a.ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
 		global.LogKeyUriPath, viper.GetString("login_page") + "/post",
-		global.LogKeyRedirectTo, redirectTo,
 	}
 
 	if len(auth.AdditionalLogs) > 0 && len(auth.AdditionalLogs)%2 == 0 {
@@ -1588,7 +1588,7 @@ func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authRes
 // - auth.getTOTPSecretOk(): method to get the TOTP secret for the authentication
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
-func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult global.AuthResult, post2FA bool) (err error) {
+func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult global.AuthResult, post2FA bool) (have2FA bool, err error) {
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
@@ -1599,13 +1599,15 @@ func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult global.Auth
 
 				err = session.Save()
 				if err != nil {
-					return
+					return false, err
 				}
+
+				return true, nil
 			}
 		}
 	}
 
-	return
+	return false, nil
 }
 
 // logFailedLoginAndRedirect logs a failed login attempt and redirects the user to a login page with an error message.
@@ -1624,7 +1626,6 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
-		global.LogKeyAuthChallenge, loginChallenge,
 		global.LogKeyUsername, a.ctx.PostForm("username"),
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
 		global.LogKeyUriPath, viper.GetString("login_page") + "/post",
@@ -1635,6 +1636,26 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 	}
 
 	level.Info(log.Logger).Log(logs...)
+}
+
+// runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
+func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.AuthResult) global.AuthResult {
+	passDBResult := &PassDBResult{
+		Authenticated: func() bool {
+			if authResult == global.AuthResultOK {
+				return true
+			}
+
+			return false
+		}(),
+		UserFound: auth.UserFound,
+	}
+
+	authResult = auth.filterLua(passDBResult, ctx)
+
+	auth.postLuaAction(passDBResult)
+
+	return authResult
 }
 
 // Page '/login/post'
@@ -1697,28 +1718,62 @@ func loginPOSTHandler(ctx *gin.Context) {
 		authResult = auth.handlePassword(ctx)
 	}
 
-	switch authResult {
-	case global.AuthResultOK:
-		err = apiConfig.processAuthOkLogin(auth, authResult, rememberPost2FA, recentSubject, post2FA)
-		if err != nil {
-			handleErr(ctx, err)
-		}
+	oldAuthResult := authResult
 
-		return
-	case global.AuthResultFail, global.AuthResultEmptyUsername, global.AuthResultEmptyPassword:
-		err = apiConfig.processAuthFailLogin(auth, authResult, post2FA)
-		if err != nil {
-			handleErr(ctx, err)
+	needLuaFilterAndPost := true
+	if post2FA {
+		authResult = runLuaFilterAndPost(ctx, auth, authResult)
+		oldAuthResult = authResult
+		needLuaFilterAndPost = false
+	}
+
+	for {
+		switch authResult {
+		case global.AuthResultOK:
+			authResult, err = apiConfig.processAuthOkLogin(ctx, auth, oldAuthResult, rememberPost2FA, recentSubject, post2FA, needLuaFilterAndPost)
+			if err != nil {
+				handleErr(ctx, err)
+			}
+
+			// If auth-results have changed, filters must have ran. Do not run them again...
+			if oldAuthResult != authResult {
+				oldAuthResult = authResult
+				needLuaFilterAndPost = false
+
+				continue
+			}
+
+			return
+		case global.AuthResultFail, global.AuthResultEmptyUsername, global.AuthResultEmptyPassword:
+			var have2FA bool
+
+			have2FA, err = apiConfig.processAuthFailLogin(auth, oldAuthResult, post2FA)
+			if err != nil {
+				handleErr(ctx, err)
+
+				return
+			}
+
+			if !have2FA && needLuaFilterAndPost {
+				authResult = runLuaFilterAndPost(ctx, auth, oldAuthResult)
+
+				if oldAuthResult != authResult {
+					oldAuthResult = authResult
+					needLuaFilterAndPost = false
+
+					continue
+				}
+			}
+
+			apiConfig.logFailedLoginAndRedirect(auth)
+
+			return
+		default:
+			handleErr(ctx, errors.ErrUnknownCause)
+			ctx.AbortWithStatus(http.StatusInternalServerError)
 
 			return
 		}
-
-		apiConfig.logFailedLoginAndRedirect(auth)
-	default:
-		handleErr(ctx, errors.ErrUnknownCause)
-		ctx.AbortWithStatus(http.StatusInternalServerError)
-
-		return
 	}
 }
 
@@ -1841,7 +1896,6 @@ func deviceGETHandler(ctx *gin.Context) {
 		global.LogKeySkip, false,
 		global.LogKeyClientID, *clientId,
 		global.LogKeyClientName, clientName,
-		global.LogKeyAuthChallenge, loginChallenge,
 		global.LogKeyUriPath, viper.GetString("device_page"),
 	)
 }
@@ -2159,7 +2213,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
 
-	a.logInfoRedirectWithConsent(acceptRequest.GetRedirectTo())
+	a.logInfoRedirectWithConsent()
 }
 
 // logInfoConsent logs information about the consent request.
@@ -2170,24 +2224,21 @@ func (a *ApiConfig) logInfoConsent() {
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, a.consentRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyUriPath, viper.GetString("consent_page"),
 	)
 }
 
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
-func (a *ApiConfig) logInfoRedirectWithConsent(redirectTo string) {
+func (a *ApiConfig) logInfoRedirectWithConsent() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeySkip, true,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, a.consentRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
 		global.LogKeyUriPath, viper.GetString("consent_page"),
-		global.LogKeyRedirectTo, redirectTo,
 	)
 }
 
@@ -2348,7 +2399,7 @@ func (a *ApiConfig) processConsentAccept() {
 
 	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
 
-	a.logInfoConsentAccept(acceptRequest.GetRedirectTo())
+	a.logInfoConsentAccept()
 }
 
 // processConsentReject processes the rejection of the OAuth2 consent request.
@@ -2396,40 +2447,33 @@ func (a *ApiConfig) processConsentReject() {
 	if redirectTo, isSet = rejectRequest.GetRedirectToOk(); isSet {
 		a.ctx.Redirect(http.StatusFound, *redirectTo)
 	} else {
-		redirectToValue := "unknown"
-		redirectTo = &redirectToValue
-
 		a.ctx.String(http.StatusForbidden, global.PasswordFail)
 	}
 
-	a.logInfoConsentReject(redirectTo)
+	a.logInfoConsentReject()
 }
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
-func (a *ApiConfig) logInfoConsentAccept(redirectTo string) {
+func (a *ApiConfig) logInfoConsentAccept() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, a.consentRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
 		global.LogKeyUriPath, viper.GetString("consent_page")+"/post",
-		global.LogKeyRedirectTo, redirectTo,
 	)
 }
 
 // logInfoConsentReject logs the information about a rejected consent request.
-func (a *ApiConfig) logInfoConsentReject(redirectTo *string) {
+func (a *ApiConfig) logInfoConsentReject() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyClientID, *a.clientId,
 		global.LogKeyClientName, a.clientName,
 		global.LogKeyAuthSubject, a.consentRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
 		global.LogKeyUriPath, viper.GetString("consent_page")+"/post",
-		global.LogKeyRedirectTo, *redirectTo,
 	)
 }
 
@@ -2522,7 +2566,6 @@ func (a *ApiConfig) logInfoLogout() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyUriPath, viper.GetString("logout_page"),
 	)
 }
@@ -2638,7 +2681,7 @@ func (a *ApiConfig) acceptLogout() {
 
 	a.ctx.Redirect(http.StatusFound, acceptRequest.GetRedirectTo())
 
-	a.logInfoLogoutAccept(acceptRequest.GetRedirectTo())
+	a.logInfoLogoutAccept()
 }
 
 // rejectLogout rejects the logout request by sending a request to the OAuth2API endpoint of the API client.
@@ -2658,34 +2701,29 @@ func (a *ApiConfig) rejectLogout() {
 	if redirectTo != "" {
 		a.ctx.Redirect(http.StatusFound, redirectTo)
 	} else {
-		redirectTo = "unknown"
 		a.ctx.AbortWithStatus(http.StatusOK)
 	}
 
-	a.logInfoLogoutReject(redirectTo)
+	a.logInfoLogoutReject()
 }
 
 // logInfoLogoutAccept logs information about the logout request acceptance.
-func (a *ApiConfig) logInfoLogoutAccept(redirectTo string) {
+func (a *ApiConfig) logInfoLogoutAccept() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthAccept,
 		global.LogKeyUriPath, viper.GetString("logout_page")+"/post",
-		global.LogKeyRedirectTo, redirectTo,
 	)
 }
 
 // logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
-func (a *ApiConfig) logInfoLogoutReject(redirectTo string) {
+func (a *ApiConfig) logInfoLogoutReject() {
 	level.Info(log.Logger).Log(
 		global.LogKeyGUID, a.guid,
 		global.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
-		global.LogKeyAuthChallenge, a.challenge,
 		global.LogKeyAuthStatus, global.LogKeyAuthReject,
 		global.LogKeyUriPath, viper.GetString("logout_page")+"/post",
-		global.LogKeyRedirectTo, redirectTo,
 	)
 }
 
@@ -2842,56 +2880,37 @@ func processCustomScopes(claimDict map[string]any, claims map[string]any, accept
 
 		for claimIndex := range customScope.Claims {
 			customClaim := customScope.Claims[claimIndex]
-			claims = processCustomClaim(claimDict, customClaim, claims)
+			claims = assignClaimValueByType(claimDict, customClaim.Name, customClaim.Type, claims)
 		}
 
 		break
 	}
 }
 
-// Extracted method for processing custom claim type
-func processCustomClaim(claimDict map[string]any, customClaim config.OIDCCustomClaim, claims map[string]any) map[string]any {
-	customClaimName := customClaim.Name
-	customClaimType := customClaim.Type
-	valueTypeMatch := false
-
-	valueTypeMatch, claims = assignClaimValueByType(claimDict, customClaimName, customClaimType, claims)
-
-	if !valueTypeMatch {
-		logUnknownClaimTypeError(customClaimName, customClaimType)
-	}
-
-	return claims
-}
-
 // Assigns claim type-specific value and returns updated claims' map
-func assignClaimValueByType(claimDict map[string]any, customClaimName string, customClaimType string, claims map[string]any) (bool, map[string]any) {
-	valueTypeMatch := false
-
+func assignClaimValueByType(claimDict map[string]any, customClaimName string, customClaimType string, claims map[string]any) map[string]any {
 	switch customClaimType {
 	case global.ClaimTypeString:
 		if value, found := claimDict[customClaimName].(string); found {
 			claims[customClaimName] = value
-			valueTypeMatch = true
 		}
 	case global.ClaimTypeFloat:
 		if value, found := claimDict[customClaimName].(float64); found {
 			claims[customClaimName] = value
-			valueTypeMatch = true
 		}
 	case global.ClaimTypeInteger:
 		if value, found := handleIntegerClaimType(claimDict, customClaimName); found {
 			claims[customClaimName] = value
-			valueTypeMatch = true
 		}
 	case global.ClaimTypeBoolean:
 		if value, found := claimDict[customClaimName].(bool); found {
 			claims[customClaimName] = value
-			valueTypeMatch = true
 		}
+	default:
+		logUnknownClaimTypeError(customClaimName, customClaimType)
 	}
 
-	return valueTypeMatch, claims
+	return claims
 }
 
 // Handling specific case for Integer claim type

@@ -118,14 +118,8 @@ const (
 	// LogKeyAuthReject indicates if the authentication was rejected.
 	LogKeyAuthReject = "reject"
 
-	// LogKeyAuthChallenge represents any challenges issued during an authentication process.
-	LogKeyAuthChallenge = "challenge"
-
 	// LogKeyAuthSubject represents the subject identifier in an authentication process.
 	LogKeyAuthSubject = "subject"
-
-	// LogKeyRedirectTo represents the target of a redirection operation.
-	LogKeyRedirectTo = "redirect_to"
 
 	// LogKeyMethod represents the HTTP method for request logging.
 	LogKeyMethod = "http_method"

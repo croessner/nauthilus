@@ -1411,9 +1411,14 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) global.AuthResult {
 	a.setOperationMode(ctx)
 
 	passDBResult := a.initializePassDBResult()
-	authResult := a.filterLua(passDBResult, ctx)
 
-	a.postLuaAction(passDBResult)
+	authResult := global.AuthResultOK
+
+	if !(a.Protocol.Get() == global.ProtoOryHydra) {
+		authResult = a.filterLua(passDBResult, ctx)
+
+		a.postLuaAction(passDBResult)
+	}
 
 	return authResult
 }
@@ -1607,9 +1612,13 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		}
 	}
 
-	authResult := a.filterLua(passDBResult, ctx)
+	authResult := global.AuthResultOK
 
-	a.postLuaAction(passDBResult)
+	if !(a.Protocol.Get() == global.ProtoOryHydra) {
+		authResult = a.filterLua(passDBResult, ctx)
+
+		a.postLuaAction(passDBResult)
+	}
 
 	return authResult
 }
@@ -2526,7 +2535,6 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 	for claimIndex := range customScope.Claims {
 		customClaimName := customScope.Claims[claimIndex].Name
 		customClaimType := customScope.Claims[claimIndex].Type
-		valueTypeMatch := false
 
 		for clientIndex := range config.LoadableConfig.Oauth2.Clients {
 			if config.LoadableConfig.Oauth2.Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
@@ -2548,52 +2556,43 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 						"value", fmt.Sprintf("%#v", value),
 					)
 
-					if customClaimType == global.ClaimTypeString {
+					switch customClaimType {
+					case global.ClaimTypeString:
 						if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							claims[customClaimName] = arg
-							valueTypeMatch = true
 						}
-					} else if customClaimType == global.ClaimTypeFloat {
+					case global.ClaimTypeFloat:
 						if arg, assertOk := value[global.SliceWithOneElement].(float64); assertOk {
 							claims[customClaimName] = arg
-							valueTypeMatch = true
 						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if number, err := strconv.ParseFloat(arg, 64); err == nil {
 								claims[customClaimName] = number
-								valueTypeMatch = true
 							}
 						}
-					} else if customClaimType == global.ClaimTypeInteger {
+					case global.ClaimTypeInteger:
 						if arg, assertOk := value[global.SliceWithOneElement].(int64); assertOk {
 							claims[customClaimName] = arg
-							valueTypeMatch = true
 						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if number, err := strconv.ParseInt(arg, 0, 64); err == nil {
 								claims[customClaimName] = number
-								valueTypeMatch = true
 							}
 						}
-					} else if customClaimType == global.ClaimTypeBoolean {
+					case global.ClaimTypeBoolean:
 						if arg, assertOk := value[global.SliceWithOneElement].(bool); assertOk {
 							claims[customClaimName] = arg
-							valueTypeMatch = true
 						} else if arg, assertOk := value[global.SliceWithOneElement].(string); assertOk {
 							if boolean, err := strconv.ParseBool(arg); err == nil {
 								claims[customClaimName] = boolean
-								valueTypeMatch = true
 							}
 						}
+					default:
+						level.Error(log.Logger).Log(
+							global.LogKeyGUID, a.GUID,
+							"custom_claim_name", customClaimName,
+							global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
+						)
 					}
 				}
-			}
-
-			if !valueTypeMatch {
-				level.Error(log.Logger).Log(
-					global.LogKeyGUID, a.GUID,
-					"custom_claim_name", customClaimName,
-					global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
-				)
-
 			}
 
 			break
