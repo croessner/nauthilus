@@ -52,7 +52,7 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 }
 
 // LoadStatsFromRedis loads the prometheus statistics at startup from a Redis server.
-func LoadStatsFromRedis() {
+func LoadStatsFromRedis(ctx context.Context) {
 	var (
 		redisValue float64
 		err        error
@@ -66,7 +66,7 @@ func LoadStatsFromRedis() {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
-		if redisValue, err = rediscli.ReadHandle.HGet(context.Background(), redisLoginsCounterKey, counterType).Float64(); err != nil {
+		if redisValue, err = rediscli.ReadHandle.HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
 				level.Info(log.Logger).Log(global.LogKeyMsg, "No statistics on Redis server")
 
@@ -83,7 +83,7 @@ func LoadStatsFromRedis() {
 }
 
 // SaveStatsToRedis saves the prometheus statistics to a Redis server.
-func SaveStatsToRedis() {
+func SaveStatsToRedis(ctx context.Context) {
 	var err error
 
 	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Save counter statistics to redis")
@@ -97,7 +97,7 @@ func SaveStatsToRedis() {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for index := range metrics {
-		if err = rediscli.WriteHandle.HSet(context.Background(), redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
+		if err = rediscli.WriteHandle.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
 			level.Error(log.Logger).Log(global.LogKeyError, err)
 
 			return

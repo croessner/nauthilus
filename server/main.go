@@ -296,7 +296,7 @@ func PreCompileInit() error {
 // - statsTicker : Time ticker for stats data. It's stopped on termination signal.
 // - actionWorkers : A slice of action.Worker pointers. All workers are stopped on termination signal and restarted on reload signal.
 func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
-	go handleTerminateSignal(cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
+	go handleTerminateSignal(ctx, cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
 	go handleUsr1Signal(ctx, store)
 	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
@@ -325,7 +325,7 @@ func closeChannels() {
 // It stops the statsTicker.
 // Signature:
 // func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, actionWorkers []*action.Worker) {
-func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
+func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -350,7 +350,7 @@ func handleTerminateSignal(cancel context.CancelFunc, statsTicker *time.Ticker, 
 	waitForActionWorkers(actionWorkers)
 
 	// Sync some Prometheus data to Redis
-	core.SaveStatsToRedis()
+	core.SaveStatsToRedis(ctx)
 
 	level.Debug(log.Logger).Log(global.LogKeyMsg, "Shutdown complete")
 
@@ -833,7 +833,7 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 		select {
 		case <-ticker.C:
 			stats.PrintStats()
-			core.SaveStatsToRedis()
+			core.SaveStatsToRedis(ctx)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -1206,7 +1206,7 @@ func main() {
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis(ctx)
 	runLuaaInitScript(ctx)
-	core.LoadStatsFromRedis()
+	core.LoadStatsFromRedis(ctx)
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)
 

@@ -100,7 +100,7 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 
 	// Registering a device
 	if user == nil {
-		if user, err = backend.GetWebAuthnFromRedis(uniqueUserID); err != nil {
+		if user, err = backend.GetWebAuthnFromRedis(ctx, uniqueUserID); err != nil {
 			return nil, err
 		} else {
 			stats.RedisReadCounter.Inc()
@@ -111,17 +111,13 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 }
 
 func putUser(ctx *gin.Context, user *backend.User) {
-	_ = ctx
-
-	if err := backend.SaveWebAuthnToRedis(user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
+	if err := backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
 		stats.RedisWriteCounter.Inc()
 	}
 }
 
 func updateUser(ctx *gin.Context, user *backend.User) {
-	_ = ctx
-
-	if err := backend.SaveWebAuthnToRedis(user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
+	if err := backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
 		stats.RedisWriteCounter.Inc()
 	}
 }

@@ -58,10 +58,10 @@ type RedisCache interface {
 }
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
-func LookupUserAccountFromRedis(username string) (accountName string, err error) {
+func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
-	accountName, err = rediscli.ReadHandle.HGet(context.Background(), key, username).Result()
+	accountName, err = rediscli.ReadHandle.HGet(ctx, key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return
@@ -78,10 +78,10 @@ func LookupUserAccountFromRedis(username string) (accountName string, err error)
 // If there is an error retrieving the value from Redis, it returns isRedisErr=true and err.
 // Otherwise, it unmarshals the value into the cache pointer and returns isRedisErr=false and err=nil.
 // It also logs any error messages using the Logger.
-func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, err error) {
+func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
 
-	if redisValue, err = rediscli.ReadHandle.Get(context.Background(), key).Bytes(); err != nil {
+	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
 		}
@@ -108,7 +108,7 @@ func LoadCacheFromRedis[T RedisCache](key string, cache **T) (isRedisErr bool, e
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache *T) error {
+func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key string, ttl uint, cache *T) error {
 	var result string
 
 	util.DebugModule(
@@ -128,7 +128,7 @@ func SaveUserDataToRedis[T RedisCache](guid string, key string, ttl uint, cache 
 	}
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyError, err,
@@ -202,12 +202,12 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 // It retrieves the Redis value based on the provided key and unmarshals it into a User object.
 // If there is an error during the process, it logs the error and returns nil with the error.
 // Otherwise, it returns the user object.
-func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
+func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
 	var redisValue []byte
 
 	key := "as_webauthn:user:" + uniqueUserId
 
-	if redisValue, err = rediscli.ReadHandle.Get(context.Background(), key).Bytes(); err != nil {
+	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
 		level.Error(log.Logger).Log(global.LogKeyError, err)
 
 		return nil, err
@@ -228,7 +228,7 @@ func GetWebAuthnFromRedis(uniqueUserId string) (user *User, err error) {
 // It serializes the user object using JSON and stores it in Redis under the key "as_webauthn:user:<user id>".
 // If serialization fails, it logs the error and returns it. If saving to Redis fails, it logs the error.
 // Note: User is a struct representing a user in the system.
-func SaveWebAuthnToRedis(user *User, ttl uint) error {
+func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 	var result string
 
 	redisValue, err := json.Marshal(user)
@@ -241,7 +241,7 @@ func SaveWebAuthnToRedis(user *User, ttl uint) error {
 	key := "as_webauthn:user:" + user.Id
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(context.Background(), key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(log.Logger).Log(global.LogKeyError, err)
 	}
 

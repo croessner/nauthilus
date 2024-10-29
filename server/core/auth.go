@@ -17,7 +17,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
@@ -1566,7 +1565,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 						}
 
 						go func() {
-							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
+							if err := backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
 								stats.RedisWriteCounter.Inc()
 							}
 						}()
@@ -1823,7 +1822,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
-	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
+	accountName, err = backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
 	if err != nil {
 		return
 	} else {
@@ -1847,7 +1846,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 		accountName = strings.Join(accounts, ":")
 
-		err = rediscli.WriteHandle.HSet(context.Background(), key, a.Username, accountName).Err()
+		err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
 		if err == nil {
 			stats.RedisWriteCounter.Inc()
 		}

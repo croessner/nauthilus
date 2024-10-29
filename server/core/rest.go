@@ -40,6 +40,9 @@ type FlushUserCmdStatus struct {
 	// User holds the identifier of a user.
 	User string `json:"user"`
 
+	// RemovedKeys contains a list of keys that have been removed during the user's command execution.
+	RemovedKeys []string `json:"removed_keys"`
+
 	// Status represents the status of the user's command.
 	Status string `json:"status"`
 }
@@ -195,7 +198,7 @@ func listBruteforce(ctx *gin.Context) {
 	list := &List{}
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	result, err := rediscli.ReadHandle.HGetAll(context.Background(), key).Result()
+	result, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -256,20 +259,19 @@ func flushCache(ctx *gin.Context) {
 	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
 
 	if err := ctx.BindJSON(userCmd); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
 	}
 
-	cacheFlushError, useCache := processFlushCache(userCmd, guid)
+	removedKeys, noUserAccoundFound, useCache := processFlushCache(ctx, userCmd, guid)
 
 	statusMsg := "flushed"
-	if cacheFlushError {
+	if noUserAccoundFound {
 		statusMsg = "not flushed"
 	}
 
-	sendCacheStatus(ctx, guid, userCmd, useCache, statusMsg)
+	sendCacheStatus(ctx, guid, userCmd, useCache, statusMsg, removedKeys)
 }
 
 // processFlushCache takes a user command and a GUID and processes the cache flush.
@@ -277,7 +279,7 @@ func flushCache(ctx *gin.Context) {
 // If it is, it sets useCache to true and calls processUserCmd to process the user command.
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
-func processFlushCache(userCmd *FlushUserCmd, guid string) (cacheFlushError bool, useCache bool) {
+func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool, useCache bool) {
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		if backendType.Get() != global.BackendCache {
 			continue
@@ -285,35 +287,58 @@ func processFlushCache(userCmd *FlushUserCmd, guid string) (cacheFlushError bool
 
 		useCache = true
 
-		cacheFlushError = processUserCmd(userCmd, guid)
-		if cacheFlushError {
+		removedKeys, noUserAccountFound = processUserCmd(ctx, userCmd, guid)
+		if noUserAccountFound {
 			break
 		}
 	}
 
-	return cacheFlushError, useCache
+	return
 }
 
 // processUserCmd processes the user command by performing the following steps:
-// 1. Calls the setupCacheFlush function to set up the cache flush and retrieve the account name, removeHash flag, and cacheFlushError flag.
+// 1. Calls the getUserAccountFromCache function to set up the cache flush and retrieve the account name, removeHash flag, and cacheFlushError flag.
 // 2. If cacheFlushError is true, returns true immediately.
-// 3. Calls the setUserKeys function to set the user keys using the user command and account name.
+// 3. Calls the prepareRedisUserKeys function to set the user keys using the user command and account name.
 // 4. Calls the removeUserFromCache function to remove the user from the cache by providing the user command, user keys, guid, and removeHash flag.
 // 5. Returns false.
-func processUserCmd(userCmd *FlushUserCmd, guid string) bool {
-	accountName, removeHash, cacheFlushError := setupCacheFlush(userCmd)
-	if cacheFlushError {
-		return true
+func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
+	var (
+		removeHash  bool
+		accountName string
+		ipAddresses []string
+		userKeys    config.StringSet
+	)
+
+	accountName = getUserAccountFromCache(ctx, userCmd)
+	ipAddresses, userKeys = prepareRedisUserKeys(ctx, userCmd, guid, accountName)
+	removedKeys = removeUserFromCache(ctx, userCmd, userKeys, guid, removeHash)
+
+	// Remove all buckets (bf) associated with the user
+	for _, ipAddress := range ipAddresses {
+		_, err := processBruteForceRules(ctx, &FlushRuleCmd{
+			IPAddress: ipAddress,
+			RuleName:  "*",
+		}, guid)
+
+		if err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		}
 	}
 
-	userKeys := setUserKeys(userCmd, accountName)
+	// Remove PW_HIST_SET from Redis
+	if err := rediscli.WriteHandle.Del(ctx, GetPWHistIPsRedisKey(accountName)).Err(); err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		} else {
+			stats.RedisWriteCounter.Inc()
+		}
+	}
 
-	removeUserFromCache(userCmd, userKeys, guid, removeHash)
-
-	return false
+	return removedKeys, noUserAccountFound
 }
 
-// setupCacheFlush handles the caching flush logic based on the provided user command.
+// getUserAccountFromCache handles the caching flush logic based on the provided user command.
 // It checks if the user command is a wildcard ("*"), in which case it returns "*", true, false.
 // If the user command is not a wildcard, it looks up the user account name using the backend.LookupUserAccountFromRedis function.
 // If there is an error during the lookup or the account name is empty, it returns "", false, true.
@@ -324,7 +349,7 @@ func processUserCmd(userCmd *FlushUserCmd, guid string) bool {
 //	userCmd := &FlushUserCmd{
 //		User: "john.doe",
 //	}
-//	accountName, removeHash, cacheFlushError := setupCacheFlush(userCmd)
+//	accountName, removeHash, cacheFlushError := getUserAccountFromCache(ctx, userCmd)
 //	if cacheFlushError {
 //		// WriteHandle cache flush error
 //	}
@@ -338,29 +363,45 @@ func processUserCmd(userCmd *FlushUserCmd, guid string) bool {
 //
 // Note: The `backend.LookupUserAccountFromRedis` function is defined as follows:
 //
-//	func LookupUserAccountFromRedis(username string) (accountName string, err error) {
+//	func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
 //		// ...
 //	}
-func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
-	if userCmd.User == "*" {
-		return "*", true, false
-	}
+func getUserAccountFromCache(ctx context.Context, userCmd *FlushUserCmd) (accountName string) {
+	var err error
 
-	accountName, err := backend.LookupUserAccountFromRedis(userCmd.User)
+	accountName, err = backend.LookupUserAccountFromRedis(ctx, userCmd.User)
 	if err != nil || accountName == "" {
 		if err == nil {
 			stats.RedisReadCounter.Inc()
 		}
 
-		return "", false, true
+		return userCmd.User
 	}
 
 	stats.RedisReadCounter.Inc()
 
-	return accountName, false, false
+	return accountName
 }
 
-// setUserKeys populates a string set with user keys based on the given FlushUserCmd and accountName.
+func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, error) {
+	var ips []string
+
+	key := GetPWHistIPsRedisKey(accountName)
+
+	if result, err := rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			return nil, err
+		}
+
+		return nil, nil
+	} else if result != nil {
+		ips = result
+	}
+
+	return ips, nil
+}
+
+// prepareRedisUserKeys populates a string set with user keys based on the given FlushUserCmd and accountName.
 // The function creates a new empty string set using the NewStringSet function from the config package.
 // It then sets two keys in the string set: one is a concatenation of the RedisPrefix constant from the config package,
 // "ucp:__default__:", and the accountName parameter. The other key is a concatenation of the RedisPrefix constant,
@@ -370,11 +411,22 @@ func setupCacheFlush(userCmd *FlushUserCmd) (string, bool, bool) {
 // passing the protocol and the global.CacheAll constant. For each cache name, it sets a key in the string set
 // by concatenating the RedisPrefix constant, "ucp:", the cache name, ":", and the accountName parameter.
 // Finally, the function returns the populated string set.
-func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
+func prepareRedisUserKeys(ctx context.Context, userCmd *FlushUserCmd, guid string, accountName string) ([]string, config.StringSet) {
+	ips, err := getIPsFromPWHistSet(ctx, accountName)
+	if err != nil {
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+	}
+
 	userKeys := config.NewStringSet()
 
 	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:__default__:" + accountName)
-	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + userCmd.User + ":*")
+
+	if ips != nil {
+		for _, ip := range ips {
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + userCmd.User + ":" + ip)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + ip)
+		}
+	}
 
 	protocols := config.LoadableConfig.GetAllProtocols()
 	for index := range protocols {
@@ -384,7 +436,7 @@ func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 		}
 	}
 
-	return userKeys
+	return ips, userKeys
 }
 
 // removeUserFromCache removes a user from the cache based on the given parameters.
@@ -393,36 +445,48 @@ func setUserKeys(userCmd *FlushUserCmd, accountName string) config.StringSet {
 // It also deletes other user keys stored in the userKeys string set.
 // If any error occurs during the removal process, it logs the error and immediately returns.
 // After successful removal, it logs the keys that have been flushed.
-func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) {
+func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
 	var err error
+
+	removedKeys := make([]string, 0)
 
 	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
 	if removeHash {
-		err = rediscli.WriteHandle.Del(context.Background(), redisKey).Err()
+		err = rediscli.WriteHandle.Del(ctx, redisKey).Err()
 	} else {
-		err = rediscli.WriteHandle.HDel(context.Background(), redisKey, userCmd.User).Err()
+		err = rediscli.WriteHandle.HDel(ctx, redisKey, userCmd.User).Err()
 	}
 
 	if err != nil {
 		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
-		return
+		return removedKeys
 	}
 
 	stats.RedisWriteCounter.Inc()
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		if err = rediscli.WriteHandle.Del(ctx, userKey).Err(); err != nil {
+			if !stderrors.Is(err, redis.Nil) {
+				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
-			return
+				return removedKeys
+			}
 		}
 
 		stats.RedisWriteCounter.Inc()
 
-		level.Info(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+		if err != nil {
+			level.Warn(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "not found")
+		} else {
+			removedKeys = append(removedKeys, userKey)
+
+			level.Info(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+		}
 	}
+
+	return removedKeys
 }
 
 // sendCacheStatus is a function that sends the cache status as a response to the client.
@@ -459,7 +523,7 @@ func removeUserFromCache(userCmd *FlushUserCmd, userKeys config.StringSet, guid 
 //
 //	   sendCacheStatus(ctx, guid, userCmd, useCache, statusMsg)
 //	}
-func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string) {
+func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string, removedKeys []string) {
 	if useCache {
 		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
 
@@ -468,8 +532,9 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCa
 			Object:    global.CatCache,
 			Operation: global.ServFlush,
 			Result: &FlushUserCmdStatus{
-				User:   userCmd.User,
-				Status: statusMsg,
+				User:        userCmd.User,
+				RemovedKeys: removedKeys,
+				Status:      statusMsg,
 			},
 		})
 	} else {
@@ -560,7 +625,6 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 	auth := &AuthState{
 		HTTPClientContext: ctx.Copy(),
-		Username:          "*",
 		ClientIP:          ipCmd.IPAddress,
 	}
 
@@ -572,7 +636,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 				return ruleFlushError, err
 			}
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = rediscli.WriteHandle.Del(context.Background(), key).Err(); err != nil {
+				if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
 					ruleFlushError = true
 
 					return ruleFlushError, err
