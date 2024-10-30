@@ -39,7 +39,7 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
 
 	for _, cacheName := range cacheNames.GetStringSlice() {
-		accountName, err = auth.getUserAccountFromRedis()
+		accountName, err = auth.updateUserAccountInRedis()
 		if err != nil {
 			return
 		}
