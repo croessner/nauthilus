@@ -40,6 +40,7 @@ import (
 	openapi "github.com/ory/hydra-client-go/v2"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -1640,6 +1641,13 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 
 // runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
 func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.AuthResult) global.AuthResult {
+	userFound, err := auth.userExists()
+	if err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+		}
+	}
+
 	passDBResult := &PassDBResult{
 		Authenticated: func() bool {
 			if authResult == global.AuthResultOK {
@@ -1648,7 +1656,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.Au
 
 			return false
 		}(),
-		UserFound: auth.UserFound,
+		UserFound: userFound,
 	}
 
 	authResult = auth.filterLua(passDBResult, ctx)
