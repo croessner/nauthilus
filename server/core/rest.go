@@ -77,6 +77,26 @@ type FlushRuleCmd struct {
 	RuleName string `json:"rule_name"`
 }
 
+// BlockedIPAddresses represents a structure to hold blocked IP addresses retrieved from Redis.
+// IPAddresses maps IP addresses to their corresponding rules/buckets.
+// Error holds any error encountered during the retrieval process.
+type BlockedIPAddresses struct {
+	// IPAddresses maps IP addresses to their respective buckets/rules that triggered blocking.
+	IPAddresses map[string]string `json:"ip_addresses"`
+
+	// Error holds any error encountered during the retrieval process.
+	Error *string `json:"error"`
+}
+
+// BlockedAccounts represents a list of blocked user accounts and potential error information.
+type BlockedAccounts struct {
+	// Accounts represents a list of user accounts.
+	Accounts []string `json:"accounts"`
+
+	// Error represents the error message, if any, encountered during the account retrieval process.
+	Error *string `json:"error"`
+}
+
 // generic handles the generic authentication logic based on the selected service type.
 func (a *AuthState) generic(ctx *gin.Context) {
 	var mode string
@@ -182,46 +202,82 @@ func healthCheck(ctx *gin.Context) {
 	ctx.String(http.StatusOK, "pong")
 }
 
-// listBruteforce handles the retrieval of brute force IP addresses and errors.
-// It fetches the previously stored IP addresses from a Redis hash, storing them in a List struct.
-// If there is an error during the retrieval, the error message is stored in the List struct as well.
-// The List struct is then returned as JSON in the response.
-func listBruteforce(ctx *gin.Context) {
-	//nolint:tagliatelle // We want lower camel case
-	type List struct {
-		IPAddresses map[string]string `json:"ip_addresses"`
-		Error       string            `json:"error"`
-	}
+// listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
+func listBlockedIPAddresses(ctx context.Context, guid string) (*BlockedIPAddresses, error) {
+	blockedIPAddresses := &BlockedIPAddresses{}
 
-	guid := ctx.GetString(global.CtxGUIDKey)
-	httpStatusCode := http.StatusOK
-	list := &List{}
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	result, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
+	resultList, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 
-			httpStatusCode = http.StatusInternalServerError
-			list.Error = err.Error()
+			errMsg := err.Error()
+			blockedIPAddresses.Error = &errMsg
+
+			return blockedIPAddresses, err
 		} else {
-			list.Error = "none"
+			blockedIPAddresses.Error = nil
 
 			stats.RedisReadCounter.Inc()
 		}
 	} else {
-		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
-
-		list.IPAddresses = result
-		list.Error = "none"
+		blockedIPAddresses.IPAddresses = resultList
+		blockedIPAddresses.Error = nil
 	}
+
+	return blockedIPAddresses, nil
+}
+
+// listBlockedAccounts retrieves a list of blocked user accounts from Redis and returns them along with any potential errors.
+func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, error) {
+	blockedAccounts := &BlockedAccounts{}
+
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+
+	resultAccounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
+	if err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+
+			errMsg := err.Error()
+			blockedAccounts.Error = &errMsg
+		} else {
+			blockedAccounts.Error = nil
+
+			stats.RedisReadCounter.Inc()
+		}
+	} else {
+		blockedAccounts.Accounts = resultAccounts
+		blockedAccounts.Error = nil
+	}
+
+	return blockedAccounts, nil
+}
+
+// listBruteforce lists all blocked IP addresses and accounts in response to a brute force attack event.
+func listBruteforce(ctx *gin.Context) {
+	guid := ctx.GetString(global.CtxGUIDKey)
+	httpStatusCode := http.StatusOK
+
+	blockedIPAddresses, err := listBlockedIPAddresses(ctx, guid)
+	if err != nil {
+		httpStatusCode = http.StatusInternalServerError
+	}
+
+	blockedAccounts, err := listBlockedAccounts(ctx, guid)
+	if err != nil {
+		httpStatusCode = http.StatusInternalServerError
+	}
+
+	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
 
 	ctx.JSON(httpStatusCode, &RESTResult{
 		GUID:      guid,
 		Object:    global.CatBruteForce,
 		Operation: global.ServList,
-		Result:    list,
+		Result:    []any{blockedIPAddresses, blockedAccounts},
 	})
 }
 

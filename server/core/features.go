@@ -230,7 +230,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 	return
 }
 
-// processRBL processes the given RBL (Real-time Blackhole List) by checking if the IP address is listed.
+// processRBL processes the given RBL (Real-time Blackhole BlockedIPAddresses) by checking if the IP address is listed.
 // It uses the isListed method to check if the IP address is listed in the RBL.
 // If an error occurs while checking the RBL, handleRBLError is called to handle the error.
 // If the IP address is listed in the RBL, it logs the matched RBL and returns the weight associated with the RBL.
