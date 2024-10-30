@@ -366,7 +366,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		userKeys    config.StringSet
 	)
 
-	if accountName = getUserAccountFromCache(ctx, userCmd); accountName == "" {
+	if accountName = getUserAccountFromCache(ctx, userCmd.User, guid); accountName == "" {
 		return nil, true
 	}
 
@@ -386,7 +386,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	}
 
 	// Remove PW_HIST_SET from Redis
-	if err := rediscli.WriteHandle.Del(ctx, GetPWHistIPsRedisKey(accountName)).Err(); err != nil {
+	if err := rediscli.WriteHandle.Del(ctx, getPWHistIPsRedisKey(accountName)).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		} else {
@@ -407,55 +407,10 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	return removedKeys, noUserAccountFound
 }
 
-// getUserAccountFromCache handles the caching flush logic based on the provided user command.
-// It checks if the user command is a wildcard ("*"), in which case it returns "*", true, false.
-// If the user command is not a wildcard, it looks up the user account name using the backend.LookupUserAccountFromRedis function.
-// If there is an error during the lookup or the account name is empty, it returns "", false, true.
-// Otherwise, it returns the account name, false, false.
-//
-// Example usage:
-//
-//	userCmd := &FlushUserCmd{
-//		User: "john.doe",
-//	}
-//	accountName, removeHash, cacheFlushError := getUserAccountFromCache(ctx, userCmd)
-//	if cacheFlushError {
-//		// WriteHandle cache flush error
-//	}
-//	// Continue with cache flushing logic
-//
-// Note: The `FlushUserCmd` type is defined as follows:
-//
-//	type FlushUserCmd struct {
-//		User string `json:"user"`
-//	}
-//
-// Note: The `backend.LookupUserAccountFromRedis` function is defined as follows:
-//
-//	func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-//		// ...
-//	}
-func getUserAccountFromCache(ctx context.Context, userCmd *FlushUserCmd) (accountName string) {
-	var err error
-
-	accountName, err = backend.LookupUserAccountFromRedis(ctx, userCmd.User)
-	if err != nil || accountName == "" {
-		if err == nil {
-			stats.RedisReadCounter.Inc()
-		}
-
-		return ""
-	}
-
-	stats.RedisReadCounter.Inc()
-
-	return accountName
-}
-
 func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, error) {
 	var ips []string
 
-	key := GetPWHistIPsRedisKey(accountName)
+	key := getPWHistIPsRedisKey(accountName)
 
 	if result, err := rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {

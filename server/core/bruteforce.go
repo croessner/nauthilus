@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"net"
@@ -220,12 +221,7 @@ func (a *AuthState) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) 
 // An additional feature of this function is to log the generated key along with some context information (GUID and Client IP)
 func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
-		accountName, err := backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
-
-		if err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-		}
-
+		accountName := getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 		if accountName == "" {
 			accountName = a.Username
 		}
@@ -535,7 +531,6 @@ func (a *AuthState) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 			} else {
 				stats.RedisWriteCounter.Inc()
 			}
-
 		}
 
 		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
@@ -627,20 +622,12 @@ func (a *AuthState) processPWHist() (accountName string) {
 		err            error
 	)
 
-	accountName, err = backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
-	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
-
-		return
-	} else {
-		stats.RedisReadCounter.Inc()
-	}
-
+	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName == "" {
 		return
 	}
 
-	key := GetPWHistIPsRedisKey(accountName)
+	key := getPWHistIPsRedisKey(accountName)
 
 	alreadyLearned, err = rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, a.ClientIP).Result()
 	if err != nil {
@@ -671,7 +658,8 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 // processBlockedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
 // It increments Redis read and write counters and logs errors encountered during the operations.
-func (a *AuthState) processBlockedAccount(accountName string) {
+func (a *AuthState) processBlockedAccount() {
+	accountName := getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName == "" {
 		return
 	}
@@ -695,8 +683,29 @@ func (a *AuthState) processBlockedAccount(accountName string) {
 	stats.RedisWriteCounter.Inc()
 }
 
-// GetPWHistIPsRedisKey generates the Redis key for storing password history associated with IPs for a specific account.
-func GetPWHistIPsRedisKey(accountName string) string {
+// getUserAccountFromCache fetches the user account name from Redis cache using the provided username.
+// Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
+func getUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
+	var err error
+
+	accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
+	if err != nil || accountName == "" {
+		if err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		} else {
+			stats.RedisReadCounter.Inc()
+		}
+
+		return ""
+	}
+
+	stats.RedisReadCounter.Inc()
+
+	return accountName
+}
+
+// getPWHistIPsRedisKey generates the Redis key for storing password history associated with IPs for a specific account.
+func getPWHistIPsRedisKey(accountName string) string {
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + accountName
 
 	return key
@@ -864,7 +873,7 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 
 		auth.BruteForceName = rule.Name
 
-		auth.processBlockedAccount(auth.processPWHist())
+		auth.processBlockedAccount()
 		auth.saveFailedPasswordCounterInRedis()
 		auth.getAllPasswordHistories()
 
