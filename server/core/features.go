@@ -371,15 +371,15 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromDNS, global.FeatureRBL)
-
-	defer stopTimer()
-
 	if a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
 		logAddMessage(a, global.Whitelisted, global.FeatureRBL)
 
 		return
 	}
+
+	stopTimer := stats.PrometheusTimer(global.PromDNS, global.FeatureRBL)
+
+	defer stopTimer()
 
 	totalRBLScore, err = a.checkRBLs(ctx)
 	if err != nil {
