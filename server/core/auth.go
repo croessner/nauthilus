@@ -1522,6 +1522,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 	if a.UserFound && !a.NoAuth {
 		accountName, err = a.updateUserAccountInRedis()
+		if !passDBResult.Authenticated {
+			a.processPWHist()
+		}
 	}
 
 	if useCache && !a.NoAuth {
@@ -1825,13 +1828,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
-	accountName, err = backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
-	if err != nil {
-		return
-	} else {
-		stats.RedisReadCounter.Inc()
-	}
-
+	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName != "" {
 		return
 	}
