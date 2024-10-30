@@ -455,7 +455,6 @@ const (
 	AuthResultFeatureLua
 )
 
-// Redis hash keys.
 const (
 	// RedisBruteForceHashKey represents the key used for brute force attempts in Redis.
 	RedisBruteForceHashKey = "BRUTEFORCE"
@@ -468,6 +467,12 @@ const (
 
 	// RedisPwHashKey represents the key used for password history in Redis.
 	RedisPwHashKey = "PW_HIST"
+
+	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
+	RedisPWHistIPsKey = "PW_HIST_IPS"
+
+	// RedisBlockedAccountsKey represents the key used to store blocked accounts in Redis.
+	RedisBlockedAccountsKey = "BLOCKED_ACCOUNTS"
 )
 
 // ImageCopyright represents the copyright statement for a logo.

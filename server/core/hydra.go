@@ -178,7 +178,7 @@ type LoginPageData struct {
 	// Name of the current language
 	LanguageCurrentName string
 
-	// List of other available languages
+	// BlockedIPAddresses of other available languages
 	LanguagePassive []Language
 }
 

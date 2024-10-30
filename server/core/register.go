@@ -16,7 +16,6 @@
 package core
 
 import (
-	"context"
 	stderrors "errors"
 	"fmt"
 	"net/http"
@@ -774,7 +773,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		userKeys := config.NewStringSet()
 		protocols := config.LoadableConfig.GetAllProtocols()
 
-		accountName, err = backend.LookupUserAccountFromRedis(username)
+		accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
 		if err != nil {
 			handleErr(ctx, err)
 
@@ -793,7 +792,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = rediscli.WriteHandle.Del(context.Background(), userKey).Result(); err != nil {
+			if _, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
 				if stderrors.Is(err, redis.Nil) {
 					stats.RedisWriteCounter.Inc()
 

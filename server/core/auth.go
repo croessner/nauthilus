@@ -17,7 +17,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
@@ -1496,6 +1495,8 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType global.Backe
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
 // Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
+	var accountName string
+
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
@@ -1519,6 +1520,10 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		return global.AuthResultTempFail
 	}
 
+	if a.UserFound && !a.NoAuth {
+		accountName, err = a.updateUserAccountInRedis()
+	}
+
 	if useCache && !a.NoAuth {
 		// Make sure the cache backend is in front of the used backend.
 		if passDBResult.Authenticated {
@@ -1538,9 +1543,6 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 				cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
 
 				for _, cacheName := range cacheNames.GetStringSlice() {
-					var accountName string
-
-					accountName, err = a.getUserAccountFromRedis()
 					if err != nil {
 						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
 
@@ -1566,7 +1568,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 						}
 
 						go func() {
-							if err := backend.SaveUserDataToRedis(*a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
+							if err := backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
 								stats.RedisWriteCounter.Inc()
 							}
 						}()
@@ -1812,9 +1814,9 @@ func (p PassDBResult) String() string {
 	return result[1:]
 }
 
-// getUserAccountFromRedis returns the user account value from the user Redis hash. If none was found, a new entry in
+// updateUserAccountInRedis returns the user account value from the user Redis hash. If none was found, a new entry in
 // the hash table is created.
-func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
+func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	var (
 		assertOk bool
 		accounts []string
@@ -1823,7 +1825,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
-	accountName, err = backend.LookupUserAccountFromRedis(a.Username)
+	accountName, err = backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
 	if err != nil {
 		return
 	} else {
@@ -1847,7 +1849,7 @@ func (a *AuthState) getUserAccountFromRedis() (accountName string, err error) {
 
 		accountName = strings.Join(accounts, ":")
 
-		err = rediscli.WriteHandle.HSet(context.Background(), key, a.Username, accountName).Err()
+		err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
 		if err == nil {
 			stats.RedisWriteCounter.Inc()
 		}
