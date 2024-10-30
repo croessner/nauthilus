@@ -653,6 +653,12 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 	stats.RedisWriteCounter.Inc()
 
+	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+	}
+
+	stats.RedisWriteCounter.Inc()
+
 	return
 }
 
