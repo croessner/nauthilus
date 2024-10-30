@@ -224,9 +224,19 @@ func (a *AuthState) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) 
 // An additional feature of this function is to log the generated key along with some context information (GUID and Client IP)
 func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
-		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", a.Username, a.ClientIP)
+		accountName, err := backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
+
+		if err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+		}
+
+		if accountName == "" {
+			accountName = a.Username
+		}
+
+		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, a.ClientIP)
 	} else {
-		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s", a.ClientIP)
+		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + a.ClientIP
 	}
 
 	util.DebugModule(
@@ -613,11 +623,11 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 	return nil
 }
 
-// storeIPinPWHistSet stores the client's IP address in the password history Redis set if it has not been stored already.
-func (a *AuthState) storeIPinPWHistSet() {
+// processPWHist stores the client's IP address in the password history Redis set if it has not been stored already.
+// Returns accountName from Redis, if available.
+func (a *AuthState) processPWHist() (accountName string) {
 	var (
 		alreadyLearned bool
-		accountName    string
 		err            error
 	)
 
@@ -630,10 +640,8 @@ func (a *AuthState) storeIPinPWHistSet() {
 		stats.RedisReadCounter.Inc()
 	}
 
-	// If a user account does not exist or has never logged in successfully before, we must fall back to the given
-	// username
 	if accountName == "" {
-		accountName = a.Username
+		return
 	}
 
 	key := GetPWHistIPsRedisKey(accountName)
@@ -657,6 +665,34 @@ func (a *AuthState) storeIPinPWHistSet() {
 	}
 
 	if err = rediscli.WriteHandle.SAdd(a.HTTPClientContext, key, a.ClientIP).Err(); err != nil {
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+	}
+
+	stats.RedisWriteCounter.Inc()
+
+	return
+}
+
+// processBlockedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
+// It increments Redis read and write counters and logs errors encountered during the operations.
+func (a *AuthState) processBlockedAccount(accountName string) {
+	if accountName == "" {
+		return
+	}
+
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+
+	if err := rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, accountName).Err(); err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+
+			return
+		}
+	}
+
+	stats.RedisReadCounter.Inc()
+
+	if err := rediscli.ReadHandle.SAdd(a.HTTPClientContext, key, accountName).Err(); err != nil {
 		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 	}
 
@@ -832,7 +868,7 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 
 		auth.BruteForceName = rule.Name
 
-		auth.storeIPinPWHistSet()
+		auth.processBlockedAccount(auth.processPWHist())
 		auth.saveFailedPasswordCounterInRedis()
 		auth.getAllPasswordHistories()
 

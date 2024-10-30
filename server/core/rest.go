@@ -310,8 +310,11 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		userKeys    config.StringSet
 	)
 
-	accountName = getUserAccountFromCache(ctx, userCmd)
-	ipAddresses, userKeys = prepareRedisUserKeys(ctx, userCmd, guid, accountName)
+	if accountName = getUserAccountFromCache(ctx, userCmd); accountName == "" {
+		return nil, true
+	}
+
+	ipAddresses, userKeys = prepareRedisUserKeys(ctx, guid, accountName)
 	removedKeys = removeUserFromCache(ctx, userCmd, userKeys, guid, removeHash)
 
 	// Remove all buckets (bf) associated with the user
@@ -328,6 +331,16 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	// Remove PW_HIST_SET from Redis
 	if err := rediscli.WriteHandle.Del(ctx, GetPWHistIPsRedisKey(accountName)).Err(); err != nil {
+		if !stderrors.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		} else {
+			stats.RedisWriteCounter.Inc()
+		}
+	}
+
+	// Remove account from BLOCKED_ACCOUNTS
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+	if err := rediscli.WriteHandle.SRem(ctx, key, accountName).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
 		} else {
@@ -375,7 +388,7 @@ func getUserAccountFromCache(ctx context.Context, userCmd *FlushUserCmd) (accoun
 			stats.RedisReadCounter.Inc()
 		}
 
-		return userCmd.User
+		return ""
 	}
 
 	stats.RedisReadCounter.Inc()
@@ -411,7 +424,7 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 // passing the protocol and the global.CacheAll constant. For each cache name, it sets a key in the string set
 // by concatenating the RedisPrefix constant, "ucp:", the cache name, ":", and the accountName parameter.
 // Finally, the function returns the populated string set.
-func prepareRedisUserKeys(ctx context.Context, userCmd *FlushUserCmd, guid string, accountName string) ([]string, config.StringSet) {
+func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
 	ips, err := getIPsFromPWHistSet(ctx, accountName)
 	if err != nil {
 		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -423,7 +436,7 @@ func prepareRedisUserKeys(ctx context.Context, userCmd *FlushUserCmd, guid strin
 
 	if ips != nil {
 		for _, ip := range ips {
-			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + userCmd.User + ":" + ip)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + accountName + ":" + ip)
 			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + ip)
 		}
 	}
