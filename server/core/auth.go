@@ -1522,7 +1522,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 	if a.UserFound && !a.NoAuth {
 		accountName, err = a.updateUserAccountInRedis()
-		a.processPWHist()
+		if !passDBResult.Authenticated {
+			a.processPWHist()
+		}
 	}
 
 	if useCache && !a.NoAuth {
