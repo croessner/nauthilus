@@ -103,15 +103,11 @@ func (a *AuthState) userExists() (bool, error) {
 	accountName, err := backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
 	if err != nil {
 		return false, err
-	} else {
-		stats.RedisReadCounter.Inc()
 	}
 
-	if accountName == "" {
-		return false, nil
-	}
+	stats.RedisReadCounter.Inc()
 
-	return true, nil
+	return accountName != "", nil
 }
 
 // checkEnforceBruteForceComputation checks the enforcement rules for brute force computation.
