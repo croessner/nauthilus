@@ -91,7 +91,7 @@ type BlockedIPAddresses struct {
 // BlockedAccounts represents a list of blocked user accounts and potential error information.
 type BlockedAccounts struct {
 	// Accounts represents a list of user accounts.
-	Accounts []string `json:"accounts"`
+	Accounts map[string][]string `json:"accounts"`
 
 	// Error represents the error message, if any, encountered during the account retrieval process.
 	Error *string `json:"error"`
@@ -232,11 +232,11 @@ func listBlockedIPAddresses(ctx context.Context, guid string) (*BlockedIPAddress
 
 // listBlockedAccounts retrieves a list of blocked user accounts from Redis and returns them along with any potential errors.
 func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, error) {
-	blockedAccounts := &BlockedAccounts{}
+	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
 
-	resultAccounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
+	accounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -249,7 +249,24 @@ func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, er
 			stats.RedisReadCounter.Inc()
 		}
 	} else {
-		blockedAccounts.Accounts = resultAccounts
+		for _, account := range accounts {
+			var accountIPs []string
+
+			key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + account
+			if accountIPs, err = rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
+				if !stderrors.Is(err, redis.Nil) {
+					level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+
+					errMsg := err.Error()
+					blockedAccounts.Error = &errMsg
+
+					break
+				}
+
+				stats.RedisReadCounter.Inc()
+			}
+			blockedAccounts.Accounts[account] = accountIPs
+		}
 		blockedAccounts.Error = nil
 	}
 
