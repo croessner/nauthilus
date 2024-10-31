@@ -589,12 +589,14 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 // It checks if the IP address is present in the hash map and matches the provided rule name or if the rule name is "*".
 // If there's a match, it retrieves the network associated with the rule, constructs the hash map key, and deletes the IP address from the hash map using Redis HDEL command.
 // If there's an error, it logs the error using the Logger.
-func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) error {
+func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (string, error) {
+	var removedKey string
+
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
 	result, err := a.getPreResultBruteForceRedis(rule)
 	if result == "" {
-		return err
+		return "", err
 	}
 
 	if result == ruleName || ruleName == "*" {
@@ -604,14 +606,16 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 			if err = rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Err(); err != nil {
 				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
 			} else {
+				removedKey = key
+
 				stats.RedisWriteCounter.Inc()
 			}
 		}
 
-		return err
+		return removedKey, err
 	}
 
-	return nil
+	return removedKey, nil
 }
 
 // processPWHist stores the client's IP address in the password history Redis set if it has not been stored already.
