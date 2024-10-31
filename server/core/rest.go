@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
@@ -99,6 +101,15 @@ type BlockedAccounts struct {
 
 	// Error represents the error message, if any, encountered during the account retrieval process.
 	Error *string `json:"error"`
+}
+
+// FilterCmd defines a struct for command filters with optional fields for Account and IP Address.
+type FilterCmd struct {
+	// Account represents the user account identifier used for filtering actions related to blocking.
+	Account string `json:"account,omitempty"`
+
+	// IPAddress represents an optional filter criterion for IP addresses in the FilterCmd struct.
+	IPAddress string `json:"ip_address,omitempty"`
 }
 
 // generic handles the generic authentication logic based on the selected service type.
@@ -207,7 +218,7 @@ func healthCheck(ctx *gin.Context) {
 }
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
-func listBlockedIPAddresses(ctx context.Context, guid string) (*BlockedIPAddresses, error) {
+func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedIPAddresses, error) {
 	blockedIPAddresses := &BlockedIPAddresses{}
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
@@ -227,6 +238,21 @@ func listBlockedIPAddresses(ctx context.Context, guid string) (*BlockedIPAddress
 			stats.RedisReadCounter.Inc()
 		}
 	} else {
+		if filterCmd != nil && filterCmd.IPAddress != "" {
+			filteredIP := make(map[string]string)
+
+			for network, bucket := range resultList {
+				if util.IsInNetwork([]string{network}, guid, filterCmd.IPAddress) {
+					filteredIP[network] = bucket
+
+					break
+				}
+			}
+
+			resultList = filteredIP
+
+		}
+
 		blockedIPAddresses.IPAddresses = resultList
 		blockedIPAddresses.Error = nil
 	}
@@ -235,7 +261,7 @@ func listBlockedIPAddresses(ctx context.Context, guid string) (*BlockedIPAddress
 }
 
 // listBlockedAccounts retrieves a list of blocked user accounts from Redis and returns them along with any potential errors.
-func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, error) {
+func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedAccounts, error) {
 	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
@@ -248,11 +274,35 @@ func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, er
 			errMsg := err.Error()
 			blockedAccounts.Error = &errMsg
 		} else {
+			err = nil
 			blockedAccounts.Error = nil
 
 			stats.RedisReadCounter.Inc()
 		}
+
+		return blockedAccounts, err
 	} else {
+		if filterCmd != nil && filterCmd.Account != "" {
+			var account string
+
+			for _, account = range accounts {
+				if account == filterCmd.Account {
+					break
+				} else {
+					account = ""
+				}
+			}
+
+			if account != "" {
+				accounts = []string{account}
+			} else {
+				errMsg := fmt.Sprintf("Account %s not found", filterCmd.Account)
+				blockedAccounts.Error = &errMsg
+
+				return blockedAccounts, nil
+			}
+		}
+
 		for _, account := range accounts {
 			var accountIPs []string
 
@@ -265,29 +315,43 @@ func listBlockedAccounts(ctx context.Context, guid string) (*BlockedAccounts, er
 					blockedAccounts.Error = &errMsg
 
 					break
+				} else {
+					err = nil
 				}
 
 				stats.RedisReadCounter.Inc()
+
+				continue
 			}
+
 			blockedAccounts.Accounts[account] = accountIPs
 		}
+
 		blockedAccounts.Error = nil
 	}
 
-	return blockedAccounts, nil
+	return blockedAccounts, err
 }
 
 // listBruteforce lists all blocked IP addresses and accounts in response to a brute force attack event.
 func listBruteforce(ctx *gin.Context) {
+	var filterCmd *FilterCmd
+
 	guid := ctx.GetString(global.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 
-	blockedIPAddresses, err := listBlockedIPAddresses(ctx, guid)
+	if ctx.Request.Method == http.MethodPost {
+		filterCmd = &FilterCmd{}
+
+		ctx.BindJSON(filterCmd)
+	}
+
+	blockedIPAddresses, err := listBlockedIPAddresses(ctx, filterCmd, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
 
-	blockedAccounts, err := listBlockedAccounts(ctx, guid)
+	blockedAccounts, err := listBlockedAccounts(ctx, filterCmd, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
