@@ -18,7 +18,6 @@ package core
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"net/http"
 	"sort"
 
@@ -103,13 +102,13 @@ type BlockedAccounts struct {
 	Error *string `json:"error"`
 }
 
-// FilterCmd defines a struct for command filters with optional fields for Account and IP Address.
+// FilterCmd defines a struct for command filters with optional fields for Accounts and IP Address.
 type FilterCmd struct {
-	// Account represents the user account identifier used for filtering actions related to blocking.
-	Account string `json:"account,omitempty"`
+	// Accounts represents an optional filter criterion for user accounts in the FilterCmd struct.
+	Accounts []string `json:"accounts,omitempty"`
 
 	// IPAddress represents an optional filter criterion for IP addresses in the FilterCmd struct.
-	IPAddress string `json:"ip_address,omitempty"`
+	IPAddress []string `json:"ip_addresses,omitempty"`
 }
 
 // generic handles the generic authentication logic based on the selected service type.
@@ -238,19 +237,24 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 			stats.RedisReadCounter.Inc()
 		}
 	} else {
-		if filterCmd != nil && filterCmd.IPAddress != "" {
+		if filterCmd != nil {
 			filteredIP := make(map[string]string)
 
-			for network, bucket := range resultList {
-				if util.IsInNetwork([]string{network}, guid, filterCmd.IPAddress) {
-					filteredIP[network] = bucket
-
-					break
-				}
+			if len(filterCmd.IPAddress) == 0 {
+				resultList = make(map[string]string)
 			}
 
-			resultList = filteredIP
+			for _, filterIPWanted := range filterCmd.IPAddress {
+				for network, bucket := range resultList {
+					if util.IsInNetwork([]string{network}, guid, filterIPWanted) {
+						filteredIP[network] = bucket
 
+						break
+					}
+				}
+
+				resultList = filteredIP
+			}
 		}
 
 		blockedIPAddresses.IPAddresses = resultList
@@ -282,25 +286,27 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 		return blockedAccounts, err
 	} else {
-		if filterCmd != nil && filterCmd.Account != "" {
-			var account string
+		if filterCmd != nil {
+			var (
+				account        string
+				filterAccounts []string
+			)
 
-			for _, account = range accounts {
-				if account == filterCmd.Account {
-					break
-				} else {
-					account = ""
+			for _, accountWanted := range filterCmd.Accounts {
+				for _, account = range accounts {
+					if account == accountWanted {
+						break
+					} else {
+						account = ""
+					}
+				}
+
+				if account != "" {
+					filterAccounts = append(filterAccounts, account)
 				}
 			}
 
-			if account != "" {
-				accounts = []string{account}
-			} else {
-				errMsg := fmt.Sprintf("Account %s not found", filterCmd.Account)
-				blockedAccounts.Error = &errMsg
-
-				return blockedAccounts, nil
-			}
+			accounts = filterAccounts
 		}
 
 		for _, account := range accounts {
