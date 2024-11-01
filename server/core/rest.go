@@ -222,7 +222,7 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
-	resultList, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
+	ipAddresses, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
@@ -238,26 +238,26 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 		}
 	} else {
 		if filterCmd != nil {
-			filteredIP := make(map[string]string)
+			filteredIPs := make(map[string]string)
 
 			if len(filterCmd.IPAddress) == 0 {
-				resultList = make(map[string]string)
+				ipAddresses = make(map[string]string)
 			}
 
 			for _, filterIPWanted := range filterCmd.IPAddress {
-				for network, bucket := range resultList {
+				for network, bucket := range ipAddresses {
 					if util.IsInNetwork([]string{network}, guid, filterIPWanted) {
-						filteredIP[network] = bucket
+						filteredIPs[network] = bucket
 
 						break
 					}
 				}
 
-				resultList = filteredIP
+				ipAddresses = filteredIPs
 			}
 		}
 
-		blockedIPAddresses.IPAddresses = resultList
+		blockedIPAddresses.IPAddresses = ipAddresses
 		blockedIPAddresses.Error = nil
 	}
 
@@ -288,8 +288,8 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 	} else {
 		if filterCmd != nil {
 			var (
-				account        string
-				filterAccounts []string
+				account          string
+				filteredAccounts []string
 			)
 
 			for _, accountWanted := range filterCmd.Accounts {
@@ -302,11 +302,11 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 				}
 
 				if account != "" {
-					filterAccounts = append(filterAccounts, account)
+					filteredAccounts = append(filteredAccounts, account)
 				}
 			}
 
-			accounts = filterAccounts
+			accounts = filteredAccounts
 		}
 
 		for _, account := range accounts {
