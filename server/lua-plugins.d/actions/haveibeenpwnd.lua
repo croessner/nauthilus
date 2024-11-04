@@ -66,7 +66,7 @@ function nauthilus_call_action(request)
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
 
-        local redis_hash_count, err_redis_hget = nauthilus_redis.redis_hget(redis_key, hash:sub(1, 5), "number")
+        local redis_hash_count, err_redis_hget = nauthilus_redis.redis_hget("default", redis_key, hash:sub(1, 5), "number")
         nauthilus_util.if_error_raise(err_redis_hget)
 
         if redis_hash_count then
@@ -103,17 +103,17 @@ function nauthilus_call_action(request)
         for line in result.body:gmatch("([^\n]*)\n?") do
             local cmp_hash = strings.split(line, ":")
             if #cmp_hash == 2 and string.lower(cmp_hash[1]) == hash then
-                local _, err_redis_hset = nauthilus_redis.redis_hset(redis_key, hash:sub(1, 5), cmp_hash[2])
+                local _, err_redis_hset = nauthilus_redis.redis_hset("default", redis_key, hash:sub(1, 5), cmp_hash[2])
                 nauthilus_util.if_error_raise(err_redis_hset)
 
-                local _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 3600)
+                local _, err_redis_expire = nauthilus_redis.redis_expire("default", redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
 
                 -- Required by telegram.lua
                 nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
                 nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
-                local script_result, err_run_script = nauthilus_redis.redis_run_script("", "nauthilus_send_mail_hash", { redis_key }, {})
+                local script_result, err_run_script = nauthilus_redis.redis_run_script("default", "", "nauthilus_send_mail_hash", { redis_key }, {})
                 nauthilus_util.if_error_raise(err_run_script)
 
                 if script_result[1] == "send_mail" then
@@ -154,7 +154,7 @@ function nauthilus_call_action(request)
                     })
                     nauthilus_util.if_error_raise(err_smtp)
 
-                    _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 86400)
+                    _, err_redis_expire = nauthilus_redis.redis_expire("default", redis_key, 86400)
                     nauthilus_util.if_error_raise(err_redis_expire)
 
                     -- Get result table
@@ -173,10 +173,10 @@ function nauthilus_call_action(request)
             end
         end
 
-        local _, err_redis_hset = nauthilus_redis.redis_hset(redis_key, hash:sub(1, 5), 0)
+        local _, err_redis_hset = nauthilus_redis.redis_hset("default", redis_key, hash:sub(1, 5), 0)
         nauthilus_util.if_error_raise(err_redis_hset)
 
-        local _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 86400)
+        local _, err_redis_expire = nauthilus_redis.redis_expire("default", redis_key, 86400)
         nauthilus_util.if_error_raise(err_redis_expire)
     end
 

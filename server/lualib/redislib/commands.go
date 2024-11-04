@@ -23,7 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
-	lua "github.com/yuin/gopher-lua"
+	"github.com/yuin/gopher-lua"
 )
 
 var ctx = context.TODO()
@@ -33,14 +33,15 @@ var ctx = context.TODO()
 // The function expects one argument: the key to retrieve.
 // Example usage: val = redis_get_str("mykey")
 func RedisGet(L *lua.LState) int {
-	key := L.CheckString(1)
+	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+	key := L.CheckString(2)
 	valueType := global.TypeString
 
-	if L.GetTop() == 2 {
-		valueType = L.CheckString(2)
+	if L.GetTop() == 3 {
+		valueType = L.CheckString(3)
 	}
 
-	err := convert.StringCmd(rediscli.ReadHandle.Get(ctx, key), valueType, L)
+	err := convert.StringCmd(client.Get(ctx, key), valueType, L)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -59,9 +60,10 @@ func RedisGet(L *lua.LState) int {
 // The function expects two arguments: the key and the value to set.
 func RedisSet(L *lua.LState) int {
 	expiration := time.Duration(0)
-	key := L.CheckString(1)
+	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+	key := L.CheckString(2)
 
-	value, err := convert.LuaValue(L.Get(2))
+	value, err := convert.LuaValue(L.Get(3))
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -69,11 +71,11 @@ func RedisSet(L *lua.LState) int {
 		return 2
 	}
 
-	if L.GetTop() == 3 {
-		expiration = time.Duration(L.CheckInt(3))
+	if L.GetTop() == 4 {
+		expiration = time.Duration(L.CheckInt(4))
 	}
 
-	cmd := rediscli.WriteHandle.Set(ctx, key, value, expiration*time.Second)
+	cmd := client.Set(ctx, key, value, expiration*time.Second)
 	if cmd.Err() != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(cmd.Err().Error()))
@@ -93,9 +95,10 @@ func RedisSet(L *lua.LState) int {
 // The function expects one argument: the key to increment.
 // Example usage: val = redis_incr("counter")
 func RedisIncr(L *lua.LState) int {
-	key := L.CheckString(1)
+	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+	key := L.CheckString(2)
 
-	cmd := rediscli.WriteHandle.Incr(ctx, key)
+	cmd := client.Incr(ctx, key)
 	if cmd.Err() != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(cmd.Err().Error()))
@@ -114,9 +117,10 @@ func RedisIncr(L *lua.LState) int {
 // If an error occurs, it returns nil and the error message as a Lua string.
 // The function expects one argument: the key to delete.
 func RedisDel(L *lua.LState) int {
-	key := L.CheckString(1)
+	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+	key := L.CheckString(2)
 
-	cmd := rediscli.WriteHandle.Del(ctx, key)
+	cmd := client.Del(ctx, key)
 	if cmd.Err() != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(cmd.Err().Error()))
@@ -136,10 +140,11 @@ func RedisDel(L *lua.LState) int {
 // If an error occurs, it returns nil and the error message as a Lua string.
 // Example usage: result = redis_expire("mykey", 60)
 func RedisExpire(L *lua.LState) int {
-	key := L.CheckString(1)
-	expiration := L.CheckNumber(2)
+	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+	key := L.CheckString(2)
+	expiration := L.CheckNumber(3)
 
-	cmd := rediscli.WriteHandle.Expire(ctx, key, time.Duration(expiration)*time.Second)
+	cmd := client.Expire(ctx, key, time.Duration(expiration)*time.Second)
 	if cmd.Err() != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(cmd.Err().Error()))
@@ -158,10 +163,11 @@ func RedisExpire(L *lua.LState) int {
 // If the rename operation is successful, it returns "OK" as a Lua string.
 // If an error occurs, it returns nil and the error message as a Lua string.
 func RedisRename(L *lua.LState) int {
-	oldKey := L.CheckString(1)
-	newKey := L.CheckString(2)
+	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+	oldKey := L.CheckString(2)
+	newKey := L.CheckString(3)
 
-	cmd := rediscli.WriteHandle.Rename(ctx, oldKey, newKey)
+	cmd := client.Rename(ctx, oldKey, newKey)
 	if cmd.Err() != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(cmd.Err().Error()))

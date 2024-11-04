@@ -93,7 +93,7 @@ func TestRedisHGet(t *testing.T) {
 			L.SetGlobal("field", lua.LString(tt.field))
 			L.SetGlobal("valueType", lua.LString(tt.valueType))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hget(key, field, valueType)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hget("default", key, field, valueType)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -180,7 +180,7 @@ func TestRedisHSet(t *testing.T) {
 				kvPairsStr += fmt.Sprintf(", %s, %s", field, value)
 			}
 
-			luaScript := fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hset(key%s)`, kvPairsStr)
+			luaScript := fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hset("default", key%s)`, kvPairsStr)
 
 			err := L.DoString(luaScript)
 			if err != nil {
@@ -263,7 +263,7 @@ func TestRedisHDel(t *testing.T) {
 				L.SetGlobal(fmt.Sprintf("field%d", index+1), lua.LString(field))
 			}
 
-			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hdel(key, %s)`, strings.Join(tt.fields, ", ")))
+			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hdel("default", key, %s)`, strings.Join(tt.fields, ", ")))
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -338,7 +338,7 @@ func TestRedisHLen(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hlen(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hlen("default", key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -419,7 +419,7 @@ func TestRedisHGetAll(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hgetall(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hgetall("default", key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -521,7 +521,7 @@ func TestRedisHIncrBy(t *testing.T) {
 			L.SetGlobal("field", lua.LString(tt.field))
 			L.SetGlobal("increment", lua.LNumber(tt.increment))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hincrby(key, field, increment)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hincrby("default", key, field, increment)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -614,7 +614,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 			L.SetGlobal("field", lua.LString(tt.field))
 			L.SetGlobal("increment", lua.LNumber(tt.increment))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hincrbyfloat(key, field, increment)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hincrbyfloat("default", key, field, increment)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -702,7 +702,7 @@ func TestRedisHExists(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("field", lua.LString(tt.field))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hexists(key, field)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hexists("default", key, field)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}

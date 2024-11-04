@@ -76,7 +76,7 @@ func TestRedisGet(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("valueType", lua.LString(tt.valueType))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_get(key, valueType)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_get("default", key, valueType)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -160,7 +160,7 @@ func TestRedisSet(t *testing.T) {
 			L.SetGlobal("value", tt.value)
 			L.SetGlobal("expiration", lua.LNumber(tt.expiration))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_set(key, value, expiration)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_set("default", key, value, expiration)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -239,7 +239,7 @@ func TestRedisExpire(t *testing.T) {
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("expiration", tt.expiration)
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_expire(key, expiration)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_expire("default", key, expiration)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -313,7 +313,7 @@ func TestRedisIncr(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_incr(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_incr("default", key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -387,7 +387,7 @@ func TestRedisDel(t *testing.T) {
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_del(key)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_del("default", key)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}
@@ -466,7 +466,7 @@ func TestRedisRename(t *testing.T) {
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
 			L.SetGlobal("newKey", lua.LString(tt.newKey))
 
-			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_rename(oldKey, newKey)`)
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_rename("default", oldKey, newKey)`)
 			if err != nil {
 				t.Fatalf("Running Lua code failed: %v", err)
 			}

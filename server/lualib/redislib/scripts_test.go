@@ -58,6 +58,9 @@ func TestRedisRunScript(t *testing.T) {
 
 			defer L.Close()
 
+			// Use default redis settings
+			L.Push(lua.LString("default"))
+
 			// Set up script
 			L.Push(lua.LString(tc.script))
 
@@ -144,6 +147,9 @@ func TestRedisUploadScript(t *testing.T) {
 			L := lua.NewState()
 
 			defer L.Close()
+
+			// Use redis default settings
+			L.Push(lua.LString("default"))
 
 			// Set up script
 			L.Push(lua.LString(tc.script))

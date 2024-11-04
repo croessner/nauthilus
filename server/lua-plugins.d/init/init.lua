@@ -46,7 +46,7 @@ function nauthilus_run_hook(logging)
     ]]
 
     local upload_script_name = "nauthilus_send_mail_hash"
-    local sha1, err_upload = nauthilus_redis.redis_upload_script(script, upload_script_name)
+    local sha1, err_upload = nauthilus_redis.redis_upload_script("default", script, upload_script_name)
 
     nauthilus_util.if_error_raise(err_upload)
 
