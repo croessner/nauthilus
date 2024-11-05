@@ -32,6 +32,25 @@ function nauthilus_run_hook(logging)
     result.level = "info"
     result.caller = N .. ".lua"
 
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        local _, err_redis_reg = nauthilus_redis.register_redis_pool(custom_pool_name, "standalone", {
+            address = "localhost:6379",
+            password = "",
+            db = 3,
+            pool_size = 10,
+            min_idle_conns = 1,
+            tls_enabled = false
+        })
+        nauthilus_util.if_error_raise(err_redis_reg)
+
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
+
     local script = [[
         local redis_key = KEYS[1]
         local send_mail = redis.call('HGET', redis_key, 'send_mail')
@@ -46,7 +65,7 @@ function nauthilus_run_hook(logging)
     ]]
 
     local upload_script_name = "nauthilus_send_mail_hash"
-    local sha1, err_upload = nauthilus_redis.redis_upload_script(script, upload_script_name)
+    local sha1, err_upload = nauthilus_redis.redis_upload_script(custom_pool, script, upload_script_name)
 
     nauthilus_util.if_error_raise(err_upload)
 

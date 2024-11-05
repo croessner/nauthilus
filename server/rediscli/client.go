@@ -25,23 +25,29 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// redisTLSOptions checks if Redis TLS is enabled in the configuration.
+// RedisTLSOptions checks if Redis TLS is enabled in the configuration.
 // If TLS is enabled, it loads the X509 key pair and creates a tls.Config object.
 // The loaded certificate is added to the tls.Config object.
 // If an error occurs while loading the key pair, it logs the error and returns nil.
 // If Redis TLS is disabled, it returns nil.
-func redisTLSOptions(tlsCfg *config.TLS) *tls.Config {
-	if config.LoadableConfig.Server.Redis.TLS.Enabled {
-		cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
-		if err != nil {
-			level.Error(log.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
+func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
+	if tlsCfg != nil && tlsCfg.Enabled {
+		var certs []tls.Certificate
 
-			return nil
+		if tlsCfg.Cert != "" && tlsCfg.Key != "" {
+			cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
+			if err != nil {
+				level.Error(log.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyError, err)
+
+				return nil
+			}
+
+			certs = append(certs, cert)
 		}
 
 		// Create a tls.Config object to use
 		tlsConfig := &tls.Config{
-			Certificates: []tls.Certificate{cert},
+			Certificates: certs,
 		}
 
 		return tlsConfig
@@ -75,7 +81,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		Password:         redisCfg.Master.Password,
 		PoolSize:         redisCfg.PoolSize,
 		MinIdleConns:     redisCfg.IdlePoolSize,
-		TLSConfig:        redisTLSOptions(&redisCfg.TLS),
+		TLSConfig:        RedisTLSOptions(&redisCfg.TLS),
 	})
 
 	return
@@ -93,13 +99,13 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		DB:           redisCfg.DatabaseNmuber,
 		PoolSize:     redisCfg.PoolSize,
 		MinIdleConns: redisCfg.IdlePoolSize,
-		TLSConfig:    redisTLSOptions(&redisCfg.TLS),
+		TLSConfig:    RedisTLSOptions(&redisCfg.TLS),
 	})
 }
 
 // newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
 // The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
-// It also includes the TLS configuration obtained from the redisTLSOptions function.
+// It also includes the TLS configuration obtained from the RedisTLSOptions function.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
 func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 	return redis.NewClusterClient(&redis.ClusterOptions{
@@ -108,7 +114,7 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		Password:     redisCfg.Cluster.Password,
 		PoolSize:     redisCfg.PoolSize,
 		MinIdleConns: redisCfg.IdlePoolSize,
-		TLSConfig:    redisTLSOptions(&redisCfg.TLS),
+		TLSConfig:    RedisTLSOptions(&redisCfg.TLS),
 	})
 }
 

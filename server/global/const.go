@@ -1140,6 +1140,15 @@ const (
 	// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
 	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
+	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
+	LuaFnRedisRegisterRedisPool = "register_redis_pool"
+
+	// LuaFnRedisGetRedisConnection defines the name of the function to retrieve a Redis connection.
+	LuaFnRedisGetRedisConnection = "get_redis_connection"
+
+	// LuaFnRedisPing is a constant representing the Redis ping function.
+	LuaFnRedisPing = "redis_ping"
+
 	// LuaFnRedisGet represents the function name for "redis_get_str" in Lua
 	LuaFnRedisGet = "redis_get"
 

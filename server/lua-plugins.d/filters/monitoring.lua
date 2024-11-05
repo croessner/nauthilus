@@ -67,15 +67,24 @@ function nauthilus_call_filter(request)
     dynamic_loader("nauthilus_redis")
     local nauthilus_redis = require("nauthilus_redis")
 
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
+
     local function set_initial_expiry(redis_key)
-        local length, err_redis_hlen = nauthilus_redis.redis_hlen(redis_key)
+        local length, err_redis_hlen = nauthilus_redis.redis_hlen(custom_pool, redis_key)
         if err_redis_hlen then
             if err_redis_hlen ~= "redis: nil" then
                 nauthilus_builtin.custom_log_add(N .. "_redis_hlen_error", err_redis_hlen)
             end
         else
             if length == 1 then
-                local _, err_redis_expire = nauthilus_redis.redis_expire(redis_key, 3600)
+                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
             end
         end
@@ -91,7 +100,7 @@ function nauthilus_call_filter(request)
 
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
-        local _, err_redis_hset = nauthilus_redis.redis_hset(redis_key, session, server)
+        local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, redis_key, session, server)
         if err_redis_hset then
             nauthilus_builtin.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
 
@@ -105,7 +114,7 @@ function nauthilus_call_filter(request)
     local function get_server_from_sessions(session)
         local redis_key = "ntc:DS:" .. crypto.md5(request.account)
 
-        local server_from_session, err_redis_hget = nauthilus_redis.redis_hget(redis_key, session)
+        local server_from_session, err_redis_hget = nauthilus_redis.redis_hget(custom_pool, redis_key, session)
         if err_redis_hget then
             if err_redis_hget ~= "redis: nil" then
                 nauthilus_builtin.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
@@ -118,7 +127,7 @@ function nauthilus_call_filter(request)
             return server_from_session
         end
 
-        local all_sessions, err_redis_hgetall = nauthilus_redis.redis_hgetall(redis_key)
+        local all_sessions, err_redis_hgetall = nauthilus_redis.redis_hgetall(custom_pool, redis_key)
         if err_redis_hgetall then
             if err_redis_hgetall ~= "redis: nil" then
                 nauthilus_builtin.custom_log_add(N .. "_redis_hgetall_error", err_redis_hget)

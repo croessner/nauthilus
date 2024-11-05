@@ -28,6 +28,8 @@ import (
 // If an error occurs during the execution of a Go function, it pushes a nil value and an error message to the Lua stack
 // and returns 2. Otherwise, it pushes the result(s) to the Lua stack and returns the number of values pushed (1).
 // The Lua function names and their corresponding Go functions are listed below:
+// - "register_redis_pool": RegisterRedisPool
+// - "get_redis_connection": GetRedisConnection
 // - "redis_get": RedisGet
 // - "redis_set": RedisSet
 // - "redis_incr": RedisIncr
@@ -48,27 +50,30 @@ import (
 // - "redis_srem": RedisSRem
 // - "redis_scard": RedisSCard
 var exportsModRedis = map[string]lua.LGFunction{
-	global.LuaFnRedisGet:          RedisGet,
-	global.LuaFnRedisSet:          RedisSet,
-	global.LuaFnRedisIncr:         RedisIncr,
-	global.LuaFnRedisDel:          RedisDel,
-	global.LuaFnRedisExpire:       RedisExpire,
-	global.LuaFnRedisHGet:         RedisHGet,
-	global.LuaFnRedisHSet:         RedisHSet,
-	global.LuaFnRedisHDel:         RedisHDel,
-	global.LuaFnRedisHLen:         RedisHLen,
-	global.LuaFnRedisHGetAll:      RedisHGetAll,
-	global.LuaFnRedisHIncrBy:      RedisHIncrBy,
-	global.LuaFnRedisHIncrByFloat: RedisHIncrByFloat,
-	global.LuaFnRedisHExists:      RedisHExists,
-	global.LuaFnRedisRename:       RedisRename,
-	global.LuaFnRedisSAdd:         RedisSAdd,
-	global.LuaFnRedisSIsMember:    RedisSIsMember,
-	global.LuaFnRedisSMembers:     RedisSMembers,
-	global.LuaFnRedisSRem:         RedisSRem,
-	global.LuaFnRedisSCard:        RedisSCard,
-	global.LuaFnRedisRunScript:    RedisRunScript,
-	global.LuaFnRedisUploadScript: RedisUploadScript,
+	global.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
+	global.LuaFnRedisGetRedisConnection: GetRedisConnection,
+	global.LuaFnRedisPing:               RedisPing,
+	global.LuaFnRedisGet:                RedisGet,
+	global.LuaFnRedisSet:                RedisSet,
+	global.LuaFnRedisIncr:               RedisIncr,
+	global.LuaFnRedisDel:                RedisDel,
+	global.LuaFnRedisExpire:             RedisExpire,
+	global.LuaFnRedisHGet:               RedisHGet,
+	global.LuaFnRedisHSet:               RedisHSet,
+	global.LuaFnRedisHDel:               RedisHDel,
+	global.LuaFnRedisHLen:               RedisHLen,
+	global.LuaFnRedisHGetAll:            RedisHGetAll,
+	global.LuaFnRedisHIncrBy:            RedisHIncrBy,
+	global.LuaFnRedisHIncrByFloat:       RedisHIncrByFloat,
+	global.LuaFnRedisHExists:            RedisHExists,
+	global.LuaFnRedisRename:             RedisRename,
+	global.LuaFnRedisSAdd:               RedisSAdd,
+	global.LuaFnRedisSIsMember:          RedisSIsMember,
+	global.LuaFnRedisSMembers:           RedisSMembers,
+	global.LuaFnRedisSRem:               RedisSRem,
+	global.LuaFnRedisSCard:              RedisSCard,
+	global.LuaFnRedisRunScript:          RedisRunScript,
+	global.LuaFnRedisUploadScript:       RedisUploadScript,
 }
 
 // LoaderModRedis initializes a new module for Redis in Lua by setting the functions from the "exportsModRedis" map into
