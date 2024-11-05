@@ -10,6 +10,15 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
+// failoverPool represents a Redis connection pool configuration for a failover setup, with an optional read-only flag.
+type failoverPool struct {
+	// name is a string that uniquely identifies the Redis connection pool.
+	name string
+
+	// readOnly indicates whether the Redis connection pool is in read-only mode.
+	readOnly bool
+}
+
 var (
 	// redisPools stores a map of Redis clients indexed by unique connection names for standalone Redis configurations.
 	redisPools = make(map[string]*redis.Client)
@@ -18,8 +27,17 @@ var (
 	redisClusterPools = make(map[string]*redis.ClusterClient)
 
 	// redisFailoverPools holds a map of Redis clients configured for sentinel or sentinel_replica failover setups.
-	redisFailoverPools = make(map[string]*redis.Client)
+	redisFailoverPools = make(map[failoverPool]*redis.Client)
 )
+
+// PoolStats represents the statistics of a Redis pool with a unique name identifier.
+type PoolStats struct {
+	// Name represents the unique identifier for the Redis pool.
+	Name string
+
+	// Stats holds the statistical data of the Redis pool.
+	Stats *redis.PoolStats
+}
 
 // ConfigValues holds the configuration parameters for a Redis client.
 type ConfigValues struct {
@@ -49,6 +67,41 @@ type ConfigValues struct {
 
 	// RedisTLS represents the TLS configuration required to enable and manage TLS connections for Redis.
 	RedisTLS *config.TLS
+}
+
+// GetStandaloneStats collects and returns statistics for all standalone Redis pools configured in the application.
+func GetStandaloneStats() []PoolStats {
+	var poolStats []PoolStats
+
+	for name, client := range redisPools {
+		poolStats = append(poolStats, PoolStats{name, client.PoolStats()})
+	}
+
+	return poolStats
+}
+
+// GetSentinelStats returns a slice of PoolStats for all Redis failover pools that match the provided readOnly status.
+func GetSentinelStats(readOnly bool) []PoolStats {
+	var poolStats []PoolStats
+
+	for foP, client := range redisFailoverPools {
+		if foP.readOnly == readOnly {
+			poolStats = append(poolStats, PoolStats{foP.name, client.PoolStats()})
+		}
+	}
+
+	return poolStats
+}
+
+// GetClusterStats returns a slice of PoolStats containing statistics for each Redis Cluster pool.
+func GetClusterStats() []PoolStats {
+	var poolStats []PoolStats
+
+	for name, client := range redisClusterPools {
+		poolStats = append(poolStats, PoolStats{name, client.PoolStats()})
+	}
+
+	return poolStats
 }
 
 // getConfigValues retrieves configuration values from the provided Lua table and returns a ConfigValues struct.
@@ -173,17 +226,17 @@ func RegisterRedisPool(L *lua.LState) int {
 
 		redisPools[name] = newRedisClient(conf)
 	case "sentinel", "sentinel_replica":
-		if _, okay := redisFailoverPools[name]; okay {
+		if _, okay := redisFailoverPools[failoverPool{name: name}]; okay {
 			L.Push(errMsg)
 			L.Push(lua.LNil)
 		}
 
-		readReplica := false
+		readOnly := false
 		if mode == "sentinel_replica" {
-			readReplica = true
+			readOnly = true
 		}
 
-		redisFailoverPools[name] = newRedisFailoverClient(conf, readReplica)
+		redisFailoverPools[failoverPool{name: name, readOnly: readOnly}] = newRedisFailoverClient(conf, readOnly)
 	case "cluster":
 		if _, okay := redisClusterPools[name]; okay {
 			L.Push(errMsg)
@@ -214,7 +267,7 @@ func GetRedisConnection(L *lua.LState) int {
 	name := L.CheckString(1)
 
 	if client, okay = redisPools[name]; !okay {
-		if client, okay = redisFailoverPools[name]; !okay {
+		if client, okay = redisFailoverPools[failoverPool{name: name}]; !okay {
 			if client, okay = redisClusterPools[name]; !okay {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(fmt.Sprintf("No known redis configurtion found with name '%s'", name)))

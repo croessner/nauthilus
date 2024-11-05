@@ -35,6 +35,15 @@ function nauthilus_run_hook(logging)
     result.level = "info"
     result.caller = N .. ".lua"
 
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= "" then
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
+
     local header = nauthilus_http_request.get_http_request_header("Content-Type")
     local body = nauthilus_http_request.get_http_request_body()
 
@@ -104,11 +113,11 @@ function nauthilus_run_hook(logging)
                 result.cmd = "NOOP"
                 result.state = "client session refreshed"
 
-                local _, err_redis_expire = nauthilus_redis.redis_expire("default", redis_key, 3600)
+                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
             else
                 -- Cleanup dovecot session
-                local deleted, err_redis_hdel = nauthilus_redis.redis_hdel("default", redis_key, result.dovecot_session)
+                local deleted, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, redis_key, result.dovecot_session)
                 if err_redis_hdel then
                     result.remove_dovecot_session_status = err_redis_hdel
                 else
