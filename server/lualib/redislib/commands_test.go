@@ -484,3 +484,66 @@ func TestRedisRename(t *testing.T) {
 		})
 	}
 }
+
+func TestPing(t *testing.T) {
+	tests := []struct {
+		name             string
+		mockError        error
+		expectedResult   lua.LValue
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:           "PingWithSuccess",
+			mockError:      nil,
+			expectedResult: lua.LString("PONG"),
+			expectedErr:    lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectPing().SetVal("PONG")
+			},
+		},
+		{
+			name:           "PingWithError",
+			mockError:      errors.New("some error"),
+			expectedResult: lua.LNil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectPing().SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+
+			rediscli.ReadHandle = db
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+
+			gotErr := L.GetGlobal("err")
+			if gotResult.String() != tt.expectedResult.String() {
+				t.Errorf("Ping = %v, want %v", gotResult, tt.expectedResult)
+			}
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}

@@ -52,6 +52,7 @@ import (
 var exportsModRedis = map[string]lua.LGFunction{
 	global.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
 	global.LuaFnRedisGetRedisConnection: GetRedisConnection,
+	global.LuaFnRedisPing:               RedisPing,
 	global.LuaFnRedisGet:                RedisGet,
 	global.LuaFnRedisSet:                RedisSet,
 	global.LuaFnRedisIncr:               RedisIncr,

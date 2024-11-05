@@ -68,7 +68,7 @@ function nauthilus_call_action(request)
 
         local custom_pool = "default"
         local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-        if custom_pool_name ~= "" then
+        if custom_pool_name ~= nil and  custom_pool_name ~= "" then
             local err_redis_client
 
             custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)

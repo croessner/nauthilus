@@ -34,7 +34,7 @@ function nauthilus_run_hook(logging)
 
     local custom_pool = "default"
     local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
-    if custom_pool_name ~= "" then
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
         local _, err_redis_reg = nauthilus_redis.register_redis_pool(custom_pool_name, "standalone", {
             address = "localhost:6379",
             password = "",

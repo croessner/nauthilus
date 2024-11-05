@@ -180,3 +180,21 @@ func RedisRename(L *lua.LState) int {
 
 	return 1
 }
+
+// RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
+func RedisPing(L *lua.LState) int {
+	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+
+	cmd := client.Ping(ctx)
+	if cmd.Err() != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(cmd.Err().Error()))
+
+		return 2
+	}
+
+	stats.RedisReadCounter.Inc()
+	L.Push(lua.LString(cmd.Val()))
+
+	return 1
+}
