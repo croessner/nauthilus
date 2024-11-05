@@ -97,6 +97,10 @@ func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *backend.LDAPReply,
 // - totpSecretPre: an array of any type that represents the TOTP secret from a master user.
 // - totpSecretField: a string that represents the field name for the TOTP secret in the attributes map.
 func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any, totpSecretField string) {
+	if passDBResult == nil || passDBResult.Attributes == nil {
+		return
+	}
+
 	if totpSecretPre != nil && len(totpSecretPre) != 0 {
 		// Use the TOTP secret from a master user if it exists.
 		passDBResult.Attributes[totpSecretField] = totpSecretPre
