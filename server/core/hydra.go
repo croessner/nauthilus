@@ -1641,10 +1641,19 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 
 // runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
 func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.AuthResult) global.AuthResult {
-	userFound, err := auth.userExists()
-	if err != nil {
-		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+	var (
+		userFound bool
+		err       error
+	)
+
+	if authResult == global.AuthResultOK && auth.isMasterUser() {
+		userFound = true
+	} else {
+		userFound, err = auth.userExists()
+		if err != nil {
+			if !stderrors.Is(err, redis.Nil) {
+				level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+			}
 		}
 	}
 
@@ -1656,7 +1665,14 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.Au
 
 			return false
 		}(),
-		UserFound: userFound,
+		UserFound:         userFound,
+		AccountField:      auth.AccountField,
+		TOTPSecretField:   auth.TOTPSecretField,
+		TOTPRecoveryField: auth.TOTPRecoveryField,
+		UniqueUserIDField: auth.UniqueUserIDField,
+		DisplayNameField:  auth.DisplayNameField,
+		Backend:           auth.UsedPassDBBackend,
+		Attributes:        auth.Attributes,
 	}
 
 	authResult = auth.filterLua(passDBResult, ctx)
