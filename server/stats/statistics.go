@@ -121,14 +121,16 @@ var (
 
 	// FunctionDuration variable declaration that creates a new Prometheus SummaryVec with the specified name and help message, and with "service" and "method" labels.
 	FunctionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "function_duration_seconds",
-		Help: "Time spent in function",
+		Name:    "function_duration_seconds",
+		Help:    "Time spent in function",
+		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
 	}, []string{"service", "task"})
 
 	// RBLDuration tracks the duration of DNS RBL (Real-time Blackhole List) lookups.
 	RBLDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "rbl_duration_seconds",
-		Help: "Time spent for RBL lookups",
+		Name:    "rbl_duration_seconds",
+		Help:    "Time spent for RBL lookups",
+		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
 	}, []string{"rbl"})
 
 	// CacheHits variable declaration that creates a new Prometheus Counter with the specified name and help message, which counts the total number of cache hits.
