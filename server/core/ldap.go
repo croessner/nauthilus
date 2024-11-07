@@ -284,7 +284,9 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromAccount, "ldap_account_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
@@ -372,7 +374,9 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "ldap_store_totp_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 

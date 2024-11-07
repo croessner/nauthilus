@@ -24,9 +24,11 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // isListed triggers a result of true, if an IP address was found on a RBL list. It also returns a human readable name.
@@ -35,6 +37,12 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		results       []net.IP
 		reverseIPAddr string
 	)
+
+	if stats.HavePrometheusLabelEnabled(global.PromFeature) {
+		timer := prometheus.NewTimer(stats.RBLDuration.WithLabelValues(rbl.Name))
+
+		defer timer.ObserveDuration()
+	}
 
 	guid := ctx.GetString(global.CtxGUIDKey)
 	ipAddress := net.ParseIP(a.ClientIP)

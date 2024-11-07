@@ -125,6 +125,12 @@ var (
 		Help: "Time spent in function",
 	}, []string{"service", "task"})
 
+	// RBLDuration tracks the duration of DNS RBL (Real-time Blackhole List) lookups.
+	RBLDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "rbl_duration_seconds",
+		Help: "Time spent for RBL lookups",
+	}, []string{"rbl"})
+
 	// CacheHits variable declaration that creates a new Prometheus Counter with the specified name and help message, which counts the total number of cache hits.
 	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "cache_hits_total",
@@ -360,6 +366,23 @@ func PrintStats() {
 	)
 }
 
+// HavePrometheusLabelEnabled returns true if the specified Prometheus label is enabled in the server configuration, otherwise false.
+func HavePrometheusLabelEnabled(prometheusLabel string) bool {
+	if !config.LoadableConfig.Server.PrometheusTimer.Enabled {
+		return false
+	}
+
+	for _, label := range config.LoadableConfig.Server.PrometheusTimer.Labels {
+		if label != prometheusLabel {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
 // PrometheusTimer is a function that takes a prometheus label (promLabel) and a prometheus observer (prometheusObserver) as arguments.
 // The function first checks if the Prometheus Timer is enabled in the server configuration (config.LoadableConfig.Server.PrometheusTimer.Enabled).
 // If the Prometheus Timer is not enabled, it returns an empty function.
@@ -369,15 +392,7 @@ func PrintStats() {
 // If there is no match, it returns an empty function.
 // This function is used to measure the time duration using Prometheus, a powerful time-series monitoring service.
 func PrometheusTimer(serviceName string, taskName string) func() {
-	if !config.LoadableConfig.Server.PrometheusTimer.Enabled {
-		return func() {}
-	}
-
-	for _, label := range config.LoadableConfig.Server.PrometheusTimer.Labels {
-		if label != serviceName {
-			continue
-		}
-
+	if HavePrometheusLabelEnabled(serviceName) {
 		timer := prometheus.NewTimer(FunctionDuration.WithLabelValues(serviceName, taskName))
 
 		return func() {
@@ -385,7 +400,7 @@ func PrometheusTimer(serviceName string, taskName string) func() {
 		}
 	}
 
-	return func() {}
+	return nil
 }
 
 // UpdateGenericConnections reads from GenericConnectionChan and updates the GenericConnections metric for each connection.

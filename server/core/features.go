@@ -95,7 +95,9 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureLua)
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	featureRequest := feature.Request{
 		Context: a.Context,
@@ -172,7 +174,9 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureTLSEncryption)
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	if !a.isInNetwork(config.LoadableConfig.ClearTextList) {
 		logAddMessage(a, global.NoTLS, global.FeatureTLSEncryption)
@@ -206,7 +210,9 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 
 	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRelayDomains)
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	username := handleMasterUserMode(a)
 
@@ -379,7 +385,9 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromDNS, global.FeatureRBL)
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	totalRBLScore, err = a.checkRBLs(ctx)
 	if err != nil {

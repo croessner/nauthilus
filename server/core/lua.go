@@ -29,7 +29,9 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromBackend, "lua_backend_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	passDBResult = &PassDBResult{}
 
@@ -154,7 +156,9 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromAccount, "lua_account_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
@@ -204,7 +208,9 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "lua_store_totp_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 

@@ -306,7 +306,9 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		stopTimer := stats.PrometheusTimer(global.PromFeature, LuaFeatures.LuaScripts[index].Name)
 
 		if stderrors.Is(ctx.Err(), context.Canceled) {
-			stopTimer()
+			if stopTimer != nil {
+				stopTimer()
+			}
 
 			return
 		}
@@ -347,7 +349,10 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 
 		r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 
-		stopTimer()
+		if stopTimer != nil {
+			stopTimer()
+		}
+
 		luaCancel()
 
 		if triggered || abortFeatures {
@@ -366,7 +371,10 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 		global.LogKeyError, err,
 	)
 
-	stopTimer()
+	if stopTimer != nil {
+		stopTimer()
+	}
+
 	luaCancel()
 }
 

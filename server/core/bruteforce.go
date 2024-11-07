@@ -963,7 +963,9 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 	stopTimer := stats.PrometheusTimer(global.PromBruteForce, "brute_force_check_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	// All rules
 	rules := config.LoadableConfig.GetBruteForceRules()
