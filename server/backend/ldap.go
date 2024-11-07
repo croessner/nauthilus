@@ -1304,7 +1304,10 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
-		stopTimer()
+		if stopTimer != nil {
+			stopTimer()
+		}
+
 		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()
@@ -1417,7 +1420,10 @@ func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthReques
 	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
-		stopTimer()
+		if stopTimer != nil {
+			stopTimer()
+		}
+
 		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()

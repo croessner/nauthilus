@@ -654,7 +654,9 @@ func prometheusMiddleware() gin.HandlerFunc {
 			timer.ObserveDuration()
 		}
 
-		stopTimer()
+		if stopTimer != nil {
+			stopTimer()
+		}
 	}
 }
 

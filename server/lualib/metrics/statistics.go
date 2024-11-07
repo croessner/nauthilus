@@ -95,8 +95,9 @@ func createHistogramVec(L *lua.LState) int {
 	}
 
 	histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: name,
-		Help: help,
+		Name:    name,
+		Help:    help,
+		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
 	}, labelNames)
 
 	prometheus.MustRegister(histogram)

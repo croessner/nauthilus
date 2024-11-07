@@ -1127,7 +1127,9 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 
 		stopTimer := stats.PrometheusTimer(global.PromAction, luaActionName)
 
-		defer stopTimer()
+		if stopTimer != nil {
+			defer stopTimer()
+		}
 
 		finished := make(chan action.Done)
 
@@ -1266,7 +1268,9 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 	go func() {
 		stopTimer := stats.PrometheusTimer(global.PromPostAction, "lua_post_action_request_total")
 
-		defer stopTimer()
+		if stopTimer != nil {
+			defer stopTimer()
+		}
 
 		finished := make(chan action.Done)
 
@@ -1641,7 +1645,9 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 
 	stopTimer := stats.PrometheusTimer(global.PromFilter, "lua_filter_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	BackendServers.mu.RLock()
 
@@ -2247,7 +2253,9 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
 
-		stopTimer()
+		if stopTimer != nil {
+			stopTimer()
+		}
 	}
 
 	if a.ClientHost == "" {

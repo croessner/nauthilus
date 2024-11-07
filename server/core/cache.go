@@ -32,7 +32,9 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	stopTimer := stats.PrometheusTimer(global.PromBackend, "cache_backend_request_total")
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	passDBResult = &PassDBResult{}
 

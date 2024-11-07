@@ -486,7 +486,9 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
 	stopTimer := stats.PrometheusTimer(global.PromFilter, script.Name)
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(global.LogKeyLuaScripttimeout)*time.Second)
 

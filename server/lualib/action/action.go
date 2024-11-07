@@ -414,7 +414,9 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 	stopTimer := stats.PrometheusTimer(global.PromAction, getTaskName(aw.actionScripts[index]))
 
-	defer stopTimer()
+	if stopTimer != nil {
+		defer stopTimer()
+	}
 
 	luaCtx, luaCancel := context.WithTimeout(aw.ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
