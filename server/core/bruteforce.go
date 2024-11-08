@@ -324,8 +324,6 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 		return true
 	} else {
 		if length > int64(config.LoadableConfig.Server.MaxPasswordHistoryEntries) {
-			level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, fmt.Sprintf("too many entries in Redis hash key %s", key))
-
 			stats.RedisReadCounter.Inc()
 
 			return true
@@ -442,13 +440,18 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		return
 	}
 
-	var keys []string
+	var (
+		keys          []string
+		keysOverLimit bool
+	)
 
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(true))
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(false))
 
 	for index := range keys {
 		if a.checkTooManyPasswordHashes(keys[index]) {
+			keysOverLimit = true
+
 			continue
 		}
 
@@ -479,6 +482,10 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		} else {
 			stats.RedisWriteCounter.Inc()
 		}
+	}
+
+	if keysOverLimit {
+		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Too many password hashes for this account")
 	}
 }
 
