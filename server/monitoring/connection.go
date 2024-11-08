@@ -51,6 +51,8 @@ func (ConnMonitor) CheckBackendConnection(ipAddress string, port int, haproxyv2 
 	return checkBackendConnection(ipAddress, port, haproxyv2, useTLS)
 }
 
+var _ Monitor = (*ConnMonitor)(nil)
+
 // NewMonitor returns a new instance of the Monitor interface. The returned Monitor is implemented by the ConnMonitor struct.
 func NewMonitor() Monitor {
 	return &ConnMonitor{}
@@ -121,6 +123,6 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 func handleHAproxyV2Error(err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyInstance, global.InstanceName,
-		global.LogKeyError, "HAProxy v2 error", "error", err,
+		global.LogKeyMsg, "HAProxy v2 error", "error", err,
 	)
 }

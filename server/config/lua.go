@@ -49,6 +49,8 @@ func (l *LuaSection) GetProtocols() any {
 	return l.Search
 }
 
+var _ GetterHandler = (*LuaSection)(nil)
+
 type LuaAction struct {
 	ActionType string `mapstructure:"type"`
 	ScriptName string `mapstructure:"name"`

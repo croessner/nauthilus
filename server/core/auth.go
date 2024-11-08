@@ -1011,7 +1011,7 @@ func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 			err = checkAllBackends(configErrors, a)
 		}
 	} else {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", passDB.backend.String(), global.LogKeyMsg, err)
 	}
 
 	return err
@@ -1032,7 +1032,7 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
 		err = errors.ErrAllBackendConfigError
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, "passdb", "all", global.LogKeyMsg, err)
 	}
 
 	return err
@@ -1508,7 +1508,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		if stderrors.As(err, &detailedError) {
 			logs := []any{
 				global.LogKeyGUID, a.GUID,
-				global.LogKeyError, detailedError.Error(),
+				global.LogKeyMsg, detailedError.Error(),
 				global.LogKeyErrorDetails, detailedError.GetDetails(),
 			}
 
@@ -1518,7 +1518,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 			level.Error(log.Logger).Log(logs...)
 		} else {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
 		}
 
 		return global.AuthResultTempFail
@@ -1552,7 +1552,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 				for _, cacheName := range cacheNames.GetStringSlice() {
 					if err != nil {
-						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
 
 						return global.AuthResultTempFail
 					}
@@ -1718,7 +1718,7 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
 
 			return global.AuthResultTempFail
 		}
@@ -1799,10 +1799,10 @@ func (a *AuthState) listUserAccounts() (accountList AccountList) {
 			if stderrors.As(err, &detailedError) {
 				level.Error(log.Logger).Log(
 					global.LogKeyGUID, a.GUID,
-					global.LogKeyError, detailedError.Error(),
+					global.LogKeyMsg, detailedError.Error(),
 					global.LogKeyErrorDetails, detailedError.GetDetails())
 			} else {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
 			}
 		}
 	}
@@ -2173,7 +2173,7 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 
 	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
 
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 		return nil
 	}
@@ -2242,7 +2242,7 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 		// This might be valid if HAproxy v2 support is enabled
 		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 		if err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyError, err.Error())
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
 		}
 
 		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
@@ -2326,7 +2326,7 @@ func (a *AuthState) processClaim(claimName string, claimValue string, claims map
 
 		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.GUID,
-			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
+			global.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
 		)
 	}
 }
@@ -2349,7 +2349,7 @@ func applyClaim(claimKey string, attributeKey string, a *AuthState, claims map[s
 	if !success {
 		level.Warn(log.Logger).Log(
 			global.LogKeyGUID, a.GUID,
-			global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
+			global.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
 		)
 	}
 }
@@ -2487,7 +2487,7 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 // - `config.LoadableConfig.Oauth2.Clients`: The OAuth2 clients configuration.
 // - `a.Attributes`: The AuthState object's Attributes map.
 // - `util.DebugModule`: A function for logging debug messages.
-// - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `log.Logger`, `global.LogKeyWarning`: Various declarations used internally in the method.
+// - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `log.Logger`, `global.LogKeyMsg`: Various declarations used internally in the method.
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
@@ -2514,7 +2514,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 		if !valueApplied {
 			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, a.GUID,
-				global.LogKeyWarning, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
+				global.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from Database", global.ClaimGroups),
 			)
 		}
 	}
@@ -2597,7 +2597,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 						level.Error(log.Logger).Log(
 							global.LogKeyGUID, a.GUID,
 							"custom_claim_name", customClaimName,
-							global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
+							global.LogKeyMsg, fmt.Sprintf("Unknown type '%s'", customClaimType),
 						)
 					}
 				}

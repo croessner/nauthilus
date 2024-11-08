@@ -301,7 +301,7 @@ func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *ato
 			dnsResolverErr.Store(true)
 		}
 
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 	}
 }
 

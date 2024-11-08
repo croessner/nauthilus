@@ -799,7 +799,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 					continue
 				}
 
-				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 				break
 			}

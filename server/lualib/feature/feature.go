@@ -368,7 +368,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 	level.Error(log.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", scriptName,
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 
 	if stopTimer != nil {

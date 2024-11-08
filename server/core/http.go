@@ -35,8 +35,6 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -55,7 +53,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
@@ -109,7 +106,7 @@ func NewLimitCounter(maxConnections int32) *LimitCounter {
 func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if atomic.LoadInt32(&lc.CurrentConnections) >= lc.MaxConnections {
-			ctx.JSON(http.StatusTooManyRequests, gin.H{global.LogKeyError: "Too many requests"})
+			ctx.JSON(http.StatusTooManyRequests, gin.H{global.LogKeyMsg: "Too many requests"})
 
 			ctx.Abort()
 
@@ -365,7 +362,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
 			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, guid,
-				global.LogKeyWarning, "Disabling HTTP basic Auth",
+				global.LogKeyMsg, "Disabling HTTP basic Auth",
 				"category", ctx.Param("category"),
 				"service", ctx.Param("service"),
 			)
@@ -405,7 +402,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
 // Based on the presence of an error, it decides which logger, logWrapper, and logKey to use.
 // The logWrapper is either level.Error or level.Info.
-// The logKey is either global.LogKeyError or global.LogKeyMsg.
+// The logKey is either global.LogKeyMsg or global.LogKeyMsg.
 // The function stops the timer and calculates the latency.
 // It then collects additional information about the request, such as negotiatedProtocol and cipherSuiteName.
 // Finally, it calls logWrapper(logger).Log() to log the request information with the appropriate logger, logKey, and values.
@@ -433,7 +430,7 @@ func loggerMiddleware() gin.HandlerFunc {
 		if err != nil {
 			logger = log.Logger
 			logWrapper = level.Error
-			logKey = global.LogKeyError
+			logKey = global.LogKeyMsg
 		} else {
 			logger = log.Logger
 			logWrapper = level.Info
@@ -616,39 +613,6 @@ func prometheusMiddleware() gin.HandlerFunc {
 		ctx.Next()
 
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
-
-		redisStatsMap := map[string]*redis.PoolStats{
-			"default_rw": rediscli.WriteHandle.PoolStats(),
-		}
-
-		if rediscli.WriteHandle != rediscli.ReadHandle {
-			redisStatsMap["default_ro"] = rediscli.ReadHandle.PoolStats()
-		}
-
-		for _, redisStats := range redislib.GetStandaloneStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(false) {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(true) {
-			redisStatsMap[redisStats.Name+"_ro"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetClusterStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for poolName, redisStats := range redisStatsMap {
-			stats.RedisHits.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Hits))
-			stats.RedisMisses.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Misses))
-			stats.RedisTimeouts.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Timeouts))
-			stats.RedisTotalConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.TotalConns))
-			stats.RedisIdleConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.IdleConns))
-			stats.RedisStaleConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.StaleConns))
-		}
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
 			timer.ObserveDuration()
@@ -993,12 +957,12 @@ func setupGinLoggers() {
 //
 // The function accepts a message string and an error. It logs the message and error using the
 // `level.Error` function from the `log.Logger` package. The message is logged using the
-// `global.LogKeyMsg` key and the error is logged using the `global.LogKeyError` key.
+// `global.LogKeyMsg` key and the error is logged using the `global.LogKeyMsg` key.
 //
 // After logging the message and error, the function exits the program with a status code of 1
 // using the `os.Exit` function.
 func logAndExit(message string, err error) {
-	level.Error(log.Logger).Log(global.LogKeyMsg, message, global.LogKeyError, err)
+	level.Error(log.Logger).Log(global.LogKeyMsg, message, global.LogKeyMsg, err)
 
 	os.Exit(1)
 }
@@ -1057,7 +1021,7 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyMsg, err)
 
 		os.Exit(-1)
 	}

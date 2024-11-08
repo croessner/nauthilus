@@ -22,14 +22,8 @@ const (
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 
-	// LogKeyError represents error information in log entries.
-	LogKeyError = "error"
-
 	// LogKeyErrorDetails represents additional error details in log entries.
 	LogKeyErrorDetails = "error_details"
-
-	// LogKeyWarning represents warning information in log entries.
-	LogKeyWarning = "warn"
 
 	// LogKeyInstance represents instance identification in log entries.
 	LogKeyInstance = "instance"
@@ -753,6 +747,9 @@ const LDAPPoolExhausted = -1
 
 // InvalidCode represents the error message for an invalid TOTP code.
 const InvalidCode = "The TOTP code is invalid"
+
+// ReisPromPoolName is a constant string used for labeling Redis pool metrics in Prometheus.
+const ReisPromPoolName = "pool_name"
 
 // Supported salted hashes.
 const (

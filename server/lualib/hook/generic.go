@@ -319,6 +319,6 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 func processError(err error, hook string) {
 	level.Error(log.Logger).Log(
 		"script", hook,
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 }

@@ -207,7 +207,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 		return
 	}
@@ -476,7 +476,7 @@ func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogK
 		append([]any{
 			global.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,
-			global.LogKeyError, err,
+			global.LogKeyMsg, err,
 		}, toLoggable(logs)...)...,
 	)
 }

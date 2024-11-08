@@ -516,14 +516,14 @@ func logError(ctx *gin.Context, err error) {
 	if stderrors.As(err, &detailedError) {
 		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
-			global.LogKeyError, (*detailedError).Error(),
+			global.LogKeyMsg, (*detailedError).Error(),
 			global.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
 		level.Error(log.Logger).Log(
 			global.LogKeyGUID, guid,
-			global.LogKeyError, err,
+			global.LogKeyMsg, err,
 			global.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	}
@@ -607,7 +607,7 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	if err != nil {
 		level.Error(log.Logger).Log(
 			global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
-			"message_id", messageID, global.LogKeyError, err.Error(),
+			"message_id", messageID, global.LogKeyMsg, err.Error(),
 		)
 	}
 
@@ -1652,7 +1652,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult global.Au
 		userFound, err = auth.userExists()
 		if err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
 			}
 		}
 	}
@@ -2952,6 +2952,6 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
 	level.Error(log.Logger).Log(
 		"custom_claim_name", customClaimName,
-		global.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
+		global.LogKeyMsg, fmt.Sprintf("Unknown type '%s'", customClaimType),
 	)
 }

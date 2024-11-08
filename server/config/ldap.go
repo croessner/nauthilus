@@ -47,6 +47,8 @@ func (l *LDAPSection) GetProtocols() any {
 	return l.Search
 }
 
+var _ GetterHandler = (*LDAPSection)(nil)
+
 type LDAPConf struct {
 	PoolOnly      bool `mapstructure:"pool_only"`
 	StartTLS      bool

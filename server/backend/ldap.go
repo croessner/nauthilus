@@ -143,6 +143,8 @@ func (l *LDAPRequest) GetLDAPReplyChan() chan *LDAPReply {
 	return l.LDAPReplyChan
 }
 
+var _ PoolRequest[LDAPRequest] = (*LDAPRequest)(nil)
+
 // LDAPAuthRequest represents a request to authenticate with an LDAP server.
 type LDAPAuthRequest struct {
 	// GUID is the unique identifier for the LDAP auth request.
@@ -168,6 +170,8 @@ type LDAPAuthRequest struct {
 func (l *LDAPAuthRequest) GetLDAPReplyChan() chan *LDAPReply {
 	return l.LDAPReplyChan
 }
+
+var _ PoolRequest[LDAPAuthRequest] = (*LDAPAuthRequest)(nil)
 
 // LDAPReply encapsulates the result of an LDAP operation.
 // It holds the results from both the database and the LDAP directory,
@@ -573,7 +577,7 @@ func (l *LDAPPool) logConnectionError(guid *string, err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 }
 
@@ -741,7 +745,7 @@ func (l *LDAPPool) logConnectionFailed(guid *string, err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
-		global.LogKeyError, err)
+		global.LogKeyMsg, err)
 }
 
 // checkConnection checks the state of a connection at the specified index.
@@ -1256,7 +1260,7 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 			level.Error(log.Logger).Log(
 				global.LogKeyLDAPPoolName, l.name,
 				global.LogKeyGUID, *ldapRequest.GUID,
-				global.LogKeyError, ldapError.Error(),
+				global.LogKeyMsg, ldapError.Error(),
 			)
 		}
 	}

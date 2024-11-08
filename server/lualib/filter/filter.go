@@ -538,7 +538,7 @@ func logError(r *Request, script *LuaFilter, err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyGUID, r.Session,
 		"name", script.Name,
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 }
 
