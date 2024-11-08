@@ -51,6 +51,8 @@ func (ConnMonitor) CheckBackendConnection(ipAddress string, port int, haproxyv2 
 	return checkBackendConnection(ipAddress, port, haproxyv2, useTLS)
 }
 
+var _ Monitor = (*ConnMonitor)(nil)
+
 // NewMonitor returns a new instance of the Monitor interface. The returned Monitor is implemented by the ConnMonitor struct.
 func NewMonitor() Monitor {
 	return &ConnMonitor{}

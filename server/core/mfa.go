@@ -38,6 +38,8 @@ func (t *TOTPSecret) setValue(value string) {
 	t.value = value
 }
 
+var _ MFA = (*TOTPSecret)(nil)
+
 func (t *TOTPSecret) getLDAPTOTPSecret(protocol *config.LDAPSearchProtocol) string {
 	return protocol.TOTPSecretField
 }
@@ -60,6 +62,8 @@ func (w *WebAuthn) getValue() string {
 func (w *WebAuthn) setValue(value string) {
 	w.Value = value
 }
+
+var _ MFA = (*WebAuthn)(nil)
 
 func (w *WebAuthn) getLDAPUniqueUserID(protocol *config.LDAPSearchProtocol) string {
 	return protocol.UniqueUserIDField

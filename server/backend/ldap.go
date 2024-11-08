@@ -143,6 +143,8 @@ func (l *LDAPRequest) GetLDAPReplyChan() chan *LDAPReply {
 	return l.LDAPReplyChan
 }
 
+var _ PoolRequest[LDAPRequest] = (*LDAPRequest)(nil)
+
 // LDAPAuthRequest represents a request to authenticate with an LDAP server.
 type LDAPAuthRequest struct {
 	// GUID is the unique identifier for the LDAP auth request.
@@ -168,6 +170,8 @@ type LDAPAuthRequest struct {
 func (l *LDAPAuthRequest) GetLDAPReplyChan() chan *LDAPReply {
 	return l.LDAPReplyChan
 }
+
+var _ PoolRequest[LDAPAuthRequest] = (*LDAPAuthRequest)(nil)
 
 // LDAPReply encapsulates the result of an LDAP operation.
 // It holds the results from both the database and the LDAP directory,

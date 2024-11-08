@@ -40,6 +40,8 @@ type LMTPClient struct {
 	text *textproto.Conn
 }
 
+var _ GenericClient = (*LMTPClient)(nil)
+
 // NewLMTPClient creates a new instance of LMTPClient with the provided connection.
 // Parameters:
 // - conn: The net.Conn used for the LMTP connection.
