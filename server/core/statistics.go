@@ -114,7 +114,7 @@ func UpdateRedisPoolStats() {
 	previousHits := make(map[string]float64)
 	previousMisses := make(map[string]float64)
 	previousTimeouts := make(map[string]float64)
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(time.Second * 10)
 
 	defer ticker.Stop()
 
@@ -151,21 +151,21 @@ func UpdateRedisPoolStats() {
 			if previousHit, ok := previousHits[poolName]; ok {
 				hitsDiff := currentHits - previousHit
 				if hitsDiff >= 0 {
-					stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(hitsDiff)
+					stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(hitsDiff)
 				}
 			}
 
 			if previousMiss, ok := previousMisses[poolName]; ok {
 				missesDiff := currentMisses - previousMiss
 				if missesDiff >= 0 {
-					stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(missesDiff)
+					stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(missesDiff)
 				}
 			}
 
 			if previousTimeout, ok := previousTimeouts[poolName]; ok {
 				timeoutsDiff := currentTimeouts - previousTimeout
 				if timeoutsDiff >= 0 {
-					stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(timeoutsDiff)
+					stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(timeoutsDiff)
 				}
 			}
 

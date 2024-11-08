@@ -146,19 +146,19 @@ var (
 	})
 
 	// RedisHits gauges the total number of times a free connection was found in the pool, categorized by type.
-	RedisHits = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
 	}, []string{global.ReisPromPoolName})
 
 	// RedisMisses is a gauge vector that counts the total number of times a free connection was NOT found in the pool.
-	RedisMisses = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
 	}, []string{global.ReisPromPoolName})
 
 	// RedisTimeouts tracks the total number of times a wait timeout occurred in Redis connections.
-	RedisTimeouts = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
 	}, []string{global.ReisPromPoolName})
