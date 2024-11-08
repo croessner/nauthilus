@@ -754,6 +754,9 @@ const LDAPPoolExhausted = -1
 // InvalidCode represents the error message for an invalid TOTP code.
 const InvalidCode = "The TOTP code is invalid"
 
+// ReisPromPoolName is a constant string used for labeling Redis pool metrics in Prometheus.
+const ReisPromPoolName = "pool_name"
+
 // Supported salted hashes.
 const (
 	// SSHA256 is a constant for choosing the SHA-256 algorithm

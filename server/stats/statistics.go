@@ -145,41 +145,41 @@ var (
 		Help: "The total number of cache misses",
 	})
 
-	// RedisHits counts the total number of times a free connection was found in the pool, labeled by the type of connection.
-	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_pool_hits_total",
+	// RedisHits gauges the total number of times a free connection was found in the pool, categorized by type.
+	RedisHits = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_connection_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
-	// RedisMisses tracks the total number of times a free connection was NOT found in the Redis pool. It is labeled by type.
-	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_pool_misses_total",
+	// RedisMisses is a gauge vector that counts the total number of times a free connection was NOT found in the pool.
+	RedisMisses = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_connection_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
-	// RedisTimeouts counts the total number of Redis pool wait timeouts, categorized by type.
-	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_pool_timeouts_total",
+	// RedisTimeouts tracks the total number of times a wait timeout occurred in Redis connections.
+	RedisTimeouts = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_connection_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
 	// RedisTotalConns tracks the total number of connections in the Redis pool, labeled by connection type.
 	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_total_connections",
 		Help: "The total number of connections in the pool",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
 	// RedisIdleConns is a Prometheus gauge that tracks the total number of idle connections in the Redis pool, labeled by "type".
 	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_idle_connections",
 		Help: "The total number of idle connections in the pool",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
 	// RedisStaleConns is a Prometheus metric that tracks the total number of stale connections removed from the Redis pool.
 	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_stale_connections",
 		Help: "The total number of stale connections removed from the pool",
-	}, []string{"type"})
+	}, []string{global.ReisPromPoolName})
 
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{

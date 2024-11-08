@@ -642,12 +642,12 @@ func prometheusMiddleware() gin.HandlerFunc {
 		}
 
 		for poolName, redisStats := range redisStatsMap {
-			stats.RedisHits.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Hits))
-			stats.RedisMisses.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Misses))
-			stats.RedisTimeouts.With(prometheus.Labels{"type": poolName}).Add(float64(redisStats.Timeouts))
-			stats.RedisTotalConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.TotalConns))
-			stats.RedisIdleConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.IdleConns))
-			stats.RedisStaleConns.With(prometheus.Labels{"type": poolName}).Set(float64(redisStats.StaleConns))
+			stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Hits))
+			stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Misses))
+			stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Timeouts))
+			stats.RedisTotalConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
+			stats.RedisIdleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
+			stats.RedisStaleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
 		}
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
