@@ -150,21 +150,21 @@ func UpdateRedisPoolStats() {
 
 			if previousHit, ok := previousHits[poolName]; ok {
 				hitsDiff := currentHits - previousHit
-				if hitsDiff > 0 {
+				if hitsDiff >= 0 {
 					stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(hitsDiff)
 				}
 			}
 
 			if previousMiss, ok := previousMisses[poolName]; ok {
 				missesDiff := currentMisses - previousMiss
-				if missesDiff > 0 {
+				if missesDiff >= 0 {
 					stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(missesDiff)
 				}
 			}
 
 			if previousTimeout, ok := previousTimeouts[poolName]; ok {
 				timeoutsDiff := currentTimeouts - previousTimeout
-				if timeoutsDiff > 0 {
+				if timeoutsDiff >= 0 {
 					stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(timeoutsDiff)
 				}
 			}
