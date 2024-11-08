@@ -410,7 +410,7 @@ func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyVa
 	level.Error(log.Logger).Log(
 		global.LogKeyGUID, luaRequest.Session,
 		"script", config.LoadableConfig.GetLuaScriptPath(),
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 
 	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{

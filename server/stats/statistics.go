@@ -305,7 +305,7 @@ func MeasureCPU(ctx context.Context) {
 
 			newCpu, err := cpu.Get()
 			if err != nil {
-				level.Error(log.Logger).Log(global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 				return
 			}

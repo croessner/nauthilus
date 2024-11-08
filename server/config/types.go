@@ -47,9 +47,9 @@ func (v *Verbosity) Set(value string) error {
 	switch value {
 	case "none", "":
 		v.verboseLevel = global.LogLevelNone
-	case global.LogKeyError:
+	case "error":
 		v.verboseLevel = global.LogLevelError
-	case global.LogKeyWarning:
+	case "warn":
 		v.verboseLevel = global.LogLevelWarn
 	case "info":
 		v.verboseLevel = global.LogLevelInfo

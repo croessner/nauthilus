@@ -191,7 +191,7 @@ func setTimeZone() {
 	if tz := os.Getenv("TZ"); tz != "" {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
 			level.Error(log.Logger).Log(
-				global.LogKeyError, fmt.Sprintf("Error loading location '%s': %v", tz, err),
+				global.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
 			)
 		}
 	}
@@ -432,7 +432,7 @@ func handleBackend(passDB *config.Backend) {
 		close(backend.LuaRequestChan)
 	case global.BackendCache:
 	default:
-		level.Warn(log.Logger).Log(global.LogKeyWarning, "Unknown backend")
+		level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
 	}
 }
 
@@ -586,7 +586,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			handleLuaBackend(store.lua)
 		case global.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyWarning, "Unknown backend")
+			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
 		}
 	}
 
@@ -595,7 +595,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(log.Logger).Log(
-			global.LogKeyError, err,
+			global.LogKeyMsg, err,
 		)
 	} else {
 		log.SetupLogging(
@@ -611,7 +611,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	if err := setupLuaScripts(); err != nil {
 		level.Error(log.Logger).Log(
 			global.LogKeyMsg, "Unable to setup Lua scripts",
-			global.LogKeyError, err,
+			global.LogKeyMsg, err,
 		)
 	}
 
@@ -632,7 +632,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			startLuaWorker(store)
 		case global.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyWarning, "Unknown backend")
+			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
 		}
 	}
 
@@ -681,7 +681,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 			setupLuaWorker(store, ctx)
 		case global.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyWarning, "Unknown backend", "backend")
+			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend", "backend")
 		}
 	}
 }
@@ -774,7 +774,7 @@ func setupRedis(ctx context.Context) {
 			return
 		}
 
-		level.Warn(log.Logger).Log(global.LogKeyWarning, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
+		level.Warn(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
 
 		time.Sleep(retryInterval)
 	}
@@ -853,7 +853,7 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 //	err: the error that has occurred
 func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 		global.LogKeyMsg, "Server down",
 		global.LogKeyProtocol, server.Protocol,
 		global.LogKeyBackendServerIP, server.IP,
@@ -1052,7 +1052,7 @@ func handleMonitoringError(err error) {
 			level.Info(log.Logger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
 		}
 	} else if stderrors.Is(err, errors.ErrMonitoringBackendServersEmpty) {
-		level.Error(log.Logger).Log(global.LogKeyError, "Monitoring backend servers are not configured")
+		level.Error(log.Logger).Log(global.LogKeyMsg, "Monitoring backend servers are not configured")
 	}
 }
 

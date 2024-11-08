@@ -1001,19 +1001,19 @@ func (f *File) validateRBLs() error {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
 			level.Warn(log.Logger).Log(
-				global.LogKeyWarning, "Please use a smaller RBL threshold!",
+				global.LogKeyMsg, "Please use a smaller RBL threshold!",
 				"rbl_threshold", f.RBLs.Threshold)
 		}
 
 		for _, rbl := range f.RBLs.Lists {
 			if rbl.Weight > math.MaxUint8 {
 				level.Warn(log.Logger).Log(
-					global.LogKeyWarning, "Please use a lower RBL weight!",
+					global.LogKeyMsg, "Please use a lower RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			} else if rbl.Weight < -math.MaxUint8 {
 				level.Warn(log.Logger).Log(
-					global.LogKeyWarning, "Please use a higher RBL weight!",
+					global.LogKeyMsg, "Please use a higher RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			}

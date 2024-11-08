@@ -225,7 +225,7 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 	ipAddresses, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 			errMsg := err.Error()
 			blockedIPAddresses.Error = &errMsg
@@ -273,7 +273,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 	accounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 			errMsg := err.Error()
 			blockedAccounts.Error = &errMsg
@@ -315,7 +315,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 			key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + account
 			if accountIPs, err = rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
 				if !stderrors.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+					level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 					errMsg := err.Error()
 					blockedAccounts.Error = &errMsg
@@ -473,7 +473,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		}, guid)
 
 		if err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 		}
 	}
 
@@ -483,7 +483,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	key := getPWHistIPsRedisKey(accountName)
 	if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 		} else {
 			err = nil
 		}
@@ -499,7 +499,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
 	if err = rediscli.WriteHandle.SRem(ctx, key, accountName).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 		} else {
 			err = nil
 		}
@@ -547,7 +547,7 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
 	ips, err := getIPsFromPWHistSet(ctx, accountName)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 	}
 
 	userKeys := config.NewStringSet()
@@ -592,7 +592,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	}
 
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 		return removedKeys
 	}
@@ -602,7 +602,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	for _, userKey := range userKeys.GetStringSlice() {
 		if err = rediscli.WriteHandle.Del(ctx, userKey).Err(); err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 				return removedKeys
 			}
@@ -642,7 +642,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 //	   level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
 //
 //	   if err := ctx.BindJSON(userCmd); err != nil {
-//	       level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+//	       level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 //	       ctx.AbortWithStatus(http.StatusBadRequest)
 //	       return
 //	   }
@@ -707,7 +707,7 @@ func flushBruteForceRule(ctx *gin.Context) {
 	ipCmd := &FlushRuleCmd{}
 
 	if err = ctx.BindJSON(ipCmd); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
@@ -717,7 +717,7 @@ func flushBruteForceRule(ctx *gin.Context) {
 
 	ruleFlushError, removedKeys, err = processBruteForceRules(ctx, ipCmd, guid)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return

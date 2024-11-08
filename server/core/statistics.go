@@ -45,7 +45,7 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyError, err)
+		level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 		return 0
 	}
@@ -75,7 +75,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 				return
 			}
 
-			level.Error(log.Logger).Log(global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 			return
 		}
@@ -100,7 +100,7 @@ func SaveStatsToRedis(ctx context.Context) {
 
 	for index := range metrics {
 		if err = rediscli.WriteHandle.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyError, err)
+			level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 			return
 		}

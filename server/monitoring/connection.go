@@ -123,6 +123,6 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 func handleHAproxyV2Error(err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyInstance, global.InstanceName,
-		global.LogKeyError, "HAProxy v2 error", "error", err,
+		global.LogKeyMsg, "HAProxy v2 error", "error", err,
 	)
 }

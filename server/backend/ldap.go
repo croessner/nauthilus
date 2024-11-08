@@ -577,7 +577,7 @@ func (l *LDAPPool) logConnectionError(guid *string, err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
-		global.LogKeyError, err,
+		global.LogKeyMsg, err,
 	)
 }
 
@@ -745,7 +745,7 @@ func (l *LDAPPool) logConnectionFailed(guid *string, err error) {
 	level.Error(log.Logger).Log(
 		global.LogKeyLDAPPoolName, l.name,
 		global.LogKeyGUID, *guid,
-		global.LogKeyError, err)
+		global.LogKeyMsg, err)
 }
 
 // checkConnection checks the state of a connection at the specified index.
@@ -1260,7 +1260,7 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 			level.Error(log.Logger).Log(
 				global.LogKeyLDAPPoolName, l.name,
 				global.LogKeyGUID, *ldapRequest.GUID,
-				global.LogKeyError, ldapError.Error(),
+				global.LogKeyMsg, ldapError.Error(),
 			)
 		}
 	}

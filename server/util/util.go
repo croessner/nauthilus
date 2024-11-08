@@ -310,7 +310,7 @@ func WithNotAvailable(value string) string {
 // logNetworkError logs a network error message.
 // a.logNetworkError(ipOrNet, err)
 func logNetworkError(guid, ipOrNet string, err error) {
-	level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyError, err)
+	level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyMsg, err)
 }
 
 // logNetworkChecking logs the information about checking a network for the given authentication object.
@@ -383,7 +383,7 @@ func logNoTrustedProxies(guid, clientIP string) {
 	level.Warn(
 		log.Logger).Log(
 		global.LogKeyGUID, guid,
-		global.LogKeyWarning, fmt.Sprintf("Client IP '%s' not matching %v", clientIP, viper.GetStringSlice("trusted_proxies")),
+		global.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching %v", clientIP, viper.GetStringSlice("trusted_proxies")),
 	)
 }
 

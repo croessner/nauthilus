@@ -22,14 +22,8 @@ const (
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 
-	// LogKeyError represents error information in log entries.
-	LogKeyError = "error"
-
 	// LogKeyErrorDetails represents additional error details in log entries.
 	LogKeyErrorDetails = "error_details"
-
-	// LogKeyWarning represents warning information in log entries.
-	LogKeyWarning = "warn"
 
 	// LogKeyInstance represents instance identification in log entries.
 	LogKeyInstance = "instance"
