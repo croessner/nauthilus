@@ -35,8 +35,6 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/redislib"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -55,7 +53,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 )
@@ -616,39 +613,6 @@ func prometheusMiddleware() gin.HandlerFunc {
 		ctx.Next()
 
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
-
-		redisStatsMap := map[string]*redis.PoolStats{
-			"default_rw": rediscli.WriteHandle.PoolStats(),
-		}
-
-		if rediscli.WriteHandle != rediscli.ReadHandle {
-			redisStatsMap["default_ro"] = rediscli.ReadHandle.PoolStats()
-		}
-
-		for _, redisStats := range redislib.GetStandaloneStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(false) {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetSentinelStats(true) {
-			redisStatsMap[redisStats.Name+"_ro"] = redisStats.Stats
-		}
-
-		for _, redisStats := range redislib.GetClusterStats() {
-			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
-		}
-
-		for poolName, redisStats := range redisStatsMap {
-			stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Hits))
-			stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Misses))
-			stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.Timeouts))
-			stats.RedisTotalConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
-			stats.RedisIdleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
-			stats.RedisStaleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
-		}
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
 			timer.ObserveDuration()

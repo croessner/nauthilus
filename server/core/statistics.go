@@ -19,10 +19,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -104,5 +106,76 @@ func SaveStatsToRedis(ctx context.Context) {
 		}
 
 		stats.RedisWriteCounter.Inc()
+	}
+}
+
+// UpdateRedisPoolStats updates and tracks Redis pool statistics such as hits, misses, timeouts, and connection counts.
+func UpdateRedisPoolStats() {
+	previousHits := make(map[string]float64)
+	previousMisses := make(map[string]float64)
+	previousTimeouts := make(map[string]float64)
+	ticker := time.NewTicker(time.Minute)
+
+	defer ticker.Stop()
+
+	for range ticker.C {
+		redisStatsMap := map[string]*redis.PoolStats{
+			"default_rw": rediscli.WriteHandle.PoolStats(),
+		}
+
+		if rediscli.WriteHandle != rediscli.ReadHandle {
+			redisStatsMap["default_ro"] = rediscli.ReadHandle.PoolStats()
+		}
+
+		for _, redisStats := range redislib.GetStandaloneStats() {
+			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+		}
+
+		for _, redisStats := range redislib.GetSentinelStats(false) {
+			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+		}
+
+		for _, redisStats := range redislib.GetSentinelStats(true) {
+			redisStatsMap[redisStats.Name+"_ro"] = redisStats.Stats
+		}
+
+		for _, redisStats := range redislib.GetClusterStats() {
+			redisStatsMap[redisStats.Name+"_rw"] = redisStats.Stats
+		}
+
+		for poolName, redisStats := range redisStatsMap {
+			currentHits := float64(redisStats.Hits)
+			currentMisses := float64(redisStats.Misses)
+			currentTimeouts := float64(redisStats.Timeouts)
+
+			if previousHit, ok := previousHits[poolName]; ok {
+				hitsDiff := currentHits - previousHit
+				if hitsDiff > 0 {
+					stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(hitsDiff)
+				}
+			}
+
+			if previousMiss, ok := previousMisses[poolName]; ok {
+				missesDiff := currentMisses - previousMiss
+				if missesDiff > 0 {
+					stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(missesDiff)
+				}
+			}
+
+			if previousTimeout, ok := previousTimeouts[poolName]; ok {
+				timeoutsDiff := currentTimeouts - previousTimeout
+				if timeoutsDiff > 0 {
+					stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(timeoutsDiff)
+				}
+			}
+
+			previousHits[poolName] = currentHits
+			previousMisses[poolName] = currentMisses
+			previousTimeouts[poolName] = currentTimeouts
+
+			stats.RedisTotalConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
+			stats.RedisIdleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
+			stats.RedisStaleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
+		}
 	}
 }
