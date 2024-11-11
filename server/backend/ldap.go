@@ -381,6 +381,7 @@ func (l *LDAPPool) updateSingleConnectionStatus(index int) int {
 func (l *LDAPPool) closeIdleConnections(openConnections, idlePoolSize, poolSize int) {
 	needClosing := max(openConnections-idlePoolSize, 0)
 
+	stats.LDAPStaleConnections.WithLabelValues(l.name).Set(float64(needClosing))
 	util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
 
 	//goland:noinspection GoDfaConstantCondition
