@@ -16,6 +16,7 @@
 package redislib
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestRedisGet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -142,7 +143,7 @@ func TestRedisSet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -222,7 +223,7 @@ func TestRedisExpire(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -297,7 +298,7 @@ func TestRedisIncr(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -371,7 +372,7 @@ func TestRedisDel(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -449,7 +450,7 @@ func TestRedisRename(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -514,7 +515,7 @@ func TestPing(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 

@@ -1,6 +1,7 @@
 package redislib
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -48,7 +49,7 @@ var uploads = &Uploads{
 }
 
 // evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
-func evaluateRedisScript(client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
+func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
 	var (
 		err    error
 		result any
@@ -59,6 +60,8 @@ func evaluateRedisScript(client redis.UniversalClient, script string, uploadScri
 	for i, arg := range args {
 		evalArgs[len(keys)+i] = arg
 	}
+
+	defer stats.RedisWriteCounter.Inc()
 
 	if uploadScriptName != "" {
 		script = uploads.Get(uploadScriptName)
@@ -79,7 +82,9 @@ func evaluateRedisScript(client redis.UniversalClient, script string, uploadScri
 }
 
 // uploadRedisScript uploads a Lua script to Redis and returns its SHA1 hash or an error if the upload fails.
-func uploadRedisScript(client redis.UniversalClient, script string) (any, error) {
+func uploadRedisScript(ctx context.Context, client redis.UniversalClient, script string) (any, error) {
+	defer stats.RedisWriteCounter.Inc()
+
 	sha1, err := client.ScriptLoad(ctx, script).Result()
 	if err != nil {
 		return nil, err
@@ -90,69 +95,69 @@ func uploadRedisScript(client redis.UniversalClient, script string) (any, error)
 
 // RedisRunScript executes a Redis script with the provided keys and arguments, returning the result or an error as Lua values.
 // It expects three arguments: the script string, a table of keys, and a table of arguments. It returns two values: an error message (or nil) and the script result (or nil).
-func RedisRunScript(L *lua.LState) int {
-	var (
-		keyList  []string
-		argsList []any
-	)
+func RedisRunScript(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		var (
+			keyList  []string
+			argsList []any
+		)
 
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	script := L.CheckString(2)
-	uploadScriptName := L.CheckString(3)
-	keys := L.CheckTable(4)
-	args := L.CheckTable(5)
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		script := L.CheckString(2)
+		uploadScriptName := L.CheckString(3)
+		keys := L.CheckTable(4)
+		args := L.CheckTable(5)
 
-	keys.ForEach(func(k, v lua.LValue) {
-		keyList = append(keyList, v.String())
-	})
+		keys.ForEach(func(k, v lua.LValue) {
+			keyList = append(keyList, v.String())
+		})
 
-	args.ForEach(func(k, v lua.LValue) {
-		argsList = append(argsList, v.String())
-	})
+		args.ForEach(func(k, v lua.LValue) {
+			argsList = append(argsList, v.String())
+		})
 
-	result, err := evaluateRedisScript(client, script, uploadScriptName, keyList, argsList...)
-	if err != nil {
+		result, err := evaluateRedisScript(ctx, client, script, uploadScriptName, keyList, argsList...)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		L.Push(convert.GoToLuaValue(L, result))
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
 
 		return 2
 	}
-
-	stats.RedisWriteCounter.Inc()
-
-	L.Push(convert.GoToLuaValue(L, result))
-	L.Push(lua.LNil)
-
-	return 2
 }
 
 // RedisUploadScript uploads a Lua script to Redis, returns the SHA1 hash of the script or an error message on failure.
-func RedisUploadScript(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	script := L.CheckString(2)
-	uploadScriptName := L.CheckString(3)
+func RedisUploadScript(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		script := L.CheckString(2)
+		uploadScriptName := L.CheckString(3)
 
-	sha1, err := uploadRedisScript(client, script)
-	if err != nil {
+		sha1, err := uploadRedisScript(ctx, client, script)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		if scriptSha1, okay := sha1.(string); okay {
+			uploads.Set(uploadScriptName, scriptSha1)
+
+			L.Push(lua.LString(scriptSha1))
+			L.Push(lua.LNil)
+
+			return 2
+		}
+
 		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(fmt.Sprintf("Could not convert script SHA1 to string: %v", sha1)))
 
 		return 2
 	}
-
-	if scriptSha1, okay := sha1.(string); okay {
-		uploads.Set(uploadScriptName, scriptSha1)
-
-		L.Push(lua.LString(scriptSha1))
-		L.Push(lua.LNil)
-
-		stats.RedisWriteCounter.Inc()
-
-		return 2
-	}
-
-	L.Push(lua.LNil)
-	L.Push(lua.LString(fmt.Sprintf("Could not convert script SHA1 to string: %v", sha1)))
-
-	return 2
 }

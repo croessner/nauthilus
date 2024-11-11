@@ -1,6 +1,7 @@
 package redislib
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -13,7 +14,7 @@ func TestRegisterRedisConnection(t *testing.T) {
 
 	defer L.Close()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	tests := []struct {
 		name    string

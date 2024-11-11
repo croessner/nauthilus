@@ -16,73 +16,47 @@
 package redislib
 
 import (
-	"github.com/croessner/nauthilus/server/global"
-	lua "github.com/yuin/gopher-lua"
-)
+	"context"
 
-// exportsModRedis is a map that contains the names of Lua functions and their corresponding Go function pointers.
-// These functions provide the implementation for Redis operations such as getting, setting, incrementing,
-// deleting, and expiring keys, as well as interacting with Redis hashes.
-// The Go functions are defined in separate functions and are not included in this documentation.
-// Each Go function takes a Lua state (L) as a parameter and returns the number of values pushed to the Lua stack.
-// If an error occurs during the execution of a Go function, it pushes a nil value and an error message to the Lua stack
-// and returns 2. Otherwise, it pushes the result(s) to the Lua stack and returns the number of values pushed (1).
-// The Lua function names and their corresponding Go functions are listed below:
-// - "register_redis_pool": RegisterRedisPool
-// - "get_redis_connection": GetRedisConnection
-// - "redis_get": RedisGet
-// - "redis_set": RedisSet
-// - "redis_incr": RedisIncr
-// - "redis_del": RedisDel
-// - "redis_expire": RedisExpire
-// - "redis_hget": RedisHGet
-// - "redis_hset": RedisHSet
-// - "redis_hdel": RedisHDel
-// - "redis_hlen": RedisHLen
-// - "redis_hgetall": RedisHGetAll
-// - "redis_hincrby": RedisHIncrBy
-// - "redis_hincrbyfloat": RedisHIncrByFloat
-// - "redis_hexists": RedisHExists
-// - "redis_rename": RedisRename
-// - "redis_sadd": RedisSAdd
-// - "redis_sismember": RedisSIsMember
-// - "redis_smembers": RedisSMembers
-// - "redis_srem": RedisSRem
-// - "redis_scard": RedisSCard
-var exportsModRedis = map[string]lua.LGFunction{
-	global.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
-	global.LuaFnRedisGetRedisConnection: GetRedisConnection,
-	global.LuaFnRedisPing:               RedisPing,
-	global.LuaFnRedisGet:                RedisGet,
-	global.LuaFnRedisSet:                RedisSet,
-	global.LuaFnRedisIncr:               RedisIncr,
-	global.LuaFnRedisDel:                RedisDel,
-	global.LuaFnRedisExpire:             RedisExpire,
-	global.LuaFnRedisHGet:               RedisHGet,
-	global.LuaFnRedisHSet:               RedisHSet,
-	global.LuaFnRedisHDel:               RedisHDel,
-	global.LuaFnRedisHLen:               RedisHLen,
-	global.LuaFnRedisHGetAll:            RedisHGetAll,
-	global.LuaFnRedisHIncrBy:            RedisHIncrBy,
-	global.LuaFnRedisHIncrByFloat:       RedisHIncrByFloat,
-	global.LuaFnRedisHExists:            RedisHExists,
-	global.LuaFnRedisRename:             RedisRename,
-	global.LuaFnRedisSAdd:               RedisSAdd,
-	global.LuaFnRedisSIsMember:          RedisSIsMember,
-	global.LuaFnRedisSMembers:           RedisSMembers,
-	global.LuaFnRedisSRem:               RedisSRem,
-	global.LuaFnRedisSCard:              RedisSCard,
-	global.LuaFnRedisRunScript:          RedisRunScript,
-	global.LuaFnRedisUploadScript:       RedisUploadScript,
-}
+	"github.com/croessner/nauthilus/server/global"
+	"github.com/yuin/gopher-lua"
+)
 
 // LoaderModRedis initializes a new module for Redis in Lua by setting the functions from the "exportsModRedis" map into
 // a new lua.LTable. The module table is then pushed onto the top of the stack. Finally, it returns 1 to indicate that
 // one value has been returned to Lua.
-func LoaderModRedis(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), exportsModRedis)
+func LoaderModRedis(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			global.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
+			global.LuaFnRedisGetRedisConnection: GetRedisConnection,
 
-	L.Push(mod)
+			global.LuaFnRedisPing:         RedisPing(ctx),
+			global.LuaFnRedisGet:          RedisGet(ctx),
+			global.LuaFnRedisSet:          RedisSet(ctx),
+			global.LuaFnRedisIncr:         RedisIncr(ctx),
+			global.LuaFnRedisDel:          RedisDel(ctx),
+			global.LuaFnRedisExpire:       RedisExpire(ctx),
+			global.LuaFnRedisHGet:         RedisHGet(ctx),
+			global.LuaFnRedisHSet:         RedisHSet(ctx),
+			global.LuaFnRedisHDel:         RedisHDel(ctx),
+			global.LuaFnRedisHLen:         RedisHLen(ctx),
+			global.LuaFnRedisHGetAll:      RedisHGetAll(ctx),
+			global.LuaFnRedisHIncrBy:      RedisHIncrBy(ctx),
+			global.LuaFnRedisHIncrByFloat: RedisHIncrByFloat(ctx),
+			global.LuaFnRedisHExists:      RedisHExists(ctx),
+			global.LuaFnRedisRename:       RedisRename(ctx),
+			global.LuaFnRedisSAdd:         RedisSAdd(ctx),
+			global.LuaFnRedisSIsMember:    RedisSIsMember(ctx),
+			global.LuaFnRedisSMembers:     RedisSMembers(ctx),
+			global.LuaFnRedisSRem:         RedisSRem(ctx),
+			global.LuaFnRedisSCard:        RedisSCard(ctx),
+			global.LuaFnRedisRunScript:    RedisRunScript(ctx),
+			global.LuaFnRedisUploadScript: RedisUploadScript(ctx),
+		})
 
-	return 1
+		L.Push(mod)
+
+		return 1
+	}
 }

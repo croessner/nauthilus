@@ -16,6 +16,8 @@
 package redislib
 
 import (
+	"context"
+
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -34,27 +36,29 @@ import (
 // In case of any error during the operation, it pushes a nil value
 // and error string to Lua stack and returns 2 indicating two return values.
 // If the operation is successful, it increments a Redis read counter and returns 1.
-func RedisHGet(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
-	field := L.CheckString(3)
-	valueType := global.TypeString
+func RedisHGet(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
+		field := L.CheckString(3)
+		valueType := global.TypeString
 
-	if L.GetTop() == 2 {
-		valueType = L.CheckString(4)
+		if L.GetTop() == 2 {
+			valueType = L.CheckString(4)
+		}
+
+		defer stats.RedisReadCounter.Inc()
+
+		err := convert.StringCmd(client.HGet(ctx, key, field), valueType, L)
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		return 1
 	}
-
-	err := convert.StringCmd(client.HGet(ctx, key, field), valueType, L)
-	if err != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
-
-		return 2
-	}
-
-	stats.RedisReadCounter.Inc()
-
-	return 1
 }
 
 // RedisHSet is a function that acts as a command interface for setting field in the hash stored at key to value.
@@ -67,45 +71,48 @@ func RedisHGet(L *lua.LState) int {
 // It returns an integer.
 // If the operation is successful, it pushes a string "OK" to Lua state L and returns 1.
 // If an error occurs, it pushes nil and the error message to Lua state L and returns 2.
-func RedisHSet(L *lua.LState) int {
-	var kvpairs []any
+func RedisHSet(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		var kvpairs []any
 
-	if L.GetTop() < 4 || (L.GetTop()-2)%2 != 0 {
-		L.Push(lua.LNil)
-		L.Push(lua.LString("Invalid number of arguments"))
-
-		return 2
-	}
-
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-
-	for i := 3; i <= L.GetTop(); i += 2 {
-		field := L.CheckString(i)
-
-		value, err := convert.LuaValue(L.Get(i + 1))
-		if err != nil {
+		if L.GetTop() < 4 || (L.GetTop()-2)%2 != 0 {
 			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+			L.Push(lua.LString("Invalid number of arguments"))
 
 			return 2
 		}
 
-		kvpairs = append(kvpairs, field, value)
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+
+		for i := 3; i <= L.GetTop(); i += 2 {
+			field := L.CheckString(i)
+
+			value, err := convert.LuaValue(L.Get(i + 1))
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+
+				return 2
+			}
+
+			kvpairs = append(kvpairs, field, value)
+		}
+
+		defer stats.RedisWriteCounter.Inc()
+
+		cmd := client.HSet(ctx, key, kvpairs...)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	cmd := client.HSet(ctx, key, kvpairs...)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
-
-		return 2
-	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisHDel is a function that uses lua as its first parameter. This function removes
@@ -119,35 +126,38 @@ func RedisHSet(L *lua.LState) int {
 // method for returning values to the Lua stack. It is used with the L.Push(lua.LNil)
 // and L.Push(lua.LString("Error")), which pushes a nil value and an error string, respectively,
 // in case of an error. On successful deletion, it returns "OK".
-func RedisHDel(L *lua.LState) int {
-	var fields []string
+func RedisHDel(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		var fields []string
 
-	if L.GetTop() < 3 {
-		L.Push(lua.LNil)
-		L.Push(lua.LString("Invalid number of arguments"))
+		if L.GetTop() < 3 {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("Invalid number of arguments"))
 
-		return 2
+			return 2
+		}
+
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+
+		for i := 3; i <= L.GetTop(); i += 1 {
+			fields = append(fields, L.CheckString(i))
+		}
+
+		defer stats.RedisWriteCounter.Inc()
+
+		cmd := client.HDel(ctx, key, fields...)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-
-	for i := 3; i <= L.GetTop(); i += 1 {
-		fields = append(fields, L.CheckString(i))
-	}
-
-	cmd := client.HDel(ctx, key, fields...)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
-
-		return 2
-	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisHLen is a function in Go that interacts with a Redis database.
@@ -164,21 +174,25 @@ func RedisHDel(L *lua.LState) int {
 //
 // It is important to note that this function returns the number of items that it pushes onto the Lua stack,
 // rather than the actual results of the Redis HLen operation.
-func RedisHLen(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
+func RedisHLen(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
 
-	cmd := client.HLen(ctx, key)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisReadCounter.Inc()
 
-		return 2
+		cmd := client.HLen(ctx, key)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisHGetAll is a function that interacts with the Redis database. This function takes a Lua state object,
@@ -196,29 +210,31 @@ func RedisHLen(L *lua.LState) int {
 //
 // It then pushes this table onto the Lua stack and returns 1 (to represent one return value, which is the table containing
 // the database records), thereby ending the function.
-func RedisHGetAll(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
+func RedisHGetAll(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
 
-	cmd := client.HGetAll(ctx, key)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisReadCounter.Inc()
 
-		return 2
+		cmd := client.HGetAll(ctx, key)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		table := L.NewTable()
+		for field, value := range cmd.Val() {
+			// We cannot make a difference for the types of the values. So, all values are returned as strings
+			table.RawSetString(field, lua.LString(value))
+		}
+
+		L.Push(table)
+
+		return 1
 	}
-
-	stats.RedisReadCounter.Inc()
-
-	table := L.NewTable()
-	for field, value := range cmd.Val() {
-		// We cannot make a difference for the types of the values. So, all values are returned as strings
-		table.RawSetString(field, lua.LString(value))
-	}
-
-	L.Push(table)
-
-	return 1
 }
 
 // RedisHIncrBy is responsible for the increment operation on a hash field in a Redis data structure.
@@ -242,24 +258,27 @@ func RedisHGetAll(L *lua.LState) int {
 // int: Returns 1 if the increment operation was successful, with the new field value pushed onto
 // the Lua stack. Returns 2 if there was an error, with nil and the error's message pushed onto
 // the Lua stack.
-func RedisHIncrBy(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-	field := L.CheckString(3)
-	increment := L.CheckInt64(4)
+func RedisHIncrBy(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+		field := L.CheckString(3)
+		increment := L.CheckInt64(4)
 
-	cmd := client.HIncrBy(ctx, key, field, increment)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisWriteCounter.Inc()
 
-		return 2
+		cmd := client.HIncrBy(ctx, key, field, increment)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisHIncrByFloat increments the value of a hash field by the provided floating-point increment.
@@ -269,24 +288,27 @@ func RedisHIncrBy(L *lua.LState) int {
 // If an error occurs, it returns nil and an error message as Lua strings.
 // The function is designed to be called from Lua scripts and uses the provided Lua state `L`.
 // Example usage: `result = redis_hincrby_float("mykey", "myfield", 0.5)`.
-func RedisHIncrByFloat(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-	field := L.CheckString(3)
-	increment := float64(L.CheckNumber(4))
+func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+		field := L.CheckString(3)
+		increment := float64(L.CheckNumber(4))
 
-	cmd := client.HIncrByFloat(ctx, key, field, increment)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisWriteCounter.Inc()
 
-		return 2
+		cmd := client.HIncrByFloat(ctx, key, field, increment)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisHExists is a function that checks if the given field exists in the Redis hash stored at a key.
@@ -302,21 +324,24 @@ func RedisHIncrByFloat(L *lua.LState) int {
 // Returns:
 //
 //	int: The status of the operation. If an error occurs, 2 is returned, otherwise 1.
-func RedisHExists(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
-	field := L.CheckString(3)
+func RedisHExists(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
+		field := L.CheckString(3)
 
-	cmd := client.HExists(ctx, key, field)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisReadCounter.Inc()
 
-		return 2
+		cmd := client.HExists(ctx, key, field)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LBool(cmd.Val()))
+
+		return 1
 	}
-
-	stats.RedisReadCounter.Inc()
-	L.Push(lua.LBool(cmd.Val()))
-
-	return 1
 }
