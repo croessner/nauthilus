@@ -178,7 +178,7 @@ var _ PoolRequest[LDAPAuthRequest] = (*LDAPAuthRequest)(nil)
 // as well as any error that might have occurred during the operation.
 type LDAPReply struct {
 	// Result holds the result retrieved from the database.
-	// It is of type DatabaseResult which can accommodate different types of database operations.
+	// It is of type DatabaseResult that can accommodate different types of database operations.
 	Result DatabaseResult
 
 	// RawResult holds a list of entries returned by the LDAP operation.
@@ -200,12 +200,13 @@ type ldapConnectionState struct {
 }
 
 // NewPool creates a new LDAPPool object based on the provided context and poolType.
-// If config.LoadableConfig.LDAP is nil, it returns nil.
+// If config.LoadableConfig.LDAP is nil, it returns.
 // The poolType can be global.LDAPPoolLookup, global.LDAPPoolUnknown, or global.LDAPPoolAuth.
 // It initializes the name and poolSize variables based on the poolType.
-// It creates slices for the conn and conf variables based on the poolSize.
+// It creates slices for the "conn" and "conf" variables based on the poolSize.
 // It iterates through the poolSize and initializes each element of conf and conn.
-// Then it assigns values from config.LoadableConfig to each element of conf and sets the state of each element of conn to global.LDAPStateClosed.
+// Then it assigns values from config.LoadableConfig to each element of conf
+// and sets the state of each element of "conn" to global.LDAPStateClosed.
 // Finally, it returns an LDAPPool object with the provided context, name, conn, and conf.
 func NewPool(ctx context.Context, poolType int) *LDAPPool {
 	var (
@@ -370,7 +371,7 @@ func (l *LDAPPool) updateSingleConnectionStatus(index int) int {
 //
 // Iteratively, the method tries to close idle connections until we reach the desired poolSize or until
 // there are no more connections that need closing, whichever comes first.
-// The method keeps track of the total connections closed and adjust the count stored in the variable needClosing.
+// The method keeps track of the total connections closed and adjusts the count stored in the variable needClosing.
 //
 // Parameters:
 // openConnections (int): Number of current open connections.
@@ -436,7 +437,7 @@ func (l *LDAPPool) houseKeeper() {
 
 	l.updateStatsPoolSize()
 
-	// List of connections is shared and must remain thread-safe. Length won't change inside this function.
+	// The list of connections is shared and must remain thread-safe. Length won't change inside this function.
 	poolSize := len(l.conn)
 
 	for {
@@ -584,7 +585,7 @@ func (l *LDAPPool) logConnectionError(guid *string, err error) {
 
 // setIdleConnections sets the idle connections in the LDAPPool.
 // It determines the idle pool size by calling the determineIdlePoolSize function.
-// If the number of open connections is less than the idle pool size,
+// If the number of open connections is lower than the idle pool size,
 // it initializes new connections by calling the initializeConnections function,
 // and optionally binds them based on the bind parameter.
 func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
@@ -1159,7 +1160,7 @@ func (l *LDAPConnection) search(ldapRequest *LDAPRequest) (result DatabaseResult
 // If the search result does not contain a distinguished name (DN) attribute, error ErrNoLDAPSearchResult will occur.
 // If the search result finds no corresponding entries, error ErrNoLDAPSearchResult will also occur.
 //
-// If the search operation is successful, a modify request is created with the DN.
+// If the search operation is successful, a "modify" request is created with the DN.
 // Then, for each attribute in ModifyAttributes of LDAPRequest, the Add method is called to add them to the modifyRequest.
 // Finally, the 'Add' request is sent to the LDAP directory.
 //
@@ -1350,7 +1351,7 @@ func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *
 // It takes a context.Context as a parameter.
 // It creates a sync.WaitGroup to wait for all started goroutines to complete.
 // It creates an LDAPPool by calling the NewPool function with the context and global.LDAPPoolLookup.
-// If the LDAPPool is nil, it returns.
+// If the LDAPPool is a nil, it returns.
 // It starts the houseKeeper goroutine by calling ldapPool.houseKeeper() in a separate goroutine.
 // It starts an infinite loop with a select statement.
 // The select statement waits for either the context to be done or a request to be received from the LDAPRequestChan channel.
@@ -1366,7 +1367,7 @@ func LDAPMainWorker(ctx context.Context) {
 		return
 	}
 
-	// Start background cleaner process
+	// Start a background cleaner process
 	go ldapPool.houseKeeper()
 
 	ldapPool.setIdleConnections(true)
@@ -1476,7 +1477,7 @@ func LDAPAuthWorker(ctx context.Context) {
 		return
 	}
 
-	// Start background cleaner process
+	// Start a background cleaner process
 	go ldapPool.houseKeeper()
 
 	ldapPool.setIdleConnections(false)
@@ -1637,8 +1638,8 @@ func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScop
 // extractAttributes extracts the attribute values from the given lua.LTable.
 // It creates a string slice called attributes with the same length as the lua.LTable.
 // Then it iterates through each pair of index and value in the lua.LTable using the ForEach method.
-// For each pair, it appends the value as a string to the attributes slice.
-// Finally, it returns the attributes slice.
+// For each pair, it appends the value as a string to the "attributes" slice.
+// Finally, it returns the "attributes" slice.
 func extractAttributes(attrTable *lua.LTable) []string {
 	attributes := make([]string, attrTable.Len())
 	attrTable.ForEach(func(index lua.LValue, value lua.LValue) {

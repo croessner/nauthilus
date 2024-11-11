@@ -41,7 +41,7 @@ import (
 
 // isRepeatingWrongPassword is a method associated with the AuthState struct used to check for repeated wrong password usage.
 // It retrieves and loads a password history from Redis using a certain key.
-// The function then checks if the current password has previously been within the loaded history and if it's attempt count exceeds one.
+// The function then checks if the current password has previously been within the loaded history and if its attempt count exceeds one.
 // In such a case, it reloads the password history from Redis with an updated key.
 // Finally, if the count of password attempts plus a predefined limit is greater or equal to the total count of attempts,
 // an information log is created and the function returns 'true', signifying the excessive usage of the same wrong password.
@@ -84,7 +84,7 @@ func (a *AuthState) isRepeatingWrongPassword() (repeating bool, err error) {
 }
 
 // userExists checks if a user exists in the backend.
-// It calls the LookupUserAccountFromRedis function to lookup the user's account name in Redis.
+// It calls the LookupUserAccountFromRedis function to look up the user's account name in Redis.
 // If an error occurs during the lookup, the function returns the error.
 // If the account name is empty, indicating that the user is not found, the function returns false.
 // Otherwise, if the user exists, the function returns true.
@@ -126,15 +126,15 @@ func (a *AuthState) checkEnforceBruteForceComputation() (bool, error) {
 	)
 
 	/*
-		- If user exists, then check its UCN
-		-   If UCN exists, then check for repeating wrong password, else abort the request.
-		==> Consequences of repeating wrong passwords: buckets won't be increased.
+		- If a user exists, then check its UCN
+		  - If UCN exists, then check for repeating wrong password, else abort the request.
+		⇒ Consequences of repeating wrong passwords: buckets won't be increased.
 
 		- If the user is unknown, enforce the brute forcing computation.
-		==> Consequences are increased buckets.
+		⇒ Consequences are increased buckets.
 
 		- On any error that might occur, abort the current request.
-		==> Consequences are non-increased buckets.
+		⇒ Consequences are non-increased buckets.
 	*/
 
 	if foundUser, err = a.userExists(); err != nil {
@@ -261,7 +261,7 @@ func logBruteForceRuleRedisKeyDebug(auth *AuthState, rule *config.BruteForceRule
 // This function belongs to the AuthState struct. It is used to generate a unique
 // Redis key for brute force rule tracking.
 //
-// For a given brute force rule, this function generates a Redis key that is used to
+// For a given brute force rule, this function generates a Redis key used to
 // maintain a record of failed requests. The key contains various components including
 // the period of rule enforcement, the CIDR block, and the number of failed requests.
 // Additional details related to IP version (IPv4 or IPv6) and network string are also
@@ -335,8 +335,8 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 
 // loadPasswordHistoryFromRedis loads password history related to brute force attacks from Redis for a given key.
 // The function will fetch all associated passwords in the form of a hash along with a counter.
-// The Redis key is created for each unique user presented by the variable `key` which is a GUID,
-// This helps in keeping the track of the number of attempts a user has made for password authentication.
+// The Redis key is created for each unique user presented by the variable `key`, which is a GUID.
+// This helps in tracking the number of attempts a user has made for password authentication.
 // The function will generate an error logs for unsuccessful retrieval of password history data from Redis.
 // The password history data is stored in the AuthState's `PasswordHistory` field.
 //
@@ -392,7 +392,7 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 // The password history is stored in a local variable and processed to compute login attempts and seen account passwords.
 // In the second phase, it retrieves the overall password history again using the Redis hash key.
 // This overall history is then used to compute the total number of seen passwords.
-// Each of these phases are independent and are executed if the Redis hash key retrieval and the password history fetch operations are successful.
+// Each of these phases is independent and is executed if the Redis hash key retrieval and the password history fetch operations are successful.
 func (a *AuthState) getAllPasswordHistories() {
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
 		return
@@ -430,8 +430,8 @@ func (a *AuthState) getAllPasswordHistories() {
 //
 //  1. It increments the value of this key by one, creating the key if it does not already exist.
 //     This increments a counter for each bad password attempt.
-//  2. Logs an error message if there is an error incrementing the key's value
-//  3. Sets an expiry time on the key. This has the effect of automatically deleting the keys after a certain period of time.
+//  2. Log an error message if there is an error incrementing the key's value
+//  3. Set an expiry time on the key. This has the effect of automatically deleting the keys after a certain period of time.
 //  4. Logs an error message if there is an error setting expiry time
 //
 // The function concludes by logging that the process has finished.
@@ -491,10 +491,10 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 
 // loadBruteForceBucketCounterFromRedis is a method on the AuthState struct that loads the brute force
 // bucket counter from Redis and updates the BruteForceCounter map. The given BruteForceRule is used to generate the Redis key.
-// If the key is not empty, it retrieves the counter value from Redis using the backend.LoadCacheFromRedis function.
+// If the key is not empty, it retrieves the counter-value from Redis using the backend.LoadCacheFromRedis function.
 // If an error occurs while loading the cache, the function returns.
 // If the BruteForceCounter is not initialized, it creates a new map.
-// Finally, it updates the BruteForceCounter map with the counter value retrieved from Redis using the rule name as the key.
+// Finally, it updates the BruteForceCounter map with the counter-value retrieved from Redis using the rule name as the key.
 func (a *AuthState) loadBruteForceBucketCounterFromRedis(rule *config.BruteForceRule) {
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
 		return
@@ -523,7 +523,7 @@ func (a *AuthState) loadBruteForceBucketCounterFromRedis(rule *config.BruteForce
 
 // saveBruteForceBucketCounterToRedis is a method on the AuthState struct that saves brute force
 // attempt information to Redis. This helps in maintaining a counter for each unique brute force rule.
-// The brute force rule, that is passed as param, is used to generate the key for Redis.
+// The brute force rule that is passed as param is used to generate the key for Redis.
 // If the key is not empty, the related counter is incremented in Redis.
 // Note that the counter is not incremented if 'BruteForceName' is equal to the 'Name' in the given rule.
 // The function also sets the key expiration time in Redis as per the 'Period' field given in the rule.
@@ -568,7 +568,7 @@ func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 // getPreResultBruteForceRedis retrieves the name of the BruteForceRule from the Redis hash map, based on the network IP address obtained from the given BruteForceRule parameter.
 // If there is an error during the retrieval, it will log the error using the Logger.
 // If the key-value pair does not exist in the Redis hash map, it will return an empty string.
-// The retrieved rule name will be returned as the result.
+// The retrieved rule name will be returned as a result.
 func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string, err error) {
 	var network *net.IPNet
 
@@ -773,23 +773,23 @@ func logBucketMatchingRule(auth *AuthState, network *net.IPNet, rule *config.Bru
 
 // checkBucketOverLimit checks if the given network exceeds the brute force allowed thresholds based on predefined rules.
 // It verifies the current network against the specified brute force rules and returns if any rule is triggered.
-func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+func (a *AuthState) checkBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	var err error
 
 	for ruleNumber = range rules {
 		// Skip, where the current IP address does not match the current rule
-		if *network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+		if *network, err = a.getNetwork(&rules[ruleNumber]); err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
 
 			return true, false, ruleNumber
 		} else if network == nil {
 			continue
 		}
 
-		auth.loadBruteForceBucketCounterFromRedis(&rules[ruleNumber])
+		a.loadBruteForceBucketCounterFromRedis(&rules[ruleNumber])
 
 		// The counter goes from 0...N-1, but the 'failed_requests' setting from 1...N
-		if auth.BruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {
+		if a.BruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {
 			ruleTriggered = true
 			*message = "Brute force attack detected"
 			stats.BruteForceRejected.WithLabelValues(rules[ruleNumber].Name).Inc()
@@ -802,58 +802,58 @@ func checkBucketOverLimit(auth *AuthState, rules []config.BruteForceRule, networ
 }
 
 // handleBruteForceLuaAction handles the brute force Lua action based on the provided authentication state and rule config.
-func handleBruteForceLuaAction(auth *AuthState, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
+func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
 	if config.LoadableConfig.HaveLuaActions() {
 		finished := make(chan action.Done)
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    global.LuaActionBruteForce,
-			Context:      auth.Context,
+			Context:      a.Context,
 			FinishedChan: finished,
-			HTTPRequest:  auth.HTTPClientContext.Request,
+			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           alreadyTriggered,
 				UserFound:           false, // unavailable
 				Authenticated:       false, // unavailable
-				NoAuth:              auth.NoAuth,
-				BruteForceCounter:   auth.BruteForceCounter[rule.Name],
-				Service:             auth.Service,
-				Session:             *auth.GUID,
-				ClientIP:            auth.ClientIP,
-				ClientPort:          auth.XClientPort,
-				ClientNet:           fmt.Sprintf("%v", network),
-				ClientHost:          auth.ClientHost,
-				ClientID:            auth.XClientID,
-				LocalIP:             auth.XLocalIP,
-				LocalPort:           auth.XPort,
-				UserAgent:           *auth.UserAgent,
-				Username:            auth.Username,
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   a.BruteForceCounter[rule.Name],
+				Service:             a.Service,
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				ClientNet:           network.String(),
+				ClientHost:          a.ClientHost,
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				Username:            a.Username,
 				Account:             "", // unavailable
 				AccountField:        "", // unavailable
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
-				Password:            auth.Password,
-				Protocol:            auth.Protocol.Get(),
+				Password:            a.Password,
+				Protocol:            a.Protocol.Get(),
 				BruteForceName:      rule.Name,
-				FeatureName:         "", // unavailable
-				StatusMessage:       &auth.StatusMessage,
-				XSSL:                auth.XSSL,
-				XSSLSessionID:       auth.XSSLSessionID,
-				XSSLClientVerify:    auth.XSSLClientVerify,
-				XSSLClientDN:        auth.XSSLClientDN,
-				XSSLClientCN:        auth.XSSLClientCN,
-				XSSLIssuer:          auth.XSSLIssuer,
-				XSSLClientNotBefore: auth.XSSLClientNotBefore,
-				XSSLClientNotAfter:  auth.XSSLClientNotAfter,
-				XSSLSubjectDN:       auth.XSSLSubjectDN,
-				XSSLIssuerDN:        auth.XSSLIssuerDN,
-				XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
-				XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
-				XSSLProtocol:        auth.XSSLProtocol,
-				XSSLCipher:          auth.XSSLCipher,
-				SSLSerial:           auth.SSLSerial,
-				SSLFingerprint:      auth.SSLFingerprint,
+				FeatureName:         a.FeatureName,
+				StatusMessage:       &a.StatusMessage,
+				XSSL:                a.XSSL,
+				XSSLSessionID:       a.XSSLSessionID,
+				XSSLClientVerify:    a.XSSLClientVerify,
+				XSSLClientDN:        a.XSSLClientDN,
+				XSSLClientCN:        a.XSSLClientCN,
+				XSSLIssuer:          a.XSSLIssuer,
+				XSSLClientNotBefore: a.XSSLClientNotBefore,
+				XSSLClientNotAfter:  a.XSSLClientNotAfter,
+				XSSLSubjectDN:       a.XSSLSubjectDN,
+				XSSLIssuerDN:        a.XSSLIssuerDN,
+				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+				XSSLProtocol:        a.XSSLProtocol,
+				XSSLCipher:          a.XSSLCipher,
+				SSLSerial:           a.SSLSerial,
+				SSLFingerprint:      a.SSLFingerprint,
 			},
 		}
 
@@ -862,11 +862,11 @@ func handleBruteForceLuaAction(auth *AuthState, alreadyTriggered bool, rule *con
 }
 
 // processBruteForce processes authentication state to handle brute force attempts based on rule triggers and network details.
-func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string) bool {
+func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string) bool {
 	if alreadyTriggered || ruleTriggered {
 		var useCache bool
 
-		logBucketRuleDebug(auth, network, rule)
+		logBucketRuleDebug(a, network, rule)
 
 		for _, backendType := range config.LoadableConfig.Server.Backends {
 			if backendType.Get() == global.BackendCache {
@@ -877,8 +877,8 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 		}
 
 		if useCache {
-			if needEnforce, err := auth.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+			if needEnforce, err := a.checkEnforceBruteForceComputation(); err != nil {
+				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
 
 				return false
 			} else if !needEnforce {
@@ -888,19 +888,21 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 			}
 		}
 
-		auth.BruteForceName = rule.Name
+		a.BruteForceName = rule.Name
 
-		auth.processBlockedAccount()
-		auth.saveFailedPasswordCounterInRedis()
-		auth.getAllPasswordHistories()
+		a.processBlockedAccount()
+		a.saveFailedPasswordCounterInRedis()
+		a.getAllPasswordHistories()
 
 		if ruleTriggered {
-			auth.setPreResultBruteForceRedis(rule)
+			a.setPreResultBruteForceRedis(rule)
 		}
 
-		logBucketMatchingRule(auth, network, rule, message)
+		logBucketMatchingRule(a, network, rule, message)
 
-		handleBruteForceLuaAction(auth, alreadyTriggered, rule, network)
+		a.FeatureName = global.FeatureBruteForce
+
+		a.handleBruteForceLuaAction(alreadyTriggered, rule, network)
 
 		return true
 	}
@@ -908,24 +910,25 @@ func processBruteForce(auth *AuthState, ruleTriggered, alreadyTriggered bool, ru
 	return false
 }
 
-// checkRepeatingBruteForcer analyzes if a network partakes in repeated brute force attempts according to specified rules.
+// checkRepeatingBruteForcer analyzes if a network partakes in repeated brute force attempts,
+// according to specified rules.
 // It returns a boolean indicating an error, whether a brute force rule already triggered, and the rule number.
-func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+func (a *AuthState) checkRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
 	var (
 		ruleName string
 		err      error
 	)
 
 	for ruleNumber = range rules {
-		if *network, err = auth.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+		if *network, err = a.getNetwork(&rules[ruleNumber]); err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
 
 			return true, false, ruleNumber
 		} else if network == nil {
 			continue
 		}
 
-		if ruleName, err = auth.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
+		if ruleName, err = a.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
 			alreadyTriggered = true
 			*message = "Brute force attack detected (cached result)"
 			stats.BruteForceRejected.WithLabelValues(ruleName).Inc()
@@ -938,7 +941,7 @@ func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, n
 }
 
 // checkBruteForce is a method of the `AuthState` struct and is responsible for
-// ascertaining whether the client IP should be blocked due to unrestricted unauthorized access attempts
+// telling whether the client IP should be blocked due to unrestricted unauthorized access attempts
 // (i.e., a Brute Force attack on the system).
 //
 // The implementation works as follows:
@@ -948,7 +951,7 @@ func checkRepeatingBruteForcer(auth *AuthState, rules []config.BruteForceRule, n
 //   - It looks for certain conditions such as `NoAuth` or `ListAccounts` under which the method returns 'false' immediately.
 //   - The method verifies if the client IP is localhost or unavailable and logs relevant info if it is.
 //   - It checks if Brute Force security is enabled for the current protocol being used, logging the data if it's not enabled.
-//   - The function checks if the current client IP is in the IP whitelist and logs the relevant data if it is.
+//   - The function checks if the current client IP is in the IP allowlist and logs the relevant data if it is.
 //   - It iterates over various Brute Force rules to determine if the client IP falls into any predefined rule and logs the data.
 //   - Lastly, it checks if any Brute Force rule is triggered, whereupon it saves some information in Redis, retrieves it back, logs
 //     the appropriate message, and runs a Lua script for handling the detected brute force attempt.
@@ -1020,19 +1023,19 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 	network := &net.IPNet{}
 
-	abort, alreadyTriggered, ruleNumber := checkRepeatingBruteForcer(a, rules, &network, &message)
+	abort, alreadyTriggered, ruleNumber := a.checkRepeatingBruteForcer(rules, &network, &message)
 	if abort {
 		return false
 	}
 
 	if !alreadyTriggered {
-		abort, ruleTriggered, ruleNumber = checkBucketOverLimit(a, rules, &network, &message)
+		abort, ruleTriggered, ruleNumber = a.checkBucketOverLimit(rules, &network, &message)
 		if abort {
 			return false
 		}
 	}
 
-	return processBruteForce(a, ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
+	return a.processBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
 }
 
 // updateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication

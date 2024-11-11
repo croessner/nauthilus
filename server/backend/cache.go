@@ -38,8 +38,8 @@ type BruteForceBucketCache uint
 type PasswordHistory map[string]uint
 
 // PositivePasswordCache is a container that stores all kinds of user information upon a successful authentication. It
-// is used for Redis as a short cache object and as proxy structure between Nauthilus instances. The cache object is not
-// refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from cache to force a refresh
+// is used for Redis as a short cache object and as a proxy structure between Nauthilus instances. The cache object is not
+// refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
 	Backend           global.Backend `redis:"passdb_backend"`
@@ -51,8 +51,8 @@ type PositivePasswordCache struct {
 	Attributes        DatabaseResult `redis:"attributes"`
 }
 
-// RedisCache is a union that is used for LoadCacheFromRedis and SaveUserDataToRedis Redis routines. These routines are
-// generics.
+// RedisCache is a union used for LoadCacheFromRedis and SaveUserDataToRedis Redis routines.
+// These routines are generics.
 type RedisCache interface {
 	PositivePasswordCache | BruteForceBucketCache
 }
@@ -226,7 +226,8 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 // SaveWebAuthnToRedis saves the user's WebAuthn data to Redis with the specified time-to-live (TTL) duration.
 // It serializes the user object using JSON and stores it in Redis under the key "as_webauthn:user:<user id>".
-// If serialization fails, it logs the error and returns it. If saving to Redis fails, it logs the error.
+// If serialization fails, it logs the error and returns it.
+// If saving to "Redis" fails, it logs the error.
 // Note: User is a struct representing a user in the system.
 func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 	var result string
