@@ -241,6 +241,12 @@ var (
 		Help: "Number of currently opened connections",
 	}, []string{"pool"})
 
+	// LDAPStaleConnections counts the number of currently staled connections in the LDAP pool which need closing.
+	LDAPStaleConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ldap_pool_stale_connections_total",
+		Help: "Number of currently staled connections",
+	}, []string{"pool"})
+
 	// LDAPPoolSize is a gauge metric that represents the size of the LDAP connection pool.
 	LDAPPoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ldap_pool_size",

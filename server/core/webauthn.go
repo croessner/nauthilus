@@ -24,7 +24,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/global"
-	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -102,8 +101,6 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 	if user == nil {
 		if user, err = backend.GetWebAuthnFromRedis(ctx, uniqueUserID); err != nil {
 			return nil, err
-		} else {
-			stats.RedisReadCounter.Inc()
 		}
 	}
 
@@ -111,15 +108,11 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 }
 
 func putUser(ctx *gin.Context, user *backend.User) {
-	if err := backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
-		stats.RedisWriteCounter.Inc()
-	}
+	backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL)
 }
 
 func updateUser(ctx *gin.Context, user *backend.User) {
-	if err := backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL); err == nil {
-		stats.RedisWriteCounter.Inc()
-	}
+	backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL)
 }
 
 // Page: '/2fa/v1/webauthn/register/begin'

@@ -153,7 +153,7 @@ func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName stri
 	case global.LuaModPassword:
 		L.PreloadModule(modName, LoaderModPassword)
 	case global.LuaModRedis:
-		L.PreloadModule(modName, redislib.LoaderModRedis)
+		L.PreloadModule(modName, redislib.LoaderModRedis(ctx))
 	case global.LuaModMail:
 		smtpClient := &smtp.EmailClient{}
 		mailModule := NewMailModule(smtpClient)

@@ -143,11 +143,11 @@ function nauthilus_util.print_result(logging, result, err_string)
         local output_str = {}
 
         for k, v in pairs(result) do
-            if string.match(v, "%s") then
-                v = '"' .. v .. '"'
+            if string.match(tostring(v), "%s") then
+                v = '"' .. tostring(v) .. '"'
             end
 
-            table.insert(output_str, k .. '=' .. v)
+            table.insert(output_str, k .. '=' .. tostring(v))
         end
 
         print(table.concat(output_str, " "))

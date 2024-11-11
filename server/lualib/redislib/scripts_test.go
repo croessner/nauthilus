@@ -1,6 +1,7 @@
 package redislib
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestRedisRunScript(t *testing.T) {
 			L.Push(args)
 
 			// Call function and check error
-			numReturned := RedisRunScript(L)
+			numReturned := RedisRunScript(context.Background())(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")
@@ -155,7 +156,7 @@ func TestRedisUploadScript(t *testing.T) {
 			L.Push(lua.LString(tc.script))
 			L.Push(lua.LString(tc.uploadScriptName))
 
-			numReturned := RedisUploadScript(L)
+			numReturned := RedisUploadScript(context.Background())(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")

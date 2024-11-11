@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
@@ -38,8 +39,8 @@ type BruteForceBucketCache uint
 type PasswordHistory map[string]uint
 
 // PositivePasswordCache is a container that stores all kinds of user information upon a successful authentication. It
-// is used for Redis as a short cache object and as proxy structure between Nauthilus instances. The cache object is not
-// refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from cache to force a refresh
+// is used for Redis as a short cache object and as a proxy structure between Nauthilus instances. The cache object is not
+// refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
 	Backend           global.Backend `redis:"passdb_backend"`
@@ -51,8 +52,8 @@ type PositivePasswordCache struct {
 	Attributes        DatabaseResult `redis:"attributes"`
 }
 
-// RedisCache is a union that is used for LoadCacheFromRedis and SaveUserDataToRedis Redis routines. These routines are
-// generics.
+// RedisCache is a union used for LoadCacheFromRedis and SaveUserDataToRedis Redis routines.
+// These routines are generics.
 type RedisCache interface {
 	PositivePasswordCache | BruteForceBucketCache
 }
@@ -60,6 +61,8 @@ type RedisCache interface {
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
+
+	defer stats.RedisReadCounter.Inc()
 
 	accountName, err = rediscli.ReadHandle.HGet(ctx, key, username).Result()
 	if err != nil {
@@ -80,6 +83,8 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 // It also logs any error messages using the Logger.
 func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T) (isRedisErr bool, err error) {
 	var redisValue []byte
+
+	defer stats.RedisReadCounter.Inc()
 
 	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -108,7 +113,7 @@ func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key string, ttl uint, cache *T) error {
+func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key string, ttl uint, cache *T) {
 	var result string
 
 	util.DebugModule(
@@ -124,8 +129,10 @@ func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key str
 			global.LogKeyMsg, err,
 		)
 
-		return err
+		return
 	}
+
+	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
@@ -140,7 +147,7 @@ func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key str
 		global.LogKeyGUID, guid,
 		"redis", result)
 
-	return err
+	return
 }
 
 // GetCacheNames returns the set of cache names for the requested protocol and cache backends.
@@ -207,6 +214,8 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 	key := "as_webauthn:user:" + uniqueUserId
 
+	defer stats.RedisReadCounter.Inc()
+
 	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
 		level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
@@ -226,7 +235,8 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 // SaveWebAuthnToRedis saves the user's WebAuthn data to Redis with the specified time-to-live (TTL) duration.
 // It serializes the user object using JSON and stores it in Redis under the key "as_webauthn:user:<user id>".
-// If serialization fails, it logs the error and returns it. If saving to Redis fails, it logs the error.
+// If serialization fails, it logs the error and returns it.
+// If saving to "Redis" fails, it logs the error.
 // Note: User is a struct representing a user in the system.
 func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 	var result string
@@ -239,6 +249,8 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 	}
 
 	key := "as_webauthn:user:" + user.Id
+
+	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {

@@ -17,6 +17,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
@@ -1116,6 +1117,43 @@ func (a *AuthState) setStatusCodes(service string) error {
 	return nil
 }
 
+// getUserAccountFromCache fetches the user account name from Redis cache using the provided username.
+// Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
+func getUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
+	var err error
+
+	accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
+	if err != nil || accountName == "" {
+		if err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		}
+
+		return ""
+	}
+
+	return accountName
+}
+
+// refreshUserAccount updates the user account information from the cache.
+// It sets the account field and attributes if they are nil and the account name is found.
+func (a *AuthState) refreshUserAccount() (accountName string) {
+	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	if accountName == "" {
+		return
+	}
+
+	if a.AccountField == nil && a.Attributes == nil {
+		accountField := global.MetaUserAccount
+		attributes := make(backend.DatabaseResult)
+
+		a.AccountField = &accountField
+		attributes[global.MetaUserAccount] = []any{accountName}
+		a.Attributes = attributes
+	}
+
+	return
+}
+
 // handleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
 func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
@@ -1132,6 +1170,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 		}
 
 		finished := make(chan action.Done)
+		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    luaAction,
@@ -1141,7 +1180,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           false,
-				UserFound:           false, // unavailable
+				UserFound:           func() bool { return accountName != "" }(),
 				Authenticated:       false, // unavailable
 				NoAuth:              a.NoAuth,
 				BruteForceCounter:   0, // unavailable
@@ -1156,8 +1195,8 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 				LocalPort:           a.XPort,
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
-				Account:             "", // unavailable
-				AccountField:        "", // unavailable
+				Account:             accountName,
+				AccountField:        a.getAccountField(),
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,
@@ -1273,6 +1312,7 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 		}
 
 		finished := make(chan action.Done)
+		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    global.LuaActionPost,
@@ -1280,30 +1320,24 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
-				Repeating:         false,
-				UserFound:         passDBResult.UserFound,
-				Authenticated:     passDBResult.Authenticated,
-				NoAuth:            a.NoAuth,
-				BruteForceCounter: 0,
-				Service:           a.Service,
-				Session:           *a.GUID,
-				ClientIP:          a.ClientIP,
-				ClientPort:        a.XClientPort,
-				ClientNet:         "", // unavailable
-				ClientHost:        a.ClientHost,
-				ClientID:          a.XClientID,
-				LocalIP:           a.XLocalIP,
-				LocalPort:         a.XPort,
-				UserAgent:         *a.UserAgent,
-				Username:          a.Username,
-				Account: func() string {
-					if passDBResult.UserFound {
-						return a.getAccount()
-					}
-
-					return ""
-				}(),
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Repeating:           false,
+				UserFound:           func() bool { return passDBResult.UserFound || accountName != "" }(),
+				Authenticated:       passDBResult.Authenticated,
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   0,
+				Service:             a.Service,
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				ClientNet:           "", // unavailable
+				ClientHost:          a.ClientHost,
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				Username:            a.Username,
+				Account:             accountName,
 				AccountField:        a.getAccountField(),
 				UniqueUserID:        a.getUniqueUserID(),
 				DisplayName:         a.getDisplayName(),
@@ -1575,11 +1609,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 							Attributes: a.Attributes,
 						}
 
-						go func() {
-							if err := backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc); err == nil {
-								stats.RedisWriteCounter.Inc()
-							}
-						}()
+						go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
 					}
 				}
 			}
@@ -1664,30 +1694,24 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 		Logs:               nil,
 		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
-			Repeating:         false, // unavailable
-			UserFound:         passDBResult.UserFound,
-			Authenticated:     passDBResult.Authenticated,
-			NoAuth:            a.NoAuth,
-			BruteForceCounter: 0, // unavailable
-			Service:           a.Service,
-			Session:           *a.GUID,
-			ClientIP:          a.ClientIP,
-			ClientPort:        a.XClientPort,
-			ClientNet:         "", // unavailable
-			ClientHost:        a.ClientHost,
-			ClientID:          a.XClientID,
-			UserAgent:         *a.UserAgent,
-			LocalIP:           a.XLocalIP,
-			LocalPort:         a.XPort,
-			Username:          a.Username,
-			Account: func() string {
-				if passDBResult.UserFound {
-					return a.getAccount()
-				}
-
-				return ""
-			}(),
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Repeating:           false, // unavailable
+			UserFound:           passDBResult.UserFound,
+			Authenticated:       passDBResult.Authenticated,
+			NoAuth:              a.NoAuth,
+			BruteForceCounter:   0, // unavailable
+			Service:             a.Service,
+			Session:             *a.GUID,
+			ClientIP:            a.ClientIP,
+			ClientPort:          a.XClientPort,
+			ClientNet:           "", // unavailable
+			ClientHost:          a.ClientHost,
+			ClientID:            a.XClientID,
+			UserAgent:           *a.UserAgent,
+			LocalIP:             a.XLocalIP,
+			LocalPort:           a.XPort,
+			Username:            a.Username,
+			Account:             a.getAccount(),
 			AccountField:        a.getAccountField(),
 			UniqueUserID:        a.getUniqueUserID(),
 			DisplayName:         a.getDisplayName(),
@@ -1853,10 +1877,9 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		accountName = strings.Join(accounts, ":")
 
+		defer stats.RedisWriteCounter.Inc()
+
 		err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
-		if err == nil {
-			stats.RedisWriteCounter.Inc()
-		}
 	}
 
 	return

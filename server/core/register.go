@@ -778,8 +778,6 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 			handleErr(ctx, err)
 
 			return
-		} else {
-			stats.RedisReadCounter.Inc()
 		}
 
 		for index := range protocols {
@@ -793,8 +791,9 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
+				stats.RedisWriteCounter.Inc()
+
 				if stderrors.Is(err, redis.Nil) {
-					stats.RedisWriteCounter.Inc()
 
 					continue
 				}
@@ -802,6 +801,8 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 				break
+			} else {
+				stats.RedisWriteCounter.Inc()
 			}
 		}
 	}

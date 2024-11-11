@@ -222,6 +222,8 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
 
+	defer stats.RedisReadCounter.Inc()
+
 	ipAddresses, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
@@ -231,10 +233,6 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 			blockedIPAddresses.Error = &errMsg
 
 			return blockedIPAddresses, err
-		} else {
-			blockedIPAddresses.Error = nil
-
-			stats.RedisReadCounter.Inc()
 		}
 	} else {
 		if filterCmd != nil {
@@ -270,6 +268,8 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
 
+	defer stats.RedisReadCounter.Inc()
+
 	accounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
@@ -279,9 +279,6 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 			blockedAccounts.Error = &errMsg
 		} else {
 			err = nil
-			blockedAccounts.Error = nil
-
-			stats.RedisReadCounter.Inc()
 		}
 
 		return blockedAccounts, err
@@ -314,6 +311,8 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 			key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + account
 			if accountIPs, err = rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
+				stats.RedisReadCounter.Inc()
+
 				if !stderrors.Is(err, redis.Nil) {
 					level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
@@ -325,11 +324,10 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 					err = nil
 				}
 
-				stats.RedisReadCounter.Inc()
-
 				continue
 			}
 
+			stats.RedisReadCounter.Inc()
 			blockedAccounts.Accounts[account] = accountIPs
 		}
 
@@ -479,6 +477,8 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	removedKeys = append(removedKeys, removedIPKeys...)
 
+	defer stats.RedisWriteCounter.Inc()
+
 	// Remove PW_HIST_SET from Redis
 	key := getPWHistIPsRedisKey(accountName)
 	if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
@@ -491,9 +491,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		removedKeys = append(removedKeys, key)
 	}
 
-	if err == nil {
-		stats.RedisWriteCounter.Inc()
-	}
+	defer stats.RedisWriteCounter.Inc()
 
 	// Remove account from BLOCKED_ACCOUNTS
 	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
@@ -505,10 +503,6 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		}
 	} else {
 		removedKeys = append(removedKeys, key)
-	}
-
-	if err == nil {
-		stats.RedisWriteCounter.Inc()
 	}
 
 	removedKeys = append(removedKeys, removeUserFromCache(ctx, userCmd, userKeys, guid, removeHash)...)
@@ -585,6 +579,8 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 
 	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
 
+	defer stats.RedisWriteCounter.Inc()
+
 	if removeHash {
 		err = rediscli.WriteHandle.Del(ctx, redisKey).Err()
 	} else {
@@ -597,11 +593,11 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 		return removedKeys
 	}
 
-	stats.RedisWriteCounter.Inc()
-
 	for _, userKey := range userKeys.GetStringSlice() {
 		if err = rediscli.WriteHandle.Del(ctx, userKey).Err(); err != nil {
 			if !stderrors.Is(err, redis.Nil) {
+				stats.RedisWriteCounter.Inc()
+
 				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
 				return removedKeys
@@ -784,6 +780,8 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
 				if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
+					stats.RedisWriteCounter.Inc()
+
 					ruleFlushError = true
 
 					return ruleFlushError, removedKeys, err

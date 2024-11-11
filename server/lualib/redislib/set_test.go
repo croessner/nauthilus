@@ -16,6 +16,7 @@
 package redislib
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -80,7 +81,7 @@ func TestRedisSAdd(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -163,7 +164,7 @@ func TestRedisSIsMember(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -237,7 +238,7 @@ func TestRedisSMembers(t *testing.T) {
 	}
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -327,7 +328,7 @@ func TestRedisSRem(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -406,7 +407,7 @@ func TestRedisSCard(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis)
+	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 

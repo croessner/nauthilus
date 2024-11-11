@@ -99,12 +99,14 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		defer stopTimer()
 	}
 
+	accountName := a.getAccount()
+
 	featureRequest := feature.Request{
 		Context: a.Context,
 		CommonRequest: &lualib.CommonRequest{
 			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 			Repeating:           false, // unavailable
-			UserFound:           false, // unavailable
+			UserFound:           func() bool { return accountName != "" }(),
 			Authenticated:       false, // unavailable
 			NoAuth:              a.NoAuth,
 			BruteForceCounter:   0, // unavailable
@@ -119,8 +121,8 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 			LocalIP:             a.XLocalIP,
 			LocalPort:           a.XPort,
 			Username:            a.Username,
-			Account:             "", // unavailable
-			AccountField:        "", // unavailable
+			Account:             accountName,
+			AccountField:        a.getAccountField(),
 			UniqueUserID:        "", // unavailable
 			DisplayName:         "", // unavailable
 			Password:            a.Password,

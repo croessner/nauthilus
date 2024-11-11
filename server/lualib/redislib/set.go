@@ -16,6 +16,8 @@
 package redislib
 
 import (
+	"context"
+
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -36,35 +38,38 @@ import (
 // Lua Usage Example:
 //
 //	redis.sadd("myset", "value1", "value2", 123, true)
-func RedisSAdd(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-	values := make([]any, L.GetTop()-2)
+func RedisSAdd(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+		values := make([]any, L.GetTop()-2)
 
-	for i := 3; i <= L.GetTop(); i++ {
-		value, err := convert.LuaValue(L.Get(i))
-		if err != nil {
+		for i := 3; i <= L.GetTop(); i++ {
+			value, err := convert.LuaValue(L.Get(i))
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+
+				return 2
+			}
+
+			values[i-3] = value
+		}
+
+		defer stats.RedisWriteCounter.Inc()
+
+		cmd := client.SAdd(ctx, key, values...)
+		if cmd.Err() != nil {
 			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+			L.Push(lua.LString(cmd.Err().Error()))
 
 			return 2
 		}
 
-		values[i-3] = value
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	cmd := client.SAdd(ctx, key, values...)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
-
-		return 2
-	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisSIsMember checks if a given value is a member of the set stored at a specified key in Redis.
@@ -96,30 +101,33 @@ func RedisSAdd(L *lua.LState) int {
 //	    print("Value is not a member of the set.")
 //	  end
 //	end
-func RedisSIsMember(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
+func RedisSIsMember(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
 
-	value, err := convert.LuaValue(L.Get(3))
-	if err != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(err.Error()))
+		value, err := convert.LuaValue(L.Get(3))
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
 
-		return 2
+			return 2
+		}
+
+		defer stats.RedisReadCounter.Inc()
+
+		cmd := client.SIsMember(ctx, key, value)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LBool(cmd.Val()))
+
+		return 1
 	}
-
-	cmd := client.SIsMember(ctx, key, value)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
-
-		return 2
-	}
-
-	stats.RedisReadCounter.Inc()
-	L.Push(lua.LBool(cmd.Val()))
-
-	return 1
 }
 
 // RedisSMembers retrieves all the members of a set in Redis corresponding to the given key.
@@ -147,28 +155,31 @@ func RedisSIsMember(L *lua.LState) int {
 //
 // This function utilizes the SMembers command from the Redis client to fetch the set members,
 // and it increments the RedisReadCounter to track the read operation.
-func RedisSMembers(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
+func RedisSMembers(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
 
-	cmd := client.SMembers(ctx, key)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisReadCounter.Inc()
 
-		return 2
+		cmd := client.SMembers(ctx, key)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		members := cmd.Val()
+		table := L.NewTable()
+		for _, member := range members {
+			table.Append(convert.GoToLuaValue(L, member))
+		}
+
+		L.Push(table)
+
+		return 1
 	}
-
-	members := cmd.Val()
-	table := L.NewTable()
-	for _, member := range members {
-		table.Append(convert.GoToLuaValue(L, member))
-	}
-
-	stats.RedisReadCounter.Inc()
-	L.Push(table)
-
-	return 1
 }
 
 // RedisSRem removes one or more members from a Redis set.
@@ -184,35 +195,38 @@ func RedisSMembers(L *lua.LState) int {
 //   - int: The number of return values on the Lua stack. On error, it returns
 //     two values: nil and the error message. On success, it returns the number
 //     of removed elements.
-func RedisSRem(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
-	key := L.CheckString(2)
-	values := make([]any, L.GetTop()-2)
+func RedisSRem(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		key := L.CheckString(2)
+		values := make([]any, L.GetTop()-2)
 
-	for i := 3; i <= L.GetTop(); i++ {
-		value, err := convert.LuaValue(L.Get(i))
-		if err != nil {
+		for i := 3; i <= L.GetTop(); i++ {
+			value, err := convert.LuaValue(L.Get(i))
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+
+				return 2
+			}
+
+			values[i-3] = value
+		}
+
+		defer stats.RedisWriteCounter.Inc()
+
+		cmd := client.SRem(ctx, key, values...)
+		if cmd.Err() != nil {
 			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+			L.Push(lua.LString(cmd.Err().Error()))
 
 			return 2
 		}
 
-		values[i-3] = value
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	cmd := client.SRem(ctx, key, values...)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
-
-		return 2
-	}
-
-	stats.RedisWriteCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
 
 // RedisSCard fetches the cardinality (number of elements) of the set stored at the specified key in Redis.
@@ -226,20 +240,23 @@ func RedisSRem(L *lua.LState) int {
 //
 // Usage example:
 // local count = redis_scard("myset")
-func RedisSCard(L *lua.LState) int {
-	client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
-	key := L.CheckString(2)
+func RedisSCard(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		key := L.CheckString(2)
 
-	cmd := client.SCard(ctx, key)
-	if cmd.Err() != nil {
-		L.Push(lua.LNil)
-		L.Push(lua.LString(cmd.Err().Error()))
+		defer stats.RedisReadCounter.Inc()
 
-		return 2
+		cmd := client.SCard(ctx, key)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
 	}
-
-	stats.RedisReadCounter.Inc()
-	L.Push(lua.LNumber(cmd.Val()))
-
-	return 1
 }
