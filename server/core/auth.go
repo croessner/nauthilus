@@ -130,30 +130,30 @@ type JSONRequest struct {
 	AuthLoginAttempt uint `json:"auth_login_attempt"`
 }
 
-// AuthState represents a struct that holds information related to authentication process.
+// AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
 	// StartTime represents the starting time of a client request.
 	StartTime time.Time
 
-	// HaveAccountField is a flag that is set, if a user account field was found in a Database.
+	// HaveAccountField is a flag that is set if a user account field was found in a Database.
 	HaveAccountField bool
 
-	// NoAuth is a flag that is set, if the request mode does not require authentication.
+	// NoAuth is a flag that is set if the request mode does not require authentication.
 	NoAuth bool
 
-	// ListAccounts is a flag that is set, if Nauthilus is requested to send a full list of available user accounts.
+	// ListAccounts is a flag that is set if Nauthilus is requested to send a full list of available user accounts.
 	ListAccounts bool
 
-	// UserFound is a flag that is set, if a password Database found the user.
+	// UserFound is a flag that is set if a password Database found the user.
 	UserFound bool
 
-	// PasswordsAccountSeen is a counter that is increased whenever a new failed password was detected for the current account.
+	// PasswordsAccountSeen is a counter increased whenever a new failed password was detected for the current account.
 	PasswordsAccountSeen uint
 
-	// PasswordsTotalSeen is a counter that is increased whenever a new failed password was detected.
+	// PasswordsTotalSeen is a counter increased whenever a new failed password was detected.
 	PasswordsTotalSeen uint
 
-	// LoginAttempts is a counter that is incremented for each failed login request
+	// LoginAttempts is a counter incremented for each failed login request
 	LoginAttempts uint
 
 	// StatusCodeOk is the HTTP status code that is set by setStatusCodes.
@@ -165,21 +165,21 @@ type AuthState struct {
 	// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
 	StatusCodeFail int
 
-	// GUID is a global unique identifier that is inherited in all functions and methods that deal with the
-	// authentication process. It is needed to track log lines belonging to one request.
+	// GUID is a global unique identifier inherited in all functions and methods that deal with the
+	// authentication process. It is necessary to track log lines belonging to one request.
 	GUID *string
 
 	// Method is set by the "Auth-Method" HTTP request header (Nginx protocol). It is typically something like "plain"
 	// or "login".
 	Method *string
 
-	// AccountField is the name of either a SQL field name or an LDAP attribute that was used to retrieve a user account.
+	// AccountField is the name of either an SQL field name or an LDAP attribute that was used to retrieve a user account.
 	AccountField *string
 
-	// Username is the value that was taken from the HTTP header "Auth-User" (Nginx protocol).
+	// Username is the value taken from the HTTP header "Auth-User" (Nginx protocol).
 	Username string
 
-	// Password is the value that was taken from the HTTP header "Auth-Pass" (Nginx protocol).
+	// Password is the value taken from the HTTP header "Auth-Pass" (Nginx protocol).
 	Password string
 
 	// ClientIP is the IP of a client that is to be authenticated. The value is set by the HTTP request header
@@ -243,7 +243,7 @@ type AuthState struct {
 	// FeatureName is the name of a feature that has triggered a reject.
 	FeatureName string
 
-	// TOTPSecret is used to store a TOTP secret in a SQL Database.
+	// TOTPSecret is used to store a TOTP secret in an SQL Database.
 	TOTPSecret *string
 
 	// TOTPSecretField is the SQL field or LDAP attribute that resolves the TOTP secret for two-factor authentication.
@@ -267,7 +267,7 @@ type AuthState struct {
 	BruteForceCounter map[string]uint
 
 	// SourcePassDBBackend is a marker for the Database that is responsible for a specific user. It is set by the
-	// password Database and stored in Redis to track the authentication flow accross databases (including proxy).
+	// password Database and stored in Redis to track the authentication flow across databases (including proxy).
 	SourcePassDBBackend global.Backend
 
 	// UsedPassDBBackend is set by the password Database that answered the current authentication request.
@@ -280,7 +280,7 @@ type AuthState struct {
 	UsedBackendPort int
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
-	// attribute name as key and the corresponding result as value.
+	// attribute name as a key and the corresponding result as a value.
 	Attributes backend.DatabaseResult
 
 	// Protocol is set by the HTTP request header "Auth-Protocol" (Nginx protocol).
@@ -322,7 +322,7 @@ type PassDBResult struct {
 	// DisplayNameField is the display name of a user
 	DisplayNameField *string
 
-	// Backend is set by the Database backend which has found the user.
+	// Backend is set by the Database backend, which has found the user.
 	Backend global.Backend
 
 	// Attributes is the result catalog returned by the underlying password Database.
@@ -336,7 +336,7 @@ type (
 
 	// PassDBMap is a struct type that represents a mapping between a backend type and a PassDBOption function.
 	// It is used in the verifyPassword method of the AuthState struct to perform password verification against multiple databases.
-	// The backend field represents the type of database backend (global.Backend) and the fn field represents the PassDBOption function.
+	// The backend field represents the type of database backend (global.Backend), and the fn field represents the PassDBOption function.
 	// The PassDBOption function takes an AuthState pointer as input and returns a PassDBResult pointer and an error.
 	// The PassDBResult pointer contains the result of the password verification process.
 	// This struct is used to store the database mappings in an array and loop through them in the verifyPassword method.
@@ -586,7 +586,8 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 
 // setCommonHeaders sets common headers for the given gin.Context and AuthState.
 // It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the AuthState.
-// If the AuthState's Service is not global.ServBasicAuth and the HaveAccountField flag is true, it retrieves the account from the AuthState and sets the "Auth-User" header
+// If the AuthState's Service is not global.ServBasicAuth, and the HaveAccountField flag is true,
+// it retrieves the account from the AuthState and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
@@ -691,7 +692,7 @@ func handleAttributeValue(ctx *gin.Context, name string, value []any) {
 
 // formatValues takes an array of values and formats them into strings.
 // It creates an empty slice of strings called stringValues.
-// It then iterates over each value in the values array and appends the formatted string representation of that value to stringValues using fmt.Sprintf("%v", values[index]).
+// It then iterates over each value in the "values" array and appends the formatted string representation of that value to stringValues using fmt.Sprintf("%v", values[index]).
 // After iterating over all the values, it returns stringValues.
 // Example usage:
 // values := []any{"one", "two", "three"}
@@ -1156,6 +1157,13 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 
 // handleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
 func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResult) {
+	var accountName string
+
+	// If brute-force is enabled, the account should have been refreshed by calling the checkBruteForce() method.
+	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+		accountName = a.refreshUserAccount()
+	}
+
 	// Helper function that sends an action request and waits for it to be finished. Features may change the Lua context.
 	// Lua post actions may make use of these changes.
 	doAction := func(luaAction global.LuaAction, luaActionName string) {
@@ -1170,7 +1178,10 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 		}
 
 		finished := make(chan action.Done)
-		accountName := a.getAccount()
+
+		if accountName == "" {
+			accountName = a.getAccount()
+		}
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    luaAction,
