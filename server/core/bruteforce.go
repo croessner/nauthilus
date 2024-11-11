@@ -681,6 +681,14 @@ func (a *AuthState) processBlockedAccount() {
 		return
 	}
 
+	if a.AccountField == nil && a.Attributes == nil {
+		accountField := global.MetaUserAccount
+		attributes := make(backend.DatabaseResult)
+
+		a.AccountField = &accountField
+		attributes[global.MetaUserAccount] = []any{accountName}
+	}
+
 	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
 
 	if err := rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, accountName).Err(); err != nil {
@@ -698,6 +706,8 @@ func (a *AuthState) processBlockedAccount() {
 	}
 
 	stats.RedisWriteCounter.Inc()
+
+	return
 }
 
 // getUserAccountFromCache fetches the user account name from Redis cache using the provided username.
@@ -805,6 +815,7 @@ func (a *AuthState) checkBucketOverLimit(rules []config.BruteForceRule, network 
 func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
 	if config.LoadableConfig.HaveLuaActions() {
 		finished := make(chan action.Done)
+		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    global.LuaActionBruteForce,
@@ -814,7 +825,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           alreadyTriggered,
-				UserFound:           false, // unavailable
+				UserFound:           func() bool { return accountName != "" }(),
 				Authenticated:       false, // unavailable
 				NoAuth:              a.NoAuth,
 				BruteForceCounter:   a.BruteForceCounter[rule.Name],
@@ -829,8 +840,8 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 				LocalPort:           a.XPort,
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
-				Account:             "", // unavailable
-				AccountField:        "", // unavailable
+				Account:             accountName,
+				AccountField:        a.getAccountField(),
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,

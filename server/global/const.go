@@ -284,6 +284,11 @@ const (
 	MaxPasswordHistoryEntries = 100
 )
 
+const (
+	// MetaUserAccount is a constant string used as a meta key for referencing a user account in various contexts.
+	MetaUserAccount = "__nauthilus_meta_user_account__"
+)
+
 // Log level.
 const (
 	// LogLevelNone is the iota constant representing no logs

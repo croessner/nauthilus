@@ -1132,6 +1132,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 		}
 
 		finished := make(chan action.Done)
+		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    luaAction,
@@ -1141,7 +1142,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 			CommonRequest: &lualib.CommonRequest{
 				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
 				Repeating:           false,
-				UserFound:           false, // unavailable
+				UserFound:           func() bool { return accountName != "" }(),
 				Authenticated:       false, // unavailable
 				NoAuth:              a.NoAuth,
 				BruteForceCounter:   0, // unavailable
@@ -1156,8 +1157,8 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 				LocalPort:           a.XPort,
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
-				Account:             "", // unavailable
-				AccountField:        "", // unavailable
+				Account:             accountName,
+				AccountField:        a.getAccountField(),
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,
@@ -1273,6 +1274,7 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 		}
 
 		finished := make(chan action.Done)
+		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    global.LuaActionPost,
@@ -1280,30 +1282,24 @@ func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
-				Repeating:         false,
-				UserFound:         passDBResult.UserFound,
-				Authenticated:     passDBResult.Authenticated,
-				NoAuth:            a.NoAuth,
-				BruteForceCounter: 0,
-				Service:           a.Service,
-				Session:           *a.GUID,
-				ClientIP:          a.ClientIP,
-				ClientPort:        a.XClientPort,
-				ClientNet:         "", // unavailable
-				ClientHost:        a.ClientHost,
-				ClientID:          a.XClientID,
-				LocalIP:           a.XLocalIP,
-				LocalPort:         a.XPort,
-				UserAgent:         *a.UserAgent,
-				Username:          a.Username,
-				Account: func() string {
-					if passDBResult.UserFound {
-						return a.getAccount()
-					}
-
-					return ""
-				}(),
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Repeating:           false,
+				UserFound:           func() bool { return passDBResult.UserFound || accountName != "" }(),
+				Authenticated:       passDBResult.Authenticated,
+				NoAuth:              a.NoAuth,
+				BruteForceCounter:   0,
+				Service:             a.Service,
+				Session:             *a.GUID,
+				ClientIP:            a.ClientIP,
+				ClientPort:          a.XClientPort,
+				ClientNet:           "", // unavailable
+				ClientHost:          a.ClientHost,
+				ClientID:            a.XClientID,
+				LocalIP:             a.XLocalIP,
+				LocalPort:           a.XPort,
+				UserAgent:           *a.UserAgent,
+				Username:            a.Username,
+				Account:             accountName,
 				AccountField:        a.getAccountField(),
 				UniqueUserID:        a.getUniqueUserID(),
 				DisplayName:         a.getDisplayName(),
@@ -1664,30 +1660,24 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) glob
 		Logs:               nil,
 		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:             config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
-			Repeating:         false, // unavailable
-			UserFound:         passDBResult.UserFound,
-			Authenticated:     passDBResult.Authenticated,
-			NoAuth:            a.NoAuth,
-			BruteForceCounter: 0, // unavailable
-			Service:           a.Service,
-			Session:           *a.GUID,
-			ClientIP:          a.ClientIP,
-			ClientPort:        a.XClientPort,
-			ClientNet:         "", // unavailable
-			ClientHost:        a.ClientHost,
-			ClientID:          a.XClientID,
-			UserAgent:         *a.UserAgent,
-			LocalIP:           a.XLocalIP,
-			LocalPort:         a.XPort,
-			Username:          a.Username,
-			Account: func() string {
-				if passDBResult.UserFound {
-					return a.getAccount()
-				}
-
-				return ""
-			}(),
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Repeating:           false, // unavailable
+			UserFound:           passDBResult.UserFound,
+			Authenticated:       passDBResult.Authenticated,
+			NoAuth:              a.NoAuth,
+			BruteForceCounter:   0, // unavailable
+			Service:             a.Service,
+			Session:             *a.GUID,
+			ClientIP:            a.ClientIP,
+			ClientPort:          a.XClientPort,
+			ClientNet:           "", // unavailable
+			ClientHost:          a.ClientHost,
+			ClientID:            a.XClientID,
+			UserAgent:           *a.UserAgent,
+			LocalIP:             a.XLocalIP,
+			LocalPort:           a.XPort,
+			Username:            a.Username,
+			Account:             a.getAccount(),
 			AccountField:        a.getAccountField(),
 			UniqueUserID:        a.getUniqueUserID(),
 			DisplayName:         a.getDisplayName(),
