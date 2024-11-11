@@ -1571,6 +1571,11 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 
 	if a.UserFound && !a.NoAuth {
 		accountName, err = a.updateUserAccountInRedis()
+		if err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
+
+			return global.AuthResultTempFail
+		}
 
 		if !passDBResult.Authenticated {
 			a.processPWHist()
@@ -1580,48 +1585,47 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 	if useCache && !a.NoAuth {
 		// Make sure the cache backend is in front of the used backend.
 		if passDBResult.Authenticated {
-			if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
-				var usedBackend global.CacheNameBackend
+			if accountName != "" {
+				if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
+					var usedBackend global.CacheNameBackend
 
-				switch a.UsedPassDBBackend {
-				case global.BackendLDAP:
-					usedBackend = global.CacheLDAP
-				case global.BackendLua:
-					usedBackend = global.CacheLua
-				case global.BackendUnknown:
-				case global.BackendCache:
-				case global.BackendLocalCache:
-				}
+					switch a.UsedPassDBBackend {
+					case global.BackendLDAP:
+						usedBackend = global.CacheLDAP
+					case global.BackendLua:
+						usedBackend = global.CacheLua
+					case global.BackendUnknown:
+					case global.BackendCache:
+					case global.BackendLocalCache:
+					}
 
-				cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
-
-				for _, cacheName := range cacheNames.GetStringSlice() {
-					if err != nil {
-						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
+					cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
+					if len(cacheNames) != 1 {
+						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Cache names are not correct")
 
 						return global.AuthResultTempFail
 					}
 
-					if accountName != "" {
-						redisUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
-						ppc := &backend.PositivePasswordCache{
-							AccountField:      a.AccountField,
-							TOTPSecretField:   a.TOTPSecretField,
-							UniqueUserIDField: a.UniqueUserIDField,
-							DisplayNameField:  a.DisplayNameField,
-							Password: func() string {
-								if a.Password != "" {
-									return util.GetHash(util.PreparePassword(a.Password))
-								}
+					cacheName := cacheNames.GetStringSlice()[global.SliceWithOneElement]
 
-								return a.Password
-							}(),
-							Backend:    a.SourcePassDBBackend,
-							Attributes: a.Attributes,
-						}
+					redisUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
+					ppc := &backend.PositivePasswordCache{
+						AccountField:      a.AccountField,
+						TOTPSecretField:   a.TOTPSecretField,
+						UniqueUserIDField: a.UniqueUserIDField,
+						DisplayNameField:  a.DisplayNameField,
+						Password: func() string {
+							if a.Password != "" {
+								return util.GetHash(util.PreparePassword(a.Password))
+							}
 
-						go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
+							return a.Password
+						}(),
+						Backend:    a.SourcePassDBBackend,
+						Attributes: a.Attributes,
 					}
+
+					go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
 				}
 			}
 		} else {
