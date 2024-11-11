@@ -156,10 +156,6 @@ func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key str
 //   - It retrieves the LDAP search protocol configuration for the requested protocol.
 //   - If a cache name is found in the LDAP search protocol configuration, it adds it to the cacheNames set.
 //
-// If backends is CacheAll or CacheSQL:
-//   - It retrieves the SQL search protocol configuration for the requested protocol.
-//   - If a cache name is found in the SQL search protocol configuration, it adds it to the cacheNames set.
-//
 // If backends is CacheAll or CacheLua:
 //   - It retrieves the Lua search protocol configuration for the requested protocol.
 //   - If a cache name is found in the Lua search protocol configuration, it adds it to the cacheNames set.
