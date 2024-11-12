@@ -353,10 +353,6 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 
 	util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
 
-	if a.checkTooManyPasswordHashes(key) {
-		return
-	}
-
 	defer stats.RedisReadCounter.Inc()
 
 	if passwordHistory, err := rediscli.ReadHandle.HGetAll(a.HTTPClientContext, key).Result(); err != nil {
@@ -486,7 +482,6 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		}
 
 		stats.RedisWriteCounter.Inc()
-
 	}
 
 	if keysOverLimit {
