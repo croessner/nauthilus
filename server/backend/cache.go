@@ -32,9 +32,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// BruteForceBucketCache is a Redis cache. It is a union member of RedisCache.
-type BruteForceBucketCache uint
-
 // PasswordHistory is a map of hashed passwords with their failure counter.
 type PasswordHistory map[string]uint
 
@@ -43,19 +40,13 @@ type PasswordHistory map[string]uint
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
-	Backend           global.Backend `redis:"passdb_backend"`
-	Password          string         `redis:"password"`
-	AccountField      *string        `redis:"account_field"`
-	TOTPSecretField   *string        `redis:"totp_secret_field"`
-	UniqueUserIDField *string        `redis:"webauth_userid_field"`
-	DisplayNameField  *string        `redis:"display_name_field"`
-	Attributes        DatabaseResult `redis:"attributes"`
-}
-
-// RedisCache is a union used for LoadCacheFromRedis and SaveUserDataToRedis Redis routines.
-// These routines are generics.
-type RedisCache interface {
-	PositivePasswordCache | BruteForceBucketCache
+	Backend           global.Backend `json:"passdb_backend"`
+	Password          string         `json:"password"`
+	AccountField      *string        `json:"account_field"`
+	TOTPSecretField   *string        `json:"totp_secret_field"`
+	UniqueUserIDField *string        `json:"webauth_userid_field"`
+	DisplayNameField  *string        `json:"display_name_field"`
+	Attributes        DatabaseResult `json:"attributes"`
 }
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
@@ -81,7 +72,7 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 // If there is an error retrieving the value from Redis, it returns isRedisErr=true and err.
 // Otherwise, it unmarshals the value into the cache pointer and returns isRedisErr=false and err=nil.
 // It also logs any error messages using the Logger.
-func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T) (isRedisErr bool, err error) {
+func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCache) (isRedisErr bool, err error) {
 	var redisValue []byte
 
 	defer stats.RedisReadCounter.Inc()
@@ -96,9 +87,7 @@ func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T
 		return true, err
 	}
 
-	*cache = new(T)
-
-	if err = json.Unmarshal(redisValue, *cache); err != nil {
+	if err = json.Unmarshal(redisValue, ucp); err != nil {
 		level.Error(log.Logger).Log(global.LogKeyMsg, err)
 
 		return
@@ -106,14 +95,14 @@ func LoadCacheFromRedis[T RedisCache](ctx context.Context, key string, cache **T
 
 	util.DebugModule(
 		global.DbgCache,
-		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", **cache))
+		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
 
 	return false, nil
 }
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis[T RedisCache](ctx context.Context, guid string, key string, ttl uint, cache *T) {
+func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint, cache *PositivePasswordCache) {
 	var result string
 
 	util.DebugModule(
