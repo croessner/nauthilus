@@ -49,7 +49,9 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		if accountName != "" {
 			redisPosUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
 
-			if _, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, &ppc); err != nil {
+			ppc = &backend.PositivePasswordCache{}
+
+			if _, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, ppc); err != nil {
 				return
 			}
 		}

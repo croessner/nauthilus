@@ -16,6 +16,8 @@
 package core
 
 import (
+	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net"
@@ -37,6 +39,9 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
+
+// BruteForceBucketCounter represents a cache mechanism to handle brute force attack mitigation using brute force buckets.
+type BruteForceBucketCounter uint
 
 // isRepeatingWrongPassword is a method associated with the AuthState struct used to check for repeated wrong password usage.
 // It retrieves and loads a password history from Redis using a certain key.
@@ -489,23 +494,52 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 	}
 }
 
-// loadBruteForceBucketCounterFromRedis is a method on the AuthState struct that loads the brute force
+// loadBruteForceBucketCounterFromRedis loads a bucket counter from Redis.
+// Increments Redis read operations counter.
+// On success, unmarshals the Redis value into bucketCounter.
+// If the key doesn't exist, returns nil.
+// Logs errors if Redis operations or JSON unmarshalling fails.
+func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucketCounter *BruteForceBucketCounter) (err error) {
+	var redisValue []byte
+
+	defer stats.RedisReadCounter.Inc()
+
+	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
+		if stderrors.Is(err, redis.Nil) {
+			return nil
+		}
+
+		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+
+		return err
+	}
+
+	if err = json.Unmarshal(redisValue, bucketCounter); err != nil {
+		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+
+		return
+	}
+
+	return nil
+}
+
+// loadBruteForceBucketCounter is a method on the AuthState struct that loads the brute force
 // bucket counter from Redis and updates the BruteForceCounter map. The given BruteForceRule is used to generate the Redis key.
 // If the key is not empty, it retrieves the counter-value from Redis using the backend.LoadCacheFromRedis function.
 // If an error occurs while loading the cache, the function returns.
 // If the BruteForceCounter is not initialized, it creates a new map.
 // Finally, it updates the BruteForceCounter map with the counter-value retrieved from Redis using the rule name as the key.
-func (a *AuthState) loadBruteForceBucketCounterFromRedis(rule *config.BruteForceRule) {
+func (a *AuthState) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
 	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
 		return
 	}
 
-	cache := new(backend.BruteForceBucketCache)
+	bucketCounter := new(BruteForceBucketCounter)
 
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
 		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
 
-		if _, err := backend.LoadCacheFromRedis(a.HTTPClientContext, key, &cache); err != nil {
+		if err := loadBruteForceBucketCounterFromRedis(a.HTTPClientContext, key, bucketCounter); err != nil {
 			return
 		}
 	}
@@ -514,7 +548,7 @@ func (a *AuthState) loadBruteForceBucketCounterFromRedis(rule *config.BruteForce
 		a.BruteForceCounter = make(map[string]uint)
 	}
 
-	a.BruteForceCounter[rule.Name] = uint(*cache)
+	a.BruteForceCounter[rule.Name] = uint(*bucketCounter)
 }
 
 // saveBruteForceBucketCounterToRedis is a method on the AuthState struct that saves brute force
@@ -763,7 +797,7 @@ func (a *AuthState) checkBucketOverLimit(rules []config.BruteForceRule, network 
 			continue
 		}
 
-		a.loadBruteForceBucketCounterFromRedis(&rules[ruleNumber])
+		a.loadBruteForceBucketCounter(&rules[ruleNumber])
 
 		// The counter goes from 0...N-1, but the 'failed_requests' setting from 1...N
 		if a.BruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {

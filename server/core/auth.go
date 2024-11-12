@@ -1616,10 +1616,12 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 						DisplayNameField:  a.DisplayNameField,
 						Password: func() string {
 							if a.Password != "" {
-								return util.GetHash(util.PreparePassword(a.Password))
+								passwordShort := util.GetHash(util.PreparePassword(a.Password))
+
+								return passwordShort
 							}
 
-							return a.Password
+							return ""
 						}(),
 						Backend:    a.SourcePassDBBackend,
 						Attributes: a.Attributes,
