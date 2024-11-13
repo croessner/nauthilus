@@ -30,6 +30,10 @@ type LuaSection struct {
 }
 
 func (l *LuaSection) String() string {
+	if l == nil {
+		return "LuaSection: <nil>"
+	}
+
 	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
@@ -58,6 +62,10 @@ type LuaAction struct {
 }
 
 func (l *LuaAction) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("{ActionType: %s}, {BackendScriptPath: %s}", l.ActionType, l.ScriptPath)
 }
 
@@ -68,6 +76,10 @@ func (l *LuaAction) String() string {
 // The ScriptPath field represents the path to the Lua script file.
 // It returns these values as strings.
 func (l *LuaAction) GetAction() (string, string, string) {
+	if l == nil {
+		return "", "", ""
+	}
+
 	return l.ActionType, l.ScriptName, l.ScriptPath
 }
 
@@ -77,6 +89,10 @@ type LuaFeature struct {
 }
 
 func (l *LuaFeature) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
@@ -86,6 +102,10 @@ type LuaFilter struct {
 }
 
 func (l *LuaFilter) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
@@ -97,6 +117,10 @@ type LuaConf struct {
 }
 
 func (l *LuaConf) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return l.BackendScriptPath
 }
 
@@ -108,7 +132,7 @@ type LuaSearchProtocol struct {
 // GetCacheName returns the Redis cache domain. It returns a DetailedError, if no value has
 // been configured.
 func (l *LuaSearchProtocol) GetCacheName() (string, error) {
-	if l.CacheName == "" {
+	if l == nil || l.CacheName == "" {
 		return "", errors.ErrLuaConfig.WithDetail("No cache name setting")
 	}
 

@@ -28,6 +28,10 @@ type LDAPSection struct {
 }
 
 func (l *LDAPSection) String() string {
+	if l == nil {
+		return "LDAPSection: <nil>"
+	}
+
 	return fmt.Sprintf("LDAPSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
@@ -71,6 +75,10 @@ type LDAPConf struct {
 
 func (l *LDAPConf) String() string {
 	var result string
+
+	if l == nil {
+		return "<nil>"
+	}
 
 	value := reflect.ValueOf(*l)
 	typeOfValue := value.Type()
@@ -128,7 +136,7 @@ type LDAPSearchProtocol struct {
 // GetAccountField returns the LDAP attribute for an account. It returns a DetailedError, if no value has
 // been configured.
 func (p *LDAPSearchProtocol) GetAccountField() (string, error) {
-	if p.AccountField == "" {
+	if p == nil || p.AccountField == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP account field; protocols=%v", p.Protocols))
 	}
@@ -139,7 +147,7 @@ func (p *LDAPSearchProtocol) GetAccountField() (string, error) {
 // GetAttributes returns a list of attributes that are requested from the LDAP server.  It returns a DetailedError, if
 // no value has been configured.
 func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
-	if len(p.Attributes) == 0 {
+	if p == nil || len(p.Attributes) == 0 {
 		return nil, errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP result attribute; protocols=%v", p.Protocols))
 	}
@@ -150,7 +158,7 @@ func (p *LDAPSearchProtocol) GetAttributes() ([]string, error) {
 // GetUserFilter returns an LDAP search filter to find a user.  It returns a DetailedError, if no value has
 // been configured.
 func (p *LDAPSearchProtocol) GetUserFilter() (string, error) {
-	if p.User == "" {
+	if p == nil || p.User == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP user filter; protocols=%v", p.Protocols))
 	}
@@ -161,7 +169,7 @@ func (p *LDAPSearchProtocol) GetUserFilter() (string, error) {
 // GetListAccountsFilter returns an LDAP filter which is used to find all user accounts.  It returns a DetailedError, if
 // no value has been configured.
 func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
-	if p.ListAccounts == "" {
+	if p == nil || p.ListAccounts == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP list_accounts filter; protocols=%v", p.Protocols))
 	}
@@ -172,7 +180,7 @@ func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 // GetBaseDN returns the base DN that is used for each specific protocol.  It returns a DetailedError, if no value has
 // been configured.
 func (p *LDAPSearchProtocol) GetBaseDN() (string, error) {
-	if p.BaseDN == "" {
+	if p == nil || p.BaseDN == "" {
 		return "", errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP base DN; protocols=%v", p.Protocols))
 	}
@@ -186,7 +194,7 @@ func (p *LDAPSearchProtocol) GetScope() (*LDAPScope, error) {
 	var err error
 
 	scope := &LDAPScope{}
-	if p.Scope == "" {
+	if p == nil || p.Scope == "" {
 		scope.Set("sub")
 	} else {
 		if err = scope.Set(p.Scope); err != nil {
@@ -201,7 +209,7 @@ func (p *LDAPSearchProtocol) GetScope() (*LDAPScope, error) {
 // GetCacheName returns the Redis cache domain. It returns a DetailedError, if no value has
 // been configured.
 func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
-	if p.CacheName == "" {
+	if p == nil || p.CacheName == "" {
 		return "", errors.ErrLDAPConfig.WithDetail("No cache name setting")
 	}
 

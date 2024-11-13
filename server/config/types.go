@@ -33,6 +33,10 @@ type Verbosity struct {
 }
 
 func (v *Verbosity) String() string {
+	if v == nil {
+		return ""
+	}
+
 	return v.name
 }
 
@@ -42,6 +46,10 @@ func (v *Verbosity) String() string {
 // If the value is valid, the verboseLevel and name fields are updated accordingly.
 // An error of type ErrWrongVerboseLevel is returned if the value is not valid.
 func (v *Verbosity) Set(value string) error {
+	if v == nil {
+		return nil
+	}
+
 	value = strings.TrimSpace(value)
 
 	switch value {
@@ -66,16 +74,28 @@ func (v *Verbosity) Set(value string) error {
 
 // Type returns the type of the Verbosity struct.
 func (v *Verbosity) Type() string {
+	if v == nil {
+		return "<nil>"
+	}
+
 	return "Verbosity"
 }
 
 // Level returns the verbosity level of the Verbosity instance.
 func (v *Verbosity) Level() int {
+	if v == nil {
+		return global.LogLevelNone
+	}
+
 	return v.verboseLevel
 }
 
 // Get returns the name of the log level as string.
 func (v *Verbosity) Get() string {
+	if v == nil {
+		return ""
+	}
+
 	return v.name
 }
 
@@ -86,11 +106,19 @@ type LDAPScope struct {
 }
 
 func (l *LDAPScope) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return l.name
 }
 
 // Set sets the numeric LDAP search scope by its string representation.
 func (l *LDAPScope) Set(value string) error {
+	if l == nil {
+		return nil
+	}
+
 	value = strings.TrimSpace(value)
 
 	switch value {
@@ -111,11 +139,19 @@ func (l *LDAPScope) Set(value string) error {
 
 // Type returns the name of the type.
 func (l *LDAPScope) Type() string {
+	if l == nil {
+		return "<nil>"
+	}
+
 	return "LDAPScope"
 }
 
 // Get returns the numeric LDAP search scope.
 func (l *LDAPScope) Get() int {
+	if l == nil {
+		return 0
+	}
+
 	return l.scope
 }
 
@@ -126,21 +162,37 @@ type Protocol struct {
 }
 
 func (p *Protocol) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+
 	return p.name
 }
 
 // Set sets the name of the protocol.
 func (p *Protocol) Set(value string) {
+	if p == nil {
+		return
+	}
+
 	p.name = value
 }
 
 // Type returns the name of the type.
 func (p *Protocol) Type() string {
+	if p == nil {
+		return "<nil>"
+	}
+
 	return "Protocol"
 }
 
 // Get returns the string for a protocol.
 func (p *Protocol) Get() string {
+	if p == nil {
+		return ""
+	}
+
 	return p.name
 }
 
@@ -162,6 +214,10 @@ type Backend struct {
 }
 
 func (b *Backend) String() string {
+	if b == nil {
+		return "<nil>"
+	}
+
 	return b.backend.String()
 }
 
@@ -171,6 +227,10 @@ func (b *Backend) String() string {
 // If the value is valid, the backend field of Backend is updated accordingly.
 // An error of type ErrWrongPassDB is returned if the value is not valid.
 func (b *Backend) Set(value string) error {
+	if b == nil {
+		return nil
+	}
+
 	value = strings.TrimSpace(value)
 
 	switch value {
@@ -189,11 +249,19 @@ func (b *Backend) Set(value string) error {
 
 // Type returns the name of the type.
 func (b *Backend) Type() string {
+	if b == nil {
+		return "<nil>"
+	}
+
 	return "Backend"
 }
 
 // Get gets the name of a password Database.
 func (b *Backend) Get() global.Backend {
+	if b == nil {
+		return global.BackendUnknown
+	}
+
 	return b.backend
 }
 
@@ -203,6 +271,10 @@ type Feature struct {
 }
 
 func (f *Feature) String() string {
+	if f == nil {
+		return "<nil>"
+	}
+
 	return f.name
 }
 
@@ -212,6 +284,10 @@ func (f *Feature) String() string {
 // If the value is valid, the name field of the Feature struct is updated accordingly.
 // An error of type ErrWrongFeature is returned if the value is not valid.
 func (f *Feature) Set(value string) error {
+	if f == nil {
+		return nil
+	}
+
 	switch value {
 	case "":
 	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureBackendServersMonitoring, global.FeatureBruteForce:
@@ -225,11 +301,19 @@ func (f *Feature) Set(value string) error {
 
 // Type returns the name of the type.
 func (f *Feature) Type() string {
+	if f == nil {
+		return "<nil>"
+	}
+
 	return "Feature"
 }
 
 // Get gets the name of a feature returned as string.
 func (f *Feature) Get() string {
+	if f == nil {
+		return ""
+	}
+
 	return f.name
 }
 
@@ -240,6 +324,10 @@ type DbgModule struct {
 }
 
 func (d *DbgModule) String() string {
+	if d == nil {
+		return "<nil>"
+	}
+
 	return d.name
 }
 
@@ -250,6 +338,10 @@ func (d *DbgModule) String() string {
 // If the value is valid, the module and name fields are updated accordingly.
 // An error of type ErrWrongDebugModule is returned if the value is not valid.
 func (d *DbgModule) Set(value string) error {
+	if d == nil {
+		return nil
+	}
+
 	value = strings.TrimSpace(value)
 
 	switch value {
@@ -296,6 +388,10 @@ func (d *DbgModule) Set(value string) error {
 
 // Type returns the type of the DbgModule, which is always "DebugModule".
 func (d *DbgModule) Type() string {
+	if d == nil {
+		return "<nil>"
+	}
+
 	return "DebugModule"
 }
 
@@ -303,6 +399,10 @@ func (d *DbgModule) Type() string {
 // The name represents the current debug module.
 // It can be used to identify the debug module when needed.
 func (d *DbgModule) Get() string {
+	if d == nil {
+		return ""
+	}
+
 	return d.name
 }
 
@@ -321,5 +421,9 @@ func (d *DbgModule) Get() string {
 //	  fmt.Println(module) // Output: 0
 //	}
 func (d *DbgModule) GetModule() global.DbgModule {
+	if d == nil {
+		return global.DbgNone
+	}
+
 	return d.module
 }

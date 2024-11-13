@@ -24,6 +24,10 @@ type RBLSection struct {
 }
 
 func (r *RBLSection) String() string {
+	if r == nil {
+		return "RBLSection: <nil>"
+	}
+
 	return fmt.Sprintf("RBLSection: {Lists[%+v] Threshold[%+v] Whitelist[%+v]}", r.Lists, r.Threshold, r.IPWhiteList)
 }
 

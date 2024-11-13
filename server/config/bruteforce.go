@@ -24,6 +24,10 @@ type BruteForceSection struct {
 }
 
 func (b *BruteForceSection) String() string {
+	if b == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("Buckets: %+v, IP-Whitelist: %+v", b.Buckets, b.IPWhitelist)
 }
 
