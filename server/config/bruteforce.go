@@ -20,7 +20,7 @@ import "fmt"
 type BruteForceSection struct {
 	IPWhitelist []string         `mapstructure:"ip_whitelist"`
 	Buckets     []BruteForceRule `mapstructure:"buckets"`
-	Learning    []Feature        `mapstructure:"learning"`
+	Learning    []*Feature       `mapstructure:"learning"`
 }
 
 func (b *BruteForceSection) String() string {

@@ -16,6 +16,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/errors"
@@ -64,7 +65,7 @@ func (v *Verbosity) Set(value string) error {
 	case "debug":
 		v.verboseLevel = global.LogLevelDebug
 	default:
-		return errors.ErrWrongVerboseLevel
+		return fmt.Errorf(errors.ErrWrongVerboseLevel.Error(), value)
 	}
 
 	v.name = value
@@ -129,7 +130,7 @@ func (l *LDAPScope) Set(value string) error {
 	case "sub":
 		l.scope = ldap.ScopeWholeSubtree
 	default:
-		return errors.ErrWrongLDAPScope
+		return fmt.Errorf(errors.ErrWrongLDAPScope.Error(), value)
 	}
 
 	l.name = value
@@ -241,7 +242,7 @@ func (b *Backend) Set(value string) error {
 	case global.BackendLuaName:
 		b.backend = global.BackendLua
 	default:
-		return errors.ErrWrongPassDB
+		return fmt.Errorf(errors.ErrWrongPassDB.Error(), value)
 	}
 
 	return nil
@@ -293,7 +294,7 @@ func (f *Feature) Set(value string) error {
 	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureBackendServersMonitoring, global.FeatureBruteForce:
 		f.name = value
 	default:
-		return errors.ErrWrongFeature
+		return fmt.Errorf(errors.ErrWrongFeature.Error(), value)
 	}
 
 	return nil
@@ -378,7 +379,7 @@ func (d *DbgModule) Set(value string) error {
 	case global.DbgFilterName:
 		d.module = global.DbgFilter
 	default:
-		return errors.ErrWrongDebugModule
+		return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 	}
 
 	d.name = value
