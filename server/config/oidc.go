@@ -23,6 +23,10 @@ type Oauth2Section struct {
 }
 
 func (o *Oauth2Section) String() string {
+	if o == nil {
+		return "OAuth2Section: <nil>"
+	}
+
 	return fmt.Sprintf("OAuth2Section: {Oauth2Client[%+v]}", o.Clients)
 }
 
@@ -83,5 +87,9 @@ type IdTokenClaims struct {
 }
 
 func (i *IdTokenClaims) String() string {
+	if i == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("{IdTokenClaims: %+v}", *i)
 }

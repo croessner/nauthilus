@@ -93,11 +93,11 @@ var (
 // env.
 
 var (
-	ErrWrongVerboseLevel = errors.New("wrong verbose level")
-	ErrWrongLDAPScope    = errors.New("wrong LDAP scope")
-	ErrWrongPassDB       = errors.New("wrong passdb backend")
-	ErrWrongFeature      = errors.New("wrong feature")
-	ErrWrongDebugModule  = errors.New("wrong debug module")
+	ErrWrongVerboseLevel = errors.New("wrong verbose level: <%s>")
+	ErrWrongLDAPScope    = errors.New("wrong LDAP scope: <%s>")
+	ErrWrongPassDB       = errors.New("wrong passdb backend: <%s>")
+	ErrWrongFeature      = errors.New("wrong feature: <%s>")
+	ErrWrongDebugModule  = errors.New("wrong debug module: <%s>")
 )
 
 // file.

@@ -1248,7 +1248,10 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 			} else if triggered {
 				a.FeatureName = global.FeatureLua
 
-				a.updateBruteForceBucketsCounter()
+				if config.LoadableConfig.BruteForce.LearnFromFeature(global.FeatureLua) {
+					a.updateBruteForceBucketsCounter()
+				}
+
 				doAction(global.LuaActionLua, global.LuaActionLuaName)
 
 				return global.AuthResultFeatureLua
@@ -1276,7 +1279,10 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 		if a.featureRelayDomains() {
 			a.FeatureName = global.FeatureRelayDomains
 
-			a.updateBruteForceBucketsCounter()
+			if config.LoadableConfig.BruteForce.LearnFromFeature(global.FeatureRelayDomains) {
+				a.updateBruteForceBucketsCounter()
+			}
+
 			doAction(global.LuaActionRelayDomains, global.LuaActionRelayDomainsName)
 
 			return global.AuthResultFeatureRelayDomain
@@ -1289,7 +1295,10 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult global.AuthResu
 		} else if triggered {
 			a.FeatureName = global.FeatureRBL
 
-			a.updateBruteForceBucketsCounter()
+			if config.LoadableConfig.BruteForce.LearnFromFeature(global.FeatureRBL) {
+				a.updateBruteForceBucketsCounter()
+			}
+
 			doAction(global.LuaActionRBL, global.LuaActionRBLName)
 
 			return global.AuthResultFeatureRBL

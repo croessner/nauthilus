@@ -22,6 +22,10 @@ type RelayDomainsSection struct {
 }
 
 func (r *RelayDomainsSection) String() string {
+	if r == nil {
+		return "RelayDomainsSection: <nil>"
+	}
+
 	return fmt.Sprintf("RelayDomainsSection: {Static[%+v]}", r.StaticDomains)
 }
 
@@ -34,6 +38,10 @@ type BackendServer struct {
 }
 
 func (n *BackendServer) String() string {
+	if n == nil {
+		return "BackendServer: <nil>"
+	}
+
 	return fmt.Sprintf("BackendServers: {Protocol: %s, IP: %s, Port: %d}", n.Protocol, n.IP, n.Port)
 }
 
@@ -41,6 +49,10 @@ type BackendServerMonitoring struct {
 	BackendServers []*BackendServer `mapstructure:"backend_servers"`
 }
 
-func (n *BackendServerMonitoring) string() string {
+func (n *BackendServerMonitoring) String() string {
+	if n == nil {
+		return "BackendServerMonitoring: <nil>"
+	}
+
 	return fmt.Sprintf("BackendServerMonitoring: [%v]", n.BackendServers)
 }

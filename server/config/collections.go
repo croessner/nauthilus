@@ -15,6 +15,11 @@
 
 package config
 
+import (
+	"fmt"
+	"strings"
+)
+
 var void struct{}
 
 // StringSet is a storage container that ensures unique keys.
@@ -22,6 +27,10 @@ type StringSet map[string]any
 
 // GetStringSlice returns all values for a StringSet as a slice of strings.
 func (s *StringSet) GetStringSlice() (result []string) {
+	if s == nil {
+		return
+	}
+
 	for key := range *s {
 		result = append(result, key)
 	}
@@ -29,8 +38,20 @@ func (s *StringSet) GetStringSlice() (result []string) {
 	return
 }
 
+func (s *StringSet) String() string {
+	if s == nil {
+		return "<nil>"
+	}
+
+	return fmt.Sprintf("StringSet: [%s]", strings.Join(s.GetStringSlice(), ", "))
+}
+
 // Set adds an element to the StringSet
 func (s *StringSet) Set(value string) {
+	if s == nil {
+		return
+	}
+
 	(*s)[value] = void
 }
 

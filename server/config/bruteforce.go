@@ -20,10 +20,39 @@ import "fmt"
 type BruteForceSection struct {
 	IPWhitelist []string         `mapstructure:"ip_whitelist"`
 	Buckets     []BruteForceRule `mapstructure:"buckets"`
+	Learning    []*Feature       `mapstructure:"learning"`
 }
 
 func (b *BruteForceSection) String() string {
+	if b == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("Buckets: %+v, IP-Whitelist: %+v", b.Buckets, b.IPWhitelist)
+}
+
+// LearnFromFeature checks if the given feature is present in the Learning slice of the BruteForceSection.
+// It returns true if the feature is found, otherwise false.
+func (b *BruteForceSection) LearnFromFeature(input string) bool {
+	if b == nil {
+		return false
+	}
+
+	if b.Learning == nil {
+		return false
+	}
+
+	if len(b.Learning) == 0 {
+		return false
+	}
+
+	for _, feature := range b.Learning {
+		if input == feature.Get() {
+			return true
+		}
+	}
+
+	return false
 }
 
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown

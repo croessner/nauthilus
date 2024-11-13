@@ -225,6 +225,10 @@ func setDefaultEnvVars() {
 func (c *Config) String() string {
 	var result string
 
+	if c == nil {
+		return "<nil>"
+	}
+
 	value := reflect.ValueOf(*c)
 	typeOfValue := value.Type()
 
