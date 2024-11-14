@@ -135,9 +135,6 @@ type AuthState struct {
 	// StartTime represents the starting time of a client request.
 	StartTime time.Time
 
-	// HaveAccountField is a flag that is set if a user account field was found in a Database.
-	HaveAccountField bool
-
 	// NoAuth is a flag that is set if the request mode does not require authentication.
 	NoAuth bool
 
@@ -592,7 +589,7 @@ func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service != global.ServBasicAuth && a.HaveAccountField {
+	if a.Service != global.ServBasicAuth {
 		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
@@ -1555,6 +1552,10 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType global.Backe
 func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
 	var accountName string
 
+	/*
+	 * 1. Verify password
+	 */
+
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
@@ -1578,7 +1579,15 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		return global.AuthResultTempFail
 	}
 
-	if a.UserFound && !a.NoAuth {
+	/*
+	 * 2. Does the user exist on the backend?
+	 */
+
+	if a.UserFound {
+		if passDBResult.AccountField != nil {
+			a.AccountField = passDBResult.AccountField
+		}
+
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
@@ -1591,8 +1600,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		}
 	}
 
-	if useCache && !a.NoAuth {
+	if useCache {
 		// Make sure the cache backend is in front of the used backend.
+		// If this is a userdb-request, the authentication state is forced to "true" (see verifyPassword()-moethod)
 		if passDBResult.Authenticated {
 			if accountName != "" {
 				if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
@@ -1651,10 +1661,21 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 			a.saveFailedPasswordCounterInRedis()
 		}
 
-		a.getAllPasswordHistories()
+		// Only passdb requests need reloading
+		if !a.NoAuth {
+			a.getAllPasswordHistories()
+		}
 	}
 
-	if !passDBResult.Authenticated {
+	/*
+	 * 3. Check the authentication state
+	 */
+
+	if passDBResult.Authenticated {
+		if !(a.haveMonitoringFlag(global.MonInMemory) || a.isMasterUser()) {
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+		}
+	} else {
 		a.updateBruteForceBucketsCounter()
 
 		authResult := a.filterLua(passDBResult, ctx)
@@ -1664,19 +1685,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		return authResult
 	}
 
-	// Set new username
-	if passDBResult.UserFound {
-		if passDBResult.AccountField != nil {
-			a.AccountField = passDBResult.AccountField
-			a.HaveAccountField = true
-		}
-	}
-
-	if passDBResult.Authenticated {
-		if !(a.haveMonitoringFlag(global.MonInMemory) || a.isMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
-		}
-	}
+	/*
+	 * 4. User was fine so far, do remaining Lua tasks
+	 */
 
 	authResult := global.AuthResultOK
 
