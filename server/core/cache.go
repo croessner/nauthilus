@@ -52,7 +52,6 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			ppc = &backend.PositivePasswordCache{}
 
 			isRedisErr := false
-
 			if isRedisErr, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, ppc); err != nil {
 				return
 			}
@@ -75,20 +74,6 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			}
 
 			break
-		}
-	}
-
-	if !passDBResult.Authenticated {
-		if key := auth.getPasswordHistoryRedisHashKey(true); key != "" {
-			auth.loadPasswordHistoryFromRedis(key)
-		}
-
-		// Prevent password lookups for already known wrong passwords (And the user is unknown in the entire system)
-		if auth.PasswordHistory != nil {
-			passwordHash := util.GetHash(util.PreparePassword(auth.Password))
-			if _, foundPassword := (*auth.PasswordHistory)[passwordHash]; foundPassword {
-				passDBResult.UserFound = true
-			}
 		}
 	}
 
