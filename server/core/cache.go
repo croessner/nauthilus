@@ -38,35 +38,43 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	passDBResult = &PassDBResult{}
 
-	cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
+	accountName, err = auth.updateUserAccountInRedis()
+	if err != nil {
+		return
+	}
 
-	for _, cacheName := range cacheNames.GetStringSlice() {
-		accountName, err = auth.updateUserAccountInRedis()
-		if err != nil {
-			return
-		}
+	if accountName != "" {
+		cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
 
-		if accountName != "" {
+		for _, cacheName := range cacheNames.GetStringSlice() {
 			redisPosUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
 
 			ppc = &backend.PositivePasswordCache{}
 
-			if _, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, ppc); err != nil {
+			isRedisErr := false
+
+			if isRedisErr, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, ppc); err != nil {
 				return
 			}
-		}
 
-		if ppc != nil {
-			if auth.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Password)) {
-				passDBResult.UserFound = true
-				passDBResult.AccountField = ppc.AccountField
-				passDBResult.TOTPSecretField = ppc.TOTPSecretField
-				passDBResult.UniqueUserIDField = ppc.UniqueUserIDField
-				passDBResult.DisplayNameField = ppc.DisplayNameField
-				passDBResult.Authenticated = true
-				passDBResult.Backend = ppc.Backend
-				passDBResult.Attributes = ppc.Attributes
+			// The user was not found for the current cache name
+			if isRedisErr {
+				continue
 			}
+
+			passDBResult.UserFound = true
+			passDBResult.AccountField = ppc.AccountField
+			passDBResult.TOTPSecretField = ppc.TOTPSecretField
+			passDBResult.UniqueUserIDField = ppc.UniqueUserIDField
+			passDBResult.DisplayNameField = ppc.DisplayNameField
+			passDBResult.Backend = ppc.Backend
+			passDBResult.Attributes = ppc.Attributes
+
+			if auth.NoAuth || ppc.Password == util.GetHash(util.PreparePassword(auth.Password)) {
+				passDBResult.Authenticated = true
+			}
+
+			break
 		}
 	}
 
@@ -75,7 +83,7 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			auth.loadPasswordHistoryFromRedis(key)
 		}
 
-		// Prevent password lookups for already known wrong passwords.
+		// Prevent password lookups for already known wrong passwords (And the user is unknown in the entire system)
 		if auth.PasswordHistory != nil {
 			passwordHash := util.GetHash(util.PreparePassword(auth.Password))
 			if _, foundPassword := (*auth.PasswordHistory)[passwordHash]; foundPassword {
