@@ -956,7 +956,7 @@ func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) 
 				break
 			}
 		} else {
-			passDBResult, err = authenticateUser(passDBResult, a, passDB)
+			err = processPassDBResult(passDBResult, a, passDB)
 			if err != nil || a.UserFound {
 				break
 			}
@@ -1037,16 +1037,16 @@ func checkAllBackends(configErrors map[global.Backend]error, a *AuthState) (err 
 	return err
 }
 
-// authenticateUser updates the passDBResult based on the provided passDB
+// processPassDBResult updates the passDBResult based on the provided passDB
 // and the AuthState object a.
 // If passDBResult is nil, it returns an error of type errors.ErrNoPassDBResult.
 // It then calls the util.DebugModule function to log debug information.
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
-func authenticateUser(passDBResult *PassDBResult, a *AuthState, passDB *PassDBMap) (*PassDBResult, error) {
+func processPassDBResult(passDBResult *PassDBResult, a *AuthState, passDB *PassDBMap) error {
 	if passDBResult == nil {
-		return passDBResult, errors.ErrNoPassDBResult
+		return errors.ErrNoPassDBResult
 	}
 
 	util.DebugModule(
@@ -1057,20 +1057,20 @@ func authenticateUser(passDBResult *PassDBResult, a *AuthState, passDB *PassDBMa
 		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
 	)
 
-	passDBResult = updateAuthentication(a, passDBResult, passDB)
+	updateAuthentication(a, passDBResult, passDB)
 
-	if passDBResult.UserFound {
-		a.UserFound = true
-	}
-
-	return passDBResult, nil
+	return nil
 }
 
 // updateAuthentication updates the fields of the AuthState struct with the values from the PassDBResult struct.
 // It checks if each field in passDBResult is not nil and if it is not nil, it updates the corresponding field in the AuthState struct.
 // It also updates the SourcePassDBBackend and UsedPassDBBackend fields of the AuthState struct with the values from passDBResult.Backend and passDB.backend respectively.
 // It returns the updated PassDBResult struct.
-func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) *PassDBResult {
+func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
+	if passDBResult.UserFound {
+		a.UserFound = true
+	}
+
 	if passDBResult.AccountField != nil {
 		a.AccountField = passDBResult.AccountField
 	}
@@ -1093,8 +1093,6 @@ func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *Pass
 
 	a.SourcePassDBBackend = passDBResult.Backend
 	a.UsedPassDBBackend = passDB.backend
-
-	return passDBResult
 }
 
 // setStatusCodes sets different status codes for various services.
