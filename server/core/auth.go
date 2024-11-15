@@ -1582,10 +1582,6 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 	 */
 
 	if a.UserFound {
-		if passDBResult.AccountField != nil {
-			a.AccountField = passDBResult.AccountField
-		}
-
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
