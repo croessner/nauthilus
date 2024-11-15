@@ -1594,9 +1594,9 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		}
 	}
 
-	if useCache {
+	// Note: User-DB queries never contain a password!
+	if !a.NoAuth && useCache {
 		// Make sure the cache backend is in front of the used backend.
-		// If this is a userdb-request, the authentication state is forced to "true" (see verifyPassword()-moethod)
 		if passDBResult.Authenticated {
 			if accountName != "" {
 				if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
@@ -1640,7 +1640,10 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 						Attributes: a.Attributes,
 					}
 
-					go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
+					// Safety net. Never store empty passwords into ppc.
+					if ppc.Password != "" {
+						go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
+					}
 				}
 			}
 		} else {
@@ -1655,10 +1658,7 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 			a.saveFailedPasswordCounterInRedis()
 		}
 
-		// Only passdb requests need reloading
-		if !a.NoAuth {
-			a.getAllPasswordHistories()
-		}
+		a.getAllPasswordHistories()
 	}
 
 	/*
