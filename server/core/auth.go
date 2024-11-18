@@ -964,7 +964,7 @@ func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) 
 	}
 
 	// Enforce authentication
-	if a.NoAuth {
+	if a.NoAuth && passDBResult != nil && passDBResult.UserFound {
 		passDBResult.Authenticated = true
 	}
 
@@ -1069,6 +1069,9 @@ func processPassDBResult(passDBResult *PassDBResult, a *AuthState, passDB *PassD
 func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
 	if passDBResult.UserFound {
 		a.UserFound = true
+
+		a.SourcePassDBBackend = passDBResult.Backend
+		a.UsedPassDBBackend = passDB.backend
 	}
 
 	if passDBResult.AccountField != nil {
@@ -1090,9 +1093,6 @@ func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *Pass
 	if passDBResult.Attributes != nil && len(passDBResult.Attributes) > 0 {
 		a.Attributes = passDBResult.Attributes
 	}
-
-	a.SourcePassDBBackend = passDBResult.Backend
-	a.UsedPassDBBackend = passDB.backend
 }
 
 // setStatusCodes sets different status codes for various services.

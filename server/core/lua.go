@@ -189,7 +189,6 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	}
 
 	accountSet := config.NewStringSet()
-	_ = accountSet
 
 	if luaBackendResult.Attributes != nil {
 		for _, value := range luaBackendResult.Attributes {
