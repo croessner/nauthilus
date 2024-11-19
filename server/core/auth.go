@@ -103,31 +103,52 @@ type JSONRequest struct {
 	Password string `json:"password"`
 
 	// ClientIP is the IP address of the client/user making the request.
-	ClientIP string `json:"client_ip"`
+	ClientIP string `json:"client_ip,omitempty"`
 
 	// ClientPort is the port number from which the client/user is sending the request.
-	ClientPort string `json:"client_port"`
+	ClientPort string `json:"client_port,omitempty"`
 
 	// ClientHostname is the hostname of the client which is sending the request.
-	ClientHostname string `json:"client_hostname"`
+	ClientHostname string `json:"client_hostname,omitempty"`
 
 	// ClientID is the unique identifier of the client/user, usually assigned by the application.
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id,omitempty"`
 
 	// LocalIP is the IP address of the server or endpoint receiving the request.
-	LocalIP string `json:"local_ip"`
+	LocalIP string `json:"local_ip,omitempty"`
 
 	// LocalPort is the port number of the server or endpoint receiving the request.
-	LocalPort string `json:"local_port"`
+	LocalPort string `json:"local_port,omitempty"`
 
 	// Service is the specific service that the client/user is trying to access with the request.
 	Service string `json:"service"`
 
 	// Method is the HTTP method used in the request (i.e., PLAIN, LOGIN, etc.)
-	Method string `json:"method"`
+	Method string `json:"method,omitempty"`
 
 	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
-	AuthLoginAttempt uint `json:"auth_login_attempt"`
+	AuthLoginAttempt uint `json:"auth_login_attempt,omitempty"`
+
+	XSSL                string `json:"ssl,omitempty"`
+	XSSLSessionID       string `json:"ssl_session_id,omitempty"`
+	XSSLClientVerify    string `json:"ssl_client_verify,omitempty"`
+	XSSLClientDN        string `json:"ssl_client_dn,omitempty"`
+	XSSLClientCN        string `json:"ssl_client_cn,omitempty"`
+	XSSLIssuer          string `json:"ssl_issuer,omitempty"`
+	XSSLClientNotBefore string `json:"ssl_client_notbefore,omitempty"`
+	XSSLClientNotAfter  string `json:"ssl_client_notafter,omitempty"`
+	XSSLSubjectDN       string `json:"ssl_subject_dn,omitempty"`
+	XSSLIssuerDN        string `json:"ssl_issuer_dn,omitempty"`
+	XSSLClientSubjectDN string `json:"ssl_client_subject_dn,omitempty"`
+	XSSLClientIssuerDN  string `json:"ssl_client_issuer_dn,omitempty"`
+	XSSLProtocol        string `json:"ssl_protocol,omitempty"`
+	XSSLCipher          string `json:"ssl_cipher,omitempty"`
+
+	// SSLSerial represents the serial number of an SSL certificate as a string.
+	SSLSerial string `json:"ssl_serial,omitempty"`
+
+	// SSLFingerprint represents the fingerprint of an SSL certificate.
+	SSLFingerprint string `json:"ssl_fingerprint,omitempty"`
 }
 
 // AuthState represents a struct that holds information related to an authentication process.
@@ -2063,7 +2084,7 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 		return
 	}
 
-	setAuthenticationFields(auth, jsonRequest).withXSSL(ctx)
+	setAuthenticationFields(auth, jsonRequest)
 }
 
 // setAuthenticationFields populates the fields of the AuthState struct with values from the JSONRequest.
@@ -2076,23 +2097,24 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 // Example usage:
 // auth := &AuthState{}
 //
-//	request := &JSONRequest{
-//	    Method:          "POST",
-//	    ClientID:        "client123",
-//	    Username:        "john",
-//	    Password:        "password",
-//	    ClientIP:        "192.168.1.100",
-//	    ClientPort:      "8080",
-//	    ClientHostname:  "example.com",
-//	    LocalIP:         "127.0.0.1",
-//	    LocalPort:       "3000",
-//	    Service:         "auth",
-//	    AuthLoginAttempt: 1,
-//	}
+//		request := &JSONRequest{
+//		    Method:          "POST",
+//		    ClientID:        "client123",
+//		    Username:        "john",
+//		    Password:        "password",
+//		    ClientIP:        "192.168.1.100",
+//		    ClientPort:      "8080",
+//		    ClientHostname:  "example.com",
+//		    LocalIP:         "127.0.0.1",
+//		    LocalPort:       "3000",
+//		    Service:         "auth",
+//		    AuthLoginAttempt: 1,
+//	     ...
+//		}
 //
 // setAuthenticationFields(auth, request)
 // // After the function call, the fields of auth would be populated with the values from request
-func setAuthenticationFields(auth *AuthState, request *JSONRequest) *AuthState {
+func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 	auth.Method = &request.Method
 	auth.UserAgent = &request.ClientID
 	auth.Username = request.Username
@@ -2103,8 +2125,22 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) *AuthState {
 	auth.XLocalIP = request.LocalIP
 	auth.XPort = request.LocalPort
 	auth.Service = request.Service
-
-	return auth
+	auth.XSSL = request.XSSL
+	auth.XSSLSessionID = request.XSSLSessionID
+	auth.XSSLClientVerify = request.XSSLClientVerify
+	auth.XSSLClientDN = request.XSSLClientDN
+	auth.XSSLClientCN = request.XSSLClientCN
+	auth.XSSLIssuer = request.XSSLIssuer
+	auth.XSSLClientNotBefore = request.XSSLClientNotBefore
+	auth.XSSLClientNotAfter = request.XSSLClientNotAfter
+	auth.XSSLSubjectDN = request.XSSLSubjectDN
+	auth.XSSLIssuerDN = request.XSSLIssuerDN
+	auth.XSSLClientSubjectDN = request.XSSLClientSubjectDN
+	auth.XSSLClientIssuerDN = request.XSSLIssuerDN
+	auth.XSSLProtocol = request.XSSLProtocol
+	auth.XSSLCipher = request.XSSLCipher
+	auth.SSLSerial = request.SSLSerial
+	auth.SSLFingerprint = request.SSLFingerprint
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
