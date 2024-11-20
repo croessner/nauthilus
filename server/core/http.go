@@ -409,8 +409,6 @@ func basicAuthMiddleware() gin.HandlerFunc {
 func loggerMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
-			logKey     string
-			logger     kitlog.Logger
 			logWrapper func(logger kitlog.Logger) kitlog.Logger
 		)
 
@@ -428,13 +426,9 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		// Decide which logger to use
 		if err != nil {
-			logger = log.Logger
 			logWrapper = level.Error
-			logKey = global.LogKeyMsg
 		} else {
-			logger = log.Logger
 			logWrapper = level.Info
-			logKey = global.LogKeyMsg
 		}
 
 		// Stop timer
@@ -449,7 +443,7 @@ func loggerMiddleware() gin.HandlerFunc {
 			cipherSuiteName = tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
 		}
 
-		logWrapper(logger).Log(
+		logWrapper(log.Logger).Log(
 			global.LogKeyGUID, guid,
 			global.LogKeyClientIP, ctx.ClientIP(),
 			global.LogKeyMethod, ctx.Request.Method,
@@ -466,7 +460,7 @@ func loggerMiddleware() gin.HandlerFunc {
 			global.LogKeyTLSSecure, negotiatedProtocol,
 			global.LogKeyTLSCipher, cipherSuiteName,
 			global.LogKeyUriPath, ctx.Request.URL.Path,
-			logKey, func() string {
+			global.LogKeyMsg, func() string {
 				if err != nil {
 					return err.Error()
 				}
