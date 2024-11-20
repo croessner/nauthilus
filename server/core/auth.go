@@ -2124,7 +2124,7 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 	auth.ClientHost = request.ClientHostname
 	auth.XLocalIP = request.LocalIP
 	auth.XPort = request.LocalPort
-	auth.Service = request.Service
+	auth.Protocol = config.NewProtocol(request.Service)
 	auth.XSSL = request.XSSL
 	auth.XSSLSessionID = request.XSSLSessionID
 	auth.XSSLClientVerify = request.XSSLClientVerify
