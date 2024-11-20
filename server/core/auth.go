@@ -100,7 +100,7 @@ type JSONRequest struct {
 	Username string `json:"username" binding:"required"`
 
 	// Password is the authentication credential of the client/user sending the request.
-	Password string `json:"password" binding:"required"`
+	Password string `json:"password,omitempty"`
 
 	// ClientIP is the IP address of the client/user making the request.
 	ClientIP string `json:"client_ip,omitempty"`
