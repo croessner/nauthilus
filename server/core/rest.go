@@ -35,7 +35,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// For a brief documentation of this file please have a look at the Markdown document REST-API.md.
+// For brief documentation of this file please have a look at the Markdown document REST-API.md.
 
 // FlushUserCmdStatus represents an user's command status.
 type FlushUserCmdStatus struct {
@@ -52,7 +52,7 @@ type FlushUserCmdStatus struct {
 // FlushUserCmd is a data structure used to handle user commands for flushing data.
 type FlushUserCmd struct {
 	// User is the field representing the name of the user to be flushed.
-	User string `json:"user"`
+	User string `json:"user" binding:"required"`
 }
 
 // FlushRuleCmdStatus is a structure representing the status of a Flush Rule command
@@ -75,11 +75,11 @@ type FlushRuleCmdStatus struct {
 type FlushRuleCmd struct {
 	// IPAddress is the IP address associated with the rule to be flushed.
 	// It must be in a format valid for an IP address.
-	IPAddress string `json:"ip_address"`
+	IPAddress string `json:"ip_address" binding:"required,ip"`
 
 	// RuleName is the name of the rule to be flushed.
 	// This value should reference an existing rule.
-	RuleName string `json:"rule_name"`
+	RuleName string `json:"rule_name" binding:"required"`
 }
 
 // BlockedIPAddresses represents a structure to hold blocked IP addresses retrieved from Redis.
@@ -347,7 +347,11 @@ func listBruteforce(ctx *gin.Context) {
 	if ctx.Request.Method == http.MethodPost {
 		filterCmd = &FilterCmd{}
 
-		ctx.BindJSON(filterCmd)
+		if err := ctx.ShouldBindJSON(filterCmd); err != nil {
+			handleJSONError(ctx, err)
+
+			return
+		}
 	}
 
 	blockedIPAddresses, err := listBlockedIPAddresses(ctx, filterCmd, guid)
@@ -403,8 +407,8 @@ func flushCache(ctx *gin.Context) {
 
 	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
 
-	if err := ctx.BindJSON(userCmd); err != nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
+	if err := ctx.ShouldBindJSON(userCmd); err != nil {
+		handleJSONError(ctx, err)
 
 		return
 	}
@@ -628,30 +632,6 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 // - userCmd: A pointer to a FlushUserCmd object containing user command details.
 // - useCache: A boolean indicating whether the cache backend is enabled or not.
 // - statusMsg: The status message to be included in the response.
-//
-// Example usage:
-//
-//	func flushCache(ctx *gin.Context) {
-//	   guid := ctx.GetString(global.CtxGUIDKey)
-//	   userCmd := &FlushUserCmd{}
-//
-//	   level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
-//
-//	   if err := ctx.BindJSON(userCmd); err != nil {
-//	       level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
-//	       ctx.AbortWithStatus(http.StatusBadRequest)
-//	       return
-//	   }
-//
-//	   cacheFlushError, useCache := processFlushCache(userCmd, guid)
-//
-//	   statusMsg := "flushed"
-//	   if cacheFlushError {
-//	       statusMsg = "not flushed"
-//	   }
-//
-//	   sendCacheStatus(ctx, guid, userCmd, useCache, statusMsg)
-//	}
 func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string, removedKeys []string) {
 	if useCache {
 		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
@@ -702,9 +682,8 @@ func flushBruteForceRule(ctx *gin.Context) {
 
 	ipCmd := &FlushRuleCmd{}
 
-	if err = ctx.BindJSON(ipCmd); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
-		ctx.AbortWithStatus(http.StatusBadRequest)
+	if err = ctx.ShouldBindJSON(ipCmd); err != nil {
+		handleJSONError(ctx, err)
 
 		return
 	}

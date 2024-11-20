@@ -97,10 +97,10 @@ func NewBackendServer() *BackendServer {
 // JSONRequest is a data structure containing the details of a client's request in JSON format.
 type JSONRequest struct {
 	// Username is the identifier of the client/user sending the request.
-	Username string `json:"username"`
+	Username string `json:"username" binding:"required"`
 
 	// Password is the authentication credential of the client/user sending the request.
-	Password string `json:"password"`
+	Password string `json:"password" binding:"required"`
 
 	// ClientIP is the IP address of the client/user making the request.
 	ClientIP string `json:"client_ip,omitempty"`
@@ -2075,9 +2075,8 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 	var jsonRequest *JSONRequest
 
-	err := ctx.ShouldBindJSON(&jsonRequest)
-	if err != nil {
-		ctx.Error(errors.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
+		handleJSONError(ctx, err)
 
 		return
 	}
@@ -2157,6 +2156,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 	} else if contentType == "application/json" {
 		processApplicationJSON(ctx, auth)
 	} else {
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
 		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 	}
 }
