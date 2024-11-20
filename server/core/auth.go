@@ -576,6 +576,7 @@ func (a *AuthState) GetDisplayNameOk() (string, bool) {
 // authOK is the general method to indicate authentication success.
 func (a *AuthState) authOK(ctx *gin.Context) {
 	setCommonHeaders(ctx, a)
+
 	switch a.Service {
 	case global.ServNginx:
 		setNginxHeaders(ctx, a)
@@ -583,14 +584,6 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 		setDovecotHeaders(ctx, a)
 	case global.ServUserInfo, global.ServJSON:
 		setUserInfoHeaders(ctx, a)
-	}
-
-	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
-
-	if cachedAuth {
-		ctx.Header("X-Auth-Cache", "Hit")
-	} else {
-		ctx.Header("X-Auth-Cache", "Miss")
 	}
 
 	handleLogging(ctx, a)
@@ -614,6 +607,14 @@ func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
+	}
+
+	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
+
+	if cachedAuth {
+		ctx.Header("X-Nauthilus-Memory-Cache", "Hit")
+	} else {
+		ctx.Header("X-Nauthilus-Memory-Cache", "Miss")
 	}
 }
 
@@ -732,7 +733,6 @@ func formatValues(values []any) []string {
 // Finally, it uses ctx.JSON to send a JSON response with a status code of a.StatusCodeOK and a body of backend.PositivePasswordCache.
 func setUserInfoHeaders(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Content-Type", "application/json; charset=UTF-8")
-	ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 	ctx.JSON(a.StatusCodeOK, &backend.PositivePasswordCache{
 		AccountField:    a.AccountField,
 		TOTPSecretField: a.TOTPSecretField,
@@ -799,23 +799,24 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 	ctx.Header("Auth-Status", a.StatusMessage)
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service == global.ServNginx {
+	switch a.Service {
+	case global.ServNginx:
 		maxWaitDelay := viper.GetUint("nginx_wait_delay")
+
 		if maxWaitDelay > 0 {
 			waitDelay := calculateWaitDelay(maxWaitDelay, a.LoginAttempts)
 
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
-	} else if a.Service == global.ServUserInfo {
+	case global.ServUserInfo, global.ServJSON:
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
-		ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 
 		if a.PasswordHistory != nil {
 			ctx.JSON(a.StatusCodeFail, *a.PasswordHistory)
 		} else {
-			ctx.JSON(a.StatusCodeFail, struct{}{})
+			ctx.JSON(a.StatusCodeFail, nil)
 		}
-	} else {
+	default:
 		ctx.String(a.StatusCodeFail, a.StatusMessage)
 	}
 }
