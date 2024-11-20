@@ -583,7 +583,7 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 	case global.ServDovecot:
 		setDovecotHeaders(ctx, a)
 	case global.ServUserInfo, global.ServJSON:
-		setUserInfoHeaders(ctx, a)
+		sendAuthResponse(ctx, a)
 	}
 
 	handleLogging(ctx, a)
@@ -727,11 +727,8 @@ func formatValues(values []any) []string {
 	return stringValues
 }
 
-// setUserInfoHeaders sets the necessary headers for the user info response.
-// It includes the Content-Type header with the value "application/json; charset=UTF-8".
-// It also includes the X-User-Found header with the string representation of a.UserFound.
-// Finally, it uses ctx.JSON to send a JSON response with a status code of a.StatusCodeOK and a body of backend.PositivePasswordCache.
-func setUserInfoHeaders(ctx *gin.Context, a *AuthState) {
+// sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
+func sendAuthResponse(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Content-Type", "application/json; charset=UTF-8")
 	ctx.JSON(a.StatusCodeOK, &backend.PositivePasswordCache{
 		AccountField:    a.AccountField,
@@ -857,13 +854,13 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 	}
 }
 
-// setUserInfoHeaders sets the necessary headers for UserInfo service in a Gin context
+// sendAuthResponse sets the necessary headers for UserInfo service in a Gin context
 // Usage example:
 //
 //	func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 //	    ...
 //	    if a.Service == global.ServUserInfo {
-//	        a.setUserInfoHeaders(ctx, reason)
+//	        a.sendAuthResponse(ctx, reason)
 //	        return
 //	    }
 //	    ...
@@ -887,7 +884,7 @@ func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
 // If the service is "user", it also sets headers specific to user information.
 // After setting the headers, it returns the appropriate response based on the service.
 // If the service is not "user", it returns an internal server error response with the status message.
-// If the service is "user", it calls the setUserInfoHeaders method to set additional headers and returns.
+// If the service is "user", it calls the sendAuthResponse method to set additional headers and returns.
 //
 // Parameters:
 // - ctx: The gin context object.
