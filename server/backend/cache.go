@@ -41,7 +41,7 @@ type PasswordHistory map[string]uint
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
 	Backend           global.Backend `json:"passdb_backend"`
-	Password          string         `json:"password"`
+	Password          string         `json:"password,omitempty"`
 	AccountField      *string        `json:"account_field"`
 	TOTPSecretField   *string        `json:"totp_secret_field"`
 	UniqueUserIDField *string        `json:"webauth_userid_field"`

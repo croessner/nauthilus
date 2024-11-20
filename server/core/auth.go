@@ -97,37 +97,58 @@ func NewBackendServer() *BackendServer {
 // JSONRequest is a data structure containing the details of a client's request in JSON format.
 type JSONRequest struct {
 	// Username is the identifier of the client/user sending the request.
-	Username string `json:"username"`
+	Username string `json:"username" binding:"required"`
 
 	// Password is the authentication credential of the client/user sending the request.
-	Password string `json:"password"`
+	Password string `json:"password" binding:"required"`
 
 	// ClientIP is the IP address of the client/user making the request.
-	ClientIP string `json:"client_ip"`
+	ClientIP string `json:"client_ip,omitempty"`
 
 	// ClientPort is the port number from which the client/user is sending the request.
-	ClientPort string `json:"client_port"`
+	ClientPort string `json:"client_port,omitempty"`
 
 	// ClientHostname is the hostname of the client which is sending the request.
-	ClientHostname string `json:"client_hostname"`
+	ClientHostname string `json:"client_hostname,omitempty"`
 
 	// ClientID is the unique identifier of the client/user, usually assigned by the application.
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id,omitempty"`
 
 	// LocalIP is the IP address of the server or endpoint receiving the request.
-	LocalIP string `json:"local_ip"`
+	LocalIP string `json:"local_ip,omitempty"`
 
 	// LocalPort is the port number of the server or endpoint receiving the request.
-	LocalPort string `json:"local_port"`
+	LocalPort string `json:"local_port,omitempty"`
 
 	// Service is the specific service that the client/user is trying to access with the request.
 	Service string `json:"service"`
 
 	// Method is the HTTP method used in the request (i.e., PLAIN, LOGIN, etc.)
-	Method string `json:"method"`
+	Method string `json:"method,omitempty"`
 
 	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
-	AuthLoginAttempt uint `json:"auth_login_attempt"`
+	AuthLoginAttempt uint `json:"auth_login_attempt,omitempty"`
+
+	XSSL                string `json:"ssl,omitempty"`
+	XSSLSessionID       string `json:"ssl_session_id,omitempty"`
+	XSSLClientVerify    string `json:"ssl_client_verify,omitempty"`
+	XSSLClientDN        string `json:"ssl_client_dn,omitempty"`
+	XSSLClientCN        string `json:"ssl_client_cn,omitempty"`
+	XSSLIssuer          string `json:"ssl_issuer,omitempty"`
+	XSSLClientNotBefore string `json:"ssl_client_notbefore,omitempty"`
+	XSSLClientNotAfter  string `json:"ssl_client_notafter,omitempty"`
+	XSSLSubjectDN       string `json:"ssl_subject_dn,omitempty"`
+	XSSLIssuerDN        string `json:"ssl_issuer_dn,omitempty"`
+	XSSLClientSubjectDN string `json:"ssl_client_subject_dn,omitempty"`
+	XSSLClientIssuerDN  string `json:"ssl_client_issuer_dn,omitempty"`
+	XSSLProtocol        string `json:"ssl_protocol,omitempty"`
+	XSSLCipher          string `json:"ssl_cipher,omitempty"`
+
+	// SSLSerial represents the serial number of an SSL certificate as a string.
+	SSLSerial string `json:"ssl_serial,omitempty"`
+
+	// SSLFingerprint represents the fingerprint of an SSL certificate.
+	SSLFingerprint string `json:"ssl_fingerprint,omitempty"`
 }
 
 // AuthState represents a struct that holds information related to an authentication process.
@@ -555,21 +576,14 @@ func (a *AuthState) GetDisplayNameOk() (string, bool) {
 // authOK is the general method to indicate authentication success.
 func (a *AuthState) authOK(ctx *gin.Context) {
 	setCommonHeaders(ctx, a)
+
 	switch a.Service {
 	case global.ServNginx:
 		setNginxHeaders(ctx, a)
 	case global.ServDovecot:
 		setDovecotHeaders(ctx, a)
 	case global.ServUserInfo, global.ServJSON:
-		setUserInfoHeaders(ctx, a)
-	}
-
-	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
-
-	if cachedAuth {
-		ctx.Header("X-Auth-Cache", "Hit")
-	} else {
-		ctx.Header("X-Auth-Cache", "Miss")
+		sendAuthResponse(ctx, a)
 	}
 
 	handleLogging(ctx, a)
@@ -593,6 +607,14 @@ func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
+	}
+
+	cachedAuth := ctx.GetBool(global.CtxLocalCacheAuthKey)
+
+	if cachedAuth {
+		ctx.Header("X-Nauthilus-Memory-Cache", "Hit")
+	} else {
+		ctx.Header("X-Nauthilus-Memory-Cache", "Miss")
 	}
 }
 
@@ -705,13 +727,9 @@ func formatValues(values []any) []string {
 	return stringValues
 }
 
-// setUserInfoHeaders sets the necessary headers for the user info response.
-// It includes the Content-Type header with the value "application/json; charset=UTF-8".
-// It also includes the X-User-Found header with the string representation of a.UserFound.
-// Finally, it uses ctx.JSON to send a JSON response with a status code of a.StatusCodeOK and a body of backend.PositivePasswordCache.
-func setUserInfoHeaders(ctx *gin.Context, a *AuthState) {
+// sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
+func sendAuthResponse(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Content-Type", "application/json; charset=UTF-8")
-	ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 	ctx.JSON(a.StatusCodeOK, &backend.PositivePasswordCache{
 		AccountField:    a.AccountField,
 		TOTPSecretField: a.TOTPSecretField,
@@ -778,23 +796,24 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 	ctx.Header("Auth-Status", a.StatusMessage)
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service == global.ServNginx {
+	switch a.Service {
+	case global.ServNginx:
 		maxWaitDelay := viper.GetUint("nginx_wait_delay")
+
 		if maxWaitDelay > 0 {
 			waitDelay := calculateWaitDelay(maxWaitDelay, a.LoginAttempts)
 
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
-	} else if a.Service == global.ServUserInfo {
+	case global.ServUserInfo, global.ServJSON:
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
-		ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 
 		if a.PasswordHistory != nil {
 			ctx.JSON(a.StatusCodeFail, *a.PasswordHistory)
 		} else {
-			ctx.JSON(a.StatusCodeFail, struct{}{})
+			ctx.JSON(a.StatusCodeFail, nil)
 		}
-	} else {
+	default:
 		ctx.String(a.StatusCodeFail, a.StatusMessage)
 	}
 }
@@ -835,13 +854,13 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 	}
 }
 
-// setUserInfoHeaders sets the necessary headers for UserInfo service in a Gin context
+// sendAuthResponse sets the necessary headers for UserInfo service in a Gin context
 // Usage example:
 //
 //	func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 //	    ...
 //	    if a.Service == global.ServUserInfo {
-//	        a.setUserInfoHeaders(ctx, reason)
+//	        a.sendAuthResponse(ctx, reason)
 //	        return
 //	    }
 //	    ...
@@ -865,7 +884,7 @@ func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
 // If the service is "user", it also sets headers specific to user information.
 // After setting the headers, it returns the appropriate response based on the service.
 // If the service is not "user", it returns an internal server error response with the status message.
-// If the service is "user", it calls the setUserInfoHeaders method to set additional headers and returns.
+// If the service is "user", it calls the sendAuthResponse method to set additional headers and returns.
 //
 // Parameters:
 // - ctx: The gin context object.
@@ -2056,14 +2075,13 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 	var jsonRequest *JSONRequest
 
-	err := ctx.ShouldBindJSON(&jsonRequest)
-	if err != nil {
-		ctx.Error(errors.ErrInvalidJSONPayload).SetType(gin.ErrorTypeBind)
+	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
+		handleJSONError(ctx, err)
 
 		return
 	}
 
-	setAuthenticationFields(auth, jsonRequest).withXSSL(ctx)
+	setAuthenticationFields(auth, jsonRequest)
 }
 
 // setAuthenticationFields populates the fields of the AuthState struct with values from the JSONRequest.
@@ -2076,23 +2094,24 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 // Example usage:
 // auth := &AuthState{}
 //
-//	request := &JSONRequest{
-//	    Method:          "POST",
-//	    ClientID:        "client123",
-//	    Username:        "john",
-//	    Password:        "password",
-//	    ClientIP:        "192.168.1.100",
-//	    ClientPort:      "8080",
-//	    ClientHostname:  "example.com",
-//	    LocalIP:         "127.0.0.1",
-//	    LocalPort:       "3000",
-//	    Service:         "auth",
-//	    AuthLoginAttempt: 1,
-//	}
+//		request := &JSONRequest{
+//		    Method:          "POST",
+//		    ClientID:        "client123",
+//		    Username:        "john",
+//		    Password:        "password",
+//		    ClientIP:        "192.168.1.100",
+//		    ClientPort:      "8080",
+//		    ClientHostname:  "example.com",
+//		    LocalIP:         "127.0.0.1",
+//		    LocalPort:       "3000",
+//		    Service:         "auth",
+//		    AuthLoginAttempt: 1,
+//	     ...
+//		}
 //
 // setAuthenticationFields(auth, request)
 // // After the function call, the fields of auth would be populated with the values from request
-func setAuthenticationFields(auth *AuthState, request *JSONRequest) *AuthState {
+func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 	auth.Method = &request.Method
 	auth.UserAgent = &request.ClientID
 	auth.Username = request.Username
@@ -2102,9 +2121,23 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) *AuthState {
 	auth.ClientHost = request.ClientHostname
 	auth.XLocalIP = request.LocalIP
 	auth.XPort = request.LocalPort
-	auth.Service = request.Service
-
-	return auth
+	auth.Protocol = config.NewProtocol(request.Service)
+	auth.XSSL = request.XSSL
+	auth.XSSLSessionID = request.XSSLSessionID
+	auth.XSSLClientVerify = request.XSSLClientVerify
+	auth.XSSLClientDN = request.XSSLClientDN
+	auth.XSSLClientCN = request.XSSLClientCN
+	auth.XSSLIssuer = request.XSSLIssuer
+	auth.XSSLClientNotBefore = request.XSSLClientNotBefore
+	auth.XSSLClientNotAfter = request.XSSLClientNotAfter
+	auth.XSSLSubjectDN = request.XSSLSubjectDN
+	auth.XSSLIssuerDN = request.XSSLIssuerDN
+	auth.XSSLClientSubjectDN = request.XSSLClientSubjectDN
+	auth.XSSLClientIssuerDN = request.XSSLIssuerDN
+	auth.XSSLProtocol = request.XSSLProtocol
+	auth.XSSLCipher = request.XSSLCipher
+	auth.SSLSerial = request.SSLSerial
+	auth.SSLFingerprint = request.SSLFingerprint
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
@@ -2123,6 +2156,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 	} else if contentType == "application/json" {
 		processApplicationJSON(ctx, auth)
 	} else {
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
 		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
 	}
 }
