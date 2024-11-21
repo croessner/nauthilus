@@ -479,14 +479,8 @@ const ImageCopyright = "Logo (c) by Roessner-Network-Solutions"
 
 // Categories and services.
 const (
-	// CatMail is a constant for the "mail" category.
-	CatMail = "mail"
-
-	// CatHTTP is a constant for the "http" category.
-	CatHTTP = "http"
-
-	// CatGeneric is a constant for the "generic" category.
-	CatGeneric = "generic"
+	// CatAuth is a constant for the "generic" category.
+	CatAuth = "auth"
 
 	// CatCache is a constant for the "cache" category.
 	CatCache = "cache"
@@ -500,20 +494,17 @@ const (
 	// ServSaslauthd is a constant for the "saslauthd" service.
 	ServSaslauthd = "saslauthd"
 
-	// ServDovecot is a constant for the "dovecot" service.
-	ServDovecot = "dovecot"
+	// ServHeader is a constant for the "header" service.
+	ServHeader = "header"
 
 	// ServCallback is a generic callback to call Lua
 	ServCallback = "callback"
 
-	// ServBasicAuth is a constant for the "basicauth" service.
-	ServBasicAuth = "basicauth"
+	// ServBasic is a constant for the "basicauth" service.
+	ServBasic = "basic"
 
 	// ServOryHydra is a constant for the "ory_hydra" service.
 	ServOryHydra = "ory_hydra"
-
-	// ServUserInfo is a constant for the "user" service.
-	ServUserInfo = "user"
 
 	// ServJSON is a constant for the "json" service.
 	ServJSON = "json"
