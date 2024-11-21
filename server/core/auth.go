@@ -2149,15 +2149,17 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 // If neither of the above conditions match, it sets the error associated with unsupported media type
 // and sets the error type to gin.ErrorTypeBind on the Context.
 func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
-	contentType := ctx.GetHeader("Content-Type")
+	if ctx.Request.Method == "POST" {
+		contentType := ctx.GetHeader("Content-Type")
 
-	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
-		processApplicationXWWWFormUrlencoded(ctx, auth)
-	} else if contentType == "application/json" {
-		processApplicationJSON(ctx, auth)
-	} else {
-		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
-		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+			processApplicationXWWWFormUrlencoded(ctx, auth)
+		} else if contentType == "application/json" {
+			processApplicationJSON(ctx, auth)
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
+			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		}
 	}
 }
 

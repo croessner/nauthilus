@@ -131,8 +131,22 @@ func (a *AuthState) generic(ctx *gin.Context) {
 	if a.ListAccounts {
 		allAccountsList := a.listUserAccounts()
 
-		for _, account := range allAccountsList {
-			ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
+		acceptHeader := ctx.GetHeader("Accept")
+
+		switch acceptHeader {
+		case "application/json":
+			ctx.JSON(http.StatusOK, allAccountsList)
+		case "*/*", "text/plain":
+			for _, account := range allAccountsList {
+				ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
+			}
+		case "application/x-www-form-urlencoded":
+			for _, account := range allAccountsList {
+				ctx.Data(http.StatusOK, "application/x-www-form-urlencoded", []byte(account+"\r\n"))
+			}
+		default:
+			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
 		}
 
 		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
