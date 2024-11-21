@@ -47,7 +47,7 @@ func isLocalOrEmptyIP(ip string) bool {
 	return ip == global.Localhost4 || ip == global.Localhost6 || ip == ""
 }
 
-// logAddMessage logs a message with the specified parameters using the global logger. It is intended to be a generic logging function.
+// logAddMessage logs a message with the specified parameters using the global logger. It is intended to be a handleAuthentication logging function.
 //
 // Parameters:
 //   - auth: Pointer to AuthState

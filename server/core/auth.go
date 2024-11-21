@@ -100,7 +100,7 @@ type JSONRequest struct {
 	Username string `json:"username" binding:"required"`
 
 	// Password is the authentication credential of the client/user sending the request.
-	Password string `json:"password" binding:"required"`
+	Password string `json:"password,omitempty"`
 
 	// ClientIP is the IP address of the client/user making the request.
 	ClientIP string `json:"client_ip,omitempty"`
@@ -251,7 +251,7 @@ type AuthState struct {
 	// StatusMessage is the HTTP response payload that is sent to the remote server that asked for authentication.
 	StatusMessage string
 
-	// Service is set by Nauthilus depending on the router endpoint. Look at httpQueryHandler for the structure of available
+	// Service is set by Nauthilus depending on the router endpoint. Look at requestHandler for the structure of available
 	// endpoints.
 	Service string
 
@@ -580,9 +580,9 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 	switch a.Service {
 	case global.ServNginx:
 		setNginxHeaders(ctx, a)
-	case global.ServDovecot:
-		setDovecotHeaders(ctx, a)
-	case global.ServUserInfo, global.ServJSON:
+	case global.ServHeader:
+		setHeaderHeaders(ctx, a)
+	case global.ServJSON:
 		sendAuthResponse(ctx, a)
 	}
 
@@ -597,13 +597,13 @@ func (a *AuthState) authOK(ctx *gin.Context) {
 
 // setCommonHeaders sets common headers for the given gin.Context and AuthState.
 // It sets the "Auth-Status" header to "OK" and the "X-Nauthilus-Session" header to the GUID of the AuthState.
-// If the AuthState's Service is not global.ServBasicAuth, and the HaveAccountField flag is true,
+// If the AuthState's Service is not global.ServBasic, and the HaveAccountField flag is true,
 // it retrieves the account from the AuthState and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 	ctx.Header("Auth-Status", "OK")
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
-	if a.Service != global.ServBasicAuth {
+	if a.Service != global.ServBasic {
 		if account, found := a.getAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
@@ -650,7 +650,7 @@ func setNginxHeaders(ctx *gin.Context, a *AuthState) {
 	}
 }
 
-// setDovecotHeaders sets the specified headers in the given gin.Context based on the attributes in the AuthState object.
+// setHeaderHeaders sets the specified headers in the given gin.Context based on the attributes in the AuthState object.
 // It iterates through the attributes and calls the handleAttributeValue function for each attribute.
 //
 // Parameters:
@@ -665,12 +665,12 @@ func setNginxHeaders(ctx *gin.Context, a *AuthState) {
 //	        "Attribute2": []any{"Value2_1", "Value2_2"},
 //	    },
 //	}
-//	setDovecotHeaders(ctx, a)
+//	setHeaderHeaders(ctx, a)
 //
 // Resulting headers in ctx:
 // - X-Nauthilus-Attribute1: "Value1"
 // - X-Nauthilus-Attribute2: "Value2_1,Value2_2"
-func setDovecotHeaders(ctx *gin.Context, a *AuthState) {
+func setHeaderHeaders(ctx *gin.Context, a *AuthState) {
 	if a.Attributes != nil && len(a.Attributes) > 0 {
 		for name, value := range a.Attributes {
 			handleAttributeValue(ctx, name, value)
@@ -805,7 +805,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
-	case global.ServUserInfo, global.ServJSON:
+	case global.ServJSON:
 		ctx.Header("Content-Type", "application/json; charset=UTF-8")
 
 		if a.PasswordHistory != nil {
@@ -859,7 +859,7 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 //
 //	func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 //	    ...
-//	    if a.Service == global.ServUserInfo {
+//	    if a.Service == global.ServJSON {
 //	        a.sendAuthResponse(ctx, reason)
 //	        return
 //	    }
@@ -875,7 +875,6 @@ func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
 	}
 
 	ctx.Header("Content-Type", "application/json; charset=UTF-8")
-	ctx.Header("X-User-Found", fmt.Sprintf("%v", a.UserFound))
 
 	ctx.JSON(a.StatusCodeInternalError, &errType{Error: reason})
 }
@@ -892,12 +891,12 @@ func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
 //
 // Usage example:
 //
-//	  func (a *AuthState) generic(ctx *gin.Context) {
+//	  func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 //	    ...
 //	    a.authTempFail(ctx, global.TempFailDefault)
 //	    ...
 //	  }
-//	  func (a *AuthState) saslAuthd(ctx *gin.Context) {
+//	  func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
 //		   ...
 //	    a.authTempFail(ctx, global.TempFailDefault)
 //	    ...
@@ -915,8 +914,9 @@ func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 
 	a.StatusMessage = reason
 
-	if a.Service == global.ServUserInfo {
+	if a.Service == global.ServJSON {
 		a.setUserInfoHeaders(ctx, reason)
+
 		return
 	}
 
@@ -1117,11 +1117,11 @@ func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *Pass
 // setStatusCodes sets different status codes for various services.
 func (a *AuthState) setStatusCodes(service string) error {
 	switch service {
-	case global.ServNginx, global.ServDovecot:
+	case global.ServNginx:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case global.ServSaslauthd, global.ServBasicAuth, global.ServOryHydra, global.ServUserInfo, global.ServJSON, global.ServCallback:
+	case global.ServSaslauthd, global.ServBasic, global.ServOryHydra, global.ServHeader, global.ServJSON, global.ServCallback:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -2149,22 +2149,24 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 // If neither of the above conditions match, it sets the error associated with unsupported media type
 // and sets the error type to gin.ErrorTypeBind on the Context.
 func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
-	contentType := ctx.GetHeader("Content-Type")
+	if ctx.Request.Method == "POST" {
+		contentType := ctx.GetHeader("Content-Type")
 
-	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
-		processApplicationXWWWFormUrlencoded(ctx, auth)
-	} else if contentType == "application/json" {
-		processApplicationJSON(ctx, auth)
-	} else {
-		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
-		ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+			processApplicationXWWWFormUrlencoded(ctx, auth)
+		} else if contentType == "application/json" {
+			processApplicationJSON(ctx, auth)
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Unsupported media type"})
+			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+		}
 	}
 }
 
-// setupHTTPBasiAuth sets up basic authentication for HTTP requests.
+// setupHTTPBasicAuth sets up basic authentication for HTTP requests.
 // It takes in a gin.Context object and a pointer to an AuthState object.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the AuthState object to set client, local, user-agent, and X-SSL information, respectively
-func setupHTTPBasiAuth(ctx *gin.Context, auth *AuthState) {
+func setupHTTPBasicAuth(ctx *gin.Context, auth *AuthState) {
 	// NOTE: We must get username and password later!
 	auth.withClientInfo(ctx)
 	auth.withLocalInfo(ctx)
@@ -2190,9 +2192,9 @@ func (a *AuthState) initMethodAndUserAgent() *AuthState {
 // setupAuth sets up the authentication based on the service parameter in the gin context.
 // It takes the gin context and an AuthState struct as input.
 //
-// If the service parameter is "nginx", "dovecot", or "user", it calls the setupHeaderBasedAuth function.
+// If the service parameter is "nginx" or "header", it calls the setupHeaderBasedAuth function.
 // If the service parameter is "saslauthd", it calls the setupBodyBasedAuth function.
-// If the service parameter is "basicauth", it calls the setupHTTPBasiAuth function.
+// If the service parameter is "basicauth", it calls the setupHTTPBasicAuth function.
 //
 // After setting up the authentication, it calls the withDefaults method on the AuthState struct.
 //
@@ -2206,19 +2208,19 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 	auth.Protocol = &config.Protocol{}
 
 	switch ctx.Param("service") {
-	case global.ServNginx, global.ServDovecot, global.ServUserInfo:
+	case global.ServNginx, global.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
 	case global.ServSaslauthd, global.ServJSON:
 		setupBodyBasedAuth(ctx, auth)
-	case global.ServBasicAuth:
-		setupHTTPBasiAuth(ctx, auth)
+	case global.ServBasic:
+		setupHTTPBasicAuth(ctx, auth)
 	case global.ServCallback:
 		auth.withDefaults(ctx)
 
 		return
 	}
 
-	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != global.ServBasicAuth {
+	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != global.ServBasic {
 		if !util.ValidateUsername(auth.Username) {
 			auth.Username = ""
 
@@ -2291,7 +2293,7 @@ func (a *AuthState) withDefaults(ctx *gin.Context) *AuthState {
 	a.Service = ctx.Param("service")
 	a.Context = ctx.MustGet(global.CtxDataExchangeKey).(*lualib.Context)
 
-	if a.Service == global.ServBasicAuth {
+	if a.Service == global.ServBasic {
 		a.Protocol.Set(global.ProtoHTTP)
 	}
 

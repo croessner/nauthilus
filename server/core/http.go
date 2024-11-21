@@ -69,7 +69,7 @@ var (
 	LangBundle *i18n.Bundle
 )
 
-// RESTResult is a generic JSON result object for the Nauthilus REST API.
+// RESTResult is a handleAuthentication JSON result object for the Nauthilus REST API.
 type RESTResult struct {
 	// GUID represents a unique identifier for a session. It is a string field used in the RESTResult struct
 	// and is also annotated with the json tag "session".
@@ -165,12 +165,12 @@ func (w *customWriter) Write(data []byte) (numBytes int, err error) {
 }
 
 //nolint:gocognit // Main logic
-func httpQueryHandler(ctx *gin.Context) {
+func requestHandler(ctx *gin.Context) {
 	if ctx.FullPath() == "/ping" {
 		healthCheck(ctx)
 	} else {
 		switch ctx.Param("category") {
-		case global.CatMail, global.CatGeneric:
+		case global.CatAuth:
 			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
@@ -185,34 +185,13 @@ func httpQueryHandler(ctx *gin.Context) {
 			}
 
 			switch ctx.Param("service") {
-			case global.ServNginx, global.ServDovecot, global.ServUserInfo, global.ServJSON:
-				auth.generic(ctx)
+			case global.ServBasic, global.ServNginx, global.ServHeader, global.ServJSON:
+				auth.handleAuthentication(ctx)
 			case global.ServSaslauthd:
-				auth.saslAuthd(ctx)
+				auth.handleSASLAuthdAuthentication(ctx)
 			case global.ServCallback:
-				auth.callback(ctx)
+				auth.handleCallback(ctx)
 				ctx.Status(auth.StatusCodeOK)
-			default:
-				ctx.AbortWithStatus(http.StatusNotFound)
-			}
-
-		case global.CatHTTP:
-			auth := NewAuthState(ctx)
-			if auth == nil {
-				ctx.AbortWithStatus(http.StatusBadRequest)
-
-				return
-			}
-
-			if found, reject := auth.preproccessAuthRequest(ctx); reject {
-				return
-			} else if found {
-				auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
-			}
-
-			switch ctx.Param("service") {
-			case global.ServBasicAuth:
-				auth.generic(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -220,7 +199,7 @@ func httpQueryHandler(ctx *gin.Context) {
 		case global.CatBruteForce:
 			switch ctx.Param("service") {
 			case global.ServList:
-				listBruteforce(ctx)
+				hanldeBruteForceList(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -239,23 +218,23 @@ func httpQueryHandler(ctx *gin.Context) {
 //  2. It uses a switch statement to handle different category values.
 //  3. For the "cache" category, it retrieves the "service" parameter and uses a switch statement
 //     to handle different service values.
-//  4. For the "flush" service, it calls the flushCache function.
+//  4. For the "flush" service, it calls the handleUserFlush function.
 //  5. For the "bruteforce" category, it retrieves the "service" parameter and uses a switch statement
 //     to handle different service values.
-//  6. For the "flush" service, it calls the flushBruteForceRule function.
+//  6. For the "flush" service, it calls the handleBruteForceRuleFlush function.
 func httpCacheHandler(ctx *gin.Context) {
 	//nolint:gocritic // Prepared for future commands
 	switch ctx.Param("category") {
 	case global.CatCache:
 		switch ctx.Param("service") {
 		case global.ServFlush:
-			flushCache(ctx)
+			handleUserFlush(ctx)
 		}
 
 	case global.CatBruteForce:
 		switch ctx.Param("service") {
 		case global.ServFlush:
-			flushBruteForceRule(ctx)
+			handleBruteForceRuleFlush(ctx)
 		}
 	}
 }
@@ -359,7 +338,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 		guid := ctx.GetString(global.CtxGUIDKey)
 
 		// Note: Chicken-egg problem.
-		if ctx.Param("category") == global.CatHTTP && ctx.Param("service") == global.ServBasicAuth {
+		if ctx.Param("category") == global.CatAuth && ctx.Param("service") == global.ServBasic {
 			level.Warn(log.Logger).Log(
 				global.LogKeyGUID, guid,
 				global.LogKeyMsg, "Disabling HTTP basic Auth",
@@ -732,8 +711,8 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 // it adds a middleware to the group that implements basic authentication.
 //
 // It then adds three endpoints to the group:
-// - A GET endpoint with the path "/:category/:service" that is handled by the luaContextMiddleware and httpQueryHandler functions.
-// - A POST endpoint with the path "/:category/:service" that is also handled by the luaContextMiddleware and httpQueryHandler functions.
+// - A GET endpoint with the path "/:category/:service" that is handled by the luaContextMiddleware and requestHandler functions.
+// - A POST endpoint with the path "/:category/:service" that is also handled by the luaContextMiddleware and requestHandler functions.
 // - A DELETE endpoint with the path "/:category/:service" that is handled by the httpCacheHandler function.
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
@@ -742,8 +721,8 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 		group.Use(basicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", luaContextMiddleware(), httpQueryHandler)
-	group.POST("/:category/:service", luaContextMiddleware(), httpQueryHandler)
+	group.GET("/:category/:service", luaContextMiddleware(), requestHandler)
+	group.POST("/:category/:service", luaContextMiddleware(), requestHandler)
 	group.DELETE("/:category/:service", httpCacheHandler)
 }
 
@@ -990,7 +969,7 @@ func setupRouter(router *gin.Engine) {
 	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
 
 	// Healthcheck
-	router.GET("/ping", httpQueryHandler)
+	router.GET("/ping", requestHandler)
 
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")

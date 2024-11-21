@@ -111,11 +111,11 @@ type FilterCmd struct {
 	IPAddress []string `json:"ip_addresses,omitempty"`
 }
 
-// generic handles the generic authentication logic based on the selected service type.
-func (a *AuthState) generic(ctx *gin.Context) {
+// handleAuthentication handles the authentication logic based on the selected service type.
+func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 	var mode string
 
-	if a.Service == global.ServBasicAuth {
+	if a.Service == global.ServBasic {
 		var httpBasicAuthOk bool
 
 		// Decode HTTP basic Auth
@@ -131,8 +131,22 @@ func (a *AuthState) generic(ctx *gin.Context) {
 	if a.ListAccounts {
 		allAccountsList := a.listUserAccounts()
 
-		for _, account := range allAccountsList {
-			ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
+		acceptHeader := ctx.GetHeader("Accept")
+
+		switch acceptHeader {
+		case "application/json":
+			ctx.JSON(http.StatusOK, allAccountsList)
+		case "*/*", "text/plain":
+			for _, account := range allAccountsList {
+				ctx.Data(http.StatusOK, "text/plain", []byte(account+"\r\n"))
+			}
+		case "application/x-www-form-urlencoded":
+			for _, account := range allAccountsList {
+				ctx.Data(http.StatusOK, "application/x-www-form-urlencoded", []byte(account+"\r\n"))
+			}
+		default:
+			ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
+			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
 		}
 
 		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
@@ -181,8 +195,8 @@ func (a *AuthState) generic(ctx *gin.Context) {
 	}
 }
 
-// saslAuthd handles the authentication logic for the saslAuthd service.
-func (a *AuthState) saslAuthd(ctx *gin.Context) {
+// handleSASLAuthdAuthentication handles the authentication logic for the handleSASLAuthdAuthentication service.
+func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
 	switch a.handlePassword(ctx) {
 	case global.AuthResultOK:
 		a.authOK(ctx)
@@ -202,8 +216,8 @@ func (a *AuthState) saslAuthd(ctx *gin.Context) {
 	}
 }
 
-// callback handles the execution of a Lua callback request in a Gin context.
-func (a *AuthState) callback(ctx *gin.Context) {
+// handleCallback handles the execution of a Lua handleCallback request in a Gin context.
+func (a *AuthState) handleCallback(ctx *gin.Context) {
 	if hookScript := config.LoadableConfig.GetLuaCallbackScriptPath(); hookScript != "" {
 		hook.RunLuaCallback(ctx, hookScript)
 	}
@@ -337,8 +351,8 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 	return blockedAccounts, err
 }
 
-// listBruteforce lists all blocked IP addresses and accounts in response to a brute force attack event.
-func listBruteforce(ctx *gin.Context) {
+// hanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
+func hanldeBruteForceList(ctx *gin.Context) {
 	var filterCmd *FilterCmd
 
 	guid := ctx.GetString(global.CtxGUIDKey)
@@ -374,7 +388,7 @@ func listBruteforce(ctx *gin.Context) {
 	})
 }
 
-// flushCache is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
+// handleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
 // and attempts to flush the cache according to the *FlushUserCmd in the request's JSON body.
 //
 // Parameters:
@@ -401,7 +415,7 @@ func listBruteforce(ctx *gin.Context) {
 //  5. If there are no binding errors, the function processes the cache flush.
 //  6. Based on the useCache flag and the outcome of the cache flush operation, the function
 //     updates the statusMsg and sends the cache status to the client.
-func flushCache(ctx *gin.Context) {
+func handleUserFlush(ctx *gin.Context) {
 	guid := ctx.GetString(global.CtxGUIDKey)
 	userCmd := &FlushUserCmd{}
 
@@ -662,13 +676,13 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCa
 	}
 }
 
-// flushBruteForceRule handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
+// handleBruteForceRuleFlush handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
 // It logs information about the action, including the GUID, brute force category, and flush operation.
 // If the IP command fails to bind, an error is logged, and a bad request status is returned.
 // If there is an error processing the brute force rules, an error is logged, and an internal server error status is returned.
 // If the rule flush error flag is true, the status message is set to "not flushed".
 // The function then logs the status message and returns a JSON response containing the GUID, brute force category, flush operation, and the result of the command, including the IP address
-func flushBruteForceRule(ctx *gin.Context) {
+func handleBruteForceRuleFlush(ctx *gin.Context) {
 	var (
 		ruleFlushError bool
 		removedKeys    []string
