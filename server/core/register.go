@@ -16,7 +16,6 @@
 package core
 
 import (
-	stderrors "errors"
 	"fmt"
 	"net/http"
 
@@ -34,7 +33,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
-	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -792,11 +790,6 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
 				stats.RedisWriteCounter.Inc()
-
-				if stderrors.Is(err, redis.Nil) {
-
-					continue
-				}
 
 				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 

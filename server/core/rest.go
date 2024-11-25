@@ -467,6 +467,7 @@ func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (re
 // 5. Returns false.
 func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	var (
+		result        int64
 		removeHash    bool
 		accountName   string
 		ipAddresses   []string
@@ -499,28 +500,24 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	// Remove PW_HIST_SET from Redis
 	key := getPWHistIPsRedisKey(accountName)
-	if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
-		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
-		} else {
-			err = nil
-		}
+	if result, err = rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 	} else {
-		removedKeys = append(removedKeys, key)
+		if result > 0 {
+			removedKeys = append(removedKeys, key)
+		}
 	}
 
 	defer stats.RedisWriteCounter.Inc()
 
-	// Remove account from BLOCKED_ACCOUNTS
+	// Remove an account from AFFECTED_ACCOUNTS
 	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
-	if err = rediscli.WriteHandle.SRem(ctx, key, accountName).Err(); err != nil {
-		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
-		} else {
-			err = nil
-		}
+	if result, err = rediscli.WriteHandle.SRem(ctx, key, accountName).Result(); err != nil {
+		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 	} else {
-		removedKeys = append(removedKeys, key)
+		if result > 0 {
+			removedKeys = append(removedKeys, key)
+		}
 	}
 
 	removedKeys = append(removedKeys, removeUserFromCache(ctx, userCmd, userKeys, guid, removeHash)...)
@@ -591,7 +588,10 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 // If any error occurs during the removal process, it logs the error and immediately returns.
 // After successful removal, it logs the keys that have been flushed.
 func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
-	var err error
+	var (
+		result int64
+		err    error
+	)
 
 	removedKeys := make([]string, 0)
 
@@ -612,21 +612,15 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	}
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if err = rediscli.WriteHandle.Del(ctx, userKey).Err(); err != nil {
-			if !stderrors.Is(err, redis.Nil) {
-				stats.RedisWriteCounter.Inc()
+		if result, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
+			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
 
-				level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
-
-				return removedKeys
-			}
+			return removedKeys
 		}
 
 		stats.RedisWriteCounter.Inc()
 
-		if err != nil {
-			level.Warn(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "not found")
-		} else {
+		if result > 0 {
 			removedKeys = append(removedKeys, userKey)
 
 			level.Info(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
