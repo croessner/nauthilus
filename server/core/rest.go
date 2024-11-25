@@ -280,7 +280,7 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedAccounts, error) {
 	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -512,7 +512,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	defer stats.RedisWriteCounter.Inc()
 
 	// Remove account from BLOCKED_ACCOUNTS
-	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
 	if err = rediscli.WriteHandle.SRem(ctx, key, accountName).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
