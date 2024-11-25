@@ -470,8 +470,8 @@ const (
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
 	RedisPWHistIPsKey = "PW_HIST_IPS"
 
-	// RedisBlockedAccountsKey represents the key used to store blocked accounts in Redis.
-	RedisBlockedAccountsKey = "BLOCKED_ACCOUNTS"
+	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
+	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
 )
 
 // ImageCopyright represents the copyright statement for a logo.

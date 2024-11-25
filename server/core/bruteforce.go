@@ -698,15 +698,15 @@ func (a *AuthState) processPWHist() (accountName string) {
 	return
 }
 
-// processBlockedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
+// updateAffectedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
 // It increments Redis read and write counters and logs errors encountered during the operations.
-func (a *AuthState) processBlockedAccount() {
+func (a *AuthState) updateAffectedAccount() {
 	accountName := a.refreshUserAccount()
 	if accountName == "" {
 		return
 	}
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBlockedAccountsKey
+	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -897,7 +897,7 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 
 		a.BruteForceName = rule.Name
 
-		a.processBlockedAccount()
+		a.updateAffectedAccount()
 		a.saveFailedPasswordCounterInRedis()
 		a.getAllPasswordHistories()
 
