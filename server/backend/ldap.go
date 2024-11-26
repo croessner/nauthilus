@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/stats"
@@ -125,7 +125,7 @@ type LDAPRequest struct {
 	Scope config.LDAPScope
 
 	// Command represents the LDAP command to be executed (add, modify, delete, or search).
-	Command global.LDAPCommand
+	Command definitions.LDAPCommand
 
 	// ModifyAttributes contains attributes information used in modify command.
 	ModifyAttributes LDAPModifyAttributes
@@ -195,18 +195,18 @@ type LDAPReply struct {
 // by keeping track of the connection's current state.
 type ldapConnectionState struct {
 	// state indicates the current LDAP connection state.
-	// The value is a constant from the global.LDAPState set.
-	state global.LDAPState
+	// The value is a constant from the definitions.LDAPState set.
+	state definitions.LDAPState
 }
 
 // NewPool creates a new LDAPPool object based on the provided context and poolType.
 // If config.LoadableConfig.LDAP is nil, it returns.
-// The poolType can be global.LDAPPoolLookup, global.LDAPPoolUnknown, or global.LDAPPoolAuth.
+// The poolType can be global.LDAPPoolLookup, global.LDAPPoolUnknown, or definitions.LDAPPoolAuth.
 // It initializes the name and poolSize variables based on the poolType.
 // It creates slices for the "conn" and "conf" variables based on the poolSize.
 // It iterates through the poolSize and initializes each element of conf and conn.
 // Then it assigns values from config.LoadableConfig to each element of conf
-// and sets the state of each element of "conn" to global.LDAPStateClosed.
+// and sets the state of each element of "conn" to definitions.LDAPStateClosed.
 // Finally, it returns an LDAPPool object with the provided context, name, conn, and conf.
 func NewPool(ctx context.Context, poolType int) *LDAPPool {
 	var (
@@ -221,14 +221,14 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 	}
 
 	switch poolType {
-	case global.LDAPPoolLookup, global.LDAPPoolUnknown:
+	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
 		name = "lookup"
 		poolSize = config.LoadableConfig.GetLDAPConfigLookupPoolSize()
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]*LDAPConnection, poolSize)
 
-	case global.LDAPPoolAuth:
+	case definitions.LDAPPoolAuth:
 		name = "auth"
 		poolSize = config.LoadableConfig.GetLDAPConfigAuthPoolSize()
 
@@ -252,7 +252,7 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 		conf[index].TLSClientKey = config.LoadableConfig.GetLDAPConfigTLSClientKey()
 		conf[index].SASLExternal = config.LoadableConfig.GetLDAPConfigSASLExternal()
 
-		conn[index].state = global.LDAPStateClosed
+		conn[index].state = definitions.LDAPStateClosed
 	}
 
 	return &LDAPPool{
@@ -278,17 +278,17 @@ func (l *LDAPPool) Close() {
 			}
 
 			util.DebugModule(
-				global.DbgLDAP,
-				global.LogKeyLDAPPoolName, l.name,
-				global.LogKeyMsg, fmt.Sprintf("Connection #%d closed", index+1),
+				definitions.DbgLDAP,
+				definitions.LogKeyLDAPPoolName, l.name,
+				definitions.LogKeyMsg, fmt.Sprintf("Connection #%d closed", index+1),
 			)
 		}
 	}
 
 	util.DebugModule(
-		global.DbgLDAP,
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyMsg, "Terminated",
+		definitions.DbgLDAP,
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyMsg, "Terminated",
 	)
 }
 
@@ -299,9 +299,9 @@ func (l *LDAPPool) Close() {
 // For any other pool type, it returns 0.
 func (l *LDAPPool) getIdlePoolSize() int {
 	switch l.poolType {
-	case global.LDAPPoolLookup, global.LDAPPoolUnknown:
+	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
 		return config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()
-	case global.LDAPPoolAuth:
+	case definitions.LDAPPoolAuth:
 		return config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()
 	default:
 		return 0
@@ -310,7 +310,7 @@ func (l *LDAPPool) getIdlePoolSize() int {
 
 // logCompletion logs a debug message indicating that the houseKeeper() method of LDAPPool has been terminated.
 func (l *LDAPPool) logCompletion() {
-	util.DebugModule(global.DbgLDAP, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, "houseKeeper() terminated")
+	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, "houseKeeper() terminated")
 }
 
 // updateConnectionsStatus updates the status of all connections in the LDAPPool.
@@ -343,24 +343,24 @@ func (l *LDAPPool) updateSingleConnectionStatus(index int) int {
 
 	defer l.conn[index].Mu.Unlock()
 
-	if l.conn[index].state != global.LDAPStateFree || l.conn[index].Conn == nil || l.conn[index].Conn.IsClosing() {
-		l.conn[index].state = global.LDAPStateClosed
+	if l.conn[index].state != definitions.LDAPStateFree || l.conn[index].Conn == nil || l.conn[index].Conn.IsClosing() {
+		l.conn[index].state = definitions.LDAPStateClosed
 
-		util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is busy or closed", index+1))
+		util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is busy or closed", index+1))
 
 		return 0
 	}
 
 	if _, err := l.conn[index].Conn.Search(ldap.NewSearchRequest("", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 30, false, "(objectClass=*)", []string{"1.1"}, nil)); err != nil {
-		util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d has broken connection", index+1))
+		util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d has broken connection", index+1))
 
 		l.conn[index].Conn = nil
-		l.conn[index].state = global.LDAPStateClosed
+		l.conn[index].state = definitions.LDAPStateClosed
 
 		return 0
 	}
 
-	util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is free", index+1))
+	util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is free", index+1))
 
 	return 1
 }
@@ -383,7 +383,7 @@ func (l *LDAPPool) closeIdleConnections(openConnections, idlePoolSize, poolSize 
 	needClosing := max(openConnections-idlePoolSize, 0)
 
 	stats.LDAPStaleConnections.WithLabelValues(l.name).Set(float64(needClosing))
-	util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
+	util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
 
 	//goland:noinspection GoDfaConstantCondition
 	for index := 0; index < poolSize && needClosing > 0; index++ {
@@ -403,14 +403,14 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 
 	defer l.conn[index].Mu.Unlock()
 
-	if l.conn[index].state != global.LDAPStateFree {
+	if l.conn[index].state != definitions.LDAPStateFree {
 		return false
 	}
 
 	l.conn[index].Conn.Close()
-	l.conn[index].state = global.LDAPStateClosed
+	l.conn[index].state = definitions.LDAPStateClosed
 
-	util.DebugModule(global.DbgLDAPPool, global.LogKeyLDAPPoolName, l.name, global.LogKeyMsg, fmt.Sprintf("Connection #%d closed", index+1))
+	util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("Connection #%d closed", index+1))
 
 	return true
 }
@@ -418,10 +418,10 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 // updateStatsPoolSize updates the LDAP pool size metric based on the pool type. It handles lookup, unknown, and auth pool types.
 func (l *LDAPPool) updateStatsPoolSize() {
 	switch l.poolType {
-	case global.LDAPPoolLookup, global.LDAPPoolUnknown:
+	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
 		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupPoolSize()))
 		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()))
-	case global.LDAPPoolAuth:
+	case definitions.LDAPPoolAuth:
 		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthPoolSize()))
 		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()))
 	}
@@ -470,7 +470,7 @@ func determineIdlePoolSize(l *LDAPPool, poolSize int) (idlePoolSize int, openCon
 	idlePoolSize = l.getIdlePoolSize()
 
 	for index := 0; index < poolSize; index++ {
-		if l.conn[index].state != global.LDAPStateClosed {
+		if l.conn[index].state != definitions.LDAPStateClosed {
 			openConnections++
 		}
 	}
@@ -533,7 +533,7 @@ func (l *LDAPPool) setupConnection(guid *string, bind bool, index int) error {
 
 	defer l.conn[index].Mu.Unlock()
 
-	if l.conn[index].state == global.LDAPStateClosed {
+	if l.conn[index].state == definitions.LDAPStateClosed {
 		err = l.conn[index].connect(guid, l.conf[index])
 		if err != nil {
 			l.logConnectionError(guid, err)
@@ -543,10 +543,10 @@ func (l *LDAPPool) setupConnection(guid *string, bind bool, index int) error {
 				if err != nil {
 					l.logConnectionError(guid, err)
 				} else {
-					l.conn[index].state = global.LDAPStateFree
+					l.conn[index].state = definitions.LDAPStateFree
 				}
 			} else {
-				l.conn[index].state = global.LDAPStateFree
+				l.conn[index].state = definitions.LDAPStateFree
 			}
 		}
 	}
@@ -560,9 +560,9 @@ func (l *LDAPPool) setupConnection(guid *string, bind bool, index int) error {
 // The LDAP connection details include the server address, port number, bind DN, and whether the connection is encrypted or not.
 func (l *LDAPPool) logConnectionInfo(guid *string, index int) {
 	util.DebugModule(
-		global.DbgLDAP,
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyGUID, *guid,
+		definitions.DbgLDAP,
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, *guid,
 		"ldap", l.conf[index].String(),
 	)
 }
@@ -577,9 +577,9 @@ func (l *LDAPPool) logConnectionInfo(guid *string, index int) {
 //	l.logConnectionError(&guid, err)
 func (l *LDAPPool) logConnectionError(guid *string, err error) {
 	level.Error(log.Logger).Log(
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyGUID, *guid,
-		global.LogKeyMsg, err,
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyMsg, err,
 	)
 }
 
@@ -601,30 +601,30 @@ func (l *LDAPPool) setIdleConnections(bind bool) (err error) {
 
 // waitForFreeConnection waits for a free connection in the LDAPPool.
 // It takes a GUID string pointer, the index of the current LDAP connection, and a wait group as parameters.
-// If the ldapConnIndex is equal to global.LDAPPoolExhausted, it means that the LDAPPool is exhausted and no free connections are available.
+// If the ldapConnIndex is equal to definitions.LDAPPoolExhausted, it means that the LDAPPool is exhausted and no free connections are available.
 // In this case, it logs a warning message indicating that the pool is exhausted and waiting for a free connection.
 // It then waits until the wait group counter reaches zero, meaning all connections have been released.
 // Finally, it logs a warning message indicating that the pool has obtained free connections.
 func (l *LDAPPool) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWaitGroup *sync.WaitGroup) {
-	if ldapConnIndex == global.LDAPPoolExhausted {
+	if ldapConnIndex == definitions.LDAPPoolExhausted {
 		level.Warn(log.Logger).Log(
-			global.LogKeyLDAPPoolName, l.name,
-			global.LogKeyGUID, *guid,
-			global.LogKeyMsg, "Pool exhausted. Waiting for a free connection")
+			definitions.LogKeyLDAPPoolName, l.name,
+			definitions.LogKeyGUID, *guid,
+			definitions.LogKeyMsg, "Pool exhausted. Waiting for a free connection")
 
 		// XXX: Very hard decision, but an exhausted pool needs a human interaction!
 		ldapWaitGroup.Wait()
 
 		level.Warn(log.Logger).Log(
-			global.LogKeyLDAPPoolName, l.name,
-			global.LogKeyGUID, *guid,
-			global.LogKeyMsg, "Pool got free connections")
+			definitions.LogKeyLDAPPoolName, l.name,
+			definitions.LogKeyGUID, *guid,
+			definitions.LogKeyMsg, "Pool got free connections")
 	}
 }
 
 // getConnection retrieves a connection from the LDAPPool. It iterates over each connection in the pool using a nested loop.
 // Within the inner loop, it calls `processConnection` to process each connection and assign a connection number.
-// If a connection number other than global.LDAPPoolExhausted is returned, it breaks out of the loop and returns the connection number.
+// If a connection number other than definitions.LDAPPoolExhausted is returned, it breaks out of the loop and returns the connection number.
 // Otherwise, it waits for a free connection by calling `waitForFreeConnection` and continues the loop until a connection is obtained.
 // Finally, it returns the obtained connection number.
 func (l *LDAPPool) getConnection(guid *string, ldapWaitGroup *sync.WaitGroup) (connNumber int) {
@@ -632,7 +632,7 @@ EndlessLoop:
 	for {
 		for index := 0; index < len(l.conn); index++ {
 			connNumber = l.processConnection(index, guid)
-			if connNumber != global.LDAPPoolExhausted {
+			if connNumber != definitions.LDAPPoolExhausted {
 				break EndlessLoop
 			}
 		}
@@ -657,15 +657,15 @@ func (l *LDAPPool) processConnection(index int, guid *string) (connNumber int) {
 	defer l.conn[index].Mu.Unlock()
 
 	// Connection is already in use, skip to next.
-	if l.conn[index].state == global.LDAPStateBusy {
+	if l.conn[index].state == definitions.LDAPStateBusy {
 		l.logConnectionBusy(guid, index)
 
-		return global.LDAPPoolExhausted
+		return definitions.LDAPPoolExhausted
 	}
 
 	// Connection is free, use it and mark it as busy.
-	if l.conn[index].state == global.LDAPStateFree {
-		l.conn[index].state = global.LDAPStateBusy
+	if l.conn[index].state == definitions.LDAPStateFree {
+		l.conn[index].state = definitions.LDAPStateBusy
 
 		l.logConnectionUsage(guid, index)
 
@@ -674,22 +674,22 @@ func (l *LDAPPool) processConnection(index int, guid *string) (connNumber int) {
 
 	// There is no free connection. We need to get a new one. If we succeed, mark the connection as
 	// busy and use it.
-	if l.conn[index].state == global.LDAPStateClosed {
+	if l.conn[index].state == definitions.LDAPStateClosed {
 		err := l.connectAndBindIfNeeded(guid, index)
 		if err != nil {
 			l.logConnectionFailed(guid, err)
 
-			return global.LDAPPoolExhausted
+			return definitions.LDAPPoolExhausted
 		}
 
-		l.conn[index].state = global.LDAPStateBusy
+		l.conn[index].state = definitions.LDAPStateBusy
 
 		l.logConnectionUsage(guid, index)
 
 		return index
 	}
 
-	return global.LDAPPoolExhausted
+	return definitions.LDAPPoolExhausted
 }
 
 // logConnectionBusy logs a debug message indicating that a connection in the LDAPPool is busy.
@@ -699,10 +699,10 @@ func (l *LDAPPool) processConnection(index int, guid *string) (connNumber int) {
 // The log message also informs that the connection is busy and that the next connection will be checked.
 func (l *LDAPPool) logConnectionBusy(guid *string, index int) {
 	util.DebugModule(
-		global.DbgLDAP,
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyGUID, *guid,
-		global.LogKeyMsg, fmt.Sprintf("Connection #%d is busy, checking next", index+1),
+		definitions.DbgLDAP,
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is busy, checking next", index+1),
 	)
 }
 
@@ -714,10 +714,10 @@ func (l *LDAPPool) logConnectionBusy(guid *string, index int) {
 // This function doesn't return any values.
 func (l *LDAPPool) logConnectionUsage(guid *string, index int) {
 	util.DebugModule(
-		global.DbgLDAP,
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyGUID, *guid,
-		global.LogKeyMsg, fmt.Sprintf("Connection #%d is free, using it", index+1),
+		definitions.DbgLDAP,
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is free, using it", index+1),
 	)
 }
 
@@ -732,7 +732,7 @@ func (l *LDAPPool) logConnectionUsage(guid *string, index int) {
 //   - error: returns error if either connection or binding fails, otherwise nil.
 func (l *LDAPPool) connectAndBindIfNeeded(guid *string, index int) error {
 	err := l.conn[index].connect(guid, l.conf[index])
-	if err == nil && (l.poolType == global.LDAPPoolLookup || l.poolType == global.LDAPPoolUnknown) {
+	if err == nil && (l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown) {
 		err = l.conn[index].bind(guid, l.conf[index])
 	}
 
@@ -745,9 +745,9 @@ func (l *LDAPPool) connectAndBindIfNeeded(guid *string, index int) error {
 // It logs the LDAP pool name, GUID, and the error encountered.
 func (l *LDAPPool) logConnectionFailed(guid *string, err error) {
 	level.Error(log.Logger).Log(
-		global.LogKeyLDAPPoolName, l.name,
-		global.LogKeyGUID, *guid,
-		global.LogKeyMsg, err)
+		definitions.LogKeyLDAPPoolName, l.name,
+		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyMsg, err)
 }
 
 // checkConnection checks the state of a connection at the specified index.
@@ -765,12 +765,12 @@ func (l *LDAPPool) checkConnection(guid *string, index int) (err error) {
 
 		defer l.conn[index].Mu.Unlock()
 
-		l.conn[index].state = global.LDAPStateClosed
+		l.conn[index].state = definitions.LDAPStateClosed
 
 		level.Warn(log.Logger).Log(
-			global.LogKeyLDAPPoolName, l.name,
-			global.LogKeyGUID, *guid,
-			global.LogKeyMsg, fmt.Sprintf("Connection #%d is closed", index+1),
+			definitions.LogKeyLDAPPoolName, l.name,
+			definitions.LogKeyGUID, *guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is closed", index+1),
 		)
 
 		if l.conn[index].Conn != nil {
@@ -781,7 +781,7 @@ func (l *LDAPPool) checkConnection(guid *string, index int) (err error) {
 			return
 		}
 
-		if l.poolType == global.LDAPPoolLookup || l.poolType == global.LDAPPoolUnknown {
+		if l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown {
 			if err = l.conn[index].bind(guid, l.conf[index]); err != nil {
 				l.conn[index].Conn.Close()
 
@@ -789,7 +789,7 @@ func (l *LDAPPool) checkConnection(guid *string, index int) (err error) {
 			}
 		}
 
-		l.conn[index].state = global.LDAPStateBusy
+		l.conn[index].state = definitions.LDAPStateBusy
 	}
 
 	return
@@ -846,7 +846,7 @@ func (l *LDAPConnection) dialAndStartTLS(guid *string, ldapConf *config.LDAPConf
 			return err
 		}
 
-		util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, global.LogKeyMsg, "STARTTLS")
+		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "STARTTLS")
 	}
 
 	return nil
@@ -855,11 +855,11 @@ func (l *LDAPConnection) dialAndStartTLS(guid *string, ldapConf *config.LDAPConf
 // logURIInfo logs the URI information and connection attempt details for debugging purposes.
 func (l *LDAPConnection) logURIInfo(guid *string, ldapConf *config.LDAPConf, ldapCounter int, retryLimit int) {
 	util.DebugModule(
-		global.DbgLDAP,
-		global.LogKeyGUID, guid,
+		definitions.DbgLDAP,
+		definitions.LogKeyGUID, guid,
 		"ldap_uri", ldapConf.ServerURIs[ldapCounter],
 		"current_attempt", retryLimit+1,
-		"max_attempt", global.LDAPMaxRetries+1,
+		"max_attempt", definitions.LDAPMaxRetries+1,
 	)
 }
 
@@ -868,7 +868,7 @@ func (l *LDAPConnection) logURIInfo(guid *string, ldapConf *config.LDAPConf, lda
 // This function is typically used as a goroutine to handle the LDAP connection timeout in the connect method of the LDAPConnection struct.
 //
 // Example usage:
-// connectTicker := time.NewTicker(global.LDAPConnectTimeout * time.Second)
+// connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
 // ldapConnectTimeout := make(chan Done)
 // tickerEndChan := make(chan Done)
 //
@@ -918,7 +918,7 @@ func (l *LDAPConnection) connect(guid *string, ldapConf *config.LDAPConf) error 
 		tlsConfig    *tls.Config
 	)
 
-	connectTicker := time.NewTicker(global.LDAPConnectTimeout * time.Second)
+	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
 
 	ldapConnectTimeout := make(chan Done)
 	tickerEndChan := make(chan Done)
@@ -932,7 +932,7 @@ EndlessLoop:
 			timeout = true
 
 		default:
-			if retryLimit > global.LDAPMaxRetries {
+			if retryLimit > definitions.LDAPMaxRetries {
 				return errors.ErrLDAPConnect.WithDetail(
 					fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
 			}
@@ -964,7 +964,7 @@ EndlessLoop:
 		}
 
 		if connected {
-			util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, global.LogKeyMsg, "Connection established")
+			util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
 
 			break EndlessLoop
 		}
@@ -989,14 +989,14 @@ EndlessLoop:
 // If the verbosity level is set to LogLevelDebug, it calls the displayWhoAmI() method to display information about the bound user.
 // This method does not take any arguments.
 func (l *LDAPConnection) externalBind(guid *string) error {
-	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, global.LogKeyMsg, "SASL/EXTERNAL")
+	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "SASL/EXTERNAL")
 
 	err := l.Conn.ExternalBind()
 	if err != nil {
 		return err
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 
@@ -1010,11 +1010,11 @@ func (l *LDAPConnection) externalBind(guid *string) error {
 // If the verbosity level is set to LogLevelDebug or higher, it displays the WhoAmI information after successful authentication.
 // It returns nil if the bind operation is successful.
 func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) error {
-	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, global.LogKeyMsg, "simple bind")
-	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
+	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
+	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
 	if config.EnvConfig.DevMode {
-		util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
+		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
 	}
 
 	_, err := l.Conn.SimpleBind(&ldap.SimpleBindRequest{
@@ -1026,7 +1026,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 		return err
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 
@@ -1042,7 +1042,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 func (l *LDAPConnection) displayWhoAmI(guid *string) {
 	res, err := l.Conn.WhoAmI(nil) //nolint:govet // Ignore
 	if err == nil {
-		util.DebugModule(global.DbgLDAP, global.LogKeyGUID, guid, "whoami", fmt.Sprintf("%+v", res))
+		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "whoami", fmt.Sprintf("%+v", res))
 	}
 }
 
@@ -1101,7 +1101,7 @@ func (l *LDAPConnection) search(ldapRequest *LDAPRequest) (result DatabaseResult
 
 	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
 
-	util.DebugModule(global.DbgLDAP, global.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
+	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
 
 	searchRequest := ldap.NewSearchRequest(
 		ldapRequest.BaseDN,
@@ -1144,10 +1144,10 @@ func (l *LDAPConnection) search(ldapRequest *LDAPRequest) (result DatabaseResult
 			}
 		}
 
-		if _, assertOk := result[global.DistinguishedName]; assertOk {
-			result[global.DistinguishedName] = append(result[global.DistinguishedName], searchResult.Entries[entryIndex].DN)
+		if _, assertOk := result[definitions.DistinguishedName]; assertOk {
+			result[definitions.DistinguishedName] = append(result[definitions.DistinguishedName], searchResult.Entries[entryIndex].DN)
 		} else {
-			result[global.DistinguishedName] = []any{searchResult.Entries[entryIndex].DN}
+			result[definitions.DistinguishedName] = []any{searchResult.Entries[entryIndex].DN}
 		}
 	}
 
@@ -1184,7 +1184,7 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 		return
 	}
 
-	if distinguishedNames, assertOk = result[global.DistinguishedName]; !assertOk {
+	if distinguishedNames, assertOk = result[definitions.DistinguishedName]; !assertOk {
 		err = errors.ErrNoLDAPSearchResult.WithDetail(
 			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
 
@@ -1198,7 +1198,7 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 		return
 	}
 
-	dn := distinguishedNames.([]any)[global.LDAPSingleValue].(string)
+	dn := distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
 
 	modifyRequest := ldap.NewModifyRequest(dn, nil)
 
@@ -1216,14 +1216,14 @@ func (l *LDAPConnection) modifyAdd(ldapRequest *LDAPRequest) (err error) {
 // sendLDAPReplyAndUnlockState sends the provided ldapReply to the request's GetLDAPReplyChan channel and unlocks the state of the connection at index in the ldapPool object.
 // It uses the provided request's GetLDAPReplyChan() method to send the ldapReply.
 // It first locks the state of the connection using the ldapPool.conn[index].mu.Lock() method.
-// Then it sets the state of the connection to global.LDAPStateFree.
+// Then it sets the state of the connection to definitions.LDAPStateFree.
 // Finally, it unlocks the state of the connection using the ldapPool.conn[index].mu.Unlock() method.
 func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *LDAPPool, index int, request T, ldapReply *LDAPReply) {
 	request.GetLDAPReplyChan() <- ldapReply
 
 	ldapPool.conn[index].Mu.Lock()
 
-	ldapPool.conn[index].state = global.LDAPStateFree
+	ldapPool.conn[index].state = definitions.LDAPStateFree
 
 	ldapPool.conn[index].Mu.Unlock()
 }
@@ -1260,9 +1260,9 @@ func (l *LDAPPool) processLookupSearchRequest(index int, ldapRequest *LDAPReques
 
 		if doLog {
 			level.Error(log.Logger).Log(
-				global.LogKeyLDAPPoolName, l.name,
-				global.LogKeyGUID, *ldapRequest.GUID,
-				global.LogKeyMsg, ldapError.Error(),
+				definitions.LogKeyLDAPPoolName, l.name,
+				definitions.LogKeyGUID, *ldapRequest.GUID,
+				definitions.LogKeyMsg, ldapError.Error(),
 			)
 		}
 	}
@@ -1300,14 +1300,14 @@ func (l *LDAPPool) processLookupModifyAddRequest(index int, ldapRequest *LDAPReq
 // It creates a new LDAPReply struct to hold the result of the lookup request.
 // If there is an error in the LDAP connection for this request, it sets the error in the LDAPReply and sends it to the reply channel.
 // It checks the command of the request and performs the appropriate action:
-// - If the command is global.LDAPSearch, it calls the processLookupSearchRequest method to perform a search operation.
-// - If the command is global.LDAPModifyAdd, it calls the processLookupModifyAddRequest method to perform an add modification operation.
+// - If the command is definitions.LDAPSearch, it calls the processLookupSearchRequest method to perform a search operation.
+// - If the command is definitions.LDAPModifyAdd, it calls the processLookupModifyAddRequest method to perform an add modification operation.
 // It sends the LDAPReply to the reply channel.
 // It locks the connection to update its state.
-// It sets the connection state to global.LDAPStateFree.
+// It sets the connection state to definitions.LDAPStateFree.
 // It unlocks the connection.
 func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
-	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_lookup_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
 		if stopTimer != nil {
@@ -1327,9 +1327,9 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 	}
 
 	switch ldapRequest.Command {
-	case global.LDAPSearch:
+	case definitions.LDAPSearch:
 		l.processLookupSearchRequest(index, ldapRequest, ldapReply)
-	case global.LDAPModifyAdd:
+	case definitions.LDAPModifyAdd:
 		l.processLookupModifyAddRequest(index, ldapRequest, ldapReply)
 	}
 
@@ -1350,7 +1350,7 @@ func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *
 // LDAPMainWorker is a function that handles LDAP requests in a worker thread.
 // It takes a context.Context as a parameter.
 // It creates a sync.WaitGroup to wait for all started goroutines to complete.
-// It creates an LDAPPool by calling the NewPool function with the context and global.LDAPPoolLookup.
+// It creates an LDAPPool by calling the NewPool function with the context and definitions.LDAPPoolLookup.
 // If the LDAPPool is a nil, it returns.
 // It starts the houseKeeper goroutine by calling ldapPool.houseKeeper() in a separate goroutine.
 // It starts an infinite loop with a select statement.
@@ -1362,7 +1362,7 @@ func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *
 func LDAPMainWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := NewPool(ctx, global.LDAPPoolLookup)
+	ldapPool := NewPool(ctx, definitions.LDAPPoolLookup)
 	if ldapPool == nil {
 		return
 	}
@@ -1423,7 +1423,7 @@ func (l *LDAPPool) processAuthBindRequest(index int, ldapAuthRequest *LDAPAuthRe
 // The function sends the LDAPReply object (which may contain the result, the raw result, or an error) to the LDAPAuthRequest channel.
 // It locks the connection's mutex, sets the connection state to LDAPStateFree, and unlocks the mutex.
 func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
-	stopTimer := stats.PrometheusTimer(global.PromBackend, "ldap_backend_auth_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
 		if stopTimer != nil {
@@ -1472,7 +1472,7 @@ func (l *LDAPPool) handleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitG
 func LDAPAuthWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := NewPool(ctx, global.LDAPPoolAuth)
+	ldapPool := NewPool(ctx, definitions.LDAPPoolAuth)
 	if ldapPool == nil {
 		return
 	}
@@ -1556,11 +1556,11 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 // if all fields are valid. Otherwise, it returns nil.
 func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
-		"session":    global.LuaLiteralString,
-		"basedn":     global.LuaLiteralString,
-		"filter":     global.LuaLiteralString,
-		"scope":      global.LuaLiteralString,
-		"attributes": global.LuaLiteralTable,
+		"session":    definitions.LuaLiteralString,
+		"basedn":     definitions.LuaLiteralString,
+		"filter":     definitions.LuaLiteralString,
+		"scope":      definitions.LuaLiteralString,
+		"attributes": definitions.LuaLiteralTable,
 	}
 
 	fieldValues := make(map[string]lua.LValue)
@@ -1587,11 +1587,11 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 	}
 
 	switch fieldType {
-	case global.LuaLiteralString:
+	case definitions.LuaLiteralString:
 		if _, ok := lv.(lua.LString); !ok {
 			L.RaiseError("%s should be a string", fieldName)
 		}
-	case global.LuaLiteralTable:
+	case definitions.LuaLiteralTable:
 		if _, ok := lv.(*lua.LTable); !ok {
 			L.RaiseError("%s should be a table", fieldName)
 		}
@@ -1627,7 +1627,7 @@ func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScop
 		BaseDN:            basedn,
 		SearchAttributes:  attributes,
 		Scope:             *scope,
-		Command:           global.LDAPSearch,
+		Command:           definitions.LDAPSearch,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctx,
 	}

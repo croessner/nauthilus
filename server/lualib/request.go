@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -166,9 +166,9 @@ type CommonRequest struct {
 func LoaderModHTTPRequest(httpRequest *http.Request) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeaders(httpRequest),
-			global.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeader(httpRequest),
-			global.LuaFnGetHTTPRequestBody:       GetHTTPRequestBody(httpRequest),
+			definitions.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeaders(httpRequest),
+			definitions.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeader(httpRequest),
+			definitions.LuaFnGetHTTPRequestBody:       GetHTTPRequestBody(httpRequest),
 		})
 
 		L.Push(mod)
@@ -179,60 +179,60 @@ func LoaderModHTTPRequest(httpRequest *http.Request) lua.LGFunction {
 
 // SetupRequest sets up the request object with the common request properties
 func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
-	logFormat := global.LogFormatDefault
+	logFormat := definitions.LogFormatDefault
 	logLevel := config.LoadableConfig.Server.Log.Level.Get()
 
 	if config.LoadableConfig.Server.Log.JSON {
-		logFormat = global.LogFormatJSON
+		logFormat = definitions.LogFormatJSON
 	}
 
-	request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(c.Debug))
-	request.RawSet(lua.LString(global.LuaRequestRepeating), lua.LBool(c.Repeating))
-	request.RawSet(lua.LString(global.LuaRequestUserFound), lua.LBool(c.UserFound))
-	request.RawSet(lua.LString(global.LuaRequestAuthenticated), lua.LBool(c.Authenticated))
-	request.RawSet(lua.LString(global.LuaRequestNoAuth), lua.LBool(c.NoAuth))
+	request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(c.Debug))
+	request.RawSet(lua.LString(definitions.LuaRequestRepeating), lua.LBool(c.Repeating))
+	request.RawSet(lua.LString(definitions.LuaRequestUserFound), lua.LBool(c.UserFound))
+	request.RawSet(lua.LString(definitions.LuaRequestAuthenticated), lua.LBool(c.Authenticated))
+	request.RawSet(lua.LString(definitions.LuaRequestNoAuth), lua.LBool(c.NoAuth))
 
-	request.RawSet(lua.LString(global.LuaRequestBruteForceCounter), lua.LNumber(c.BruteForceCounter))
+	request.RawSet(lua.LString(definitions.LuaRequestBruteForceCounter), lua.LNumber(c.BruteForceCounter))
 
-	request.RawSetString(global.LuaRequestService, lua.LString(c.Service))
-	request.RawSetString(global.LuaRequestSession, lua.LString(c.Session))
-	request.RawSetString(global.LuaRequestClientIP, lua.LString(c.ClientIP))
-	request.RawSetString(global.LuaRequestClientPort, lua.LString(c.ClientPort))
-	request.RawSetString(global.LuaRequestClientNet, lua.LString(c.ClientNet))
-	request.RawSetString(global.LuaRequestClientHost, lua.LString(c.ClientHost))
-	request.RawSetString(global.LuaRequestClientID, lua.LString(c.ClientID))
-	request.RawSetString(global.LuaRequestUserAgent, lua.LString(c.UserAgent))
-	request.RawSetString(global.LuaRequestLocalIP, lua.LString(c.LocalIP))
-	request.RawSetString(global.LuaRequestLocalPort, lua.LString(c.LocalPort))
-	request.RawSetString(global.LuaRequestUsername, lua.LString(c.Username))
-	request.RawSetString(global.LuaRequestAccount, lua.LString(c.Account))
-	request.RawSetString(global.LuaRequestAccountField, lua.LString(c.AccountField))
-	request.RawSetString(global.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
-	request.RawSetString(global.LuaRequestDisplayName, lua.LString(c.DisplayName))
-	request.RawSetString(global.LuaRequestPassword, lua.LString(c.Password))
-	request.RawSetString(global.LuaRequestProtocol, lua.LString(c.Protocol))
-	request.RawSetString(global.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
-	request.RawSetString(global.LuaRequestFeature, lua.LString(c.FeatureName))
-	request.RawSetString(global.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
-	request.RawSetString(global.LuaRequestXSSL, lua.LString(c.XSSL))
-	request.RawSetString(global.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
-	request.RawSetString(global.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))
-	request.RawSetString(global.LuaRequestXSSLClientDN, lua.LString(c.XSSLClientDN))
-	request.RawSetString(global.LuaRequestXSSLClientCN, lua.LString(c.XSSLClientCN))
-	request.RawSetString(global.LuaRequestXSSLIssuer, lua.LString(c.XSSLIssuer))
-	request.RawSetString(global.LuaRequestXSSLClientNotBefore, lua.LString(c.XSSLClientNotBefore))
-	request.RawSetString(global.LuaRequestXSSLClientNotAfter, lua.LString(c.XSSLClientNotAfter))
-	request.RawSetString(global.LuaRequestXSSLSubjectDN, lua.LString(c.XSSLSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLIssuerDN, lua.LString(c.XSSLIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLClientSubjectDN, lua.LString(c.XSSLClientSubjectDN))
-	request.RawSetString(global.LuaRequestXSSLClientIssuerDN, lua.LString(c.XSSLClientIssuerDN))
-	request.RawSetString(global.LuaRequestXSSLProtocol, lua.LString(c.XSSLProtocol))
-	request.RawSetString(global.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
-	request.RawSetString(global.LuaRequestSSLSerial, lua.LString(c.SSLSerial))
-	request.RawSetString(global.LuaRequestSSLFingerprint, lua.LString(c.SSLFingerprint))
+	request.RawSetString(definitions.LuaRequestService, lua.LString(c.Service))
+	request.RawSetString(definitions.LuaRequestSession, lua.LString(c.Session))
+	request.RawSetString(definitions.LuaRequestClientIP, lua.LString(c.ClientIP))
+	request.RawSetString(definitions.LuaRequestClientPort, lua.LString(c.ClientPort))
+	request.RawSetString(definitions.LuaRequestClientNet, lua.LString(c.ClientNet))
+	request.RawSetString(definitions.LuaRequestClientHost, lua.LString(c.ClientHost))
+	request.RawSetString(definitions.LuaRequestClientID, lua.LString(c.ClientID))
+	request.RawSetString(definitions.LuaRequestUserAgent, lua.LString(c.UserAgent))
+	request.RawSetString(definitions.LuaRequestLocalIP, lua.LString(c.LocalIP))
+	request.RawSetString(definitions.LuaRequestLocalPort, lua.LString(c.LocalPort))
+	request.RawSetString(definitions.LuaRequestUsername, lua.LString(c.Username))
+	request.RawSetString(definitions.LuaRequestAccount, lua.LString(c.Account))
+	request.RawSetString(definitions.LuaRequestAccountField, lua.LString(c.AccountField))
+	request.RawSetString(definitions.LuaRequestUniqueUserID, lua.LString(c.UniqueUserID))
+	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
+	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
+	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))
+	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
+	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
+	request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
+	request.RawSetString(definitions.LuaRequestXSSL, lua.LString(c.XSSL))
+	request.RawSetString(definitions.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
+	request.RawSetString(definitions.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))
+	request.RawSetString(definitions.LuaRequestXSSLClientDN, lua.LString(c.XSSLClientDN))
+	request.RawSetString(definitions.LuaRequestXSSLClientCN, lua.LString(c.XSSLClientCN))
+	request.RawSetString(definitions.LuaRequestXSSLIssuer, lua.LString(c.XSSLIssuer))
+	request.RawSetString(definitions.LuaRequestXSSLClientNotBefore, lua.LString(c.XSSLClientNotBefore))
+	request.RawSetString(definitions.LuaRequestXSSLClientNotAfter, lua.LString(c.XSSLClientNotAfter))
+	request.RawSetString(definitions.LuaRequestXSSLSubjectDN, lua.LString(c.XSSLSubjectDN))
+	request.RawSetString(definitions.LuaRequestXSSLIssuerDN, lua.LString(c.XSSLIssuerDN))
+	request.RawSetString(definitions.LuaRequestXSSLClientSubjectDN, lua.LString(c.XSSLClientSubjectDN))
+	request.RawSetString(definitions.LuaRequestXSSLClientIssuerDN, lua.LString(c.XSSLClientIssuerDN))
+	request.RawSetString(definitions.LuaRequestXSSLProtocol, lua.LString(c.XSSLProtocol))
+	request.RawSetString(definitions.LuaRequestXSSLCipher, lua.LString(c.XSSLCipher))
+	request.RawSetString(definitions.LuaRequestSSLSerial, lua.LString(c.SSLSerial))
+	request.RawSetString(definitions.LuaRequestSSLFingerprint, lua.LString(c.SSLFingerprint))
 
-	request.RawSetString(global.LuaRequestLogFormat, lua.LString(logFormat))
-	request.RawSetString(global.LuaRequestLogLevel, lua.LString(logLevel))
+	request.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
+	request.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
 
 	return request
 }

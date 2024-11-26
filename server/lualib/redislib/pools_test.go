@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -14,7 +14,7 @@ func TestRegisterRedisConnection(t *testing.T) {
 
 	defer L.Close()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	tests := []struct {
 		name    string

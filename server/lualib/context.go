@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -27,9 +27,9 @@ import (
 func LoaderModContext(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnCtxSet:    ContextSet(ctx),
-			global.LuaFnCtxGet:    ContextGet(ctx),
-			global.LuaFnCtxDelete: ContextDelete(ctx),
+			definitions.LuaFnCtxSet:    ContextSet(ctx),
+			definitions.LuaFnCtxGet:    ContextGet(ctx),
+			definitions.LuaFnCtxDelete: ContextDelete(ctx),
 		})
 
 		L.Push(mod)

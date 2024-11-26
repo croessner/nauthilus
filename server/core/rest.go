@@ -18,13 +18,14 @@ package core
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"sort"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -115,7 +116,7 @@ type FilterCmd struct {
 func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 	var mode string
 
-	if a.Service == global.ServBasic {
+	if a.Service == definitions.ServBasic {
 		var httpBasicAuthOk bool
 
 		// Decode HTTP basic Auth
@@ -149,48 +150,48 @@ func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
 		}
 
-		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMode, mode)
+		level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMode, mode)
 	} else {
-		if !(a.NoAuth || ctx.GetBool(global.CtxLocalCacheAuthKey)) {
+		if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
 			//nolint:exhaustive // Ignore some results
 			switch a.handleFeatures(ctx) {
-			case global.AuthResultFeatureTLS:
+			case definitions.AuthResultFeatureTLS:
 				a.postLuaAction(&PassDBResult{})
-				a.authTempFail(ctx, global.TempFailNoTLS)
+				a.authTempFail(ctx, definitions.TempFailNoTLS)
 
 				return
-			case global.AuthResultFeatureRelayDomain, global.AuthResultFeatureRBL, global.AuthResultFeatureLua:
+			case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
 				a.postLuaAction(&PassDBResult{})
 				a.authFail(ctx)
 
 				return
-			case global.AuthResultUnset:
-			case global.AuthResultOK:
-			case global.AuthResultFail:
-			case global.AuthResultTempFail:
-				a.authTempFail(ctx, global.TempFailDefault)
-			case global.AuthResultEmptyUsername:
-			case global.AuthResultEmptyPassword:
+			case definitions.AuthResultUnset:
+			case definitions.AuthResultOK:
+			case definitions.AuthResultFail:
+			case definitions.AuthResultTempFail:
+				a.authTempFail(ctx, definitions.TempFailDefault)
+			case definitions.AuthResultEmptyUsername:
+			case definitions.AuthResultEmptyPassword:
 			}
 		}
 
 		//nolint:exhaustive // Ignore some results
 		switch a.handlePassword(ctx) {
-		case global.AuthResultOK:
+		case definitions.AuthResultOK:
 			a.authOK(ctx)
-		case global.AuthResultFail:
+		case definitions.AuthResultFail:
 			a.authFail(ctx)
-		case global.AuthResultTempFail:
-			a.authTempFail(ctx, global.TempFailDefault)
-		case global.AuthResultEmptyUsername:
-			a.authTempFail(ctx, global.TempFailEmptyUser)
-		case global.AuthResultEmptyPassword:
+		case definitions.AuthResultTempFail:
+			a.authTempFail(ctx, definitions.TempFailDefault)
+		case definitions.AuthResultEmptyUsername:
+			a.authTempFail(ctx, definitions.TempFailEmptyUser)
+		case definitions.AuthResultEmptyPassword:
 			a.authFail(ctx)
-		case global.AuthResultUnset:
-		case global.AuthResultFeatureRBL:
-		case global.AuthResultFeatureTLS:
-		case global.AuthResultFeatureRelayDomain:
-		case global.AuthResultFeatureLua:
+		case definitions.AuthResultUnset:
+		case definitions.AuthResultFeatureRBL:
+		case definitions.AuthResultFeatureTLS:
+		case definitions.AuthResultFeatureRelayDomain:
+		case definitions.AuthResultFeatureLua:
 		}
 	}
 }
@@ -198,21 +199,21 @@ func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 // handleSASLAuthdAuthentication handles the authentication logic for the handleSASLAuthdAuthentication service.
 func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
 	switch a.handlePassword(ctx) {
-	case global.AuthResultOK:
+	case definitions.AuthResultOK:
 		a.authOK(ctx)
-	case global.AuthResultFail:
+	case definitions.AuthResultFail:
 		a.authFail(ctx)
-	case global.AuthResultTempFail:
-		a.authTempFail(ctx, global.TempFailDefault)
-	case global.AuthResultEmptyUsername:
-		a.authTempFail(ctx, global.TempFailEmptyUser)
-	case global.AuthResultEmptyPassword:
+	case definitions.AuthResultTempFail:
+		a.authTempFail(ctx, definitions.TempFailDefault)
+	case definitions.AuthResultEmptyUsername:
+		a.authTempFail(ctx, definitions.TempFailEmptyUser)
+	case definitions.AuthResultEmptyPassword:
 		a.authFail(ctx)
-	case global.AuthResultUnset:
-	case global.AuthResultFeatureRBL:
-	case global.AuthResultFeatureTLS:
-	case global.AuthResultFeatureRelayDomain:
-	case global.AuthResultFeatureLua:
+	case definitions.AuthResultUnset:
+	case definitions.AuthResultFeatureRBL:
+	case definitions.AuthResultFeatureTLS:
+	case definitions.AuthResultFeatureRelayDomain:
+	case definitions.AuthResultFeatureLua:
 	}
 }
 
@@ -225,7 +226,7 @@ func (a *AuthState) handleCallback(ctx *gin.Context) {
 
 // healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
 func healthCheck(ctx *gin.Context) {
-	level.Info(log.Logger).Log(global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey), global.LogKeyMsg, "Health check")
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
 }
@@ -234,14 +235,14 @@ func healthCheck(ctx *gin.Context) {
 func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedIPAddresses, error) {
 	blockedIPAddresses := &BlockedIPAddresses{}
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisBruteForceHashKey
 
 	defer stats.RedisReadCounter.Inc()
 
 	ipAddresses, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 			errMsg := err.Error()
 			blockedIPAddresses.Error = &errMsg
@@ -280,14 +281,14 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedAccounts, error) {
 	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisAffectedAccountsKey
 
 	defer stats.RedisReadCounter.Inc()
 
 	accounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 			errMsg := err.Error()
 			blockedAccounts.Error = &errMsg
@@ -323,12 +324,12 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 		for _, account := range accounts {
 			var accountIPs []string
 
-			key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + account
+			key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPWHistIPsKey + ":" + account
 			if accountIPs, err = rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
 				stats.RedisReadCounter.Inc()
 
 				if !stderrors.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+					level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 					errMsg := err.Error()
 					blockedAccounts.Error = &errMsg
@@ -355,7 +356,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 func hanldeBruteForceList(ctx *gin.Context) {
 	var filterCmd *FilterCmd
 
-	guid := ctx.GetString(global.CtxGUIDKey)
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 
 	if ctx.Request.Method == http.MethodPost {
@@ -378,12 +379,12 @@ func hanldeBruteForceList(ctx *gin.Context) {
 		httpStatusCode = http.StatusInternalServerError
 	}
 
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, global.ServList)
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, definitions.ServList)
 
 	ctx.JSON(httpStatusCode, &RESTResult{
 		GUID:      guid,
-		Object:    global.CatBruteForce,
-		Operation: global.ServList,
+		Object:    definitions.CatBruteForce,
+		Operation: definitions.ServList,
 		Result:    []any{blockedIPAddresses, blockedAccounts},
 	})
 }
@@ -416,10 +417,10 @@ func hanldeBruteForceList(ctx *gin.Context) {
 //  6. Based on the useCache flag and the outcome of the cache flush operation, the function
 //     updates the statusMsg and sends the cache status to the client.
 func handleUserFlush(ctx *gin.Context) {
-	guid := ctx.GetString(global.CtxGUIDKey)
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &FlushUserCmd{}
 
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatCache, global.ServFlush)
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatCache, definitions.ServFlush)
 
 	if err := ctx.ShouldBindJSON(userCmd); err != nil {
 		handleJSONError(ctx, err)
@@ -429,8 +430,9 @@ func handleUserFlush(ctx *gin.Context) {
 
 	removedKeys, noUserAccoundFound, useCache := processFlushCache(ctx, userCmd, guid)
 
-	statusMsg := "flushed"
-	if noUserAccoundFound {
+	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
+
+	if noUserAccoundFound || len(removedKeys) == 0 {
 		statusMsg = "not flushed"
 	}
 
@@ -444,7 +446,7 @@ func handleUserFlush(ctx *gin.Context) {
 // It returns cacheFlushError and useCache flags.
 func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool, useCache bool) {
 	for _, backendType := range config.LoadableConfig.Server.Backends {
-		if backendType.Get() != global.BackendCache {
+		if backendType.Get() != definitions.BackendCache {
 			continue
 		}
 
@@ -490,7 +492,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		}, guid)
 
 		if err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 		}
 	}
 
@@ -501,7 +503,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	// Remove PW_HIST_SET from Redis
 	key := getPWHistIPsRedisKey(accountName)
 	if result, err = rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if result > 0 {
 			removedKeys = append(removedKeys, key)
@@ -511,9 +513,9 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	defer stats.RedisWriteCounter.Inc()
 
 	// Remove an account from AFFECTED_ACCOUNTS
-	key = config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
+	key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisAffectedAccountsKey
 	if result, err = rediscli.WriteHandle.SRem(ctx, key, accountName).Result(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if result > 0 {
 			removedKeys = append(removedKeys, key)
@@ -550,31 +552,31 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 // the RedisPwHashKey constant from the global package, ":", the User field from the userCmd parameter, and ":*".
 // Next, it iterates over the protocols obtained from the LoadableConfig.GetAllProtocols function from the config package.
 // For each protocol, it retrieves the cache names using the backend.GetCacheNames function from the backend package,
-// passing the protocol and the global.CacheAll constant. For each cache name, it sets a key in the string set
+// passing the protocol and the definitions.CacheAll constant. For each cache name, it sets a key in the string set
 // by concatenating the RedisPrefix constant, "ucp:", the cache name, ":", and the accountName parameter.
 // Finally, the function returns the populated string set.
 func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
 	ips, err := getIPsFromPWHistSet(ctx, accountName)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	}
 
 	userKeys := config.NewStringSet()
 
-	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:__default__:" + accountName)
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
 
 	if ips != nil {
 		for _, ip := range ips {
-			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + accountName + ":" + ip)
-			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + ip)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPwHashKey + ":" + ip)
 		}
 	}
 
 	protocols := config.LoadableConfig.GetAllProtocols()
 	for index := range protocols {
-		cacheNames := backend.GetCacheNames(protocols[index], global.CacheAll)
+		cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 		}
 	}
 
@@ -595,7 +597,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 
 	removedKeys := make([]string, 0)
 
-	redisKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
+	redisKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserHashKey
 
 	defer stats.RedisWriteCounter.Inc()
 
@@ -606,14 +608,14 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	}
 
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 		return removedKeys
 	}
 
 	for _, userKey := range userKeys.GetStringSlice() {
 		if result, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 			return removedKeys
 		}
@@ -623,7 +625,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 		if result > 0 {
 			removedKeys = append(removedKeys, userKey)
 
-			level.Info(log.Logger).Log(global.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+			level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 		}
 	}
 
@@ -642,14 +644,14 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 // - statusMsg: The status message to be included in the response.
 func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string, removedKeys []string) {
 	if useCache {
-		level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
+		level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, statusMsg)
 
 		sort.Strings(removedKeys)
 
 		ctx.JSON(http.StatusOK, &RESTResult{
 			GUID:      guid,
-			Object:    global.CatCache,
-			Operation: global.ServFlush,
+			Object:    definitions.CatCache,
+			Operation: definitions.ServFlush,
 			Result: &FlushUserCmdStatus{
 				User:        userCmd.User,
 				RemovedKeys: removedKeys,
@@ -659,12 +661,12 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCa
 	} else {
 		msg := "Cache backend not enabled"
 
-		level.Warn(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, msg)
+		level.Warn(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, msg)
 
 		ctx.JSON(http.StatusInternalServerError, &RESTResult{
 			GUID:      guid,
-			Object:    global.CatCache,
-			Operation: global.ServFlush,
+			Object:    definitions.CatCache,
+			Operation: definitions.ServFlush,
 			Result:    msg,
 		})
 	}
@@ -683,10 +685,9 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 		err            error
 	)
 
-	guid := ctx.GetString(global.CtxGUIDKey)
-	statusMsg := "flushed"
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.CatBruteForce, global.ServFlush)
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatBruteForce, definitions.ServFlush)
 
 	ipCmd := &FlushRuleCmd{}
 
@@ -696,28 +697,30 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 		return
 	}
 
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
 
 	ruleFlushError, removedKeys, err = processBruteForceRules(ctx, ipCmd, guid)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return
 	}
 
-	if ruleFlushError {
+	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
+
+	if ruleFlushError || len(removedKeys) == 0 {
 		statusMsg = "not flushed"
 	}
 
-	level.Info(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, statusMsg)
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, statusMsg)
 
 	sort.Strings(removedKeys)
 
 	ctx.JSON(http.StatusOK, &RESTResult{
 		GUID:      guid,
-		Object:    global.CatBruteForce,
-		Operation: global.ServFlush,
+		Object:    definitions.CatBruteForce,
+		Operation: definitions.ServFlush,
 		Result: &FlushRuleCmdStatus{
 			IPAddress:   ipCmd.IPAddress,
 			RuleName:    ipCmd.RuleName,
@@ -741,10 +744,7 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 // Finally, it returns the ruleFlushError flag indicating if there was any error during rule flushing,
 // and a nil error value if no error occurred.
 func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) (bool, []string, error) {
-	var (
-		removedKeys []string
-		err         error
-	)
+	var removedKeys []string
 
 	ruleFlushError := false
 
@@ -766,19 +766,19 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 			}
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
+				if result, err := rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
 					stats.RedisWriteCounter.Inc()
 
 					ruleFlushError = true
 
 					return ruleFlushError, removedKeys, err
+				} else if result > 0 {
+					removedKeys = append(removedKeys, key)
+
+					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
 				}
 
-				removedKeys = append(removedKeys, key)
-
 				stats.RedisWriteCounter.Inc()
-
-				level.Info(log.Logger).Log(global.LogKeyGUID, guid, "key", key, "status", "flushed")
 			}
 		}
 	}

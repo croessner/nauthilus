@@ -18,7 +18,7 @@ package convert
 import (
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/redis/go-redis/v9"
 	"github.com/yuin/gopher-lua"
 )
@@ -72,7 +72,7 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 	}
 
 	switch valType {
-	case global.TypeString:
+	case definitions.TypeString:
 		if value.Val() == "" {
 			L.Push(lua.LNil)
 
@@ -80,7 +80,7 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 		}
 
 		L.Push(lua.LString(value.Val()))
-	case global.TypeNumber:
+	case definitions.TypeNumber:
 		if value.Val() == "" {
 			L.Push(lua.LNil)
 
@@ -92,7 +92,7 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 		} else {
 			return err
 		}
-	case global.TypeBoolean:
+	case definitions.TypeBoolean:
 		if value.Val() == "" {
 			L.Push(lua.LNil)
 
@@ -104,7 +104,7 @@ func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 		} else {
 			return err
 		}
-	case global.TypeNil:
+	case definitions.TypeNil:
 		L.Push(lua.LNil)
 	default:
 		return fmt.Errorf("unable to convert string command of type %s", valType)

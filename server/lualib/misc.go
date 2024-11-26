@@ -24,8 +24,8 @@ import (
 	"unicode"
 
 	"github.com/biter777/countries"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
@@ -34,11 +34,11 @@ import (
 // exportsModMisc is a variable of type map[string]lua.LGFunction that holds the mappings
 // between Lua function names and their corresponding Go implementations.
 // It contains two key-value pairs:
-// 1. Key: global.LuaFnGetCountryName, Value: getCountryName
-// 2. Key: global.LuaFnWaitRandom, Value: waitRandom
+// 1. Key: definitions.LuaFnGetCountryName, Value: getCountryName
+// 2. Key: definitions.LuaFnWaitRandom, Value: waitRandom
 var exportsModMisc = map[string]lua.LGFunction{
-	global.LuaFnGetCountryName: getCountryName,
-	global.LuaFnWaitRandom:     waitRandom,
+	definitions.LuaFnGetCountryName: getCountryName,
+	definitions.LuaFnWaitRandom:     waitRandom,
 }
 
 // `exportsModPassword` is a variable of type map[string]lua.LGFunction that contains the exported Lua functions for the module.
@@ -50,8 +50,8 @@ var exportsModMisc = map[string]lua.LGFunction{
 // The module is typically used by the `LoaderModPassword` function to initialize a new Lua module.
 // The `exportsModPassword` variable itself is not mentioned in the surrounding code example.
 var exportsModPassword = map[string]lua.LGFunction{
-	global.LuaFnComparePasswords:    comparePasswords,
-	global.LuaFnCheckPasswordPolicy: validatePassword,
+	definitions.LuaFnComparePasswords:    comparePasswords,
+	definitions.LuaFnCheckPasswordPolicy: validatePassword,
 }
 
 // LoaderModMisc initializes a new module for the "nauthilus_misc" module in Lua.

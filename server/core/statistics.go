@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -45,7 +45,7 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return 0
 	}
@@ -60,22 +60,22 @@ func LoadStatsFromRedis(ctx context.Context) {
 		err        error
 	)
 
-	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Load counter statistics from redis")
+	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Load counter statistics from redis")
 
 	stats.LoginsCounter.Reset()
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
-	for _, counterType := range []string{global.LabelSuccess, global.LabelFailure} {
+	for _, counterType := range []string{definitions.LabelSuccess, definitions.LabelFailure} {
 		if redisValue, err = rediscli.ReadHandle.HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
-				level.Info(log.Logger).Log(global.LogKeyMsg, "No statistics on Redis server")
+				level.Info(log.Logger).Log(definitions.LogKeyMsg, "No statistics on Redis server")
 
 				return
 			}
 
-			level.Error(log.Logger).Log(global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 			return
 		}
@@ -88,19 +88,19 @@ func LoadStatsFromRedis(ctx context.Context) {
 func SaveStatsToRedis(ctx context.Context) {
 	var err error
 
-	util.DebugModule(global.DbgStats, global.LogKeyMsg, "Save counter statistics to redis")
+	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
-		{Value: getCounterValue(stats.LoginsCounter, global.LabelSuccess), Label: global.LabelSuccess},
-		{Value: getCounterValue(stats.LoginsCounter, global.LabelFailure), Label: global.LabelFailure},
+		{Value: getCounterValue(stats.LoginsCounter, definitions.LabelSuccess), Label: definitions.LabelSuccess},
+		{Value: getCounterValue(stats.LoginsCounter, definitions.LabelFailure), Label: definitions.LabelFailure},
 	}
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for index := range metrics {
 		if err = rediscli.WriteHandle.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 			return
 		}
@@ -151,21 +151,21 @@ func UpdateRedisPoolStats() {
 			if previousHit, ok := previousHits[poolName]; ok {
 				hitsDiff := currentHits - previousHit
 				if hitsDiff >= 0 {
-					stats.RedisHits.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(hitsDiff)
+					stats.RedisHits.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(hitsDiff)
 				}
 			}
 
 			if previousMiss, ok := previousMisses[poolName]; ok {
 				missesDiff := currentMisses - previousMiss
 				if missesDiff >= 0 {
-					stats.RedisMisses.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(missesDiff)
+					stats.RedisMisses.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(missesDiff)
 				}
 			}
 
 			if previousTimeout, ok := previousTimeouts[poolName]; ok {
 				timeoutsDiff := currentTimeouts - previousTimeout
 				if timeoutsDiff >= 0 {
-					stats.RedisTimeouts.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Add(timeoutsDiff)
+					stats.RedisTimeouts.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(timeoutsDiff)
 				}
 			}
 
@@ -173,9 +173,9 @@ func UpdateRedisPoolStats() {
 			previousMisses[poolName] = currentMisses
 			previousTimeouts[poolName] = currentTimeouts
 
-			stats.RedisTotalConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
-			stats.RedisIdleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
-			stats.RedisStaleConns.With(prometheus.Labels{global.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
+			stats.RedisTotalConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
+			stats.RedisIdleConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
+			stats.RedisStaleConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
 		}
 	}
 }

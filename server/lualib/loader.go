@@ -20,7 +20,7 @@ import (
 	stdhttp "net/http"
 
 	"github.com/cjoudrey/gluahttp"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/metrics"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
@@ -76,94 +76,94 @@ import (
 // Refer to the module documentations for the declaration codes of the constants.
 func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, httpClient *stdhttp.Client) {
 	switch modName {
-	case global.LuaModGLLPlugin:
+	case definitions.LuaModGLLPlugin:
 		plugin.Preload(L)
-	case global.LuaModGLLArgParse:
+	case definitions.LuaModGLLArgParse:
 		argparse.Preload(L)
-	case global.LuaModGLLBase64:
+	case definitions.LuaModGLLBase64:
 		base64.Preload(L)
-	case global.LuaModGLLCertUtil:
+	case definitions.LuaModGLLCertUtil:
 		cert_util.Preload(L)
-	case global.LuaModGLLChef:
+	case definitions.LuaModGLLChef:
 		chef.Preload(L)
-	case global.LuaModGLLCloudWatch:
+	case definitions.LuaModGLLCloudWatch:
 		cloudwatch.Preload(L)
-	case global.LuaModGLLCmd:
+	case definitions.LuaModGLLCmd:
 		cmd.Preload(L)
-	case global.LuaModGLLCrypto:
+	case definitions.LuaModGLLCrypto:
 		crypto.Preload(L)
-	case global.LuaModGLLDB:
+	case definitions.LuaModGLLDB:
 		db.Preload(L)
-	case global.LuaModGLLFilePath:
+	case definitions.LuaModGLLFilePath:
 		filepath.Preload(L)
-	case global.LuaModGLLGOOS:
+	case definitions.LuaModGLLGOOS:
 		goos.Preload(L)
-	case global.LuaModGLLHTTP:
+	case definitions.LuaModGLLHTTP:
 		http.Preload(L)
-	case global.LuaModGLLHumanize:
+	case definitions.LuaModGLLHumanize:
 		humanize.Preload(L)
-	case global.LuaModGLLInspect:
+	case definitions.LuaModGLLInspect:
 		inspect.Preload(L)
-	case global.LuaModGLLIOUtil:
+	case definitions.LuaModGLLIOUtil:
 		ioutil.Preload(L)
-	case global.LuaModGLLJSON:
+	case definitions.LuaModGLLJSON:
 		json.Preload(L)
-	case global.LuaModGLLLog:
+	case definitions.LuaModGLLLog:
 		log.Preload(L)
-	case global.LuaModGLLPb:
+	case definitions.LuaModGLLPb:
 		pb.Preload(L)
-	case global.LuaModGLLPProf:
+	case definitions.LuaModGLLPProf:
 		pprof.Preload(L)
-	case global.LuaModGLLPrometheus:
+	case definitions.LuaModGLLPrometheus:
 		prometheus.Preload(L)
-	case global.LuaModGLLRegExp:
+	case definitions.LuaModGLLRegExp:
 		regexp.Preload(L)
-	case global.LuaModGLLRuntime:
+	case definitions.LuaModGLLRuntime:
 		runtime.Preload(L)
-	case global.LuaModGLLShellEscape:
+	case definitions.LuaModGLLShellEscape:
 		shellescape.Preload(L)
-	case global.LuaModGLLStats:
+	case definitions.LuaModGLLStats:
 		stats.Preload(L)
-	case global.LuaModGLLStorage:
+	case definitions.LuaModGLLStorage:
 		storage.Preload(L)
-	case global.LuaModGLLStrings:
+	case definitions.LuaModGLLStrings:
 		strings.Preload(L)
-	case global.LuaModGLLTAC:
+	case definitions.LuaModGLLTAC:
 		tac.Preload(L)
-	case global.LuaModGLLTCP:
+	case definitions.LuaModGLLTCP:
 		tcp.Preload(L)
-	case global.LuaModGLLTelegram:
+	case definitions.LuaModGLLTelegram:
 		telegram.Preload(L)
-	case global.LuaModGLLTemplate:
+	case definitions.LuaModGLLTemplate:
 		template.Preload(L)
-	case global.LuaModGLLTime:
+	case definitions.LuaModGLLTime:
 		time.Preload(L)
-	case global.LuaModGLLXMLPath:
+	case definitions.LuaModGLLXMLPath:
 		xmlpath.Preload(L)
-	case global.LuaModGLLYAML:
+	case definitions.LuaModGLLYAML:
 		yaml.Preload(L)
-	case global.LuaModGLLZabbix:
+	case definitions.LuaModGLLZabbix:
 		zabbix.Preload(L)
-	case global.LuaModGLuaCrypto:
+	case definitions.LuaModGLuaCrypto:
 		gluacrypto.Preload(L)
-	case global.LuaModGLuaHTTP:
+	case definitions.LuaModGLuaHTTP:
 		httpModule := gluahttp.NewHttpModule(httpClient)
 
 		L.PreloadModule("glua_http", httpModule.Loader)
-	case global.LuaModPassword:
+	case definitions.LuaModPassword:
 		L.PreloadModule(modName, LoaderModPassword)
-	case global.LuaModRedis:
+	case definitions.LuaModRedis:
 		L.PreloadModule(modName, redislib.LoaderModRedis(ctx))
-	case global.LuaModMail:
+	case definitions.LuaModMail:
 		smtpClient := &smtp.EmailClient{}
 		mailModule := NewMailModule(smtpClient)
 
 		L.PreloadModule(modName, mailModule.Loader)
-	case global.LuaModMisc:
+	case definitions.LuaModMisc:
 		L.PreloadModule(modName, LoaderModMisc)
-	case global.LuaModPrometheus:
+	case definitions.LuaModPrometheus:
 		L.PreloadModule(modName, metrics.LoaderModPrometheus)
-	case global.LuaModPsnet:
+	case definitions.LuaModPsnet:
 		L.PreloadModule(modName, connmgr.LoaderModPsnet(ctx))
 	default:
 		return

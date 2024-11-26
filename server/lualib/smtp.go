@@ -16,7 +16,7 @@
 package lualib
 
 import (
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 
 	"github.com/yuin/gopher-lua"
@@ -38,7 +38,7 @@ func NewMailModule(smtpClient smtp.Client) *MailModule {
 // Returns the number of results pushed onto the Lua stack, which is always 1 in this method.
 func (m *MailModule) Loader(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		global.LuaFnSendMail: SendMail(m.smtpClient),
+		definitions.LuaFnSendMail: SendMail(m.smtpClient),
 	})
 
 	L.Push(mod)

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
@@ -38,13 +38,13 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		reverseIPAddr string
 	)
 
-	if stats.HavePrometheusLabelEnabled(global.PromFeature) {
+	if stats.HavePrometheusLabelEnabled(definitions.PromFeature) {
 		timer := prometheus.NewTimer(stats.RBLDuration.WithLabelValues(rbl.Name))
 
 		defer timer.ObserveDuration()
 	}
 
-	guid := ctx.GetString(global.CtxGUIDKey)
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 	ipAddress := net.ParseIP(a.ClientIP)
 	if ipAddress.IsLoopback() {
 		return false, "", nil
@@ -100,8 +100,8 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	for _, result := range results {
 		if result.String() == rbl.ReturnCode {
 			util.DebugModule(
-				global.DbgRBL,
-				global.LogKeyGUID, guid,
+				definitions.DbgRBL,
+				definitions.LogKeyGUID, guid,
 				"query", query, "result", result.String(), "rbl", rbl.Name,
 			)
 

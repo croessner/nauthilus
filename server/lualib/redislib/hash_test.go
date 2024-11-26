@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -43,7 +43,7 @@ func TestRedisHGet(t *testing.T) {
 			name:           "GetExistingField",
 			key:            "existingKey",
 			field:          "existingField",
-			valueType:      global.TypeString,
+			valueType:      definitions.TypeString,
 			expectedResult: lua.LString("OK"),
 			expectedErr:    lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -54,7 +54,7 @@ func TestRedisHGet(t *testing.T) {
 			name:           "GetNonExistingField",
 			key:            "existingKey",
 			field:          "nonExistingField",
-			valueType:      global.TypeString,
+			valueType:      definitions.TypeString,
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("redis: nil"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -65,7 +65,7 @@ func TestRedisHGet(t *testing.T) {
 			name:           "GetFieldWithError",
 			key:            "keyWithError",
 			field:          "fieldWithError",
-			valueType:      global.TypeString,
+			valueType:      definitions.TypeString,
 			expectedResult: lua.LNil,
 			expectedErr:    lua.LString("some error"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -76,7 +76,7 @@ func TestRedisHGet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -153,7 +153,7 @@ func TestRedisHSet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -245,7 +245,7 @@ func TestRedisHDel(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -323,7 +323,7 @@ func TestRedisHLen(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -404,7 +404,7 @@ func TestRedisHGetAll(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -504,7 +504,7 @@ func TestRedisHIncrBy(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -597,7 +597,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -686,7 +686,7 @@ func TestRedisHExists(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 

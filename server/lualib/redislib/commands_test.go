@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	lua "github.com/yuin/gopher-lua"
@@ -39,7 +39,7 @@ func TestRedisGet(t *testing.T) {
 		{
 			name:        "GetStringValue",
 			key:         "testKey",
-			valueType:   global.TypeString,
+			valueType:   definitions.TypeString,
 			expectedVal: lua.LString("testValue"),
 			expectedErr: lua.LNil,
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -49,7 +49,7 @@ func TestRedisGet(t *testing.T) {
 		{
 			name:        "GetValueWithMissingKey",
 			key:         "missingKey",
-			valueType:   global.TypeString,
+			valueType:   definitions.TypeString,
 			expectedVal: lua.LNil,
 			expectedErr: lua.LString("redis: nil"),
 			prepareMockRedis: func(mock redismock.ClientMock) {
@@ -60,7 +60,7 @@ func TestRedisGet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -143,7 +143,7 @@ func TestRedisSet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -223,7 +223,7 @@ func TestRedisExpire(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -298,7 +298,7 @@ func TestRedisIncr(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -372,7 +372,7 @@ func TestRedisDel(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -450,7 +450,7 @@ func TestRedisRename(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 
@@ -515,7 +515,7 @@ func TestPing(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(global.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
 
 	defer L.Close()
 

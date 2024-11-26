@@ -27,8 +27,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -67,12 +67,12 @@ func (a *AuthState) isRepeatingWrongPassword() (repeating bool, err error) {
 				if a.PasswordHistory != nil {
 					if counterTotal, foundPassword := (*a.PasswordHistory)[passwordHash]; foundPassword {
 						// Hint: We may make this configurable one day.
-						if counter+global.SamePasswordsDifferentAccountLimit >= counterTotal {
+						if counter+definitions.SamePasswordsDifferentAccountLimit >= counterTotal {
 							level.Info(log.Logger).Log(
-								global.LogKeyGUID, a.GUID,
-								global.LogKeyBruteForce, "Repeating wrong password",
-								global.LogKeyUsername, a.Username,
-								global.LogKeyClientIP, a.ClientIP,
+								definitions.LogKeyGUID, a.GUID,
+								definitions.LogKeyBruteForce, "Repeating wrong password",
+								definitions.LogKeyUsername, a.Username,
+								definitions.LogKeyClientIP, a.ClientIP,
 								"counter", counter,
 							)
 
@@ -148,10 +148,10 @@ func (a *AuthState) checkEnforceBruteForceComputation() (bool, error) {
 			return false, nil
 		} else if a.PasswordHistory == nil {
 			level.Info(log.Logger).Log(
-				global.LogKeyGUID, a.GUID,
-				global.LogKeyMsg, "No negative password cache present",
-				global.LogKeyUsername, a.Username,
-				global.LogKeyClientIP, a.ClientIP,
+				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyMsg, "No negative password cache present",
+				definitions.LogKeyUsername, a.Username,
+				definitions.LogKeyClientIP, a.ClientIP,
 			)
 
 			return false, nil
@@ -228,15 +228,15 @@ func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key strin
 			accountName = a.Username
 		}
 
-		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, a.ClientIP)
+		key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, a.ClientIP)
 	} else {
-		key = config.LoadableConfig.Server.Redis.Prefix + global.RedisPwHashKey + ":" + a.ClientIP
+		key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPwHashKey + ":" + a.ClientIP
 	}
 
 	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, a.GUID,
-		global.LogKeyClientIP, a.ClientIP,
+		definitions.DbgBf,
+		definitions.LogKeyGUID, a.GUID,
+		definitions.LogKeyClientIP, a.ClientIP,
 		"key", key,
 	)
 
@@ -246,9 +246,9 @@ func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key strin
 // logBruteForceRuleRedisKeyDebug logs detailed information about a brute force rule execution for debugging purposes.
 func logBruteForceRuleRedisKeyDebug(auth *AuthState, rule *config.BruteForceRule, network *net.IPNet, key string) {
 	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, auth.GUID,
-		global.LogKeyClientIP, auth.ClientIP,
+		definitions.DbgBf,
+		definitions.LogKeyGUID, auth.GUID,
+		definitions.LogKeyClientIP, auth.ClientIP,
 		"rule", rule.Name,
 		"period", rule.Period,
 		"cidr", rule.CIDR,
@@ -291,7 +291,7 @@ func (a *AuthState) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 
 	network, err := a.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 		return
 	}
@@ -322,7 +322,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 
 	if length, err := rediscli.ReadHandle.HLen(a.HTTPClientContext, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
 		return true
@@ -351,13 +351,13 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 		return
 	}
 
-	util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
+	util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, a.GUID, "load_key", key)
 
 	defer stats.RedisReadCounter.Inc()
 
 	if passwordHistory, err := rediscli.ReadHandle.HGetAll(a.HTTPClientContext, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
 		return
@@ -372,7 +372,7 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 		for passwordHash, counter := range passwordHistory {
 			if counterInt, err = strconv.Atoi(counter); err != nil {
 				if !stderrors.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+					level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 				}
 
 				return
@@ -392,7 +392,7 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 // This overall history is then used to compute the total number of seen passwords.
 // Each of these phases is independent and is executed if the Redis hash key retrieval and the password history fetch operations are successful.
 func (a *AuthState) getAllPasswordHistories() {
-	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -434,7 +434,7 @@ func (a *AuthState) getAllPasswordHistories() {
 //
 // The function concludes by logging that the process has finished.
 func (a *AuthState) saveFailedPasswordCounterInRedis() {
-	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -442,6 +442,10 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		keys          []string
 		keysOverLimit bool
 	)
+
+	if a.ClientIP == "" {
+		return
+	}
 
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(true))
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(false))
@@ -453,7 +457,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 			continue
 		}
 
-		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "incr_key", keys[index])
+		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, a.GUID, "incr_key", keys[index])
 
 		// We can increment a key/value, even it never existed before.
 		if err := rediscli.WriteHandle.HIncrBy(
@@ -463,7 +467,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		).Err(); err != nil {
 			stats.RedisWriteCounter.Inc()
 
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 			return
 		} else {
@@ -471,21 +475,21 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		}
 
 		util.DebugModule(
-			global.DbgBf,
-			global.LogKeyGUID, a.GUID,
+			definitions.DbgBf,
+			definitions.LogKeyGUID, a.GUID,
 			"key", keys[index],
-			global.LogKeyMsg, "Increased",
+			definitions.LogKeyMsg, "Increased",
 		)
 
 		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
 		stats.RedisWriteCounter.Inc()
 	}
 
 	if keysOverLimit {
-		level.Info(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Too many password hashes for this account")
+		level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Too many password hashes for this account")
 	}
 }
 
@@ -504,13 +508,13 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 			return nil
 		}
 
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return err
 	}
 
 	if err = json.Unmarshal(redisValue, bucketCounter); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return
 	}
@@ -525,14 +529,14 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 // If the BruteForceCounter is not initialized, it creates a new map.
 // Finally, it updates the BruteForceCounter map with the counter-value retrieved from Redis using the rule name as the key.
 func (a *AuthState) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
-	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
 	bucketCounter := new(BruteForceBucketCounter)
 
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "load_key", key)
+		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, a.GUID, "load_key", key)
 
 		if err := loadBruteForceBucketCounterFromRedis(a.HTTPClientContext, key, bucketCounter); err != nil {
 			return
@@ -555,20 +559,20 @@ func (a *AuthState) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
 // In case of any errors (while incrementing the counter or setting the expiration), the error is logged.
 func (a *AuthState) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	if key := a.getBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModule(global.DbgBf, global.LogKeyGUID, a.GUID, "store_key", key)
+		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, a.GUID, "store_key", key)
 
 		if a.BruteForceName != rule.Name {
 			defer stats.RedisWriteCounter.Inc()
 
 			if err := rediscli.WriteHandle.Incr(a.HTTPClientContext, key).Err(); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			}
 		}
 
 		defer stats.RedisWriteCounter.Inc()
 
 		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 	}
 }
@@ -576,16 +580,16 @@ func (a *AuthState) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 // setPreResultBruteForceRedis sets the BruteForceRule name in the Redis hash map based on the network IP address obtained from the given BruteForceRule parameter.
 // If there is an error during the operation, it logs the error using the Logger.
 func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisBruteForceHashKey
 
 	network, err := a.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	} else {
 		defer stats.RedisWriteCounter.Inc()
 
 		if err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, network.String(), a.BruteForceName).Err(); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 	}
 }
@@ -597,11 +601,11 @@ func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string, err error) {
 	var network *net.IPNet
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisBruteForceHashKey
 
 	network, err = a.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 		return
 	} else {
@@ -609,7 +613,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 
 		if ruleName, err = rediscli.ReadHandle.HGet(a.HTTPClientContext, key, network.String()).Result(); err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			}
 		}
 	}
@@ -626,7 +630,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (string, error) {
 	var removedKey string
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisBruteForceHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisBruteForceHashKey
 
 	result, err := a.getPreResultBruteForceRedis(rule)
 	if result == "" {
@@ -635,14 +639,16 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 
 	if result == ruleName || ruleName == "*" {
 		if network, err := a.getNetwork(rule); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		} else {
 			defer stats.RedisWriteCounter.Inc()
 
-			if err = rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Err(); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			if removed, err := rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Result(); err != nil {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			} else {
-				removedKey = key
+				if removed > 0 {
+					removedKey = key
+				}
 			}
 		}
 
@@ -660,6 +666,10 @@ func (a *AuthState) processPWHist() (accountName string) {
 		err            error
 	)
 
+	if a.ClientIP == "" {
+		return
+	}
+
 	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName == "" {
 		return
@@ -672,7 +682,7 @@ func (a *AuthState) processPWHist() (accountName string) {
 	alreadyLearned, err = rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, a.ClientIP).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 			return
 		}
@@ -686,13 +696,13 @@ func (a *AuthState) processPWHist() (accountName string) {
 	defer stats.RedisWriteCounter.Inc()
 
 	if err = rediscli.WriteHandle.SAdd(a.HTTPClientContext, key, a.ClientIP).Err(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
 	defer stats.RedisWriteCounter.Inc()
 
 	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
 	return
@@ -706,13 +716,13 @@ func (a *AuthState) updateAffectedAccount() {
 		return
 	}
 
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisAffectedAccountsKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisAffectedAccountsKey
 
 	defer stats.RedisReadCounter.Inc()
 
 	if err := rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, accountName).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 			return
 		}
@@ -721,7 +731,7 @@ func (a *AuthState) updateAffectedAccount() {
 	defer stats.RedisWriteCounter.Inc()
 
 	if err := rediscli.WriteHandle.SAdd(a.HTTPClientContext, key, accountName).Err(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
 	return
@@ -729,7 +739,7 @@ func (a *AuthState) updateAffectedAccount() {
 
 // getPWHistIPsRedisKey generates the Redis key for storing password history associated with IPs for a specific account.
 func getPWHistIPsRedisKey(accountName string) string {
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisPWHistIPsKey + ":" + accountName
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPWHistIPsKey + ":" + accountName
 
 	return key
 }
@@ -737,16 +747,16 @@ func getPWHistIPsRedisKey(accountName string) string {
 // logBruteForceDebug logs debug information related to brute force authentication attempts using the provided AuthState.
 func logBruteForceDebug(auth *AuthState) {
 	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, *auth.GUID,
-		global.LogKeyClientIP, auth.ClientIP,
-		global.LogKeyClientPort, auth.XClientPort,
-		global.LogKeyClientHost, auth.ClientHost,
-		global.LogKeyClientID, auth.XClientID,
-		global.LogKeyLocalIP, auth.XLocalIP,
-		global.LogKeyPort, auth.XPort,
-		global.LogKeyUsername, auth.Username,
-		global.LogKeyProtocol, auth.Protocol.Get(),
+		definitions.DbgBf,
+		definitions.LogKeyGUID, *auth.GUID,
+		definitions.LogKeyClientIP, auth.ClientIP,
+		definitions.LogKeyClientPort, auth.XClientPort,
+		definitions.LogKeyClientHost, auth.ClientHost,
+		definitions.LogKeyClientID, auth.XClientID,
+		definitions.LogKeyLocalIP, auth.XLocalIP,
+		definitions.LogKeyPort, auth.XPort,
+		definitions.LogKeyUsername, auth.Username,
+		definitions.LogKeyProtocol, auth.Protocol.Get(),
 		"service", util.WithNotAvailable(auth.Service),
 		"no-auth", auth.NoAuth,
 		"list-accounts", auth.ListAccounts,
@@ -755,10 +765,10 @@ func logBruteForceDebug(auth *AuthState) {
 
 // logBucketRuleDebug logs debug information for a brute force rule, including client IP, rule details, and request counts.
 func logBucketRuleDebug(auth *AuthState, network *net.IPNet, rule *config.BruteForceRule) {
-	util.DebugModule(global.DbgBf,
-		global.LogKeyGUID, auth.GUID,
+	util.DebugModule(definitions.DbgBf,
+		definitions.LogKeyGUID, auth.GUID,
 		"limit", rule.FailedRequests,
-		global.LogKeyClientIP, auth.ClientIP,
+		definitions.LogKeyClientIP, auth.ClientIP,
 		"rule_network", fmt.Sprintf("%v", network),
 		"rule", rule.Name,
 		"counter", auth.BruteForceCounter[rule.Name],
@@ -768,10 +778,10 @@ func logBucketRuleDebug(auth *AuthState, network *net.IPNet, rule *config.BruteF
 // logBucketMatchingRule logs information about a matched brute force rule for a given authentication state.
 func logBucketMatchingRule(auth *AuthState, network *net.IPNet, rule *config.BruteForceRule, message string) {
 	level.Info(log.Logger).Log(
-		global.LogKeyGUID, auth.GUID,
-		global.LogKeyBruteForce, message,
-		global.LogKeyUsername, auth.Username,
-		global.LogKeyClientIP, auth.ClientIP,
+		definitions.LogKeyGUID, auth.GUID,
+		definitions.LogKeyBruteForce, message,
+		definitions.LogKeyUsername, auth.Username,
+		definitions.LogKeyClientIP, auth.ClientIP,
 		"rule_network", fmt.Sprintf("%v", network),
 		"rule", rule.Name,
 	)
@@ -785,7 +795,7 @@ func (a *AuthState) checkBucketOverLimit(rules []config.BruteForceRule, network 
 	for ruleNumber = range rules {
 		// Skip, where the current IP address does not match the current rule
 		if *network, err = a.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 			return true, false, ruleNumber
 		} else if network == nil {
@@ -814,12 +824,12 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 		accountName := a.getAccount()
 
 		action.RequestChan <- &action.Action{
-			LuaAction:    global.LuaActionBruteForce,
+			LuaAction:    definitions.LuaActionBruteForce,
 			Context:      a.Context,
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+				Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
 				Repeating:           alreadyTriggered,
 				UserFound:           func() bool { return accountName != "" }(),
 				Authenticated:       false, // unavailable
@@ -876,7 +886,7 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 		logBucketRuleDebug(a, network, rule)
 
 		for _, backendType := range config.LoadableConfig.Server.Backends {
-			if backendType.Get() == global.BackendCache {
+			if backendType.Get() == definitions.BackendCache {
 				useCache = true
 
 				break
@@ -885,7 +895,7 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 
 		if useCache {
 			if needEnforce, err := a.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 				return false
 			} else if !needEnforce {
@@ -907,7 +917,7 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 
 		logBucketMatchingRule(a, network, rule, message)
 
-		a.FeatureName = global.FeatureBruteForce
+		a.FeatureName = definitions.FeatureBruteForce
 
 		a.handleBruteForceLuaAction(alreadyTriggered, rule, network)
 
@@ -928,7 +938,7 @@ func (a *AuthState) checkRepeatingBruteForcer(rules []config.BruteForceRule, net
 
 	for ruleNumber = range rules {
 		if *network, err = a.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
 			return true, false, ruleNumber
 		} else if network == nil {
@@ -974,11 +984,11 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return false
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromBruteForce, "brute_force_check_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -994,16 +1004,16 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 	logBruteForceDebug(a)
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		a.AdditionalLogs = append(a.AdditionalLogs, global.LogKeyBruteForce)
-		a.AdditionalLogs = append(a.AdditionalLogs, global.Localhost)
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
 
 		return false
 	}
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
 		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, global.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, global.Whitelisted)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
 
 			return false
 		}
@@ -1022,8 +1032,8 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 
 	if !bruteForceProtocolEnabled {
 		level.Warn(log.Logger).Log(
-			global.LogKeyGUID, a.GUID,
-			global.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
+			definitions.LogKeyGUID, a.GUID,
+			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
 		return false
 	}
@@ -1055,7 +1065,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 //
 // Returns: none
 func (a *AuthState) updateBruteForceBucketsCounter() {
-	if !config.LoadableConfig.HasFeature(global.FeatureBruteForce) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -1064,16 +1074,16 @@ func (a *AuthState) updateBruteForceBucketsCounter() {
 	}
 
 	util.DebugModule(
-		global.DbgBf,
-		global.LogKeyGUID, *a.GUID,
-		global.LogKeyClientIP, a.ClientIP,
-		global.LogKeyClientPort, a.XClientPort,
-		global.LogKeyClientHost, a.ClientHost,
-		global.LogKeyClientID, a.XClientID,
-		global.LogKeyLocalIP, a.XLocalIP,
-		global.LogKeyPort, a.XPort,
-		global.LogKeyUsername, a.Username,
-		global.LogKeyProtocol, a.Protocol.Get(),
+		definitions.DbgBf,
+		definitions.LogKeyGUID, *a.GUID,
+		definitions.LogKeyClientIP, a.ClientIP,
+		definitions.LogKeyClientPort, a.XClientPort,
+		definitions.LogKeyClientHost, a.ClientHost,
+		definitions.LogKeyClientID, a.XClientID,
+		definitions.LogKeyLocalIP, a.XLocalIP,
+		definitions.LogKeyPort, a.XPort,
+		definitions.LogKeyUsername, a.Username,
+		definitions.LogKeyProtocol, a.Protocol.Get(),
 		"service", util.WithNotAvailable(a.Service),
 		"no-auth", a.NoAuth,
 		"list-accounts", a.ListAccounts,
@@ -1083,7 +1093,7 @@ func (a *AuthState) updateBruteForceBucketsCounter() {
 		return
 	}
 
-	if a.ClientIP == global.Localhost4 || a.ClientIP == global.Localhost6 || a.ClientIP == global.NotAvailable {
+	if a.ClientIP == definitions.Localhost4 || a.ClientIP == definitions.Localhost6 || a.ClientIP == definitions.NotAvailable {
 		return
 	}
 

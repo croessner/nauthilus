@@ -24,7 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/util"
@@ -152,15 +152,15 @@ func PreCompileLuaScript(hook string) (err error) {
 //	*lua.LTable: The Lua table containing the "log_format" and "log_level" global variables.
 func setupLogging(L *lua.LState) *lua.LTable {
 	logTable := L.NewTable()
-	logFormat := global.LogFormatDefault
+	logFormat := definitions.LogFormatDefault
 	logLevel := config.LoadableConfig.Server.Log.Level.Get()
 
 	if config.LoadableConfig.Server.Log.JSON {
-		logFormat = global.LogFormatJSON
+		logFormat = definitions.LogFormatJSON
 	}
 
-	logTable.RawSetString(global.LuaRequestLogFormat, lua.LString(logFormat))
-	logTable.RawSetString(global.LuaRequestLogLevel, lua.LString(logLevel))
+	logTable.RawSetString(definitions.LuaRequestLogFormat, lua.LString(logFormat))
+	logTable.RawSetString(definitions.LuaRequestLogLevel, lua.LString(logLevel))
 
 	return logTable
 }
@@ -198,13 +198,13 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, useGin bool) {
 // If the LDAP backend is not activated, it raises an error.
 func registerModule(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, useGin bool) {
 	switch modName {
-	case global.LuaModHTTPRequest:
+	case definitions.LuaModHTTPRequest:
 		if useGin {
 			L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.(*gin.Context).Request))
 		} else {
 			return
 		}
-	case global.LuaModLDAP:
+	case definitions.LuaModLDAP:
 		if config.LoadableConfig.HaveLDAPBackend() {
 			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
 		} else {
@@ -274,7 +274,7 @@ func RunLuaInit(ctx context.Context, hook string) error {
 // executeAndHandleError executes the compiled Lua script and handles any errors that occur.
 // It first sets the Lua package path using lualib.PackagePath and includes the directory where the Lua modules reside.
 // Then it calls lualib.DoCompiledFile to run the script in the LState and checks for any errors.
-// Finally, it calls L.CallByParam to call the Lua function specified by global.LuaFnRunHook, and checks for any errors.
+// Finally, it calls L.CallByParam to call the Lua function specified by definitions.LuaFnRunHook, and checks for any errors.
 // If any errors occur during these steps, the function calls processError to log the error message.
 // This function takes two arguments: the compiled Lua script pointer (*lua.FunctionProto) and the LState (*lua.LState).
 // It returns an error, which will be nil if no errors occurred during the execution of the Lua script.
@@ -299,7 +299,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 	}
 
 	if err = L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(global.LuaFnRunHook),
+		Fn:      L.GetGlobal(definitions.LuaFnRunHook),
 		NRet:    0,
 		Protect: true,
 	}, logTable); err != nil {
@@ -319,6 +319,6 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 func processError(err error, hook string) {
 	level.Error(log.Logger).Log(
 		"script", hook,
-		global.LogKeyMsg, err,
+		definitions.LogKeyMsg, err,
 	)
 }

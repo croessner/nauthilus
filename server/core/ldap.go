@@ -22,8 +22,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -158,7 +158,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: global.LDAPSearch,
+		Command: definitions.LDAPSearch,
 		MacroSource: &util.MacroSource{
 			Username:    username,
 			XLocalIP:    auth.XLocalIP,
@@ -186,7 +186,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	// User not found
-	if distinguishedNames, assertOk = ldapReply.Result[global.DistinguishedName]; !assertOk {
+	if distinguishedNames, assertOk = ldapReply.Result[definitions.DistinguishedName]; !assertOk {
 		return
 	}
 
@@ -194,11 +194,11 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		return
 	}
 
-	dn := distinguishedNames.([]any)[global.LDAPSingleValue].(string)
+	dn := distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
 
 	// If a DN was returned and an account field is present, the user was found in the backend.
 	passDBResult.UserFound = true
-	passDBResult.Backend = global.BackendLDAP
+	passDBResult.Backend = definitions.BackendLDAP
 
 	if _, okay := ldapReply.Result[accountField]; okay {
 		passDBResult.AccountField = &accountField
@@ -243,7 +243,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			level.Debug(log.Logger).Log(global.LogKeyGUID, auth.GUID, global.LogKeyMsg, err)
+			level.Debug(log.Logger).Log(definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, err)
 
 			if stderrors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
@@ -282,7 +282,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromAccount, "ldap_account_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "ldap_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -316,7 +316,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: global.LDAPSearch,
+		Command: definitions.LDAPSearch,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,
@@ -372,7 +372,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "ldap_store_totp_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "ldap_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -406,7 +406,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	ldapRequest := &backend.LDAPRequest{
 		GUID:    auth.GUID,
-		Command: global.LDAPModifyAdd,
+		Command: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,

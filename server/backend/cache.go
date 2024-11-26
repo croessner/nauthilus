@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -40,18 +40,18 @@ type PasswordHistory map[string]uint
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
-	Backend           global.Backend `json:"passdb_backend"`
-	Password          string         `json:"password,omitempty"`
-	AccountField      *string        `json:"account_field"`
-	TOTPSecretField   *string        `json:"totp_secret_field"`
-	UniqueUserIDField *string        `json:"webauth_userid_field"`
-	DisplayNameField  *string        `json:"display_name_field"`
-	Attributes        DatabaseResult `json:"attributes"`
+	Backend           definitions.Backend `json:"passdb_backend"`
+	Password          string              `json:"password,omitempty"`
+	AccountField      *string             `json:"account_field"`
+	TOTPSecretField   *string             `json:"totp_secret_field"`
+	UniqueUserIDField *string             `json:"webauth_userid_field"`
+	DisplayNameField  *string             `json:"display_name_field"`
+	Attributes        DatabaseResult      `json:"attributes"`
 }
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-	key := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserHashKey
+	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserHashKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -82,20 +82,20 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCa
 			return true, nil
 		}
 
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return true, err
 	}
 
 	if err = json.Unmarshal(redisValue, ucp); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return
 	}
 
 	util.DebugModule(
-		global.DbgCache,
-		global.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
+		definitions.DbgCache,
+		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
 
 	return false, nil
 }
@@ -106,16 +106,16 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint,
 	var result string
 
 	util.DebugModule(
-		global.DbgCache,
-		global.LogKeyGUID, guid,
-		global.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
+		definitions.DbgCache,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
 	)
 
 	redisValue, err := json.Marshal(cache)
 	if err != nil {
 		level.Error(log.Logger).Log(
-			global.LogKeyGUID, guid,
-			global.LogKeyMsg, err,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, err,
 		)
 
 		return
@@ -126,14 +126,14 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint,
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
 		level.Error(log.Logger).Log(
-			global.LogKeyGUID, guid,
-			global.LogKeyMsg, err,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, err,
 		)
 	}
 
 	util.DebugModule(
-		global.DbgCache,
-		global.LogKeyGUID, guid,
+		definitions.DbgCache,
+		definitions.LogKeyGUID, guid,
 		"redis", result)
 
 	return
@@ -158,7 +158,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint,
 // Returns:
 // - cacheNames: The set of cache names found for the requested protocol and cache backends.
 // It can be obtained as a string slice using the GetStringSlice() method.
-func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (cacheNames config.StringSet) {
+func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
 	var (
 		cacheName    string
 		protocolLDAP *config.LDAPSearchProtocol
@@ -167,7 +167,7 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 
 	cacheNames = config.NewStringSet()
 
-	if backends == global.CacheAll || backends == global.CacheLDAP {
+	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
 		if protocolLDAP, _ = config.LoadableConfig.GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
 			if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
@@ -175,7 +175,7 @@ func GetCacheNames(requestedProtocol string, backends global.CacheNameBackend) (
 		}
 	}
 
-	if backends == global.CacheAll || backends == global.CacheLua {
+	if backends == definitions.CacheAll || backends == definitions.CacheLua {
 		if protocolLua, _ = config.LoadableConfig.GetLuaSearchProtocol(requestedProtocol); protocolLua != nil {
 			if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
@@ -202,7 +202,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	defer stats.RedisReadCounter.Inc()
 
 	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	user = &User{}
 
 	if err = json.Unmarshal(redisValue, user); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 
 	redisValue, err := json.Marshal(user)
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return err
 	}
@@ -239,10 +239,10 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 	}
 
-	util.DebugModule(global.DbgCache, "redis", result)
+	util.DebugModule(definitions.DbgCache, "redis", result)
 
 	return err
 }

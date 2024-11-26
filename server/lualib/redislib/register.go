@@ -18,7 +18,7 @@ package redislib
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -28,31 +28,31 @@ import (
 func LoaderModRedis(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
-			global.LuaFnRedisGetRedisConnection: GetRedisConnection,
+			definitions.LuaFnRedisRegisterRedisPool:  RegisterRedisPool,
+			definitions.LuaFnRedisGetRedisConnection: GetRedisConnection,
 
-			global.LuaFnRedisPing:         RedisPing(ctx),
-			global.LuaFnRedisGet:          RedisGet(ctx),
-			global.LuaFnRedisSet:          RedisSet(ctx),
-			global.LuaFnRedisIncr:         RedisIncr(ctx),
-			global.LuaFnRedisDel:          RedisDel(ctx),
-			global.LuaFnRedisExpire:       RedisExpire(ctx),
-			global.LuaFnRedisHGet:         RedisHGet(ctx),
-			global.LuaFnRedisHSet:         RedisHSet(ctx),
-			global.LuaFnRedisHDel:         RedisHDel(ctx),
-			global.LuaFnRedisHLen:         RedisHLen(ctx),
-			global.LuaFnRedisHGetAll:      RedisHGetAll(ctx),
-			global.LuaFnRedisHIncrBy:      RedisHIncrBy(ctx),
-			global.LuaFnRedisHIncrByFloat: RedisHIncrByFloat(ctx),
-			global.LuaFnRedisHExists:      RedisHExists(ctx),
-			global.LuaFnRedisRename:       RedisRename(ctx),
-			global.LuaFnRedisSAdd:         RedisSAdd(ctx),
-			global.LuaFnRedisSIsMember:    RedisSIsMember(ctx),
-			global.LuaFnRedisSMembers:     RedisSMembers(ctx),
-			global.LuaFnRedisSRem:         RedisSRem(ctx),
-			global.LuaFnRedisSCard:        RedisSCard(ctx),
-			global.LuaFnRedisRunScript:    RedisRunScript(ctx),
-			global.LuaFnRedisUploadScript: RedisUploadScript(ctx),
+			definitions.LuaFnRedisPing:         RedisPing(ctx),
+			definitions.LuaFnRedisGet:          RedisGet(ctx),
+			definitions.LuaFnRedisSet:          RedisSet(ctx),
+			definitions.LuaFnRedisIncr:         RedisIncr(ctx),
+			definitions.LuaFnRedisDel:          RedisDel(ctx),
+			definitions.LuaFnRedisExpire:       RedisExpire(ctx),
+			definitions.LuaFnRedisHGet:         RedisHGet(ctx),
+			definitions.LuaFnRedisHSet:         RedisHSet(ctx),
+			definitions.LuaFnRedisHDel:         RedisHDel(ctx),
+			definitions.LuaFnRedisHLen:         RedisHLen(ctx),
+			definitions.LuaFnRedisHGetAll:      RedisHGetAll(ctx),
+			definitions.LuaFnRedisHIncrBy:      RedisHIncrBy(ctx),
+			definitions.LuaFnRedisHIncrByFloat: RedisHIncrByFloat(ctx),
+			definitions.LuaFnRedisHExists:      RedisHExists(ctx),
+			definitions.LuaFnRedisRename:       RedisRename(ctx),
+			definitions.LuaFnRedisSAdd:         RedisSAdd(ctx),
+			definitions.LuaFnRedisSIsMember:    RedisSIsMember(ctx),
+			definitions.LuaFnRedisSMembers:     RedisSMembers(ctx),
+			definitions.LuaFnRedisSRem:         RedisSRem(ctx),
+			definitions.LuaFnRedisSCard:        RedisSCard(ctx),
+			definitions.LuaFnRedisRunScript:    RedisRunScript(ctx),
+			definitions.LuaFnRedisUploadScript: RedisUploadScript(ctx),
 		})
 
 		L.Push(mod)

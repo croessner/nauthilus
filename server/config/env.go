@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/spf13/viper"
 )
 
@@ -70,17 +70,17 @@ type Config struct {
 // It initializes various viper configuration variables with default values.
 // The default values are taken from the global constants and types defined in the code.
 func setCommonDefaultEnvVars() {
-	viper.SetDefault("smtp_backend_address", global.SMTPBackendAddress)
-	viper.SetDefault("smtp_backend_port", global.SMTPBackendPort)
-	viper.SetDefault("imap_backend_address", global.IMAPBackendAddress)
-	viper.SetDefault("imap_backend_port", global.IMAPBackendPort)
-	viper.SetDefault("pop3_backend_address", global.POP3BackendAddress)
-	viper.SetDefault("pop3_backend_port", global.POP3BackendPort)
-	viper.SetDefault("nginx_wait_delay", global.WaitDelay)
-	viper.SetDefault("max_login_attempts", global.MaxLoginAttempts)
+	viper.SetDefault("smtp_backend_address", definitions.SMTPBackendAddress)
+	viper.SetDefault("smtp_backend_port", definitions.SMTPBackendPort)
+	viper.SetDefault("imap_backend_address", definitions.IMAPBackendAddress)
+	viper.SetDefault("imap_backend_port", definitions.IMAPBackendPort)
+	viper.SetDefault("pop3_backend_address", definitions.POP3BackendAddress)
+	viper.SetDefault("pop3_backend_port", definitions.POP3BackendPort)
+	viper.SetDefault("nginx_wait_delay", definitions.WaitDelay)
+	viper.SetDefault("max_login_attempts", definitions.MaxLoginAttempts)
 	viper.SetDefault("developer_mode", false)
-	viper.SetDefault("max_action_workers", global.MaxActionWorkers)
-	viper.SetDefault("lua_script_timeout", global.LuaMaxExecutionTime)
+	viper.SetDefault("max_action_workers", definitions.MaxActionWorkers)
+	viper.SetDefault("lua_script_timeout", definitions.LuaMaxExecutionTime)
 }
 
 // setProtectionDefaultEnvVars sets the default environment variables for the application.
@@ -107,7 +107,7 @@ func setWebDefaultEnvVars() {
 // SetDefault sets the default value for the "login_page" configuration variable
 func setLoginPageDefaultEnvVars() {
 	viper.SetDefault("login_page", "/login")
-	viper.SetDefault("login_page_logo_image_alt", global.ImageCopyright)
+	viper.SetDefault("login_page_logo_image_alt", definitions.ImageCopyright)
 	viper.SetDefault("login_remember_for", 10800)
 	viper.SetDefault("login_page_welcome", "")
 }
@@ -117,7 +117,7 @@ func setLoginPageDefaultEnvVars() {
 // The default values are taken from the global constants and types defined in the code.
 func setConsentPageDefaultEnvVars() {
 	viper.SetDefault("consent_page", "/consent")
-	viper.SetDefault("consent_page_logo_image_alt", global.ImageCopyright)
+	viper.SetDefault("consent_page_logo_image_alt", definitions.ImageCopyright)
 	viper.SetDefault("consent_remember_for", 3600)
 	viper.SetDefault("consent_page_welcome", "")
 }
@@ -158,7 +158,7 @@ func setTOTPPageDefaultEnvVars() {
 	viper.SetDefault("totp_page", "/totp")
 	viper.SetDefault("totp_issuer", "nauthilus.me")
 	viper.SetDefault("totp_welcome", "")
-	viper.SetDefault("totp_page_logo_image_alt", global.ImageCopyright)
+	viper.SetDefault("totp_page_logo_image_alt", definitions.ImageCopyright)
 }
 
 // setNotifyPageDefaultEnvVars sets the default environment variables for the notify page.
@@ -167,7 +167,7 @@ func setTOTPPageDefaultEnvVars() {
 func setNotifyPageDefaultEnvVars() {
 	viper.SetDefault("notify_page", "/notify")
 	viper.SetDefault("notify_page_welcome", "")
-	viper.SetDefault("notify_page_logo_image_alt", global.ImageCopyright)
+	viper.SetDefault("notify_page_logo_image_alt", definitions.ImageCopyright)
 }
 
 // setLocalCacheDefaults sets the default value for the "local_cache_auth_ttl" configuration key to 30 seconds.

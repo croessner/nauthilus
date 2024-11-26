@@ -1,7 +1,7 @@
 package metrics
 
 import (
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/yuin/gopher-lua"
 )
@@ -343,19 +343,19 @@ func decrementGauge(L *lua.LState) int {
 }
 
 var exportsModPrometheus = map[string]lua.LGFunction{
-	global.LuaFnCreateSummaryVec:    createSummaryVec,
-	global.LuaFnCreateCounterVec:    createCounterVec,
-	global.LuaFnCreateHistogramVec:  createHistogramVec,
-	global.LuaFnStartSummaryTimer:   startSumaryTimer,
-	global.LuaFnStartHistogramTimer: startHistogramTimer,
-	global.LuaFnStopTimer:           stopTimer,
-	global.LuaFnIncrementCounter:    incrementCounter,
-	global.LuaFnCreateGaugeVec:      createGaugeVec,
-	global.LuaFNAddGauge:            addGauge,
-	global.LuaFnSubGauge:            subGauge,
-	global.LuaFnSetGauge:            setGauge,
-	global.LuaFnIncrementGauge:      incrementGauge,
-	global.LuaFnDecrementGauge:      decrementGauge,
+	definitions.LuaFnCreateSummaryVec:    createSummaryVec,
+	definitions.LuaFnCreateCounterVec:    createCounterVec,
+	definitions.LuaFnCreateHistogramVec:  createHistogramVec,
+	definitions.LuaFnStartSummaryTimer:   startSumaryTimer,
+	definitions.LuaFnStartHistogramTimer: startHistogramTimer,
+	definitions.LuaFnStopTimer:           stopTimer,
+	definitions.LuaFnIncrementCounter:    incrementCounter,
+	definitions.LuaFnCreateGaugeVec:      createGaugeVec,
+	definitions.LuaFNAddGauge:            addGauge,
+	definitions.LuaFnSubGauge:            subGauge,
+	definitions.LuaFnSetGauge:            setGauge,
+	definitions.LuaFnIncrementGauge:      incrementGauge,
+	definitions.LuaFnDecrementGauge:      decrementGauge,
 }
 
 // LoaderModPrometheus loads the Prometheus module into the given Lua state.

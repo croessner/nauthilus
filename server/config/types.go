@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/go-ldap/ldap/v3"
 )
 
@@ -55,15 +55,15 @@ func (v *Verbosity) Set(value string) error {
 
 	switch value {
 	case "none", "":
-		v.verboseLevel = global.LogLevelNone
+		v.verboseLevel = definitions.LogLevelNone
 	case "error":
-		v.verboseLevel = global.LogLevelError
+		v.verboseLevel = definitions.LogLevelError
 	case "warn":
-		v.verboseLevel = global.LogLevelWarn
+		v.verboseLevel = definitions.LogLevelWarn
 	case "info":
-		v.verboseLevel = global.LogLevelInfo
+		v.verboseLevel = definitions.LogLevelInfo
 	case "debug":
-		v.verboseLevel = global.LogLevelDebug
+		v.verboseLevel = definitions.LogLevelDebug
 	default:
 		return fmt.Errorf(errors.ErrWrongVerboseLevel.Error(), value)
 	}
@@ -85,7 +85,7 @@ func (v *Verbosity) Type() string {
 // Level returns the verbosity level of the Verbosity instance.
 func (v *Verbosity) Level() int {
 	if v == nil {
-		return global.LogLevelNone
+		return definitions.LogLevelNone
 	}
 
 	return v.verboseLevel
@@ -211,7 +211,7 @@ func NewProtocol(protocol string) *Protocol {
 
 // Backend is a password Database container.
 type Backend struct {
-	backend global.Backend
+	backend definitions.Backend
 }
 
 func (b *Backend) String() string {
@@ -235,12 +235,12 @@ func (b *Backend) Set(value string) error {
 	value = strings.TrimSpace(value)
 
 	switch value {
-	case global.BackendCacheName:
-		b.backend = global.BackendCache
-	case global.BackendLDAPName:
-		b.backend = global.BackendLDAP
-	case global.BackendLuaName:
-		b.backend = global.BackendLua
+	case definitions.BackendCacheName:
+		b.backend = definitions.BackendCache
+	case definitions.BackendLDAPName:
+		b.backend = definitions.BackendLDAP
+	case definitions.BackendLuaName:
+		b.backend = definitions.BackendLua
 	default:
 		return fmt.Errorf(errors.ErrWrongPassDB.Error(), value)
 	}
@@ -258,9 +258,9 @@ func (b *Backend) Type() string {
 }
 
 // Get gets the name of a password Database.
-func (b *Backend) Get() global.Backend {
+func (b *Backend) Get() definitions.Backend {
 	if b == nil {
-		return global.BackendUnknown
+		return definitions.BackendUnknown
 	}
 
 	return b.backend
@@ -291,7 +291,7 @@ func (f *Feature) Set(value string) error {
 
 	switch value {
 	case "":
-	case global.FeatureTLSEncryption, global.FeatureRBL, global.FeatureRelayDomains, global.FeatureLua, global.FeatureBackendServersMonitoring, global.FeatureBruteForce:
+	case definitions.FeatureTLSEncryption, definitions.FeatureRBL, definitions.FeatureRelayDomains, definitions.FeatureLua, definitions.FeatureBackendServersMonitoring, definitions.FeatureBruteForce:
 		f.name = value
 	default:
 		return fmt.Errorf(errors.ErrWrongFeature.Error(), value)
@@ -321,7 +321,7 @@ func (f *Feature) Get() string {
 // DbgModule represents a debugging module configuration.
 type DbgModule struct {
 	name   string
-	module global.DbgModule
+	module definitions.DbgModule
 }
 
 func (d *DbgModule) String() string {
@@ -346,38 +346,38 @@ func (d *DbgModule) Set(value string) error {
 	value = strings.TrimSpace(value)
 
 	switch value {
-	case global.DbgNoneName, "":
-		d.module = global.DbgNone
-	case global.DbgAllName:
-		d.module = global.DbgAll
-	case global.DbgAuthName:
-		d.module = global.DbgAuth
-	case global.DbgHydraName:
-		d.module = global.DbgHydra
-	case global.DbgWebAuthnName:
-		d.module = global.DbgWebAuthn
-	case global.DbgStatsName:
-		d.module = global.DbgStats
-	case global.DbgWhitelistName:
-		d.module = global.DbgWhitelist
-	case global.DbgLDAPName:
-		d.module = global.DbgLDAP
-	case global.DbgLDAPPoolName:
-		d.module = global.DbgLDAPPool
-	case global.DbgCacheName:
-		d.module = global.DbgCache
-	case global.DbgBfName:
-		d.module = global.DbgBf
-	case global.DbgRBLName:
-		d.module = global.DbgRBL
-	case global.DbgActionName:
-		d.module = global.DbgAction
-	case global.DbgFeatureName:
-		d.module = global.DbgFeature
-	case global.DbgLuaName:
-		d.module = global.DbgLua
-	case global.DbgFilterName:
-		d.module = global.DbgFilter
+	case definitions.DbgNoneName, "":
+		d.module = definitions.DbgNone
+	case definitions.DbgAllName:
+		d.module = definitions.DbgAll
+	case definitions.DbgAuthName:
+		d.module = definitions.DbgAuth
+	case definitions.DbgHydraName:
+		d.module = definitions.DbgHydra
+	case definitions.DbgWebAuthnName:
+		d.module = definitions.DbgWebAuthn
+	case definitions.DbgStatsName:
+		d.module = definitions.DbgStats
+	case definitions.DbgWhitelistName:
+		d.module = definitions.DbgWhitelist
+	case definitions.DbgLDAPName:
+		d.module = definitions.DbgLDAP
+	case definitions.DbgLDAPPoolName:
+		d.module = definitions.DbgLDAPPool
+	case definitions.DbgCacheName:
+		d.module = definitions.DbgCache
+	case definitions.DbgBfName:
+		d.module = definitions.DbgBf
+	case definitions.DbgRBLName:
+		d.module = definitions.DbgRBL
+	case definitions.DbgActionName:
+		d.module = definitions.DbgAction
+	case definitions.DbgFeatureName:
+		d.module = definitions.DbgFeature
+	case definitions.DbgLuaName:
+		d.module = definitions.DbgLua
+	case definitions.DbgFilterName:
+		d.module = definitions.DbgFilter
 	default:
 		return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 	}
@@ -421,9 +421,9 @@ func (d *DbgModule) Get() string {
 //	  module := dbg.GetModule()
 //	  fmt.Println(module) // Output: 0
 //	}
-func (d *DbgModule) GetModule() global.DbgModule {
+func (d *DbgModule) GetModule() definitions.DbgModule {
 	if d == nil {
-		return global.DbgNone
+		return definitions.DbgNone
 	}
 
 	return d.module
