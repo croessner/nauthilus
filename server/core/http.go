@@ -773,7 +773,7 @@ func waitForShutdown(httpServer *http.Server, ctx context.Context) {
 func waitForShutdown3(http3Server *http3.Server, ctx context.Context) {
 	<-ctx.Done()
 
-	http3Server.CloseGracefully(30 * time.Second)
+	http3Server.Close()
 
 	HTTP3EndChan <- Done{}
 }
