@@ -218,6 +218,10 @@ func setupLuaScripts() error {
 		return err
 	}
 
+	if err := PreCompileHooks(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -279,6 +283,20 @@ func PreCompileInit() error {
 	}
 
 	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaInitScriptPath()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PreCompileHooks precompiles Lua hooks if they are enabled in the configuration.
+// It returns an error if the pre-compilation process fails; otherwise, it returns nil.
+func PreCompileHooks() error {
+	if !config.LoadableConfig.HaveLuaHooks() {
+		return nil
+	}
+
+	if err := hook.PreCompileLuaHooks(); err != nil {
 		return err
 	}
 

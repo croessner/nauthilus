@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -207,6 +208,15 @@ func requestHandler(ctx *gin.Context) {
 		default:
 			ctx.AbortWithStatus(http.StatusNotFound)
 		}
+	}
+}
+
+// customRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
+func customRequestHandler(ctx *gin.Context) {
+	if result, err := hook.RunLuaHook(ctx); err != nil {
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
+	} else if result != nil {
+		ctx.JSON(http.StatusOK, result)
 	}
 }
 
@@ -724,6 +734,8 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 	group.GET("/:category/:service", luaContextMiddleware(), requestHandler)
 	group.POST("/:category/:service", luaContextMiddleware(), requestHandler)
 	group.DELETE("/:category/:service", httpCacheHandler)
+
+	group.Any("/custom/:hook", luaContextMiddleware(), customRequestHandler)
 }
 
 // setupWebAuthnEndpoints is a function that sets up the endpoints related to WebAuthn in the given Gin router.

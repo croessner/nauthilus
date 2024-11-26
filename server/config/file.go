@@ -660,6 +660,19 @@ func (f *File) HaveLuaFeatures() bool {
 	return false
 }
 
+// HaveLuaHooks returns true if the File instance has Lua hooks associated with it, otherwise returns false.
+func (f *File) HaveLuaHooks() bool {
+	if f == nil {
+		return false
+	}
+
+	if f.HaveLua() {
+		return len(f.Lua.Hooks) > 0
+	}
+
+	return false
+}
+
 // HaveLuaActions is a method on the File struct.
 // It checks if the File struct has Lua actions.
 // It returns true if the File struct has Lua actions, otherwise returns false.

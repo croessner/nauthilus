@@ -171,6 +171,10 @@ func LuaValueToGo(value lua.LValue) any {
 	case *lua.LTable:
 		table := make(map[any]any)
 
+		if v == nil {
+			return table
+		}
+
 		v.ForEach(func(key lua.LValue, v2 lua.LValue) {
 			table[LuaValueToGo(key)] = LuaValueToGo(v2)
 		})

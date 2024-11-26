@@ -480,7 +480,6 @@ const (
 // ImageCopyright represents the copyright statement for a logo.
 const ImageCopyright = "Logo (c) by Roessner-Network-Solutions"
 
-// Categories and services.
 const (
 	// CatAuth is a constant for the "generic" category.
 	CatAuth = "auth"
@@ -490,6 +489,9 @@ const (
 
 	// CatBruteForce is a constant for the "bruteforce" category.
 	CatBruteForce = "bruteforce"
+
+	// CatCustom represents a custom category identifier with the value "custom".
+	CatCustom = "custom"
 
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
