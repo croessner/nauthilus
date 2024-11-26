@@ -428,7 +428,7 @@ func handleUserFlush(ctx *gin.Context) {
 		return
 	}
 
-	removedKeys, noUserAccoundFound, useCache := processFlushCache(ctx, userCmd, guid)
+	removedKeys, noUserAccoundFound := processFlushCache(ctx, userCmd, guid)
 
 	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
 
@@ -436,7 +436,7 @@ func handleUserFlush(ctx *gin.Context) {
 		statusMsg = "not flushed"
 	}
 
-	sendCacheStatus(ctx, guid, userCmd, useCache, statusMsg, removedKeys)
+	sendCacheStatus(ctx, guid, userCmd, statusMsg, removedKeys)
 }
 
 // processFlushCache takes a user command and a GUID and processes the cache flush.
@@ -444,13 +444,11 @@ func handleUserFlush(ctx *gin.Context) {
 // If it is, it sets useCache to true and calls processUserCmd to process the user command.
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
-func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool, useCache bool) {
+func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		if backendType.Get() != definitions.BackendCache {
 			continue
 		}
-
-		useCache = true
 
 		removedKeys, noUserAccountFound = processUserCmd(ctx, userCmd, guid)
 		if noUserAccountFound {
@@ -640,36 +638,22 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 // - ctx: The gin.Context object representing the HTTP request and response context.
 // - guid: The GUID string associated with the request.
 // - userCmd: A pointer to a FlushUserCmd object containing user command details.
-// - useCache: A boolean indicating whether the cache backend is enabled or not.
 // - statusMsg: The status message to be included in the response.
-func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, useCache bool, statusMsg string, removedKeys []string) {
-	if useCache {
-		level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, statusMsg)
+func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, statusMsg string, removedKeys []string) {
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, statusMsg)
 
-		sort.Strings(removedKeys)
+	sort.Strings(removedKeys)
 
-		ctx.JSON(http.StatusOK, &RESTResult{
-			GUID:      guid,
-			Object:    definitions.CatCache,
-			Operation: definitions.ServFlush,
-			Result: &FlushUserCmdStatus{
-				User:        userCmd.User,
-				RemovedKeys: removedKeys,
-				Status:      statusMsg,
-			},
-		})
-	} else {
-		msg := "Cache backend not enabled"
-
-		level.Warn(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, msg)
-
-		ctx.JSON(http.StatusInternalServerError, &RESTResult{
-			GUID:      guid,
-			Object:    definitions.CatCache,
-			Operation: definitions.ServFlush,
-			Result:    msg,
-		})
-	}
+	ctx.JSON(http.StatusOK, &RESTResult{
+		GUID:      guid,
+		Object:    definitions.CatCache,
+		Operation: definitions.ServFlush,
+		Result: &FlushUserCmdStatus{
+			User:        userCmd.User,
+			RemovedKeys: removedKeys,
+			Status:      statusMsg,
+		},
+	})
 }
 
 // handleBruteForceRuleFlush handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
