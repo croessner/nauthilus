@@ -443,6 +443,10 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		keysOverLimit bool
 	)
 
+	if a.ClientIP == "" {
+		return
+	}
+
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(true))
 	keys = append(keys, a.getPasswordHistoryRedisHashKey(false))
 
@@ -659,6 +663,10 @@ func (a *AuthState) processPWHist() (accountName string) {
 		alreadyLearned bool
 		err            error
 	)
+
+	if a.ClientIP == "" {
+		return
+	}
 
 	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName == "" {

@@ -47,7 +47,7 @@ func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		cacheNames := backend.GetCacheNames(auth.Protocol.Get(), global.CacheAll)
 
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			redisPosUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
+			redisPosUserKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 			ppc = &backend.PositivePasswordCache{}
 

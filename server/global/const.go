@@ -472,6 +472,9 @@ const (
 
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
+
+	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
+	RedisUserPositiveCachePrefix = "ucp:"
 )
 
 // ImageCopyright represents the copyright statement for a logo.

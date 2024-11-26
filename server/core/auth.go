@@ -1419,7 +1419,7 @@ func (a *AuthState) haveMonitoringFlag(flag global.Monitoring) bool {
 // It performs common validation checks and then proceeds based on the value of ctx.Value(global.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
 // Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
-// In the next step, it calls the postVerificationProcesses function to perform further control flow based on cache usage and authentication status.
+// In the next step, it calls the authenticateUser function to perform further control flow based on cache usage and authentication status.
 // Finally, it returns the authResult which indicates the authentication result of the process.
 func (a *AuthState) handlePassword(ctx *gin.Context) (authResult global.AuthResult) {
 	// Common validation checks
@@ -1434,7 +1434,7 @@ func (a *AuthState) handlePassword(ctx *gin.Context) (authResult global.AuthResu
 	useCache, backendPos, passDBs := a.handleBackendTypes()
 
 	// Further control flow based on whether cache is used and authentication status
-	authResult = a.postVerificationProcesses(ctx, useCache, backendPos, passDBs)
+	authResult = a.authenticateUser(ctx, useCache, backendPos, passDBs)
 
 	return authResult
 }
@@ -1558,21 +1558,9 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType global.Backe
 	})
 }
 
-// postVerificationProcesses manages the post-verification steps in the authentication process.
-// It first verifies the password provided by the user. If the verification fails, it logs the error and returns temporary failure.
-// If the cache is being used and the user is not excluded from authentication, it ensures that the cache backend precedes the used backend.
-// If the verification is successful, user data is saved to Redis. If it fails, it increases the brute force counter.
-// It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
-// call post Lua action and return authentication failure.
-// It also checks if the user is found during password verification, if true, it sets a new username to the user.
-// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
-func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
-	var accountName string
-
-	/*
-	 * 1. Verify password
-	 */
-
+// processVerifyPassword verifies the user's password against multiple databases.
+// It logs detailed information in case of errors and returns the result of the password verification process.
+func (a *AuthState) processVerifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
 	passDBResult, err := a.verifyPassword(passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
@@ -1592,20 +1580,18 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		} else {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
 		}
-
-		return global.AuthResultTempFail
 	}
 
-	/*
-	 * 2. Does the user exist on the backend?
-	 */
+	return passDBResult, err
+}
 
+// processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
+// It returns the account name and any error encountered during the process.
+func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
 	if a.UserFound {
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
 			level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, err.Error())
-
-			return global.AuthResultTempFail
 		}
 
 		if !passDBResult.Authenticated {
@@ -1613,96 +1599,174 @@ func (a *AuthState) postVerificationProcesses(ctx *gin.Context, useCache bool, b
 		}
 	}
 
-	// Note: User-DB queries never contain a password!
-	if !a.NoAuth && useCache {
-		// Make sure the cache backend is in front of the used backend.
-		if passDBResult.Authenticated {
-			if accountName != "" {
-				if backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend] {
-					var usedBackend global.CacheNameBackend
+	return
+}
 
-					switch a.UsedPassDBBackend {
-					case global.BackendLDAP:
-						usedBackend = global.CacheLDAP
-					case global.BackendLua:
-						usedBackend = global.CacheLua
-					case global.BackendUnknown:
-					case global.BackendCache:
-					case global.BackendLocalCache:
-					}
+// isCacheInCorrectPosition checks if the cache backend is positioned before the used password database backend.
+func (a *AuthState) isCacheInCorrectPosition(backendPos map[global.Backend]int) bool {
+	return backendPos[global.BackendCache] < backendPos[a.UsedPassDBBackend]
+}
 
-					cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
-					if len(cacheNames) != 1 {
-						level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Cache names are not correct")
+// getUsedBackend returns the cache name backend based on the used password database backend.
+func (a *AuthState) getUsedBackend() (global.CacheNameBackend, error) {
+	var usedBackend global.CacheNameBackend
 
-						return global.AuthResultTempFail
-					}
+	switch a.UsedPassDBBackend {
+	case global.BackendLDAP:
+		usedBackend = global.CacheLDAP
+	case global.BackendLua:
+		usedBackend = global.CacheLua
+	case global.BackendUnknown:
+	case global.BackendCache:
+	case global.BackendLocalCache:
+	default:
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Unable to get the cache name backend.")
 
-					cacheName := cacheNames.GetStringSlice()[global.SliceWithOneElement]
+		return usedBackend, errors.ErrIncorrectCache
+	}
 
-					redisUserKey := config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName
-					ppc := &backend.PositivePasswordCache{
-						AccountField:      a.AccountField,
-						TOTPSecretField:   a.TOTPSecretField,
-						UniqueUserIDField: a.UniqueUserIDField,
-						DisplayNameField:  a.DisplayNameField,
-						Password: func() string {
-							if a.Password != "" {
-								passwordShort := util.GetHash(util.PreparePassword(a.Password))
+	return usedBackend, nil
+}
 
-								return passwordShort
-							}
+// getCacheName retrieves the cache name associated with the given backend, based on the protocol configured for the AuthState.
+func (a *AuthState) getCacheName(usedBackend global.CacheNameBackend) (cacheName string, err error) {
+	cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
+	if len(cacheNames) != 1 {
+		level.Error(log.Logger).Log(global.LogKeyGUID, a.GUID, global.LogKeyMsg, "Cache names are not correct")
 
-							return ""
-						}(),
-						Backend:    a.SourcePassDBBackend,
-						Attributes: a.Attributes,
-					}
+		return "", errors.ErrIncorrectCache
+	}
 
-					// Safety net. Never store empty passwords into ppc.
-					if ppc.Password != "" {
-						go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
-					}
-				}
+	cacheName = cacheNames.GetStringSlice()[global.SliceWithOneElement]
+
+	return
+}
+
+// createPositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
+func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache {
+	return &backend.PositivePasswordCache{
+		AccountField:      a.AccountField,
+		TOTPSecretField:   a.TOTPSecretField,
+		UniqueUserIDField: a.UniqueUserIDField,
+		DisplayNameField:  a.DisplayNameField,
+		Password: func() string {
+			if a.Password != "" {
+				passwordShort := util.GetHash(util.PreparePassword(a.Password))
+
+				return passwordShort
+			}
+
+			return ""
+		}(),
+		Backend:    a.SourcePassDBBackend,
+		Attributes: a.Attributes,
+	}
+}
+
+// saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
+func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
+	if accountName != "" {
+		redisUserKey := config.LoadableConfig.Server.Redis.Prefix + global.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+
+		if ppc.Password != "" {
+			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
+		}
+	}
+}
+
+// processCacheUserLoginOk updates the user cache with a positive authentication result.
+// It retrieves the backend used during authentication and the respective cache name to save the user information.
+func (a *AuthState) processCacheUserLoginOk(accountName string) error {
+	usedBackend, err := a.getUsedBackend()
+	if err != nil {
+		return err
+	}
+
+	cacheName, err := a.getCacheName(usedBackend)
+	if err != nil {
+		return err
+	}
+
+	a.saveUserPositiveCache(
+		a.createPositivePasswordCache(),
+		cacheName,
+		accountName,
+	)
+
+	return nil
+}
+
+// processCacheUserLoginFail processes the cache update when a user login fails. It logs the event and updates the failure counter.
+func (a *AuthState) processCacheUserLoginFail(accountName string) {
+	util.DebugModule(
+		global.DbgAuth,
+		global.LogKeyGUID, a.GUID,
+		"account", accountName,
+		"authenticated", false,
+		global.LogKeyMsg, "Calling saveFailedPasswordCounterInRedis()",
+	)
+
+	// Increase counters
+	a.saveFailedPasswordCounterInRedis()
+}
+
+// processCache updates the relevant user cache entries based on authentication results from password databases.
+func (a *AuthState) processCache(authenticated bool, accountName string, useCache bool, backendPos map[global.Backend]int) error {
+	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
+		if authenticated {
+			err := a.processCacheUserLoginOk(accountName)
+			if err != nil {
+				return err
 			}
 		} else {
-			util.DebugModule(
-				global.DbgAuth,
-				global.LogKeyGUID, a.GUID,
-				"authenticated", false,
-				global.LogKeyMsg, "Calling saveFailedPasswordCounterInRedis()",
-			)
-
-			// Increase counters
-			a.saveFailedPasswordCounterInRedis()
+			a.processCacheUserLoginFail(accountName)
 		}
 
 		a.getAllPasswordHistories()
 	}
 
-	/*
-	 * 3. Check the authentication state
-	 */
+	return nil
+}
+
+// authenticateUser manages the post-verification steps in the authentication process.
+// It first verifies the password provided by the user. If the verification fails, it logs the error and returns temporary failure.
+// If the cache is being used and the user is not excluded from authentication, it ensures that the cache backend precedes the used backend.
+// If the verification is successful, user data is saved to Redis. If it fails, it increases the brute force counter.
+// It then tries to get all password histories of the user. If the user is not found, it updates the brute force buckets counter,
+// call post Lua action and return authentication failure.
+// It also checks if the user is found during password verification, if true, it sets a new username to the user.
+// Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
+func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[global.Backend]int, passDBs []*PassDBMap) global.AuthResult {
+	var (
+		accountName  string
+		authResult   global.AuthResult
+		passDBResult *PassDBResult
+		err          error
+	)
+
+	if passDBResult, err = a.processVerifyPassword(passDBs); err != nil {
+		return global.AuthResultTempFail
+	}
+
+	if accountName, err = a.processUserFound(passDBResult); err != nil {
+		return global.AuthResultTempFail
+	}
+
+	if err = a.processCache(passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
+		return global.AuthResultTempFail
+	}
 
 	if passDBResult.Authenticated {
 		if !(a.haveMonitoringFlag(global.MonInMemory) || a.isMasterUser()) {
 			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
 		}
+
+		authResult = global.AuthResultOK
 	} else {
 		a.updateBruteForceBucketsCounter()
 
-		authResult := a.filterLua(passDBResult, ctx)
-
-		a.postLuaAction(passDBResult)
-
-		return authResult
+		authResult = global.AuthResultFail
 	}
-
-	/*
-	 * 4. User was fine so far, do remaining Lua tasks
-	 */
-
-	authResult := global.AuthResultOK
 
 	if !(a.Protocol.Get() == global.ProtoOryHydra) {
 		authResult = a.filterLua(passDBResult, ctx)

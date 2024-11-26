@@ -561,7 +561,7 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 
 	userKeys := config.NewStringSet()
 
-	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:__default__:" + accountName)
+	userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisUserPositiveCachePrefix + "__default__:" + accountName)
 
 	if ips != nil {
 		for _, ip := range ips {
@@ -574,7 +574,7 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(protocols[index], global.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + "ucp:" + cacheName + ":" + accountName)
+			userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + global.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 		}
 	}
 
