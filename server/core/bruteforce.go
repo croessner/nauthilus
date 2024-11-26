@@ -643,10 +643,12 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 		} else {
 			defer stats.RedisWriteCounter.Inc()
 
-			if err = rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Err(); err != nil {
+			if removed, err := rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Result(); err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			} else {
-				removedKey = key
+				if removed > 0 {
+					removedKey = key
+				}
 			}
 		}
 

@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -429,8 +430,9 @@ func handleUserFlush(ctx *gin.Context) {
 
 	removedKeys, noUserAccoundFound, useCache := processFlushCache(ctx, userCmd, guid)
 
-	statusMsg := "flushed"
-	if noUserAccoundFound {
+	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
+
+	if noUserAccoundFound || len(removedKeys) == 0 {
 		statusMsg = "not flushed"
 	}
 
@@ -684,7 +686,6 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 	)
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	statusMsg := "flushed"
 
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatBruteForce, definitions.ServFlush)
 
@@ -706,7 +707,9 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 		return
 	}
 
-	if ruleFlushError {
+	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
+
+	if ruleFlushError || len(removedKeys) == 0 {
 		statusMsg = "not flushed"
 	}
 
@@ -741,10 +744,7 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 // Finally, it returns the ruleFlushError flag indicating if there was any error during rule flushing,
 // and a nil error value if no error occurred.
 func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) (bool, []string, error) {
-	var (
-		removedKeys []string
-		err         error
-	)
+	var removedKeys []string
 
 	ruleFlushError := false
 
@@ -766,19 +766,19 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 			}
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if err = rediscli.WriteHandle.Del(ctx, key).Err(); err != nil {
+				if result, err := rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
 					stats.RedisWriteCounter.Inc()
 
 					ruleFlushError = true
 
 					return ruleFlushError, removedKeys, err
+				} else if result > 0 {
+					removedKeys = append(removedKeys, key)
+
+					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
 				}
 
-				removedKeys = append(removedKeys, key)
-
 				stats.RedisWriteCounter.Inc()
-
-				level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
 			}
 		}
 	}
