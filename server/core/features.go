@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
@@ -44,7 +44,7 @@ import (
 // Returns:
 //   - bool: True if the IP address is localhost or empty, false otherwise.
 func isLocalOrEmptyIP(ip string) bool {
-	return ip == global.Localhost4 || ip == global.Localhost6 || ip == ""
+	return ip == definitions.Localhost4 || ip == definitions.Localhost6 || ip == ""
 }
 
 // logAddMessage logs a message with the specified parameters using the global logger. It is intended to be a handleAuthentication logging function.
@@ -81,19 +81,19 @@ func logAddLocalhost(auth *AuthState, feature string) {
 		return
 	}
 
-	auth.AdditionalLogs = append(auth.AdditionalLogs, fmt.Sprintf("%s_%s", global.LogKeyFeatureName, feature))
-	auth.AdditionalLogs = append(auth.AdditionalLogs, global.Localhost)
+	auth.AdditionalLogs = append(auth.AdditionalLogs, fmt.Sprintf("%s_%s", definitions.LogKeyFeatureName, feature))
+	auth.AdditionalLogs = append(auth.AdditionalLogs, definitions.Localhost)
 }
 
 // featureLua runs Lua scripts and returns a trigger result.
 func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, global.FeatureLua)
+		logAddLocalhost(a, definitions.FeatureLua)
 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureLua)
+	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureLua)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -104,7 +104,7 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	featureRequest := feature.Request{
 		Context: a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           func() bool { return accountName != "" }(),
 			Authenticated:       false, // unavailable
@@ -165,7 +165,7 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 // featureTLSEncryption checks, if the remote client connection was secured.
 func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, global.FeatureTLSEncryption)
+		logAddLocalhost(a, definitions.FeatureTLSEncryption)
 
 		return
 	}
@@ -174,21 +174,21 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureTLSEncryption)
+	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureTLSEncryption)
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
 	if !a.isInNetwork(config.LoadableConfig.ClearTextList) {
-		logAddMessage(a, global.NoTLS, global.FeatureTLSEncryption)
+		logAddMessage(a, definitions.NoTLS, definitions.FeatureTLSEncryption)
 
 		triggered = true
 
 		return
 	}
 
-	logAddMessage(a, global.Whitelisted, global.FeatureTLSEncryption)
+	logAddMessage(a, definitions.Whitelisted, definitions.FeatureTLSEncryption)
 
 	return
 }
@@ -205,12 +205,12 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, global.FeatureRelayDomains)
+		logAddLocalhost(a, definitions.FeatureRelayDomains)
 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromFeature, global.FeatureRelayDomains)
+	stopTimer := stats.PrometheusTimer(definitions.PromFeature, definitions.FeatureRelayDomains)
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -230,7 +230,7 @@ func (a *AuthState) featureRelayDomains() (triggered bool) {
 			}
 		}
 
-		logAddMessage(a, fmt.Sprintf("%s not our domain", split[1]), global.FeatureRelayDomains)
+		logAddMessage(a, fmt.Sprintf("%s not our domain", split[1]), definitions.FeatureRelayDomains)
 
 		triggered = true
 	}
@@ -297,13 +297,13 @@ func handleRBLOutcome(waitGroup *sync.WaitGroup, rblChan chan int, weight int) {
 // Finally, it logs the error at the error level.
 func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
 	if strings.Contains(err.Error(), "no such host") {
-		util.DebugModule(global.DbgRBL, global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if !rbl.AllowFailure {
 			dnsResolverErr.Store(true)
 		}
 
-		level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	}
 }
 
@@ -374,18 +374,18 @@ func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
-		logAddLocalhost(a, global.FeatureRBL)
+		logAddLocalhost(a, definitions.FeatureRBL)
 
 		return
 	}
 
 	if a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
-		logAddMessage(a, global.Whitelisted, global.FeatureRBL)
+		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
 	}
 
-	stopTimer := stats.PrometheusTimer(global.PromDNS, global.FeatureRBL)
+	stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.FeatureRBL)
 
 	if stopTimer != nil {
 		defer stopTimer()

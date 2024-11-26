@@ -18,7 +18,7 @@ package core
 import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 )
@@ -27,7 +27,7 @@ import (
 func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromBackend, "lua_backend_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "lua_backend_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -38,14 +38,14 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
-		Function:          global.LuaCommandPassDB,
+		Function:          definitions.LuaCommandPassDB,
 		Service:           auth.Service,
 		Protocol:          auth.Protocol,
 		Context:           auth.Context,
 		LuaReplyChan:      luaReplyChan,
 		HTTPClientContext: auth.HTTPClientContext,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           false, // set by backend_result
 			Authenticated:       false, // set by backend_result
@@ -134,7 +134,7 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if luaBackendResult.UserFound {
-		passDBResult.Backend = global.BackendLua
+		passDBResult.Backend = definitions.BackendLua
 	}
 
 	if luaBackendResult.Attributes != nil {
@@ -154,7 +154,7 @@ func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromAccount, "lua_account_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "lua_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -163,12 +163,12 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
-		Function:          global.LuaCommandListAccounts,
+		Function:          definitions.LuaCommandListAccounts,
 		Protocol:          auth.Protocol,
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Debug:      config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Service:    auth.Service,
 			Session:    *auth.GUID,
 			ClientIP:   auth.ClientIP,
@@ -205,7 +205,7 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
-	stopTimer := stats.PrometheusTimer(global.PromStoreTOTP, "lua_store_totp_request_total")
+	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "lua_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -214,13 +214,13 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
 	luaRequest := &backend.LuaRequest{
-		Function:          global.LuaCommandAddMFAValue,
+		Function:          definitions.LuaCommandAddMFAValue,
 		Protocol:          auth.Protocol,
 		TOTPSecret:        totp.getValue(),
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.LoadableConfig.Server.Log.Level.Level() == global.LogLevelDebug,
+			Debug:      config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Service:    auth.Service,
 			Session:    *auth.GUID,
 			Username:   auth.Username,

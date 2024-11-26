@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/mitchellh/mapstructure"
@@ -183,7 +183,7 @@ func (f *File) GetLDAPConfigStartTLS() bool {
 		return false
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -199,7 +199,7 @@ func (f *File) GetLDAPConfigStartTLS() bool {
 // configuration and then checks whether TLSSkipVerify is enabled in the LDAP configuration.
 //
 // It follows the steps:
-// 1. Get the LDAP specific configuration by calling GetConfig with 'global.BackendLDAP'.
+// 1. Get the LDAP specific configuration by calling GetConfig with 'definitions.BackendLDAP'.
 // 2. If no configuration is found, it defaults to returning false.
 // 3. If a configuration is found, it checks whether it can be asserted to a LDAPConf type.
 // 4. If it is successfully asserted to a LDAPConf type, it returns the value of 'TLSSkipVerify'.
@@ -212,7 +212,7 @@ func (f *File) GetLDAPConfigTLSSkipVerify() bool {
 		return false
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -233,7 +233,7 @@ func (f *File) GetLDAPConfigSASLExternal() bool {
 		return false
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return false
 	}
@@ -251,19 +251,19 @@ func (f *File) GetLDAPConfigSASLExternal() bool {
 // it will return the default global LDAP idle pool size.
 func (f *File) GetLDAPConfigLookupIdlePoolSize() int {
 	if f == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.LookupIdlePoolSize
 	}
 
-	return global.LDAPIdlePoolSize
+	return definitions.LDAPIdlePoolSize
 }
 
 // GetLDAPConfigAuthIdlePoolSize is a method that operates on a File struct.
@@ -273,19 +273,19 @@ func (f *File) GetLDAPConfigLookupIdlePoolSize() int {
 // global LDAP idle pool size.
 func (f *File) GetLDAPConfigAuthIdlePoolSize() int {
 	if f == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.AuthIdlePoolSize
 	}
 
-	return global.LDAPIdlePoolSize
+	return definitions.LDAPIdlePoolSize
 }
 
 // GetLDAPConfigLookupPoolSize retrieves the number of connections
@@ -295,41 +295,41 @@ func (f *File) GetLDAPConfigAuthIdlePoolSize() int {
 // If not, it returns the global constant LDAPIdlePoolSize.
 func (f *File) GetLDAPConfigLookupPoolSize() int {
 	if f == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.LookupPoolSize
 	}
 
-	return global.LDAPIdlePoolSize
+	return definitions.LDAPIdlePoolSize
 }
 
 // GetLDAPConfigAuthPoolSize is a method of File struct.
 // It returns the LDAP configuration authentication pool size.
 // If the configuration for LDAP backend is nil or not assertable,
-// it returns the default global.LDAPIdlePoolSize value. Otherwise,
+// it returns the default definitions.LDAPIdlePoolSize value. Otherwise,
 // it returns the AuthPoolSize from the LDAP configuration.
 func (f *File) GetLDAPConfigAuthPoolSize() int {
 	if f == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
-		return global.LDAPIdlePoolSize
+		return definitions.LDAPIdlePoolSize
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
 		return ldapConf.AuthPoolSize
 	}
 
-	return global.LDAPIdlePoolSize
+	return definitions.LDAPIdlePoolSize
 }
 
 // GetLDAPConfigBindDN is a method on the File struct.
@@ -341,7 +341,7 @@ func (f *File) GetLDAPConfigBindDN() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -365,7 +365,7 @@ func (f *File) GetLDAPConfigBindPW() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -379,7 +379,7 @@ func (f *File) GetLDAPConfigBindPW() string {
 
 // GetLDAPConfigTLSCAFile is a method on the File struct.
 // It retrieves the TLS CA file path for the LDAP configuration.
-// It first retrieves the LDAP configuration using the GetConfig method, passing in the global.BackendLDAP value.
+// It first retrieves the LDAP configuration using the GetConfig method, passing in the definitions.BackendLDAP value.
 // If the LDAP configuration is not found or is not of type *LDAPConf, it returns an empty string.
 // Otherwise, it casts the retrieved configuration to *LDAPConf and returns the TLSCAFile field.
 // If the TLSCAFile field is empty, it also returns an empty string.
@@ -390,7 +390,7 @@ func (f *File) GetLDAPConfigTLSCAFile() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -410,7 +410,7 @@ func (f *File) GetLDAPConfigTLSClientCert() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -431,7 +431,7 @@ func (f *File) GetLDAPConfigTLSClientKey() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return ""
 	}
@@ -445,7 +445,7 @@ func (f *File) GetLDAPConfigTLSClientKey() string {
 
 // GetLDAPConfigServerURIs is a method on the File struct.
 // It returns an array of LDAP server URIs.
-// It first gets the LDAP configuration using the GetConfig method from global.BackendLDAP.
+// It first gets the LDAP configuration using the GetConfig method from definitions.BackendLDAP.
 // If no LDAP configuration is found, it returns an array with a default URI "ldap://localhost".
 // If a valid LDAP configuration is found, it returns the ServerURIs field from the LDAPConf struct.
 // If the configuration is not of type LDAPConf, it also returns an array with a default URI "ldap://localhost".
@@ -466,7 +466,7 @@ func (f *File) GetLDAPConfigServerURIs() []string {
 		return []string{"ldap://localhost"}
 	}
 
-	getConfig := f.GetConfig(global.BackendLDAP)
+	getConfig := f.GetConfig(definitions.BackendLDAP)
 	if getConfig == nil {
 		return []string{"ldap://localhost"}
 	}
@@ -489,7 +489,7 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	getSearch := f.GetProtocols(global.BackendLDAP)
+	getSearch := f.GetProtocols(definitions.BackendLDAP)
 	if getSearch == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -502,11 +502,11 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
 		}
 	}
 
-	if protocol == global.ProtoDefault {
+	if protocol == definitions.ProtoDefault {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	return f.GetLDAPSearchProtocol(global.ProtoDefault)
+	return f.GetLDAPSearchProtocol(definitions.ProtoDefault)
 }
 
 /*
@@ -515,7 +515,7 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
 
 // GetLuaScriptPath is a method on the File struct.
 // It returns the Lua script path from the LuaConf field in the File struct.
-// It first calls the GetConfig method with the global.BackendLua parameter to obtain the Lua configuration.
+// It first calls the GetConfig method with the definitions.BackendLua parameter to obtain the Lua configuration.
 // If the Lua configuration is nil, it returns an empty string.
 // If the Lua configuration is not nil, it asserts the retrieved configuration as a *LuaConf type.
 // If the assertion is successful, it returns the BackendScriptPath field from the Lua configuration.
@@ -525,7 +525,7 @@ func (f *File) GetLuaScriptPath() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLua)
+	getConfig := f.GetConfig(definitions.BackendLua)
 	if getConfig == nil {
 		return ""
 	}
@@ -544,7 +544,7 @@ func (f *File) GetLuaCallbackScriptPath() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLua)
+	getConfig := f.GetConfig(definitions.BackendLua)
 	if getConfig == nil {
 		return ""
 	}
@@ -563,7 +563,7 @@ func (f *File) GetLuaInitScriptPath() string {
 		return ""
 	}
 
-	getConfig := f.GetConfig(global.BackendLua)
+	getConfig := f.GetConfig(definitions.BackendLua)
 	if getConfig == nil {
 		return ""
 	}
@@ -582,19 +582,19 @@ func (f *File) GetLuaInitScriptPath() string {
 // If the LuaConf struct is not of type *LuaConf, it also returns the global Lua package path.
 func (f *File) GetLuaPackagePath() string {
 	if f == nil {
-		return global.LuaPackagePath
+		return definitions.LuaPackagePath
 	}
 
-	getConfig := f.GetConfig(global.BackendLua)
+	getConfig := f.GetConfig(definitions.BackendLua)
 	if getConfig == nil {
-		return global.LuaPackagePath
+		return definitions.LuaPackagePath
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
 		return luaConf.PackagePath
 	}
 
-	return global.LuaPackagePath
+	return definitions.LuaPackagePath
 }
 
 // GetLuaSearchProtocol is a method on the File struct.
@@ -610,7 +610,7 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	getSearch := f.GetProtocols(global.BackendLua)
+	getSearch := f.GetProtocols(definitions.BackendLua)
 	if getSearch == nil {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -623,11 +623,11 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 		}
 	}
 
-	if protocol == global.ProtoDefault {
+	if protocol == definitions.ProtoDefault {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	return f.GetLuaSearchProtocol(global.ProtoDefault)
+	return f.GetLuaSearchProtocol(definitions.ProtoDefault)
 }
 
 // HaveLuaFilters is a method on the File struct.
@@ -684,7 +684,7 @@ func (f *File) HaveLuaCallback() bool {
 	}
 
 	if f.HaveLua() {
-		getConfig := f.GetConfig(global.BackendLua)
+		getConfig := f.GetConfig(definitions.BackendLua)
 		if getConfig == nil {
 			return false
 		}
@@ -697,7 +697,7 @@ func (f *File) HaveLuaCallback() bool {
 
 // HaveLuaInit checks if the Lua initialization script path is set in the configuration.
 // It first confirms that the File instance supports Lua by invoking HaveLua method.
-// Then, it retrieves the Lua configuration using GetConfig with the global.BackendLua constant.
+// Then, it retrieves the Lua configuration using GetConfig with the definitions.BackendLua constant.
 // If the retrieved configuration is of type *LuaConf and the InitScriptPath is not empty, it returns true.
 // Otherwise, it returns false.
 func (f *File) HaveLuaInit() bool {
@@ -706,7 +706,7 @@ func (f *File) HaveLuaInit() bool {
 	}
 
 	if f.HaveLua() {
-		getConfig := f.GetConfig(global.BackendLua)
+		getConfig := f.GetConfig(definitions.BackendLua)
 		if getConfig == nil {
 			return false
 		}
@@ -734,7 +734,7 @@ func (f *File) HaveLDAPBackend() bool {
 	}
 
 	for _, backendType := range f.Server.Backends {
-		if backendType.Get() == global.BackendLDAP {
+		if backendType.Get() == definitions.BackendLDAP {
 			return true
 		}
 	}
@@ -849,19 +849,19 @@ func (f *File) HaveServer() bool {
 // If an SQLSection is found for the SQL backend, it adds it to the getterMap.
 // If a LuaSection is found for the Lua backend, it adds it to the getterMap.
 // Finally, it returns the getterMap.
-func (f *File) RetrieveGetterMap() map[global.Backend]GetterHandler {
+func (f *File) RetrieveGetterMap() map[definitions.Backend]GetterHandler {
 	if f == nil {
 		return nil
 	}
 
-	getterMap := make(map[global.Backend]GetterHandler, 3)
+	getterMap := make(map[definitions.Backend]GetterHandler, 3)
 
-	if ldapSection, ok := f.GetSection(global.BackendLDAP).(*LDAPSection); ok {
-		getterMap[global.BackendLDAP] = ldapSection
+	if ldapSection, ok := f.GetSection(definitions.BackendLDAP).(*LDAPSection); ok {
+		getterMap[definitions.BackendLDAP] = ldapSection
 	}
 
-	if luaSection, ok := f.GetSection(global.BackendLua).(*LuaSection); ok {
-		getterMap[global.BackendLua] = luaSection
+	if luaSection, ok := f.GetSection(definitions.BackendLua).(*LuaSection); ok {
+		getterMap[definitions.BackendLua] = luaSection
 	}
 
 	return getterMap
@@ -872,7 +872,7 @@ func (f *File) RetrieveGetterMap() map[global.Backend]GetterHandler {
 // If the backend is found, it retrieves the configuration handler associated with it
 // and returns the result of calling the GetterHandler() method on the configuration handler.
 // If the configuration handler is not found, it returns nil.
-func (f *File) GetConfig(backend global.Backend) any {
+func (f *File) GetConfig(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
@@ -895,7 +895,7 @@ func (f *File) GetConfig(backend global.Backend) any {
 // If the backend is found, it retrieves the protocol handler associated with it
 // and returns the result of calling the ProtoHandler() method on the protocol handler.
 // If the protocol handler is not found, it returns nil.
-func (f *File) GetProtocols(backend global.Backend) any {
+func (f *File) GetProtocols(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
@@ -914,21 +914,21 @@ func (f *File) GetProtocols(backend global.Backend) any {
 }
 
 // GetSection is a method on the File struct.
-// It takes a backend of type global.Backend as parameter and returns the corresponding section.
+// It takes a backend of type definitions.Backend as parameter and returns the corresponding section.
 // The method checks the value of the backend parameter and returns the appropriate section.
-// If the backend is global.BackendLDAP, it returns f.LDAP.
+// If the backend is definitions.BackendLDAP, it returns f.LDAP.
 // If the backend is global.BackendMySQL, global.BackendPostgres, or global.BackendSQL, it returns f.SQL.
-// If the backend is global.BackendLua, it returns f.Lua.
+// If the backend is definitions.BackendLua, it returns f.Lua.
 // For any other value of the backend parameter, it returns nil.
-func (f *File) GetSection(backend global.Backend) any {
+func (f *File) GetSection(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
 
 	switch backend {
-	case global.BackendLDAP:
+	case definitions.BackendLDAP:
 		return f.LDAP
-	case global.BackendLua:
+	case definitions.BackendLua:
 		return f.Lua
 	default:
 		return nil
@@ -965,7 +965,7 @@ func (f *File) GetAllProtocols() []string {
 
 	protocols := NewStringSet()
 
-	if ldapProtocols := f.GetProtocols(global.BackendLDAP); ldapProtocols != nil {
+	if ldapProtocols := f.GetProtocols(definitions.BackendLDAP); ldapProtocols != nil {
 		for index := range ldapProtocols.([]LDAPSearchProtocol) {
 			for protoIndex := range LoadableConfig.LDAP.Search[index].Protocols {
 				protocols.Set(LoadableConfig.LDAP.Search[index].Protocols[protoIndex])
@@ -973,7 +973,7 @@ func (f *File) GetAllProtocols() []string {
 		}
 	}
 
-	if luaProtocols := f.GetProtocols(global.BackendLua); luaProtocols != nil {
+	if luaProtocols := f.GetProtocols(definitions.BackendLua); luaProtocols != nil {
 		for index := range luaProtocols.([]LuaSearchProtocol) {
 			for protoIndex := range LoadableConfig.Lua.Search[index].Protocols {
 				protocols.Set(LoadableConfig.Lua.Search[index].Protocols[protoIndex])
@@ -1285,19 +1285,19 @@ func (f *File) validateRBLs() error {
 	if f.RBLs != nil {
 		if f.RBLs.Threshold > math.MaxInt {
 			level.Warn(log.Logger).Log(
-				global.LogKeyMsg, "Please use a smaller RBL threshold!",
+				definitions.LogKeyMsg, "Please use a smaller RBL threshold!",
 				"rbl_threshold", f.RBLs.Threshold)
 		}
 
 		for _, rbl := range f.RBLs.Lists {
 			if rbl.Weight > math.MaxUint8 {
 				level.Warn(log.Logger).Log(
-					global.LogKeyMsg, "Please use a lower RBL weight!",
+					definitions.LogKeyMsg, "Please use a lower RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			} else if rbl.Weight < -math.MaxUint8 {
 				level.Warn(log.Logger).Log(
-					global.LogKeyMsg, "Please use a higher RBL weight!",
+					definitions.LogKeyMsg, "Please use a higher RBL weight!",
 					"rbl_threshold", rbl.Weight,
 					"rbl", rbl.RBL)
 			}
@@ -1398,23 +1398,23 @@ func (f *File) validateSecrets() error {
 
 // validatePrometheusLabels is a method on the File struct that validates the Prometheus labels used in the server's Prometheus timer configuration.
 // If the Prometheus timer is enabled, it checks that each label is one of the predefined constants:
-// - global.PromAction
-// - global.PromAccount
-// - global.PromBackend
-// - global.PromBruteForce
-// - global.PromFeature
-// - global.PromFilter
-// - global.PromPostAction
-// - global.PromRequest
-// - global.PromStoreTOTP
-// - global.PromDNS
+// - definitions.PromAction
+// - definitions.PromAccount
+// - definitions.PromBackend
+// - definitions.PromBruteForce
+// - definitions.PromFeature
+// - definitions.PromFilter
+// - definitions.PromPostAction
+// - definitions.PromRequest
+// - definitions.PromStoreTOTP
+// - definitions.PromDNS
 // If any label is unknown, it returns an error with a message indicating the unknown label.
 // If the Prometheus timer is not enabled, it returns nil.
 func (f *File) validatePrometheusLabels() error {
 	if f.Server.PrometheusTimer.Enabled {
 		for _, label := range f.Server.PrometheusTimer.Labels {
 			switch label {
-			case global.PromAction, global.PromAccount, global.PromBackend, global.PromBruteForce, global.PromFeature, global.PromFilter, global.PromPostAction, global.PromRequest, global.PromStoreTOTP, global.PromDNS:
+			case definitions.PromAction, definitions.PromAccount, definitions.PromBackend, definitions.PromBruteForce, definitions.PromFeature, definitions.PromFilter, definitions.PromPostAction, definitions.PromRequest, definitions.PromStoreTOTP, definitions.PromDNS:
 				continue
 			}
 
@@ -1450,7 +1450,7 @@ func (f *File) LDAPHavePoolOnly() bool {
 func (f *File) validatePassDBBackends() error {
 	for _, backend := range f.Server.Backends {
 		switch backend.Get() {
-		case global.BackendLDAP:
+		case definitions.BackendLDAP:
 			if f.LDAP == nil {
 				return errors.ErrNoLDAPSection
 			}
@@ -1476,7 +1476,7 @@ func (f *File) validatePassDBBackends() error {
 			}
 
 			if f.GetLDAPConfigLookupIdlePoolSize() < 1 {
-				f.LDAP.Config.LookupIdlePoolSize = global.LDAPIdlePoolSize
+				f.LDAP.Config.LookupIdlePoolSize = definitions.LDAPIdlePoolSize
 			}
 
 			if f.GetLDAPConfigLookupPoolSize() < f.GetLDAPConfigLookupIdlePoolSize() {
@@ -1488,19 +1488,19 @@ func (f *File) validatePassDBBackends() error {
 			}
 
 			if f.GetLDAPConfigAuthIdlePoolSize() < 1 {
-				f.LDAP.Config.AuthIdlePoolSize = global.LDAPIdlePoolSize
+				f.LDAP.Config.AuthIdlePoolSize = definitions.LDAPIdlePoolSize
 			}
 
 			if f.GetLDAPConfigAuthPoolSize() < f.GetLDAPConfigAuthIdlePoolSize() {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
 			}
-		case global.BackendLua:
+		case definitions.BackendLua:
 			if f.GetLuaScriptPath() == "" {
 				return errors.ErrNoLuaScriptPath
 			}
-		case global.BackendUnknown:
-		case global.BackendCache:
-		case global.BackendLocalCache:
+		case definitions.BackendUnknown:
+		case definitions.BackendCache:
+		case definitions.BackendLocalCache:
 		}
 	}
 
@@ -1553,12 +1553,12 @@ func checkAddress(address string) error {
 }
 
 // validateAddress is a method on the File struct.
-// It validates the Server.Address field, if it is empty it assigns global.HTTPAddress to it.
+// It validates the Server.Address field, if it is empty it assigns definitions.HTTPAddress to it.
 // It then checks if the Server.Address is a valid address by using net.SplitHostPort function.
 // It returns any error that occurs during the validation process.
 func (f *File) validateAddress() error {
 	if f.Server.Address == "" {
-		f.Server.Address = global.HTTPAddress
+		f.Server.Address = definitions.HTTPAddress
 	}
 
 	return checkAddress(f.Server.Address)
@@ -1635,11 +1635,11 @@ func (f *File) validateDNSResolver() error {
 
 // validateInstanceName is a method on the File struct.
 // It checks if the Server's InstanceName field is empty.
-// If it is empty, it sets the InstanceName to the global.InstanceName constant value.
+// If it is empty, it sets the InstanceName to the definitions.InstanceName constant value.
 // It returns an error if any error occurred during the validation process.
 func (f *File) validateInstanceName() error {
 	if f.Server.InstanceName == "" {
-		f.Server.InstanceName = global.InstanceName
+		f.Server.InstanceName = definitions.InstanceName
 	}
 
 	return nil
@@ -1652,7 +1652,7 @@ func (f *File) validateInstanceName() error {
 // This method does not return any errors.
 func (f *File) validateDNSTimeout() error {
 	if f.Server.DNS.Timeout == 0 {
-		f.Server.DNS.Timeout = global.DNSResolveTimeout
+		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
 	}
 
 	// Not less than 1 second
@@ -1682,7 +1682,7 @@ func (f *File) validateRedisMasterAddress() error {
 	}
 
 	if f.Server.Redis.Master.Address == "" {
-		f.Server.Redis.Master.Address = fmt.Sprintf("%s:%d", global.RedisAddress, global.RedisPort)
+		f.Server.Redis.Master.Address = fmt.Sprintf("%s:%d", definitions.RedisAddress, definitions.RedisPort)
 	}
 
 	return checkAddress(f.Server.Redis.Master.Address)
@@ -1741,12 +1741,12 @@ func (f *File) validateRedisPoolSize() error {
 
 // validateRedisPosCacheTTL is a method on the File struct.
 // It checks if the RedisPosCacheTTL field in the Server.Redis struct is set to 0.
-// If it is, it assigns the value of global.RedisPosCacheTTL to it before returning.
+// If it is, it assigns the value of definitions.RedisPosCacheTTL to it before returning.
 // This method ensures that a default value is set for RedisPosCacheTTL if it was not explicitly provided.
 // The function does not return any errors.
 func (f *File) validateRedisPosCacheTTL() error {
 	if f.Server.Redis.PosCacheTTL == 0 {
-		f.Server.Redis.PosCacheTTL = global.RedisPosCacheTTL
+		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL
 	}
 
 	return nil
@@ -1754,11 +1754,11 @@ func (f *File) validateRedisPosCacheTTL() error {
 
 // validateRedisNegCacheTTL is a method on the File struct.
 // It validates the RedisNegCacheTTL field of the Server.Redis struct.
-// If the RedisNegCacheTTL field is 0, it sets it to the global.RedisNegCacheTTL constant.
+// If the RedisNegCacheTTL field is 0, it sets it to the definitions.RedisNegCacheTTL constant.
 // Returns nil error.
 func (f *File) validateRedisNegCacheTTL() error {
 	if f.Server.Redis.NegCacheTTL == 0 {
-		f.Server.Redis.NegCacheTTL = global.RedisNegCacheTTL
+		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL
 	}
 
 	return nil
@@ -1827,11 +1827,11 @@ func (f *File) validateHTTPRequestHeaders() error {
 // validateMaxConnections ensures that the MaxConcurrentRequests parameter is set to a valid value.
 func (f *File) validateMaxConnections() error {
 	if f.Server.MaxConcurrentRequests == 0 {
-		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
+		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
 
 	if f.Server.MaxConcurrentRequests < 0 {
-		f.Server.MaxConcurrentRequests = global.MaxConcurrentRequests
+		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
 
 	return nil
@@ -1840,7 +1840,7 @@ func (f *File) validateMaxConnections() error {
 // validateMaxPasswordHistoryEntries sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
 func (f *File) validateMaxPasswordHistoryEntries() error {
 	if f.Server.MaxPasswordHistoryEntries <= 0 {
-		f.Server.MaxPasswordHistoryEntries = global.MaxPasswordHistoryEntries
+		f.Server.MaxPasswordHistoryEntries = definitions.MaxPasswordHistoryEntries
 	}
 
 	return nil
@@ -2274,7 +2274,7 @@ func ReloadConfigFile() (err error) {
 	// Replace existing configuration
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&LoadableConfig)), unsafe.Pointer(newCfgReload))
 
-	level.Info(log.Logger).Log(global.LogKeyMsg, "Reloading configuration file finished")
+	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Reloading configuration file finished")
 
 	return
 }

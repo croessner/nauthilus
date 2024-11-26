@@ -24,7 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
@@ -62,14 +62,14 @@ type LuaScriptAction struct {
 	ScriptName string
 
 	// LuaAction is the type of Lua action.
-	LuaAction global.LuaAction
+	LuaAction definitions.LuaAction
 }
 
 // Action contains a subset of the Authentication structure.
 // Action represents all the information related to a user's action in the system.
 type Action struct {
 	// LuaAction stores the user's desired action in Lua format.
-	LuaAction global.LuaAction
+	LuaAction definitions.LuaAction
 
 	// Context represents the shared Lua context which is used by all Lua states accross the request.
 	*lualib.Context
@@ -109,9 +109,9 @@ type Worker struct {
 func NewWorker() *Worker {
 	resultMap := make(map[int]string, 2)
 
-	resultMap[0] = global.LuaSuccess
-	resultMap[1] = global.LuaFail
-	RequestChan = make(chan *Action, global.MaxChannelSize)
+	resultMap[0] = definitions.LuaSuccess
+	resultMap[1] = definitions.LuaFail
+	RequestChan = make(chan *Action, definitions.MaxChannelSize)
 
 	return &Worker{
 		resultMap: resultMap,
@@ -188,7 +188,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 
 	luaAction.LuaAction = getLuaActionType(actionType)
 
-	if luaAction.LuaAction != global.LuaActionNone {
+	if luaAction.LuaAction != definitions.LuaActionNone {
 		aw.loadScript(luaAction, scriptName, scriptPath)
 	}
 }
@@ -207,7 +207,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return
 	}
@@ -266,13 +266,13 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 // This function does not return any value.
 func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
 	switch modName {
-	case global.LuaModContext:
+	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
-	case global.LuaModHTTPRequest:
+	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(httpRequest))
-	case global.LuaModLDAP:
+	case definitions.LuaModLDAP:
 		if config.LoadableConfig.HaveLDAPBackend() {
-			L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
+			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
@@ -310,8 +310,8 @@ func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modNa
 func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 	level.Info(log.Logger).Log(
 		append([]any{
-			global.LogKeyGUID, aw.luaActionRequest.Session,
-			global.LogKeyMsg, "Lua actions finished",
+			definitions.LogKeyGUID, aw.luaActionRequest.Session,
+			definitions.LogKeyMsg, "Lua actions finished",
 		}, toLoggable(logs)...)...,
 	)
 }
@@ -369,15 +369,15 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	if config.EnvConfig.DevMode {
-		util.DebugModule(global.DbgAction, global.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
+		util.DebugModule(definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 
-	globals.RawSet(lua.LString(global.LuaActionResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(global.LuaActionResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(definitions.LuaActionResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(definitions.LuaActionResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
 
-	L.SetGlobal(global.LuaDefaultTable, globals)
+	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
 // setupRequest creates a Lua table representing the request data.
@@ -412,7 +412,7 @@ func getTaskName(action *LuaScriptAction) string {
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) (result int) {
 	var err error
 
-	stopTimer := stats.PrometheusTimer(global.PromAction, getTaskName(aw.actionScripts[index]))
+	stopTimer := stats.PrometheusTimer(definitions.PromAction, getTaskName(aw.actionScripts[index]))
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -436,7 +436,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	L.Pop(1)
 
 	util.DebugModule(
-		global.DbgAction,
+		definitions.DbgAction,
 		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 	)
 
@@ -458,7 +458,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 	}
 
 	if err := L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(global.LuaFnCallAction),
+		Fn:      L.GetGlobal(definitions.LuaFnCallAction),
 		NRet:    1,
 		Protect: true,
 	}, request); err != nil {
@@ -474,9 +474,9 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
 	level.Error(log.Logger).Log(
 		append([]any{
-			global.LogKeyGUID, aw.luaActionRequest.Session,
+			definitions.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,
-			global.LogKeyMsg, err,
+			definitions.LogKeyMsg, err,
 		}, toLoggable(logs)...)...,
 	)
 }
@@ -517,25 +517,25 @@ func toLoggable(logs *lualib.CustomLogKeyValue) []any {
 	return nil
 }
 
-// getLuaActionType maps a given actionName string to its corresponding global.LuaAction constant.
+// getLuaActionType maps a given actionName string to its corresponding definitions.LuaAction constant.
 // If actionName matches any of the predefined names, the corresponding constant is returned.
-// Otherwise, global.LuaActionNone is returned.
-func getLuaActionType(actionName string) global.LuaAction {
+// Otherwise, definitions.LuaActionNone is returned.
+func getLuaActionType(actionName string) definitions.LuaAction {
 	switch actionName {
-	case global.LuaActionBruteForceName:
-		return global.LuaActionBruteForce
-	case global.LuaActionRBLName:
-		return global.LuaActionRBL
-	case global.LuaActionTLSName:
-		return global.LuaActionTLS
-	case global.LuaActionRelayDomainsName:
-		return global.LuaActionRelayDomains
-	case global.LuaActionLuaName:
-		return global.LuaActionLua
-	case global.LuaActionPostName:
-		return global.LuaActionPost
+	case definitions.LuaActionBruteForceName:
+		return definitions.LuaActionBruteForce
+	case definitions.LuaActionRBLName:
+		return definitions.LuaActionRBL
+	case definitions.LuaActionTLSName:
+		return definitions.LuaActionTLS
+	case definitions.LuaActionRelayDomainsName:
+		return definitions.LuaActionRelayDomains
+	case definitions.LuaActionLuaName:
+		return definitions.LuaActionLua
+	case definitions.LuaActionPostName:
+		return definitions.LuaActionPost
 	default:
-		return global.LuaActionNone
+		return definitions.LuaActionNone
 	}
 }
 
@@ -550,18 +550,18 @@ func getLuaActionType(actionName string) global.LuaAction {
 // If the LuaAction is any other value, it returns an empty string.
 func getLuaActionName(action *LuaScriptAction) string {
 	switch action.LuaAction {
-	case global.LuaActionBruteForce:
-		return global.LuaActionBruteForceName
-	case global.LuaActionRBL:
-		return global.LuaActionRBLName
-	case global.LuaActionTLS:
-		return global.LuaActionTLSName
-	case global.LuaActionRelayDomains:
-		return global.LuaActionRelayDomainsName
-	case global.LuaActionLua:
-		return global.LuaActionLuaName
-	case global.LuaActionPost:
-		return global.LuaActionPostName
+	case definitions.LuaActionBruteForce:
+		return definitions.LuaActionBruteForceName
+	case definitions.LuaActionRBL:
+		return definitions.LuaActionRBLName
+	case definitions.LuaActionTLS:
+		return definitions.LuaActionTLSName
+	case definitions.LuaActionRelayDomains:
+		return definitions.LuaActionRelayDomainsName
+	case definitions.LuaActionLua:
+		return definitions.LuaActionLuaName
+	case definitions.LuaActionPost:
+		return definitions.LuaActionPostName
 	default:
 		return "-"
 	}

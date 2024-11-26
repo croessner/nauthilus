@@ -19,7 +19,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -34,7 +34,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
 		key := L.CheckString(2)
-		valueType := global.TypeString
+		valueType := definitions.TypeString
 
 		if L.GetTop() == 3 {
 			valueType = L.CheckString(3)

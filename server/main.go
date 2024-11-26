@@ -32,8 +32,8 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
@@ -191,7 +191,7 @@ func setTimeZone() {
 	if tz := os.Getenv("TZ"); tz != "" {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
 			level.Error(log.Logger).Log(
-				global.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
+				definitions.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
 			)
 		}
 	}
@@ -222,11 +222,11 @@ func setupLuaScripts() error {
 }
 
 // PreCompileFeatures pre-compiles the features for the application based on the configuration.
-// If the application is configured without the Lua features (global.FeatureLua), it performs no operation and returns nil.
+// If the application is configured without the Lua features (definitions.FeatureLua), it performs no operation and returns nil.
 // If the application is configured with the Lua features, it attempts to pre-compile the Lua features.
 // If pre-compilation of the Lua features encounters any errors, it returns the error. Otherwise, it returns nil.
 func PreCompileFeatures() error {
-	if !config.LoadableConfig.HasFeature(global.FeatureLua) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureLua) {
 		return nil
 	}
 
@@ -332,7 +332,7 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 
 	sig := <-sigsTerminate
 
-	level.Info(log.Logger).Log(global.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
+	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Shutting down Nauthilus", "signal", sig)
 
 	cancel()
 
@@ -352,7 +352,7 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 	// Sync some Prometheus data to Redis
 	core.SaveStatsToRedis(ctx)
 
-	level.Debug(log.Logger).Log(global.LogKeyMsg, "Shutdown complete")
+	level.Debug(log.Logger).Log(definitions.LogKeyMsg, "Shutdown complete")
 
 	closeChannels()
 
@@ -413,7 +413,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 // It will log a warning if an unrecognized backend is given.
 func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
-	case global.BackendLDAP:
+	case definitions.BackendLDAP:
 		<-backend.LDAPEndChan
 
 		close(backend.LDAPEndChan)
@@ -425,14 +425,14 @@ func handleBackend(passDB *config.Backend) {
 			close(backend.LDAPAuthEndChan)
 			close(backend.LDAPAuthRequestChan)
 		}
-	case global.BackendLua:
+	case definitions.BackendLua:
 		<-backend.LuaMainWorkerEndChan
 
 		close(backend.LuaMainWorkerEndChan)
 		close(backend.LuaRequestChan)
-	case global.BackendCache:
+	case definitions.BackendCache:
 	default:
-		level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
 	}
 }
 
@@ -535,7 +535,7 @@ func startLuaWorker(store *contextStore) {
 // and then starts the HTTP server again with the given context and contextStore.
 func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal) {
 	level.Info(log.Logger).Log(
-		global.LogKeyMsg, "Restarting Nauthilus", "signal", sig,
+		definitions.LogKeyMsg, "Restarting Nauthilus", "signal", sig,
 	)
 
 	stopContext(store.server)
@@ -575,18 +575,18 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 //	 actionWorkers: A slice of action workers that are stopped and restarted during the process.
 func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
 	level.Info(log.Logger).Log(
-		global.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
+		definitions.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
-		case global.BackendLDAP:
+		case definitions.BackendLDAP:
 			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
-		case global.BackendLua:
+		case definitions.BackendLua:
 			handleLuaBackend(store.lua)
-		case global.BackendCache:
+		case definitions.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
+			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
 		}
 	}
 
@@ -595,7 +595,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(log.Logger).Log(
-			global.LogKeyMsg, err,
+			definitions.LogKeyMsg, err,
 		)
 	} else {
 		log.SetupLogging(
@@ -610,8 +610,8 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	if err := setupLuaScripts(); err != nil {
 		level.Error(log.Logger).Log(
-			global.LogKeyMsg, "Unable to setup Lua scripts",
-			global.LogKeyMsg, err,
+			definitions.LogKeyMsg, "Unable to setup Lua scripts",
+			definitions.LogKeyMsg, err,
 		)
 	}
 
@@ -619,20 +619,20 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
-		case global.BackendLDAP:
+		case definitions.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
 			if !config.LoadableConfig.LDAPHavePoolOnly() {
 				store.ldapAuth = newContextTuple(ctx)
 			}
 
 			startLDAPWorkers(store)
-		case global.BackendLua:
+		case definitions.BackendLua:
 			store.lua = newContextTuple(ctx)
 
 			startLuaWorker(store)
-		case global.BackendCache:
+		case definitions.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend")
+			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
 		}
 	}
 
@@ -645,12 +645,12 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	stats.ReloadMutex.Unlock()
 
 	level.Debug(log.Logger).Log(
-		global.LogKeyMsg, "Reload complete",
+		definitions.LogKeyMsg, "Reload complete",
 	)
 }
 
 // initializeActionWorkers creates and initializes a slice of action workers.
-// It creates `global.MaxActionWorkers` number of workers, each worker is created using `action.NewWorker()`.
+// It creates `definitions.MaxActionWorkers` number of workers, each worker is created using `action.NewWorker()`.
 // The workers are then appended to the `workers` slice.
 // Finally, the `workers` slice is returned.
 func initializeActionWorkers() []*action.Worker {
@@ -668,20 +668,20 @@ func initializeActionWorkers() []*action.Worker {
 // It starts the action workers by calling the `startActionWorker` function with the appropriate parameters.
 // Then, for each backendType in the `config.LoadableConfig.Server.Backends` slice, it performs the necessary setup based on the backend type.
 // The setup depends on the passDB's backend type and calls corresponding setup functions, such as `setupLDAPWorker`, `setupSQLWorker`, or `setupLuaWorker`.
-// If the passDB's backend is `global.BackendCache`, no setup is performed.
+// If the passDB's backend is `definitions.BackendCache`, no setup is performed.
 // If the passDB's backend is unknown, a warning log is generated for an unknown backend.
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
 	for _, backendType := range config.LoadableConfig.Server.Backends {
 		switch backendType.Get() {
-		case global.BackendLDAP:
+		case definitions.BackendLDAP:
 			setupLDAPWorker(store, ctx)
-		case global.BackendLua:
+		case definitions.BackendLua:
 			setupLuaWorker(store, ctx)
-		case global.BackendCache:
+		case definitions.BackendCache:
 		default:
-			level.Warn(log.Logger).Log(global.LogKeyMsg, "Unknown backend", "backend")
+			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
 		}
 	}
 }
@@ -720,7 +720,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 // The context store is modified within the function where it initializes the LuaContext based on the provided context.
 // The Lua worker is then started with the initialized context.
 func setupLuaWorker(store *contextStore, ctx context.Context) {
-	backend.LuaRequestChan = make(chan *backend.LuaRequest, global.MaxChannelSize)
+	backend.LuaRequestChan = make(chan *backend.LuaRequest, definitions.MaxChannelSize)
 	backend.LuaMainWorkerEndChan = make(chan backend.Done)
 
 	store.lua = newContextTuple(ctx)
@@ -774,7 +774,7 @@ func setupRedis(ctx context.Context) {
 			return
 		}
 
-		level.Warn(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
 
 		time.Sleep(retryInterval)
 	}
@@ -790,7 +790,7 @@ func setupRedis(ctx context.Context) {
 // Any signal sent to close the server is sent through the HTTPEndChan channel of type Done.
 func startHTTPServer(ctx context.Context, store *contextStore) {
 	level.Info(log.Logger).Log(
-		global.LogKeyMsg, "Starting Nauthilus HTTP server",
+		definitions.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"version", version,
 	)
 
@@ -853,11 +853,11 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 //	err: the error that has occurred
 func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
-		global.LogKeyMsg, err,
-		global.LogKeyMsg, "Server down",
-		global.LogKeyProtocol, server.Protocol,
-		global.LogKeyBackendServerIP, server.IP,
-		global.LogKeyBackendServerPort, server.Port,
+		definitions.LogKeyMsg, err,
+		definitions.LogKeyMsg, "Server down",
+		definitions.LogKeyProtocol, server.Protocol,
+		definitions.LogKeyBackendServerIP, server.IP,
+		definitions.LogKeyBackendServerPort, server.Port,
 	)
 }
 
@@ -869,11 +869,11 @@ func logBackendServerError(server *config.BackendServer, err error) {
 //	logBackendServerDebug(server)
 func logBackendServerDebug(server *config.BackendServer) {
 	util.DebugModule(
-		global.DbgFeature,
-		global.LogKeyMsg, "Server alive",
-		global.LogKeyProtocol, server.Protocol,
-		global.LogKeyBackendServerIP, server.IP,
-		global.LogKeyBackendServerPort, server.Port,
+		definitions.DbgFeature,
+		definitions.LogKeyMsg, "Server alive",
+		definitions.LogKeyProtocol, server.Protocol,
+		definitions.LogKeyBackendServerIP, server.IP,
+		definitions.LogKeyBackendServerPort, server.Port,
 	)
 }
 
@@ -979,7 +979,7 @@ func compareBackendServers(servers []*config.BackendServer, servers2 []*config.B
 // If there are no backend servers or the feature is not enabled, it returns an error.
 // It returns a list with backend servers or an error.
 func monitoringConfig() ([]*config.BackendServer, error) {
-	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		return nil, errors.ErrFeatureBackendServersMonitoringDisabled
 	}
 
@@ -1047,12 +1047,12 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 // not enabled, it logs an informational message. If there are no
 // configured backend servers for monitoring, it logs an error message.
 func handleMonitoringError(err error) {
-	if !config.LoadableConfig.HasFeature(global.FeatureBackendServersMonitoring) {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if stderrors.Is(err, errors.ErrFeatureBackendServersMonitoringDisabled) {
-			level.Info(log.Logger).Log(global.LogKeyMsg, "Monitoring feature is not enabled")
+			level.Info(log.Logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
 		}
 	} else if stderrors.Is(err, errors.ErrMonitoringBackendServersEmpty) {
-		level.Error(log.Logger).Log(global.LogKeyMsg, "Monitoring backend servers are not configured")
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Monitoring backend servers are not configured")
 	}
 }
 
@@ -1068,7 +1068,7 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, monitoringTi
 	(*monitoringTicker).Stop()
 	store.backendServerMonitoring.cancel()
 
-	*monitoringTicker = time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	*monitoringTicker = time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
 
 	go runBackendServerMonitoring(ctx, store, *monitoringTicker)
 }
@@ -1084,23 +1084,23 @@ func enableBlockProfile() {
 
 func postEnvironmentDebug() {
 	if config.LoadableConfig.RBLs != nil {
-		level.Debug(log.Logger).Log(global.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
+		level.Debug(log.Logger).Log(definitions.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
 	}
 
 	if config.LoadableConfig.ClearTextList != nil {
-		level.Debug(log.Logger).Log(global.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
+		level.Debug(log.Logger).Log(definitions.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
 	}
 
 	if config.LoadableConfig.RelayDomains != nil {
-		level.Debug(log.Logger).Log(global.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
+		level.Debug(log.Logger).Log(definitions.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
 	}
 
 	if config.LoadableConfig.BackendServerMonitoring != nil {
-		level.Debug(log.Logger).Log(global.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
+		level.Debug(log.Logger).Log(definitions.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
 	}
 
 	if config.LoadableConfig.BruteForce != nil {
-		level.Debug(log.Logger).Log(global.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
+		level.Debug(log.Logger).Log(definitions.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
 	}
 
 	if config.LoadableConfig.Oauth2 != nil {
@@ -1195,8 +1195,8 @@ func main() {
 
 	enableBlockProfile()
 
-	statsTicker := time.NewTicker(global.StatsDelay * time.Second)
-	monitoringTicker := time.NewTicker(global.BackendServerMonitoringDelay * time.Second)
+	statsTicker := time.NewTicker(definitions.StatsDelay * time.Second)
+	monitoringTicker := time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
 	store := newContextStore()
 
 	store.action = newContextTuple(ctx)

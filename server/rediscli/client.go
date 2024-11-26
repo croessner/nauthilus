@@ -19,7 +19,7 @@ import (
 	"crypto/tls"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
@@ -37,7 +37,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 		if tlsCfg.Cert != "" && tlsCfg.Key != "" {
 			cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
 			if err != nil {
-				level.Error(log.Logger).Log(global.LogKeyInstance, config.LoadableConfig.Server.InstanceName, global.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.LoadableConfig.Server.InstanceName, definitions.LogKeyMsg, err)
 
 				return nil
 			}

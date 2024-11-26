@@ -31,8 +31,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
@@ -106,7 +106,7 @@ func NewLimitCounter(maxConnections int32) *LimitCounter {
 func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if atomic.LoadInt32(&lc.CurrentConnections) >= lc.MaxConnections {
-			ctx.JSON(http.StatusTooManyRequests, gin.H{global.LogKeyMsg: "Too many requests"})
+			ctx.JSON(http.StatusTooManyRequests, gin.H{definitions.LogKeyMsg: "Too many requests"})
 
 			ctx.Abort()
 
@@ -170,7 +170,7 @@ func requestHandler(ctx *gin.Context) {
 		healthCheck(ctx)
 	} else {
 		switch ctx.Param("category") {
-		case global.CatAuth:
+		case definitions.CatAuth:
 			auth := NewAuthState(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
@@ -185,20 +185,20 @@ func requestHandler(ctx *gin.Context) {
 			}
 
 			switch ctx.Param("service") {
-			case global.ServBasic, global.ServNginx, global.ServHeader, global.ServJSON:
+			case definitions.ServBasic, definitions.ServNginx, definitions.ServHeader, definitions.ServJSON:
 				auth.handleAuthentication(ctx)
-			case global.ServSaslauthd:
+			case definitions.ServSaslauthd:
 				auth.handleSASLAuthdAuthentication(ctx)
-			case global.ServCallback:
+			case definitions.ServCallback:
 				auth.handleCallback(ctx)
 				ctx.Status(auth.StatusCodeOK)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
 
-		case global.CatBruteForce:
+		case definitions.CatBruteForce:
 			switch ctx.Param("service") {
-			case global.ServList:
+			case definitions.ServList:
 				hanldeBruteForceList(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
@@ -225,15 +225,15 @@ func requestHandler(ctx *gin.Context) {
 func httpCacheHandler(ctx *gin.Context) {
 	//nolint:gocritic // Prepared for future commands
 	switch ctx.Param("category") {
-	case global.CatCache:
+	case definitions.CatCache:
 		switch ctx.Param("service") {
-		case global.ServFlush:
+		case definitions.ServFlush:
 			handleUserFlush(ctx)
 		}
 
-	case global.CatBruteForce:
+	case definitions.CatBruteForce:
 		switch ctx.Param("service") {
-		case global.ServFlush:
+		case definitions.ServFlush:
 			handleBruteForceRuleFlush(ctx)
 		}
 	}
@@ -246,10 +246,10 @@ func httpCacheHandler(ctx *gin.Context) {
 // This middleware function should be used in the setup of routing to ensure the security of the endpoint it is applied to.
 func protectEndpointMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		guid := ctx.GetString(global.CtxGUIDKey) // MiddleWare behind Logger!
+		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
 
 		protocol := &config.Protocol{}
-		protocol.Set(global.ProtoHTTP)
+		protocol.Set(definitions.ProtoHTTP)
 
 		clientIP := ctx.GetHeader("Client-IP")
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
@@ -273,18 +273,18 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort, &auth.XSSL)
 
 		if clientIP == "" {
-			clientIP = global.NotAvailable
+			clientIP = definitions.NotAvailable
 		}
 
 		if clientPort == "" {
-			clientPort = global.NotAvailable
+			clientPort = definitions.NotAvailable
 		}
 
 		auth.ClientIP = clientIP
 		auth.XClientPort = clientPort
 
 		// Store remote client IP into connection context. It can be used for brute force updates.
-		ctx.Set(global.CtxClientIPKey, clientIP)
+		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
 		if auth.checkBruteForce() {
 			auth.updateBruteForceBucketsCounter()
@@ -297,29 +297,29 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 
 		//nolint:exhaustive // Ignore some results
 		switch auth.handleFeatures(ctx) {
-		case global.AuthResultFeatureTLS:
+		case definitions.AuthResultFeatureTLS:
 			auth.postLuaAction(&PassDBResult{})
 			handleErr(ctx, errors.ErrNoTLS)
 			ctx.Abort()
 
 			return
-		case global.AuthResultFeatureRelayDomain, global.AuthResultFeatureRBL, global.AuthResultFeatureLua:
+		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
 			auth.postLuaAction(&PassDBResult{})
 			auth.authFail(ctx)
 			ctx.Abort()
 
 			return
-		case global.AuthResultUnset:
-		case global.AuthResultOK:
-		case global.AuthResultFail:
-		case global.AuthResultTempFail:
+		case definitions.AuthResultUnset:
+		case definitions.AuthResultOK:
+		case definitions.AuthResultFail:
+		case definitions.AuthResultTempFail:
 			auth.postLuaAction(&PassDBResult{})
-			auth.authTempFail(ctx, global.TempFailDefault)
+			auth.authTempFail(ctx, definitions.TempFailDefault)
 			ctx.Abort()
 
 			return
-		case global.AuthResultEmptyUsername:
-		case global.AuthResultEmptyPassword:
+		case definitions.AuthResultEmptyUsername:
+		case definitions.AuthResultEmptyPassword:
 		}
 
 		ctx.Next()
@@ -335,13 +335,13 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 // and inserts a WWW-Authenticate field into response header.
 func basicAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		guid := ctx.GetString(global.CtxGUIDKey)
+		guid := ctx.GetString(definitions.CtxGUIDKey)
 
 		// Note: Chicken-egg problem.
-		if ctx.Param("category") == global.CatAuth && ctx.Param("service") == global.ServBasic {
+		if ctx.Param("category") == definitions.CatAuth && ctx.Param("service") == definitions.ServBasic {
 			level.Warn(log.Logger).Log(
-				global.LogKeyGUID, guid,
-				global.LogKeyMsg, "Disabling HTTP basic Auth",
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Disabling HTTP basic Auth",
 				"category", ctx.Param("category"),
 				"service", ctx.Param("service"),
 			)
@@ -375,13 +375,13 @@ func basicAuthMiddleware() gin.HandlerFunc {
 }
 
 // loggerMiddleware is a middleware function that logs information about the incoming HTTP request and response.
-// It sets a GUID (generated using ksuid.New().String()) in the Gin context with the key defined by global.CtxGUIDKey.
+// It sets a GUID (generated using ksuid.New().String()) in the Gin context with the key defined by definitions.CtxGUIDKey.
 // The function starts a timer to measure the latency of the request.
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
 // After the request is processed, it checks for any errors in the context using ctx.Errors.Last().
 // Based on the presence of an error, it decides which logger, logWrapper, and logKey to use.
 // The logWrapper is either level.Error or level.Info.
-// The logKey is either global.LogKeyMsg or global.LogKeyMsg.
+// The logKey is either definitions.LogKeyMsg or global.LogKeyMsg.
 // The function stops the timer and calculates the latency.
 // It then collects additional information about the request, such as negotiatedProtocol and cipherSuiteName.
 // Finally, it calls logWrapper(logger).Log() to log the request information with the appropriate logger, logKey, and values.
@@ -392,8 +392,8 @@ func loggerMiddleware() gin.HandlerFunc {
 		)
 
 		guid := ksuid.New().String()
-		ctx.Set(global.CtxGUIDKey, guid)
-		ctx.Set(global.CtxLocalCacheAuthKey, false)
+		ctx.Set(definitions.CtxGUIDKey, guid)
+		ctx.Set(definitions.CtxLocalCacheAuthKey, false)
 
 		// Start timer
 		start := time.Now()
@@ -414,8 +414,8 @@ func loggerMiddleware() gin.HandlerFunc {
 		end := time.Now()
 		latency := end.Sub(start)
 
-		negotiatedProtocol := global.NotAvailable
-		cipherSuiteName := global.NotAvailable
+		negotiatedProtocol := definitions.NotAvailable
+		cipherSuiteName := definitions.NotAvailable
 
 		if ctx.Request.TLS != nil {
 			negotiatedProtocol = tls.VersionName(ctx.Request.TLS.Version)
@@ -423,23 +423,23 @@ func loggerMiddleware() gin.HandlerFunc {
 		}
 
 		logWrapper(log.Logger).Log(
-			global.LogKeyGUID, guid,
-			global.LogKeyClientIP, ctx.ClientIP(),
-			global.LogKeyMethod, ctx.Request.Method,
-			global.LogKeyProtocol, ctx.Request.Proto,
-			global.LogKeyHTTPStatus, ctx.Writer.Status(),
-			global.LogKeyLatency, latency,
-			global.LogKeyUserAgent, func() string {
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyClientIP, ctx.ClientIP(),
+			definitions.LogKeyMethod, ctx.Request.Method,
+			definitions.LogKeyProtocol, ctx.Request.Proto,
+			definitions.LogKeyHTTPStatus, ctx.Writer.Status(),
+			definitions.LogKeyLatency, latency,
+			definitions.LogKeyUserAgent, func() string {
 				if ctx.Request.UserAgent() != "" {
 					return ctx.Request.UserAgent()
 				}
 
-				return global.NotAvailable
+				return definitions.NotAvailable
 			}(),
-			global.LogKeyTLSSecure, negotiatedProtocol,
-			global.LogKeyTLSCipher, cipherSuiteName,
-			global.LogKeyUriPath, ctx.Request.URL.Path,
-			global.LogKeyMsg, func() string {
+			definitions.LogKeyTLSSecure, negotiatedProtocol,
+			definitions.LogKeyTLSCipher, cipherSuiteName,
+			definitions.LogKeyUriPath, ctx.Request.URL.Path,
+			definitions.LogKeyMsg, func() string {
 				if err != nil {
 					return err.Error()
 				}
@@ -451,11 +451,11 @@ func loggerMiddleware() gin.HandlerFunc {
 }
 
 // luaContextMiddleware is a middleware function that adds a Lua context to the Gin context.
-// It sets the value of global.CtxDataExchangeKey in the Gin context to a new instance of Context created by lualib.NewContext().
+// It sets the value of definitions.CtxDataExchangeKey in the Gin context to a new instance of Context created by lualib.NewContext().
 // The function then calls the Next() method in the Gin context to proceed to the next middleware or handler in the chain.
 func luaContextMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Set(global.CtxDataExchangeKey, lualib.NewContext())
+		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
 		ctx.Next()
 	}
@@ -472,7 +472,7 @@ func luaContextMiddleware() gin.HandlerFunc {
 // - withLanguageMiddleware: custom middleware that sets the language for the request.
 func createMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
-		sessions.Sessions(global.SessionName, sessionStore),
+		sessions.Sessions(definitions.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
 		luaContextMiddleware(),
 		withLanguageMiddleware(),
@@ -576,7 +576,7 @@ func prometheusMiddleware() gin.HandlerFunc {
 			mode = "auth"
 		}
 
-		stopTimer := stats.PrometheusTimer(global.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
+		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
 		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
@@ -656,7 +656,7 @@ func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 //	setup2FAEndpoints(router, sessionStore)
 func setup2FAEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 	if tags.Register2FA {
-		group := router.Group(global.TwoFAv1Root)
+		group := router.Group(definitions.TwoFAv1Root)
 
 		// This page handles the user login request to do a two-factor authentication
 		twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, loginGET2FAHandler, loginPOST2FAHandler)
@@ -697,7 +697,7 @@ func setupStaticContent(router *gin.Engine) {
 func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 	group := router.Group(viper.GetString("notify_page"))
 
-	group.Use(sessions.Sessions(global.SessionName, sessionStore))
+	group.Use(sessions.Sessions(definitions.SessionName, sessionStore))
 	group.GET("/", luaContextMiddleware(), protectEndpointMiddleware(), withLanguageMiddleware(), notifyGETHandler)
 	group.GET("/:languageTag", luaContextMiddleware(), protectEndpointMiddleware(), withLanguageMiddleware(), notifyGETHandler)
 }
@@ -730,7 +730,7 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 // It takes in two parameters:
 // - router: a pointer to a gin.Engine instance, which represents the Gin router.
 // - sessionStore: an instance of sessions.Store, which is used for session management.
-// This function creates a group in the router with the path specified by the constant global.TwoFAv1Root.
+// This function creates a group in the router with the path specified by the constant definitions.TwoFAv1Root.
 // Inside this group, it creates another group with the path specified by the configuration value "webauthn_page" retrieved from viper.GetString("webauthn_page").
 // It adds a middleware to this sub-group that enables session management using the provided session store.
 // It then adds two endpoints to this sub-group:
@@ -738,10 +738,10 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 // - A POST endpoint at the path "/register/finish" which is handled by the finishRegistration function.
 func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 	if tags.IsDevelopment {
-		group := router.Group(global.TwoFAv1Root)
+		group := router.Group(definitions.TwoFAv1Root)
 
 		regGroup := group.Group(viper.GetString("webauthn_page"))
-		regGroup.Use(sessions.Sessions(global.SessionName, sessionStore))
+		regGroup.Use(sessions.Sessions(definitions.SessionName, sessionStore))
 		regGroup.GET("/register/begin", beginRegistration)
 		regGroup.POST("/register/finish", finishRegistration)
 	}
@@ -865,7 +865,7 @@ func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener 
 // The warning message indicates that PROXY protocol is not available for HTTP/3.
 func logProxyHTTP3() {
 	if config.LoadableConfig.Server.HTTP3 && config.LoadableConfig.Server.HAproxyV2 {
-		level.Warn(log.Logger).Log(global.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
 	}
 }
 
@@ -919,7 +919,7 @@ func setupGinLoggers() {
 	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
 	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
 
-	if config.LoadableConfig.Server.Log.Level.Level() != global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() != definitions.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -930,12 +930,12 @@ func setupGinLoggers() {
 //
 // The function accepts a message string and an error. It logs the message and error using the
 // `level.Error` function from the `log.Logger` package. The message is logged using the
-// `global.LogKeyMsg` key and the error is logged using the `global.LogKeyMsg` key.
+// `global.LogKeyMsg` key and the error is logged using the `definitions.LogKeyMsg` key.
 //
 // After logging the message and error, the function exits the program with a status code of 1
 // using the `os.Exit` function.
 func logAndExit(message string, err error) {
-	level.Error(log.Logger).Log(global.LogKeyMsg, message, global.LogKeyMsg, err)
+	level.Error(log.Logger).Log(definitions.LogKeyMsg, message, definitions.LogKeyMsg, err)
 
 	os.Exit(1)
 }
@@ -994,7 +994,7 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", global.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", definitions.LogKeyMsg, err)
 
 		os.Exit(-1)
 	}

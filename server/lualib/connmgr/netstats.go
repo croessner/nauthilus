@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -81,7 +81,7 @@ func init() {
 // logError logs an error message along with the provided error if err is not nil.
 func logError(message string, err error) {
 	if err != nil {
-		level.Error(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("%s: %v\n", message, err))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("%s: %v\n", message, err))
 	}
 }
 
@@ -164,7 +164,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 		if !equalIPs(m.ipTargets[target], ips) {
 			m.ipTargets[target] = ips
 
-			level.Debug(log.Logger).Log(global.LogKeyMsg, fmt.Sprintf("Updated IPs for target '%s': %v\n", target, ips))
+			level.Debug(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Updated IPs for target '%s': %v\n", target, ips))
 		}
 
 		cancel()
@@ -331,8 +331,8 @@ func (m *ConnectionManager) luaRegisterTarget(ctx context.Context) lua.LGFunctio
 func LoaderModPsnet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx),
-			global.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
+			definitions.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx),
+			definitions.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
 		})
 
 		L.Push(mod)

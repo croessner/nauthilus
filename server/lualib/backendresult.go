@@ -16,7 +16,7 @@
 package lualib
 
 import (
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/yuin/gopher-lua"
 )
@@ -58,9 +58,9 @@ type LuaBackendResult struct {
 // RegisterBackendResultType registers the Lua type "nauthilus_backend_result" in the given Lua state.
 // It sets the type metatable with the given name and creates the necessary static attributes and methods.
 func RegisterBackendResultType(L *lua.LState, methods ...string) {
-	mt := L.NewTypeMetatable(global.LuaBackendResultTypeName)
+	mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
 
-	L.SetGlobal(global.LuaBackendResultTypeName, mt)
+	L.SetGlobal(definitions.LuaBackendResultTypeName, mt)
 
 	// Static attributes
 	L.SetField(mt, "new", L.NewFunction(newBackendResult))
@@ -87,7 +87,7 @@ func newBackendResult(L *lua.LState) int {
 
 	userData.Value = backendResult
 
-	L.SetMetatable(userData, L.GetTypeMetatable(global.LuaBackendResultTypeName))
+	L.SetMetatable(userData, L.GetTypeMetatable(definitions.LuaBackendResultTypeName))
 	L.Push(userData)
 
 	return 1
@@ -109,14 +109,14 @@ func checkBackendResult(L *lua.LState) *LuaBackendResult {
 
 // backendResultMethods is a map that holds the names of backend result methods and their corresponding functions.
 var backendResultMethods = map[string]lua.LGFunction{
-	global.LuaBackendResultAuthenticated:     backendResultGetSetAuthenticated,
-	global.LuaBackendResultUserFound:         backendResultGetSetUserFound,
-	global.LuaBackendResultAccountField:      backendResultGetSetAccountField,
-	global.LuaBackendResultTOTPSecretField:   backendResultGetSetTOTPSecretField,
-	global.LuaBackendResultTOTPRecoveryField: backendResultGetSetTOTPRecoveryField,
-	global.LuaBAckendResultUniqueUserIDField: backendResultGetSetUniqueUserIDField,
-	global.LuaBackendResultDisplayNameField:  backendResultGetSetDisplayNameField,
-	global.LuaBackendResultAttributes:        backendResultGetSetAttributes,
+	definitions.LuaBackendResultAuthenticated:     backendResultGetSetAuthenticated,
+	definitions.LuaBackendResultUserFound:         backendResultGetSetUserFound,
+	definitions.LuaBackendResultAccountField:      backendResultGetSetAccountField,
+	definitions.LuaBackendResultTOTPSecretField:   backendResultGetSetTOTPSecretField,
+	definitions.LuaBackendResultTOTPRecoveryField: backendResultGetSetTOTPRecoveryField,
+	definitions.LuaBAckendResultUniqueUserIDField: backendResultGetSetUniqueUserIDField,
+	definitions.LuaBackendResultDisplayNameField:  backendResultGetSetDisplayNameField,
+	definitions.LuaBackendResultAttributes:        backendResultGetSetAttributes,
 }
 
 // backendResultGetSetAuthenticated sets or returns the value of the Authenticated field in the backendResult

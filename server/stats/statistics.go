@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/util"
@@ -149,37 +149,37 @@ var (
 	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_hits_total",
 		Help: "The total number of times a free connection was found in the pool",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// RedisMisses is a gauge vector that counts the total number of times a free connection was NOT found in the pool.
 	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_misses_total",
 		Help: "The total number of times a free connection was NOT found in the pool",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// RedisTimeouts tracks the total number of times a wait timeout occurred in Redis connections.
 	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "redis_connection_timeouts_total",
 		Help: "The total number of times a wait timeout occurred",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// RedisTotalConns tracks the total number of connections in the Redis pool, labeled by connection type.
 	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_total_connections",
 		Help: "The total number of connections in the pool",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// RedisIdleConns is a Prometheus gauge that tracks the total number of idle connections in the Redis pool, labeled by "type".
 	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_idle_connections",
 		Help: "The total number of idle connections in the pool",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// RedisStaleConns is a Prometheus metric that tracks the total number of stale connections removed from the Redis pool.
 	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "redis_pool_stale_connections",
 		Help: "The total number of stale connections removed from the pool",
-	}, []string{global.ReisPromPoolName})
+	}, []string{definitions.ReisPromPoolName})
 
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
@@ -311,7 +311,7 @@ func MeasureCPU(ctx context.Context) {
 
 			newCpu, err := cpu.Get()
 			if err != nil {
-				level.Error(log.Logger).Log(global.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 				return
 			}
@@ -342,7 +342,7 @@ func MeasureCPU(ctx context.Context) {
 // It uses the util.ByteSize function to convert the memory values in bytes to kilobytes (KB)
 // by dividing them by 1024.
 // The logging is performed using the Logger from the logging package.
-// Note: The declarations of log.Logger, global.LogKeyStatsAlloc, util.ByteSize,
+// Note: The declarations of log.Logger, definitions.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
 func PrintStats() {
 	var memStats runtime.MemStats
@@ -351,26 +351,26 @@ func PrintStats() {
 
 	level.Info(log.Logger).Log(
 		// Heap Stats
-		global.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
-		global.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
-		global.LogKeyStatsHeapIdle, util.ByteSize(memStats.HeapIdle),
-		global.LogKeyStatsHeapSys, util.ByteSize(memStats.HeapSys),
-		global.LogKeyStatsHeapReleased, util.ByteSize(memStats.HeapReleased),
-		global.LogKeyStatsMallocs, memStats.Mallocs,
-		global.LogKeyStatsFrees, memStats.Frees,
+		definitions.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
+		definitions.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
+		definitions.LogKeyStatsHeapIdle, util.ByteSize(memStats.HeapIdle),
+		definitions.LogKeyStatsHeapSys, util.ByteSize(memStats.HeapSys),
+		definitions.LogKeyStatsHeapReleased, util.ByteSize(memStats.HeapReleased),
+		definitions.LogKeyStatsMallocs, memStats.Mallocs,
+		definitions.LogKeyStatsFrees, memStats.Frees,
 
 		// Stack Stats
-		global.LogKeyStatsStackInUse, util.ByteSize(memStats.StackInuse),
-		global.LogKeyStatsStackSys, util.ByteSize(memStats.StackSys),
+		definitions.LogKeyStatsStackInUse, util.ByteSize(memStats.StackInuse),
+		definitions.LogKeyStatsStackSys, util.ByteSize(memStats.StackSys),
 
 		// GC Stats
-		global.LogKeyStatsGCSys, util.ByteSize(memStats.GCSys),
-		global.LogKeyStatsNumGC, memStats.NumGC,
+		definitions.LogKeyStatsGCSys, util.ByteSize(memStats.GCSys),
+		definitions.LogKeyStatsNumGC, memStats.NumGC,
 
 		// General Stats
-		global.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
-		global.LogKeyStatsSys, util.ByteSize(memStats.Sys),
-		global.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
+		definitions.LogKeyStatsAlloc, util.ByteSize(memStats.Alloc),
+		definitions.LogKeyStatsSys, util.ByteSize(memStats.Sys),
+		definitions.LogKeyStatsTotalAlloc, util.ByteSize(memStats.TotalAlloc),
 	)
 }
 

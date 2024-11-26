@@ -22,8 +22,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -37,7 +37,7 @@ var webAuthn *webauthn.WebAuthn
 // can be gotten from the session cookie.
 func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName string) (*backend.User, error) {
 	var (
-		passDB        global.Backend
+		passDB        definitions.Backend
 		assertOk      bool
 		err           error
 		user          *backend.User
@@ -51,10 +51,10 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 	session := sessions.Default(ctx)
 
 	// We expect the same Database for credentials that was used for authenticating a user!
-	if cookieValue := session.Get(global.CookieUserBackend); cookieValue != nil {
-		if passDB, assertOk = cookieValue.(global.Backend); assertOk {
+	if cookieValue := session.Get(definitions.CookieUserBackend); cookieValue != nil {
+		if passDB, assertOk = cookieValue.(definitions.Backend); assertOk {
 			switch passDB {
-			case global.BackendLDAP:
+			case definitions.BackendLDAP:
 				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
 			default:
 				return nil, errors.ErrUnknownDatabaseBackend
@@ -63,12 +63,12 @@ func getUser(ctx *gin.Context, userName string, uniqueUserID string, displayName
 	}
 
 	// No cookie (default login page), search all configured databases.
-	if passDB == global.BackendUnknown {
+	if passDB == definitions.BackendUnknown {
 		for _, backendType := range config.LoadableConfig.Server.Backends {
 			switch backendType.Get() {
-			case global.BackendCache:
+			case definitions.BackendCache:
 				credentialDBs = append(credentialDBs, nil)
-			case global.BackendLDAP:
+			case definitions.BackendLDAP:
 				credentialDBs = append(credentialDBs, ldapGetWebAuthnCredentials)
 			// TODO: Add more databases
 			default:
@@ -125,8 +125,8 @@ func beginRegistration(ctx *gin.Context) {
 
 	session := sessions.Default(ctx)
 
-	cookieValue := session.Get(global.CookieAuthResult)
-	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
+	cookieValue := session.Get(definitions.CookieAuthResult)
+	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
 		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 		sessionCleaner(ctx)
 
@@ -134,7 +134,7 @@ func beginRegistration(ctx *gin.Context) {
 	}
 
 	// We use the account name as username!
-	cookieValue = session.Get(global.CookieAccount)
+	cookieValue = session.Get(definitions.CookieAccount)
 	if cookieValue != nil {
 		if value, assertOkay := cookieValue.(string); assertOkay {
 			userName = value
@@ -148,7 +148,7 @@ func beginRegistration(ctx *gin.Context) {
 		return
 	}
 
-	cookieValue = session.Get(global.CookieUniqueUserID)
+	cookieValue = session.Get(definitions.CookieUniqueUserID)
 	if cookieValue != nil {
 		if value, assertOkay := cookieValue.(string); assertOkay {
 			uniqueUserID = value
@@ -162,7 +162,7 @@ func beginRegistration(ctx *gin.Context) {
 		return
 	}
 
-	cookieValue = session.Get(global.CookieDisplayName)
+	cookieValue = session.Get(definitions.CookieDisplayName)
 	if cookieValue != nil {
 		if value, assertOk := cookieValue.(string); assertOk {
 			displayName = value
@@ -214,13 +214,13 @@ func beginRegistration(ctx *gin.Context) {
 	}
 
 	util.DebugModule(
-		global.DbgWebAuthn,
-		global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
-		global.LogKeyMsg, "session data begin",
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "session data begin",
 		"content", fmt.Sprintf("%#v", sessionData),
 	)
 
-	session.Set(global.CookieRegistration, sessionDataJSON)
+	session.Set(definitions.CookieRegistration, sessionDataJSON)
 
 	if err = session.Save(); err != nil {
 		ctx.JSON(http.StatusInternalServerError, err)
@@ -246,14 +246,14 @@ func finishRegistration(ctx *gin.Context) {
 
 	defer sessionCleaner(ctx)
 
-	cookieValue := session.Get(global.CookieAuthResult)
-	if cookieValue == nil || global.AuthResult(cookieValue.(uint8)) != global.AuthResultOK {
+	cookieValue := session.Get(definitions.CookieAuthResult)
+	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
 		ctx.JSON(http.StatusUnauthorized, errors.ErrNotLoggedIn.Error())
 
 		return
 	}
 
-	cookieValue = session.Get(global.CookieUsername)
+	cookieValue = session.Get(definitions.CookieUsername)
 	if cookieValue != nil {
 		if value, assertOkay := cookieValue.(string); assertOkay {
 			userName = value
@@ -266,7 +266,7 @@ func finishRegistration(ctx *gin.Context) {
 		return
 	}
 
-	cookieValue = session.Get(global.CookieUniqueUserID)
+	cookieValue = session.Get(definitions.CookieUniqueUserID)
 	if cookieValue != nil {
 		if value, assertOkay := cookieValue.(string); assertOkay {
 			uniqueUserID = value
@@ -280,7 +280,7 @@ func finishRegistration(ctx *gin.Context) {
 		return
 	}
 
-	cookieValue = session.Get(global.CookieDisplayName)
+	cookieValue = session.Get(definitions.CookieDisplayName)
 	if cookieValue != nil {
 		if value, assertOk := cookieValue.(string); assertOk {
 			displayName = value
@@ -294,7 +294,7 @@ func finishRegistration(ctx *gin.Context) {
 		return
 	}
 
-	cookieValue = session.Get(global.CookieRegistration)
+	cookieValue = session.Get(definitions.CookieRegistration)
 	if cookieValue != nil {
 		if value, assertOkay := cookieValue.([]byte); assertOkay {
 			sessionData = &webauthn.SessionData{}
@@ -316,9 +316,9 @@ func finishRegistration(ctx *gin.Context) {
 	}
 
 	util.DebugModule(
-		global.DbgWebAuthn,
-		global.LogKeyGUID, ctx.GetString(global.CtxGUIDKey),
-		global.LogKeyMsg, "session data finish",
+		definitions.DbgWebAuthn,
+		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+		definitions.LogKeyMsg, "session data finish",
 		"content", fmt.Sprintf("%#v", sessionData),
 	)
 

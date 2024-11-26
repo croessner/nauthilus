@@ -34,8 +34,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -59,14 +59,14 @@ func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
 
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
 type CryptPassword struct {
-	global.Algorithm
-	global.PasswordOption
+	definitions.Algorithm
+	definitions.PasswordOption
 	Password string
 	Salt     []byte
 }
 
 // Generate creates the encrypted form of a plain text password.
-func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.Algorithm, pwOption global.PasswordOption) (
+func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption) (
 	string, error,
 ) {
 	var (
@@ -78,12 +78,12 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 	hashSalt = append([]byte(plainPassword), salt...)
 
 	switch alg {
-	case global.SSHA512:
+	case definitions.SSHA512:
 		hashValue = sha512.New()
-		c.Algorithm = global.SSHA512
-	case global.SSHA256:
+		c.Algorithm = definitions.SSHA512
+	case definitions.SSHA256:
 		hashValue = sha256.New()
-		c.Algorithm = global.SSHA256
+		c.Algorithm = definitions.SSHA256
 	default:
 		return "", errors.ErrUnsupportedAlgorithm
 	}
@@ -91,12 +91,12 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 	hashValue.Write(hashSalt)
 
 	switch pwOption {
-	case global.B64:
+	case definitions.B64:
 		c.Password = base64.StdEncoding.EncodeToString(append(hashValue.Sum(nil), salt...))
-		c.PasswordOption = global.B64
-	case global.HEX:
+		c.PasswordOption = definitions.B64
+	case definitions.HEX:
 		c.Password = hex.EncodeToString(append(hashValue.Sum(nil), salt...))
-		c.PasswordOption = global.HEX
+		c.PasswordOption = definitions.HEX
 	default:
 		return "", errors.ErrUnsupportedPasswordOption
 	}
@@ -106,7 +106,7 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg global.A
 
 // GetParameters splits an encoded password into its components.
 func (c *CryptPassword) GetParameters(cryptedPassword string) (
-	salt []byte, alg global.Algorithm, pwOption global.PasswordOption, err error,
+	salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption, err error,
 ) {
 	var decodedPwSasltSalt []byte
 
@@ -115,10 +115,10 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	passwordPrefix := re.FindString(cryptedPassword)
 
 	if strings.HasPrefix(passwordPrefix, "SSHA512") {
-		alg = global.SSHA512
+		alg = definitions.SSHA512
 	} else {
 		if strings.HasPrefix(passwordPrefix, "SSHA256") {
-			alg = global.SSHA256
+			alg = definitions.SSHA256
 		} else {
 			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
@@ -127,16 +127,16 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	c.Algorithm = alg
 
 	if strings.HasSuffix(passwordPrefix, ".B64") {
-		pwOption = global.B64
+		pwOption = definitions.B64
 	} else {
 		if strings.HasSuffix(passwordPrefix, ".HEX") {
-			pwOption = global.HEX
+			pwOption = definitions.HEX
 		}
 	}
 
 	// {SSHA256} or {SSHA512} without suffix
 	if len(passwordPrefix) == 7 {
-		pwOption = global.B64
+		pwOption = definitions.B64
 	}
 
 	c.PasswordOption = pwOption
@@ -145,9 +145,9 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 
 	//goland:noinspection GoDfaConstantCondition
 	switch pwOption {
-	case global.B64:
+	case definitions.B64:
 		decodedPwSasltSalt, err = base64.StdEncoding.DecodeString(c.Password)
-	case global.HEX:
+	case definitions.HEX:
 		decodedPwSasltSalt, err = hex.DecodeString(c.Password)
 	}
 
@@ -157,13 +157,13 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 
 	//goland:noinspection GoDfaConstantCondition
 	switch alg {
-	case global.SSHA512:
+	case definitions.SSHA512:
 		if len(decodedPwSasltSalt) < 65 {
 			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
 
 		salt = decodedPwSasltSalt[64:]
-	case global.SSHA256:
+	case definitions.SSHA256:
 		if len(decodedPwSasltSalt) < 33 {
 			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
@@ -237,50 +237,50 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 	return re.ReplaceAllString(value, sep)
 }
 
-func DebugModule(module global.DbgModule, keyvals ...any) {
+func DebugModule(module definitions.DbgModule, keyvals ...any) {
 	var moduleName string
 
-	if config.LoadableConfig.Server.Log.Level.Level() < global.LogLevelDebug {
+	if config.LoadableConfig.Server.Log.Level.Level() < definitions.LogLevelDebug {
 		return
 	}
 
 	switch module {
-	case global.DbgAll:
-		moduleName = global.DbgAllName
-	case global.DbgAuth:
-		moduleName = global.DbgAuthName
-	case global.DbgHydra:
-		moduleName = global.DbgHydraName
-	case global.DbgWebAuthn:
-		moduleName = global.DbgWebAuthnName
-	case global.DbgStats:
-		moduleName = global.DbgStatsName
-	case global.DbgWhitelist:
-		moduleName = global.DbgWhitelistName
-	case global.DbgLDAP:
-		moduleName = global.DbgLDAPName
-	case global.DbgLDAPPool:
-		moduleName = global.DbgLDAPPoolName
-	case global.DbgCache:
-		moduleName = global.DbgCacheName
-	case global.DbgBf:
-		moduleName = global.DbgBfName
-	case global.DbgRBL:
-		moduleName = global.DbgRBLName
-	case global.DbgAction:
-		moduleName = global.DbgActionName
-	case global.DbgFeature:
-		moduleName = global.DbgFeatureName
-	case global.DbgLua:
-		moduleName = global.DbgLuaName
-	case global.DbgFilter:
-		moduleName = global.DbgFilterName
+	case definitions.DbgAll:
+		moduleName = definitions.DbgAllName
+	case definitions.DbgAuth:
+		moduleName = definitions.DbgAuthName
+	case definitions.DbgHydra:
+		moduleName = definitions.DbgHydraName
+	case definitions.DbgWebAuthn:
+		moduleName = definitions.DbgWebAuthnName
+	case definitions.DbgStats:
+		moduleName = definitions.DbgStatsName
+	case definitions.DbgWhitelist:
+		moduleName = definitions.DbgWhitelistName
+	case definitions.DbgLDAP:
+		moduleName = definitions.DbgLDAPName
+	case definitions.DbgLDAPPool:
+		moduleName = definitions.DbgLDAPPoolName
+	case definitions.DbgCache:
+		moduleName = definitions.DbgCacheName
+	case definitions.DbgBf:
+		moduleName = definitions.DbgBfName
+	case definitions.DbgRBL:
+		moduleName = definitions.DbgRBLName
+	case definitions.DbgAction:
+		moduleName = definitions.DbgActionName
+	case definitions.DbgFeature:
+		moduleName = definitions.DbgFeatureName
+	case definitions.DbgLua:
+		moduleName = definitions.DbgLuaName
+	case definitions.DbgFilter:
+		moduleName = definitions.DbgFilterName
 	default:
 		return
 	}
 
 	for index := range config.LoadableConfig.Server.Log.DbgModules {
-		if !(config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == global.DbgAll || config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == module) {
+		if !(config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == definitions.DbgAll || config.LoadableConfig.Server.Log.DbgModules[index].GetModule() == module) {
 			continue
 		}
 
@@ -301,7 +301,7 @@ func DebugModule(module global.DbgModule, keyvals ...any) {
 // WithNotAvailable returns a default "not available" string if the given value is an empty string.
 func WithNotAvailable(value string) string {
 	if value == "" {
-		return global.NotAvailable
+		return definitions.NotAvailable
 	}
 
 	return value
@@ -310,20 +310,20 @@ func WithNotAvailable(value string) string {
 // logNetworkError logs a network error message.
 // a.logNetworkError(ipOrNet, err)
 func logNetworkError(guid, ipOrNet string, err error) {
-	level.Error(log.Logger).Log(global.LogKeyGUID, guid, global.LogKeyMsg, "%s is not a network", ipOrNet, global.LogKeyMsg, err)
+	level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "%s is not a network", ipOrNet, definitions.LogKeyMsg, err)
 }
 
 // logNetworkChecking logs the information about checking a network for the given authentication object.
 func logNetworkChecking(guid, clientIP string, network *net.IPNet) {
 	DebugModule(
-		global.DbgWhitelist,
-		global.LogKeyGUID, guid, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, network.String()),
+		definitions.DbgWhitelist,
+		definitions.LogKeyGUID, guid, definitions.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, network.String()),
 	)
 }
 
 // logIPChecking logs the IP address of the client along with the IP address or network being checked.
 func logIPChecking(guid, ipOrNet, clientIP string) {
-	DebugModule(global.DbgWhitelist, global.LogKeyGUID, guid, global.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, ipOrNet))
+	DebugModule(definitions.DbgWhitelist, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, ipOrNet))
 }
 
 // IsInNetwork checks if an IP address is part of a list of networks.
@@ -367,9 +367,9 @@ func IsInNetwork(networkList []string, guid, clientIP string) (matchIP bool) {
 // logForwarderFound logs the finding of the header "X-Forwarded-For" in the debug module.
 func logForwarderFound(guid string) {
 	DebugModule(
-		global.DbgAuth,
-		global.LogKeyGUID, guid,
-		global.LogKeyMsg, "Found header X-Forwarded-For",
+		definitions.DbgAuth,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Found header X-Forwarded-For",
 	)
 }
 
@@ -382,17 +382,17 @@ func logForwarderFound(guid string) {
 func logNoTrustedProxies(guid, clientIP string) {
 	level.Warn(
 		log.Logger).Log(
-		global.LogKeyGUID, guid,
-		global.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching %v", clientIP, viper.GetStringSlice("trusted_proxies")),
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Client IP '%s' not matching %v", clientIP, viper.GetStringSlice("trusted_proxies")),
 	)
 }
 
 // logTrustedProxy logs the client IP matching with the forwarded address.
 func logTrustedProxy(guid string, fwdAddress, clientIP string) {
 	DebugModule(
-		global.DbgAuth,
-		global.LogKeyGUID, guid,
-		global.LogKeyMsg, fmt.Sprintf(
+		definitions.DbgAuth,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf(
 			"Client IP '%s' matching, forwarded for '%s'", clientIP, fwdAddress),
 	)
 }
@@ -407,7 +407,7 @@ func logTrustedProxy(guid string, fwdAddress, clientIP string) {
 // IP address is used as the client IP. The client port is set to "N/A".
 func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *string) {
 	fwdAddress := ctx.GetHeader("X-Forwarded-For")
-	guid := ctx.GetString(global.CtxGUIDKey)
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	if fwdAddress != "" {
 		logForwarderFound(guid)
@@ -427,7 +427,7 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *
 			*clientIP = strings.TrimSpace(multipleIPs[0])
 		}
 
-		*clientPort = global.NotAvailable
+		*clientPort = definitions.NotAvailable
 
 		if *xssl == "" {
 			proto := ctx.GetHeader("X-Forwarded-Proto")

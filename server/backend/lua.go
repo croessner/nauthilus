@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -52,7 +52,7 @@ func InitHTTPClient() {
 // LuaRequest is a struct that includes various information for a request to Lua.
 type LuaRequest struct {
 	// Function is the Lua command that will be executed.
-	Function global.LuaCommand
+	Function definitions.LuaCommand
 
 	// TOTPSecret is the secret value used in time-based one-time password (TOTP) authentication.
 	TOTPSecret string
@@ -79,7 +79,7 @@ type LuaRequest struct {
 }
 
 // LoaderModLDAP is a function that returns a LGFunction.
-// The returned LGFunction sets up a table with the function name global.LuaFnLDAPSearch
+// The returned LGFunction sets up a table with the function name definitions.LuaFnLDAPSearch
 // and its corresponding LuaLDAPSearch function.
 // It then pushes the table onto the Lua stack and returns 1.
 // The function is intended to be used as a loader for the LDAP module in Lua scripts.
@@ -91,7 +91,7 @@ type LuaRequest struct {
 func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnLDAPSearch: LuaLDAPSearch(ctx),
+			definitions.LuaFnLDAPSearch: LuaLDAPSearch(ctx),
 		})
 
 		L.Push(mod)
@@ -157,9 +157,9 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 
 // registerModule registers a module in the Lua state based on the given modName.
 // It uses the Lua state L, the context.Context ctx, the *LuaRequest luaRequest, and the map[string]bool registry.
-// If modName is global.LuaModHTTPRequest, it preloads the Lua module with the given modName and the lualib.LoaderModHTTPRequest function.
-// If modName is global.LuaModLDAP and the LDAP backend is activated, it preloads the Lua module with the given modName and the LoaderModLDAP function.
-// If modName is not global.LuaModHTTPRequest or global.LuaModLDAP, it does nothing and returns.
+// If modName is definitions.LuaModHTTPRequest, it preloads the Lua module with the given modName and the lualib.LoaderModHTTPRequest function.
+// If modName is definitions.LuaModLDAP and the LDAP backend is activated, it preloads the Lua module with the given modName and the LoaderModLDAP function.
+// If modName is not definitions.LuaModHTTPRequest or global.LuaModLDAP, it does nothing and returns.
 // It marks the modName key in the registry as true.
 //
 // Parameters:
@@ -172,11 +172,11 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 // Returns: None.
 func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, modName string, registry map[string]bool) {
 	switch modName {
-	case global.LuaModContext:
+	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(luaRequest.Context))
-	case global.LuaModHTTPRequest:
+	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
-	case global.LuaModLDAP:
+	case definitions.LuaModLDAP:
 		if config.LoadableConfig.HaveLDAPBackend() {
 			L.PreloadModule(modName, LoaderModLDAP(ctx))
 		} else {
@@ -219,14 +219,14 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 
 	lualib.RegisterBackendResultType(
 		L,
-		global.LuaBackendResultAuthenticated,
-		global.LuaBackendResultUserFound,
-		global.LuaBackendResultAccountField,
-		global.LuaBackendResultTOTPSecretField,
-		global.LuaBackendResultTOTPRecoveryField,
-		global.LuaBAckendResultUniqueUserIDField,
-		global.LuaBackendResultDisplayNameField,
-		global.LuaBackendResultAttributes,
+		definitions.LuaBackendResultAuthenticated,
+		definitions.LuaBackendResultUserFound,
+		definitions.LuaBackendResultAccountField,
+		definitions.LuaBackendResultTOTPSecretField,
+		definitions.LuaBackendResultTOTPRecoveryField,
+		definitions.LuaBAckendResultUniqueUserIDField,
+		definitions.LuaBackendResultDisplayNameField,
+		definitions.LuaBackendResultAttributes,
 	)
 
 	registerDynamicLoader(L, ctx, luaRequest)
@@ -258,13 +258,13 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
-	globals.RawSet(lua.LString(global.LuaBackendResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(global.LuaBackendResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(definitions.LuaBackendResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(definitions.LuaBackendResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
-	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(logs)))
+	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&luaRequest.StatusMessage)))
 
-	L.SetGlobal(global.LuaDefaultTable, globals)
+	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
 // setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
@@ -279,24 +279,24 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 // - nret: The number of return values.
 func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
 	switch luaRequest.Function {
-	case global.LuaCommandPassDB:
-		luaCommand = global.LuaFnBackendVerifyPassword
+	case definitions.LuaCommandPassDB:
+		luaCommand = definitions.LuaFnBackendVerifyPassword
 		nret = 2
 
 		luaRequest.SetupRequest(request)
-	case global.LuaCommandListAccounts:
-		luaCommand = global.LuaFnBackendListAccounts
+	case definitions.LuaCommandListAccounts:
+		luaCommand = definitions.LuaFnBackendListAccounts
 		nret = 2
 
-		request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-		request.RawSetString(global.LuaRequestSession, lua.LString(luaRequest.Session))
-	case global.LuaCommandAddMFAValue:
-		luaCommand = global.LuaFnBackendAddTOTPSecret
+		request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+		request.RawSetString(definitions.LuaRequestSession, lua.LString(luaRequest.Session))
+	case definitions.LuaCommandAddMFAValue:
+		luaCommand = definitions.LuaFnBackendAddTOTPSecret
 		nret = 1
 
-		request.RawSetString(global.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
-		request.RawSet(lua.LString(global.LuaRequestDebug), lua.LBool(luaRequest.Debug))
-		request.RawSetString(global.LuaRequestSession, lua.LString(luaRequest.Session))
+		request.RawSetString(definitions.LuaRequestTOTPSecret, lua.LString(luaRequest.TOTPSecret))
+		request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(luaRequest.Debug))
+		request.RawSetString(definitions.LuaRequestSession, lua.LString(luaRequest.Session))
 	}
 
 	return luaCommand, nret
@@ -368,15 +368,15 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 	}
 
 	switch luaRequest.Function {
-	case global.LuaCommandPassDB:
+	case definitions.LuaCommandPassDB:
 		userData := L.ToUserData(-1)
 
 		if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
 			luaBackendResult.Logs = logs
 
 			util.DebugModule(
-				global.DbgLua,
-				global.LogKeyGUID, luaRequest.Session,
+				definitions.DbgLua,
+				definitions.LogKeyGUID, luaRequest.Session,
 				"result", fmt.Sprintf("%+v", luaBackendResult),
 			)
 
@@ -388,7 +388,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 			}
 		}
 
-	case global.LuaCommandListAccounts:
+	case definitions.LuaCommandListAccounts:
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
 			Attributes: convert.LuaValueToGo(L.ToTable(-1)).(map[any]any),
 			Logs:       logs,
@@ -408,9 +408,9 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 // Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
 func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
 	level.Error(log.Logger).Log(
-		global.LogKeyGUID, luaRequest.Session,
+		definitions.LogKeyGUID, luaRequest.Session,
 		"script", config.LoadableConfig.GetLuaScriptPath(),
-		global.LogKeyMsg, err,
+		definitions.LogKeyMsg, err,
 	)
 
 	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{

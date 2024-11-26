@@ -18,7 +18,7 @@ package redislib
 import (
 	"context"
 
-	"github.com/croessner/nauthilus/server/global"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -41,7 +41,7 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
 		key := L.CheckString(2)
 		field := L.CheckString(3)
-		valueType := global.TypeString
+		valueType := definitions.TypeString
 
 		if L.GetTop() == 2 {
 			valueType = L.CheckString(4)

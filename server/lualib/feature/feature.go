@@ -25,8 +25,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
@@ -205,13 +205,13 @@ func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
 // Returns: none
 func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
 	switch modName {
-	case global.LuaModContext:
+	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
-	case global.LuaModHTTPRequest:
+	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
-	case global.LuaModLDAP:
+	case definitions.LuaModLDAP:
 		if config.LoadableConfig.HaveLDAPBackend() {
-			L.PreloadModule(global.LuaModLDAP, backend.LoaderModLDAP(ctx))
+			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
@@ -260,17 +260,17 @@ func (r *Request) setGlobals(L *lua.LState) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
 
-	globals.RawSet(lua.LString(global.LuaFeatureTriggerNo), lua.LBool(false))
-	globals.RawSet(lua.LString(global.LuaFeatureTriggerYes), lua.LBool(true))
-	globals.RawSet(lua.LString(global.LuaFeatureAbortNo), lua.LBool(false))
-	globals.RawSet(lua.LString(global.LuaFeatureAbortYes), lua.LBool(true))
-	globals.RawSet(lua.LString(global.LuaFeatureResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(global.LuaFeatureResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(definitions.LuaFeatureTriggerNo), lua.LBool(false))
+	globals.RawSet(lua.LString(definitions.LuaFeatureTriggerYes), lua.LBool(true))
+	globals.RawSet(lua.LString(definitions.LuaFeatureAbortNo), lua.LBool(false))
+	globals.RawSet(lua.LString(definitions.LuaFeatureAbortYes), lua.LBool(true))
+	globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
-	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
-	L.SetGlobal(global.LuaDefaultTable, globals)
+	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
 // setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
@@ -303,7 +303,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 			L.SetTop(0)
 		}
 
-		stopTimer := stats.PrometheusTimer(global.PromFeature, LuaFeatures.LuaScripts[index].Name)
+		stopTimer := stats.PrometheusTimer(definitions.PromFeature, LuaFeatures.LuaScripts[index].Name)
 
 		if stderrors.Is(ctx.Err(), context.Canceled) {
 			if stopTimer != nil {
@@ -329,7 +329,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		}
 
 		if err = L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(global.LuaFnCallFeature),
+			Fn:      L.GetGlobal(definitions.LuaFnCallFeature),
 			NRet:    3,
 			Protect: true,
 		}, request); err != nil {
@@ -366,9 +366,9 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
 	level.Error(log.Logger).Log(
-		global.LogKeyGUID, r.Session,
+		definitions.LogKeyGUID, r.Session,
 		"name", scriptName,
-		global.LogKeyMsg, err,
+		definitions.LogKeyMsg, err,
 	)
 
 	if stopTimer != nil {
@@ -394,8 +394,8 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 //
 // Dependencies:
 // - log.Logger: the default error logger for logging the log entry
-// - global.LogKeyGUID: the constant representing the log key for the session ID
-// - global.LogKeyMsg: the constant representing the log key for the log message
+// - definitions.LogKeyGUID: the constant representing the log key for the session ID
+// - definitions.LogKeyMsg: the constant representing the log key for the log message
 // - r.formatResult: a helper method to format the feature result as a string
 //
 // Parameters:
@@ -407,9 +407,9 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 // Returns: none
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
 	logs := []any{
-		global.LogKeyGUID, r.Session,
+		definitions.LogKeyGUID, r.Session,
 		"name", scriptName,
-		global.LogKeyMsg, "Lua feature finished",
+		definitions.LogKeyMsg, "Lua feature finished",
 		"triggered", triggered,
 		"abort_features", abortFeatures,
 		"result", func() string {
@@ -423,7 +423,7 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 		}
 	}
 
-	util.DebugModule(global.DbgFeature, logs...)
+	util.DebugModule(definitions.DbgFeature, logs...)
 }
 
 // formatResult returns the formatted result based on the given ret value.
@@ -432,8 +432,8 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 // Otherwise, it returns a string formatted as "unknown(ret)".
 func (r *Request) formatResult(ret int) string {
 	resultMap := map[int]string{
-		0: global.LuaSuccess,
-		1: global.LuaFail,
+		0: definitions.LuaSuccess,
+		1: definitions.LuaFail,
 	}
 
 	if ret == 0 || ret == 1 {

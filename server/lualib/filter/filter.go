@@ -24,8 +24,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/global"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -88,17 +88,17 @@ func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendR
 // The function does not return any value.
 func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string, registry map[string]bool, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
 	switch modName {
-	case global.LuaModContext:
+	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
-	case global.LuaModHTTPRequest:
+	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
-	case global.LuaModLDAP:
+	case definitions.LuaModLDAP:
 		if config.LoadableConfig.HaveLDAPBackend() {
 			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
-	case global.LuaModBackend:
+	case definitions.LuaModBackend:
 		L.PreloadModule(modName, LoaderModBackend(r, backendResult, removeAttributes))
 	default:
 		return
@@ -125,11 +125,11 @@ var LuaFilters *PreCompiledLuaFilters
 func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			global.LuaFnGetBackendServers:       getBackendServers(request.BackendServers),
-			global.LuaFnSelectBackendServer:     selectBackendServer(&request.UsedBackendAddress, &request.UsedBackendPort),
-			global.LuaFnCheckBackendConnection:  lualib.CheckBackendConnection(monitoring.NewMonitor()),
-			global.LuaFnApplyBackendResult:      applyBackendResult(backendResult),
-			global.LuaFnRemoveFromBackendResult: removeFromBackendResult(removeAttributes),
+			definitions.LuaFnGetBackendServers:       getBackendServers(request.BackendServers),
+			definitions.LuaFnSelectBackendServer:     selectBackendServer(&request.UsedBackendAddress, &request.UsedBackendPort),
+			definitions.LuaFnCheckBackendConnection:  lualib.CheckBackendConnection(monitoring.NewMonitor()),
+			definitions.LuaFnApplyBackendResult:      applyBackendResult(backendResult),
+			definitions.LuaFnRemoveFromBackendResult: removeFromBackendResult(removeAttributes),
 		})
 
 		L.Push(mod)
@@ -330,7 +330,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 		servers := L.NewTable()
 
 		// Create the metatable
-		mt := L.NewTypeMetatable(global.LuaBackendServerTypeName)
+		mt := L.NewTypeMetatable(definitions.LuaBackendServerTypeName)
 
 		L.SetField(mt, "__index", L.NewFunction(indexMethod))
 
@@ -350,7 +350,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 				TLS:       backendServer.TLS,
 			}
 
-			L.SetMetatable(serverUserData, L.GetTypeMetatable(global.LuaBackendServerTypeName))
+			L.SetMetatable(serverUserData, L.GetTypeMetatable(definitions.LuaBackendServerTypeName))
 
 			// Add userdata into the servers table
 			servers.Append(serverUserData)
@@ -457,15 +457,15 @@ func setGlobals(r *Request, L *lua.LState) {
 
 	globals := L.NewTable()
 
-	globals.RawSet(lua.LString(global.LuaFilterAccept), lua.LBool(false))
-	globals.RawSet(lua.LString(global.LuaFilterREJECT), lua.LBool(true))
-	globals.RawSet(lua.LString(global.LuaFilterResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(global.LuaFilterResultFail), lua.LNumber(1))
+	globals.RawSet(lua.LString(definitions.LuaFilterAccept), lua.LBool(false))
+	globals.RawSet(lua.LString(definitions.LuaFilterREJECT), lua.LBool(true))
+	globals.RawSet(lua.LString(definitions.LuaFilterResultOk), lua.LNumber(0))
+	globals.RawSet(lua.LString(definitions.LuaFilterResultFail), lua.LNumber(1))
 
-	globals.RawSetString(global.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
-	globals.RawSetString(global.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
 
-	L.SetGlobal(global.LuaDefaultTable, globals)
+	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
 // setRequest constructs a new lua.LTable and assigns fields based on the supplied Request struct 'r'.
@@ -484,13 +484,13 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 // It also calls the Lua function with the given parameters and logs the result.
 // The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
-	stopTimer := stats.PrometheusTimer(global.PromFilter, script.Name)
+	stopTimer := stats.PrometheusTimer(definitions.PromFilter, script.Name)
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(global.LogKeyLuaScripttimeout)*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(definitions.LogKeyLuaScripttimeout)*time.Second)
 
 	defer luaCancel()
 
@@ -510,7 +510,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 		return false, scriptErr
 	}
 
-	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(global.LuaFnCallFilter), NRet: 2, Protect: true}, request)
+	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(definitions.LuaFnCallFilter), NRet: 2, Protect: true}, request)
 	if callErr != nil {
 		logError(r, script, callErr)
 
@@ -536,21 +536,21 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 // It logs the Session GUID, the name of the script, and the error message to the default error logger with an Error level.
 func logError(r *Request, script *LuaFilter, err error) {
 	level.Error(log.Logger).Log(
-		global.LogKeyGUID, r.Session,
+		definitions.LogKeyGUID, r.Session,
 		"name", script.Name,
-		global.LogKeyMsg, err,
+		definitions.LogKeyMsg, err,
 	)
 }
 
 // logResult logs the output of a LuaFilter execution for a given request.
 // The outcome (ok or fail) and whether an action was taken is logged along with the session ID and script name.
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
-	resultMap := map[int]string{global.ResultOk: "ok", global.ResultFail: "fail"}
+	resultMap := map[int]string{definitions.ResultOk: "ok", definitions.ResultFail: "fail"}
 
 	logs := []any{
-		global.LogKeyGUID, r.Session,
+		definitions.LogKeyGUID, r.Session,
 		"name", script.Name,
-		global.LogKeyMsg, "Lua filter finished",
+		definitions.LogKeyMsg, "Lua filter finished",
 		"action", action,
 		"result", resultMap[ret],
 	}
@@ -564,7 +564,7 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 		}
 	}
 
-	util.DebugModule(global.DbgFilter, logs...)
+	util.DebugModule(definitions.DbgFilter, logs...)
 }
 
 // mergeMaps merges 2 maps into one. If same key exists in both maps, value from m2 is used.
@@ -627,7 +627,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
 
-	lualib.RegisterBackendResultType(L, global.LuaBackendResultAttributes)
+	lualib.RegisterBackendResultType(L, definitions.LuaBackendResultAttributes)
 	setGlobals(r, L)
 
 	request := setRequest(r, L)
