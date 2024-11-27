@@ -290,12 +290,10 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
-	if found, reject := auth.preproccessAuthRequest(ctx); reject {
+	if reject := auth.preproccessAuthRequest(ctx); reject {
 		handleErr(ctx, errors.ErrBruteForceAttack)
 
 		return
-	} else if found {
-		auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 	}
 
 	if authResult == definitions.AuthResultUnset {
