@@ -2,7 +2,7 @@ module github.com/croessner/nauthilus
 
 go 1.23
 
-toolchain go1.23.1
+toolchain go1.23.3
 
 require (
 	github.com/biter777/countries v1.7.5
@@ -39,7 +39,7 @@ require (
 	github.com/simia-tech/crypt v0.5.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.19.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/tengattack/gluacrypto v0.0.0-20240324200146-54b58c95c255
 	github.com/vadv/gopher-lua-libs v0.5.0
 	github.com/yuin/gopher-lua v1.1.1
@@ -69,7 +69,7 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.8.1 // indirect
-	github.com/emersion/go-message v0.18.0 // indirect
+	github.com/emersion/go-message v0.18.1 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.7 // indirect

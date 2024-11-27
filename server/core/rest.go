@@ -27,7 +27,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/lualib/hook"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -214,13 +213,6 @@ func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
 	case definitions.AuthResultFeatureTLS:
 	case definitions.AuthResultFeatureRelayDomain:
 	case definitions.AuthResultFeatureLua:
-	}
-}
-
-// handleCallback handles the execution of a Lua handleCallback request in a Gin context.
-func (a *AuthState) handleCallback(ctx *gin.Context) {
-	if hookScript := config.LoadableConfig.GetLuaCallbackScriptPath(); hookScript != "" {
-		hook.RunLuaCallback(ctx, hookScript)
 	}
 }
 

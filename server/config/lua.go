@@ -25,6 +25,7 @@ type LuaSection struct {
 	Actions  []LuaAction
 	Features []LuaFeature
 	Filters  []LuaFilter
+	Hooks    []LuaHooks `mapstructure:"custom_hooks"`
 	Config   *LuaConf
 	Search   []LuaSearchProtocol
 }
@@ -110,10 +111,9 @@ func (l *LuaFilter) String() string {
 }
 
 type LuaConf struct {
-	PackagePath        string `mapstructure:"package_path"`
-	BackendScriptPath  string `mapstructure:"backend_script_path"`
-	CallbackScriptPath string `mapstructure:"callback_script_path"`
-	InitScriptPath     string `mapstructure:"init_script_path"`
+	PackagePath       string `mapstructure:"package_path"`
+	BackendScriptPath string `mapstructure:"backend_script_path"`
+	InitScriptPath    string `mapstructure:"init_script_path"`
 }
 
 func (l *LuaConf) String() string {
@@ -137,4 +137,18 @@ func (l *LuaSearchProtocol) GetCacheName() (string, error) {
 	}
 
 	return l.CacheName, nil
+}
+
+type LuaHooks struct {
+	Location   string `mapstructure:"http_location"`
+	Method     string `mapstructure:"http_method"`
+	ScriptPath string `mapstructure:"script_path"`
+}
+
+func (l *LuaHooks) String() string {
+	if l == nil {
+		return "<nil>"
+	}
+
+	return fmt.Sprintf("{Location: %s}, {Method: %s}, {ScriptPath: %s}", l.Location, l.Method, l.ScriptPath)
 }
