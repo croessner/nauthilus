@@ -1758,7 +1758,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.haveMonitoringFlag(definitions.MonInMemory) || a.isMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), a, config.EnvConfig.LocalCacheAuthTTL)
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.EnvConfig.LocalCacheAuthTTL)
 		}
 
 		authResult = definitions.AuthResultOK
@@ -2832,7 +2832,7 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
 func (a *AuthState) generateLocalChacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s\000%s",
+	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
 		a.Service,
@@ -2843,13 +2843,6 @@ func (a *AuthState) generateLocalChacheKey() string {
 			}
 
 			return a.ClientIP
-		}(),
-		func() string {
-			if a.XClientPort == "" {
-				return "0"
-			}
-
-			return a.XClientPort
 		}(),
 	)
 }
@@ -2866,22 +2859,12 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 	}
 
 	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
-		guid := *a.GUID
-		restoreCtx := false
+		passDBResult := value.(*PassDBResult)
 
-		if a.HTTPClientContext != nil {
-			a.HTTPClientContext = nil
-			restoreCtx = true
-		}
-
-		*a = *value.(*AuthState)
-
-		a.GUID = &guid
-		a.UsedPassDBBackend = definitions.BackendLocalCache
-
-		if restoreCtx {
-			a.HTTPClientContext = ctx.Copy()
-		}
+		updateAuthentication(a, passDBResult, &PassDBMap{
+			backend: definitions.BackendLocalCache,
+			fn:      nil,
+		})
 
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
 
@@ -2895,8 +2878,8 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 // If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
-func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
-	if found = a.getFromLocalCache(ctx); !found {
+func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
+	if found := a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 
 		if a.checkBruteForce() {
@@ -2904,11 +2887,11 @@ func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (found bool, reject
 			a.postLuaAction(&PassDBResult{})
 			a.authFail(ctx)
 
-			return false, true
+			return true
 		}
 	} else {
 		stats.CacheHits.Inc()
 	}
 
-	return found, false
+	return false
 }
