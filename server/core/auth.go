@@ -1121,7 +1121,7 @@ func (a *AuthState) setStatusCodes(service string) error {
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case definitions.ServSaslauthd, definitions.ServBasic, definitions.ServOryHydra, definitions.ServHeader, definitions.ServJSON, definitions.ServCallback:
+	case definitions.ServSaslauthd, definitions.ServBasic, definitions.ServOryHydra, definitions.ServHeader, definitions.ServJSON:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -2123,12 +2123,6 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 	auth.XPort = ctx.PostForm("port")
 	auth.XSSL = ctx.PostForm("tls")
 	auth.XSSLProtocol = ctx.PostForm("security")
-
-	if !util.ValidateUsername(auth.Username) {
-		auth.Username = ""
-
-		ctx.Error(errors.ErrInvalidUsername)
-	}
 }
 
 // processApplicationJSON takes a gin Context and an AuthState object.
@@ -2278,10 +2272,6 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
-	case definitions.ServCallback:
-		auth.withDefaults(ctx)
-
-		return
 	}
 
 	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != definitions.ServBasic {
@@ -2890,10 +2880,6 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
-	if a.Service == definitions.ServCallback {
-		return
-	}
-
 	if found = a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 
