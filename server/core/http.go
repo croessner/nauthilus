@@ -182,7 +182,7 @@ func requestHandler(ctx *gin.Context) {
 			if found, reject := auth.preproccessAuthRequest(ctx); reject {
 				return
 			} else if found {
-				auth.withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
+				auth.withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 			}
 
 			switch ctx.Param("service") {

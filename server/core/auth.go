@@ -2384,12 +2384,14 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
-		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
-		}
+		if config.LoadableConfig.Server.HAproxyV2 {
+			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
+			if err != nil {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+			}
 
-		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
+			util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
+		}
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
