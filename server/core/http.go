@@ -805,13 +805,11 @@ func prepareHAproxyV2() *proxyproto.Listener {
 			panic(err)
 		}
 
-		policyFunc := func(upstream net.Addr) (proxyproto.Policy, error) {
-			return proxyproto.REQUIRE, nil
-		}
-
 		proxyListener = &proxyproto.Listener{
 			Listener: listener,
-			Policy:   policyFunc,
+			ConnPolicy: func(connPolicyOptions proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+				return proxyproto.REQUIRE, nil
+			},
 		}
 	}
 
