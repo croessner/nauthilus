@@ -1121,7 +1121,7 @@ func (a *AuthState) setStatusCodes(service string) error {
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case definitions.ServSaslauthd, definitions.ServBasic, definitions.ServOryHydra, definitions.ServHeader, definitions.ServJSON, definitions.ServCallback:
+	case definitions.ServSaslauthd, definitions.ServBasic, definitions.ServOryHydra, definitions.ServHeader, definitions.ServJSON:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
@@ -2123,12 +2123,6 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 	auth.XPort = ctx.PostForm("port")
 	auth.XSSL = ctx.PostForm("tls")
 	auth.XSSLProtocol = ctx.PostForm("security")
-
-	if !util.ValidateUsername(auth.Username) {
-		auth.Username = ""
-
-		ctx.Error(errors.ErrInvalidUsername)
-	}
 }
 
 // processApplicationJSON takes a gin Context and an AuthState object.
@@ -2278,10 +2272,6 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 		setupBodyBasedAuth(ctx, auth)
 	case definitions.ServBasic:
 		setupHTTPBasicAuth(ctx, auth)
-	case definitions.ServCallback:
-		auth.withDefaults(ctx)
-
-		return
 	}
 
 	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != definitions.ServBasic {
@@ -2394,12 +2384,14 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
-		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
-		}
+		if config.LoadableConfig.Server.HAproxyV2 {
+			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
+			if err != nil {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+			}
 
-		util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
+			util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)
+		}
 	}
 
 	if config.LoadableConfig.Server.DNS.ResolveClientIP {
@@ -2840,11 +2832,25 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
 func (a *AuthState) generateLocalChacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s\000%s",
+	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
 		a.Service,
 		a.Protocol.Get(),
+		func() string {
+			if a.ClientIP == "" {
+				return "0.0.0.0"
+			}
+
+			return a.ClientIP
+		}(),
+		func() string {
+			if a.XClientPort == "" {
+				return "0"
+			}
+
+			return a.XClientPort
+		}(),
 	)
 }
 
@@ -2890,10 +2896,6 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (found bool, reject bool) {
-	if a.Service == definitions.ServCallback {
-		return
-	}
-
 	if found = a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 

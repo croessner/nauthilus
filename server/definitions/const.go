@@ -490,9 +490,6 @@ const (
 	// CatBruteForce is a constant for the "bruteforce" category.
 	CatBruteForce = "bruteforce"
 
-	// CatCustom represents a custom category identifier with the value "custom".
-	CatCustom = "custom"
-
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
@@ -501,9 +498,6 @@ const (
 
 	// ServHeader is a constant for the "header" service.
 	ServHeader = "header"
-
-	// ServCallback is a generic callback to call Lua
-	ServCallback = "callback"
 
 	// ServBasic is a constant for the "basicauth" service.
 	ServBasic = "basic"
