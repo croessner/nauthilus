@@ -2830,11 +2830,25 @@ func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
 func (a *AuthState) generateLocalChacheKey() string {
-	return fmt.Sprintf("%s\000%s\000%s\000%s",
+	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
 		a.Service,
 		a.Protocol.Get(),
+		func() string {
+			if a.ClientIP == "" {
+				return "0.0.0.0"
+			}
+
+			return a.ClientIP
+		}(),
+		func() string {
+			if a.XClientPort == "" {
+				return "0"
+			}
+
+			return a.XClientPort
+		}(),
 	)
 }
 
