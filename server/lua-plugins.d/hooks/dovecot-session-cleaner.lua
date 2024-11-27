@@ -29,11 +29,12 @@ local json = require("json")
 
 local N = "callback"
 
-function nauthilus_run_hook(logging)
+function nauthilus_run_hook(logging, session)
     local result = {}
 
     result.level = "info"
     result.caller = N .. ".lua"
+    result.session = session
 
     local custom_pool = "default"
     local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")

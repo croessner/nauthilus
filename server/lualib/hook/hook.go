@@ -357,7 +357,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 
 	logTable := setupLogging(L)
 
-	_, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook)
+	_, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, "")
 
 	return err
 }
@@ -367,6 +367,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LState, context.Context)) (gin.H, error) {
 	var script *PrecompiledLuaScript
 
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 	hook := ctx.Param("hook")
 
 	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
@@ -387,7 +388,7 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 
 	logTable := setupLogging(L)
 
-	return executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook)
+	return executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
 }
 
 // registerDynamicLoaderGin registers a dynamic loader function in the Lua state (L)
@@ -428,7 +429,7 @@ func RunLuaInit(ctx context.Context, hook string) error {
 //	if err != nil {
 //	    // handle error
 //	}
-func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook string) (result gin.H, err error) {
+func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook, guid string) (result gin.H, err error) {
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err, hook)
 	}
@@ -441,7 +442,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 		Fn:      L.GetGlobal(definitions.LuaFnRunHook),
 		NRet:    1,
 		Protect: true,
-	}, logTable); err != nil {
+	}, logTable, lua.LString(guid)); err != nil {
 		processError(err, hook)
 	}
 
