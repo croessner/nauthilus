@@ -210,10 +210,6 @@ func setupLuaScripts() error {
 		return err
 	}
 
-	if err := PreCompileCallback(); err != nil {
-		return err
-	}
-
 	if err := PreCompileInit(); err != nil {
 		return err
 	}
@@ -251,22 +247,6 @@ func PreCompileFilters() error {
 	}
 
 	if err := filter.PreCompileLuaFilters(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// PreCompileCallback pre-compiles the Lua callback script if present in the configuration.
-// It checks if the Lua callback is enabled in the LoadableConfig.
-// If enabled, it pre-compiles the Lua callback script using hook.PreCompileLuaScript.
-// Returns an error if the pre-compilation fails, else returns nil.
-func PreCompileCallback() error {
-	if !config.LoadableConfig.HaveLuaCallback() {
-		return nil
-	}
-
-	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaCallbackScriptPath()); err != nil {
 		return err
 	}
 

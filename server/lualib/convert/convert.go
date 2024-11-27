@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/yuin/gopher-lua"
 )
@@ -182,5 +183,40 @@ func LuaValueToGo(value lua.LValue) any {
 		return table
 	default:
 		return v.String()
+	}
+}
+
+// ToGinH converts a map with any key and any value types into a gin.H type with string keys and converted values.
+func ToGinH(value any) gin.H {
+	result := make(gin.H)
+
+	switch v := value.(type) {
+	case map[any]any:
+		for key, value := range v {
+			keyStr := fmt.Sprintf("%v", key)
+			result[keyStr] = ToGinValue(value)
+		}
+	default:
+		return nil
+	}
+
+	return result
+}
+
+// ToGinValue converts a generic value into a format compatible with Gin, handling maps, slices, and other types.
+func ToGinValue(value any) any {
+	switch v := value.(type) {
+	case map[any]any:
+		return ToGinH(v)
+	case []any:
+		arr := make([]any, len(v))
+
+		for i, item := range v {
+			arr[i] = ToGinValue(item)
+		}
+
+		return arr
+	default:
+		return value
 	}
 }

@@ -216,7 +216,7 @@ func PreCompileLuaScript(filePath string) (err error) {
 	LuaScripts[filePath].Replace(luaScriptNew)
 
 	for luaScriptName := range LuaScripts {
-		if luaScriptName != config.LoadableConfig.GetLuaCallbackScriptPath() && luaScriptName != config.LoadableConfig.GetLuaInitScriptPath() {
+		if luaScriptName != config.LoadableConfig.GetLuaInitScriptPath() {
 			if LuaScripts[luaScriptName].GetPrecompiledScript() == nil {
 				delete(LuaScripts, luaScriptName)
 			}
@@ -400,11 +400,6 @@ func registerDynamicLoaderInit(L *lua.LState, ctx context.Context) {
 	registerDynamicLoader(L, ctx, false)
 }
 
-// RunLuaCallback runs a Lua callback request in a Gin context.
-func RunLuaCallback(ctx *gin.Context, hook string) error {
-	return runLuaCommonWrapper(ctx, hook, registerDynamicLoaderGin)
-}
-
 // RunLuaHook executes a precompiled Lua script based on a hook parameter from the gin.Context.
 func RunLuaHook(ctx *gin.Context) (gin.H, error) {
 	return runLuaCustomWrapper(ctx, registerDynamicLoaderGin)
@@ -452,16 +447,12 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 
 	if L.GetTop() == 1 {
 		luaResult := L.ToTable(-1)
-		result = make(gin.H)
-
 		anyTable := convert.LuaValueToGo(luaResult).(map[any]any)
+		result = convert.ToGinH(anyTable)
 
-		for key, value := range anyTable {
-			if keyName, okay := key.(string); okay {
-				result[keyName] = value
-			} else {
-				result[fmt.Sprintf("%v", key)] = value
-			}
+		if result == nil {
+			result = gin.H{}
+			err = fmt.Errorf("custom location '%s' returned invalid result", hook)
 		}
 	}
 

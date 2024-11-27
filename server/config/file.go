@@ -537,25 +537,6 @@ func (f *File) GetLuaScriptPath() string {
 	return ""
 }
 
-// GetLuaCallbackScriptPath returns the path to the Lua callback script specified in the configuration.
-// If the configuration or LuaConf is nil, it returns an empty string.
-func (f *File) GetLuaCallbackScriptPath() string {
-	if f == nil {
-		return ""
-	}
-
-	getConfig := f.GetConfig(definitions.BackendLua)
-	if getConfig == nil {
-		return ""
-	}
-
-	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		return luaConf.CallbackScriptPath
-	}
-
-	return ""
-}
-
 // GetLuaInitScriptPath returns the path to the Lua init script specified in the configuration.
 // If the configuration or LuaConf is nil, it returns an empty string.
 func (f *File) GetLuaInitScriptPath() string {
@@ -683,26 +664,6 @@ func (f *File) HaveLuaActions() bool {
 
 	if f.HaveLua() {
 		return len(f.Lua.Actions) > 0
-	}
-
-	return false
-}
-
-// HaveLuaCallback checks if the Lua backend has a callback script path defined in the configuration.
-// Returns true if the backend is Lua and the callback script path is not empty,
-// otherwise returns false.
-func (f *File) HaveLuaCallback() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveLua() {
-		getConfig := f.GetConfig(definitions.BackendLua)
-		if getConfig == nil {
-			return false
-		}
-
-		return getConfig.(*LuaConf).CallbackScriptPath != ""
 	}
 
 	return false

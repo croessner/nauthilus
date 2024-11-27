@@ -190,9 +190,6 @@ func requestHandler(ctx *gin.Context) {
 				auth.handleAuthentication(ctx)
 			case definitions.ServSaslauthd:
 				auth.handleSASLAuthdAuthentication(ctx)
-			case definitions.ServCallback:
-				auth.handleCallback(ctx)
-				ctx.Status(auth.StatusCodeOK)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}

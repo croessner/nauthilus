@@ -130,4 +130,6 @@ function nauthilus_run_hook(logging)
            nauthilus_util.print_result(logging, result)
         end
     end
+
+    return result
 end

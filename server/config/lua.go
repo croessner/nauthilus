@@ -111,10 +111,9 @@ func (l *LuaFilter) String() string {
 }
 
 type LuaConf struct {
-	PackagePath        string `mapstructure:"package_path"`
-	BackendScriptPath  string `mapstructure:"backend_script_path"`
-	CallbackScriptPath string `mapstructure:"callback_script_path"`
-	InitScriptPath     string `mapstructure:"init_script_path"`
+	PackagePath       string `mapstructure:"package_path"`
+	BackendScriptPath string `mapstructure:"backend_script_path"`
+	InitScriptPath    string `mapstructure:"init_script_path"`
 }
 
 func (l *LuaConf) String() string {
