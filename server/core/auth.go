@@ -1115,21 +1115,17 @@ func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *Pass
 }
 
 // setStatusCodes sets different status codes for various services.
-func (a *AuthState) setStatusCodes(service string) error {
+func (a *AuthState) setStatusCodes(service string) {
 	switch service {
 	case definitions.ServNginx:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusOK
 		a.StatusCodeFail = http.StatusOK
-	case definitions.ServSaslauthd, definitions.ServBasic, definitions.ServOryHydra, definitions.ServHeader, definitions.ServJSON:
+	default:
 		a.StatusCodeOK = http.StatusOK
 		a.StatusCodeInternalError = http.StatusInternalServerError
 		a.StatusCodeFail = http.StatusForbidden
-	default:
-		return errors.ErrUnknownService
 	}
-
-	return nil
 }
 
 // getUserAccountFromCache fetches the user account name from Redis cache using the provided username.
@@ -2315,15 +2311,8 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	if err := auth.setStatusCodes(ctx.Param("service")); err != nil {
-
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-
-		return nil
-	}
-
+	auth.setStatusCodes(ctx.Param("service"))
 	setupAuth(ctx, auth)
-
 	logNewAuthState(guid, auth)
 
 	if ctx.Errors.Last() != nil {

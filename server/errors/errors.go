@@ -80,7 +80,6 @@ func NewDetailedError(err string) *DetailedError {
 
 var (
 	ErrNoBackendsConfigured                    = errors.New("no database backends configured")
-	ErrUnknownService                          = errors.New("unknown service")
 	ErrAllBackendConfigError                   = errors.New("configuration errors in all Database sections")
 	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")

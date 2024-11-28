@@ -878,11 +878,7 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	auth.Username = a.loginRequest.GetSubject()
 
-	if err := auth.setStatusCodes(definitions.ServOryHydra); err != nil {
-		handleErr(a.ctx, err)
-
-		return
-	}
+	auth.setStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.handlePassword(a.ctx); authStatus == definitions.AuthResultOK {
 		if config.LoadableConfig.Oauth2 != nil {
@@ -1164,10 +1160,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 		return nil, errors.ErrInvalidUsername
 	}
 
-	if err := auth.setStatusCodes(definitions.ServOryHydra); err != nil {
-		return nil, err
-	}
-
+	auth.setStatusCodes(definitions.ServOryHydra)
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx).initMethodAndUserAgent()
 
 	if reject := auth.preproccessAuthRequest(ctx); reject {

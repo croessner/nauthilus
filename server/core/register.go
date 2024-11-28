@@ -253,7 +253,6 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	var (
 		authCompleteWithOK   bool
 		authCompleteWithFail bool
-		err                  error
 		guid                 = ctx.GetString(definitions.CtxGUIDKey)
 	)
 
@@ -282,12 +281,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 		return
 	}
 
-	if err = auth.setStatusCodes(definitions.ServOryHydra); err != nil {
-		handleErr(ctx, err)
-
-		return
-	}
-
+	auth.setStatusCodes(definitions.ServOryHydra)
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
 	if reject := auth.preproccessAuthRequest(ctx); reject {
