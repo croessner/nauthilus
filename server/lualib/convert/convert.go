@@ -170,17 +170,37 @@ func LuaValueToGo(value lua.LValue) any {
 	case lua.LString:
 		return v.String()
 	case *lua.LTable:
-		table := make(map[any]any)
+		// Try to detect if it's an array or a map
+		isArray := true
+
+		mp := make(map[any]any)
 
 		if v == nil {
-			return table
+			return mp
 		}
 
-		v.ForEach(func(key lua.LValue, v2 lua.LValue) {
-			table[LuaValueToGo(key)] = LuaValueToGo(v2)
+		array := make([]any, 0, v.Len())
+
+		v.ForEach(func(key lua.LValue, value lua.LValue) {
+			if isArray && key.Type() == lua.LTNumber {
+				index := int(key.(lua.LNumber))
+				if index == len(array)+1 {
+					array = append(array, LuaValueToGo(value))
+				} else {
+					isArray = false
+				}
+			} else {
+				isArray = false
+			}
+
+			mp[LuaValueToGo(key)] = LuaValueToGo(value)
 		})
 
-		return table
+		if isArray {
+			return array
+		}
+
+		return mp
 	default:
 		return v.String()
 	}
