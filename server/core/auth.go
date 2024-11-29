@@ -411,7 +411,7 @@ func (a *AuthState) String() string {
 	return result[1:]
 }
 
-// LogLineMail returns an array of key-value pairs used for logging mail information.
+// LogLineTemplate returns an array of key-value pairs used for logging mail information.
 // The array includes the following information:
 // - session: the session GUID
 // - protocol: the protocol used
@@ -436,7 +436,7 @@ func (a *AuthState) String() string {
 // - status_message: the status message
 // - uri_path: the URI path
 // - authenticated: the authentication status
-func (a *AuthState) LogLineMail(status string, endpoint string) []any {
+func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	var keyvals []any
 
 	if a.StatusMessage == "" {
@@ -573,8 +573,8 @@ func (a *AuthState) GetDisplayNameOk() (string, bool) {
 	return displayName, displayName != ""
 }
 
-// authOK is the general method to indicate authentication success.
-func (a *AuthState) authOK(ctx *gin.Context) {
+// AuthOK is the general method to indicate authentication success.
+func (a *AuthState) AuthOK(ctx *gin.Context) {
 	setCommonHeaders(ctx, a)
 
 	switch a.Service {
@@ -729,7 +729,6 @@ func formatValues(values []any) []string {
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
 func sendAuthResponse(ctx *gin.Context, a *AuthState) {
-	ctx.Header("Content-Type", "application/json; charset=UTF-8")
 	ctx.JSON(a.StatusCodeOK, &backend.PositivePasswordCache{
 		AccountField:    a.AccountField,
 		TOTPSecretField: a.TOTPSecretField,
@@ -740,10 +739,10 @@ func sendAuthResponse(ctx *gin.Context, a *AuthState) {
 
 // handleLogging logs information about the authentication request if the verbosity level is greater than LogLevelWarn.
 // It uses the log.Logger to log the information.
-// The logged information includes the result of the a.LogLineMail() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
+// The logged information includes the result of the a.LogLineTemplate() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, a *AuthState) {
-	level.Info(log.Logger).Log(a.LogLineMail(func() string {
+	level.Info(log.Logger).Log(a.LogLineTemplate(func() string {
 		if !a.NoAuth {
 			return "ok"
 		}
@@ -756,7 +755,7 @@ func handleLogging(ctx *gin.Context, a *AuthState) {
 // If the number of login attempts exceeds the maximum value allowed (MaxUint8), it sets it to the maximum value.
 // If the AuthState service is equal to ServNginx and the number of login attempts is less than the maximum login attempts specified in the environment configuration,
 // it increments the number of login attempts by one.
-// The usage example of this method can be found in the authFail function.
+// The usage example of this method can be found in the AuthFail function.
 func (a *AuthState) increaseLoginAttempts() {
 	if a.LoginAttempts > math.MaxUint8 {
 		a.LoginAttempts = math.MaxUint8
@@ -782,7 +781,6 @@ func calculateWaitDelay(maxWaitDelay, loginAttempt uint) int {
 // It updates the StatusMessage of the authentication to definitions.PasswordFail.
 //
 // If the Service field of the authentication is equal to global.ServUserInfo, it also sets the following headers:
-//   - "Content-Type" header to "application/json; charset=UTF-8"
 //   - "X-User-Found" header to the string representation of the UserFound field of the authentication
 //   - If the PasswordHistory field is not nil, it responds with a JSON representation of the PasswordHistory.
 //     If the PasswordHistory field is nil, it responds with an empty JSON object.
@@ -806,8 +804,6 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
 	case definitions.ServJSON:
-		ctx.Header("Content-Type", "application/json; charset=UTF-8")
-
 		if a.PasswordHistory != nil {
 			ctx.JSON(a.StatusCodeFail, *a.PasswordHistory)
 		} else {
@@ -828,15 +824,15 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
-	level.Info(log.Logger).Log(a.LogLineMail("fail", ctx.Request.URL.Path)...)
+	level.Info(log.Logger).Log(a.LogLineTemplate("fail", ctx.Request.URL.Path)...)
 
 	stats.RejectedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
 	stats.LoginsCounter.WithLabelValues(definitions.LabelFailure).Inc()
 }
 
-// authFail handles the failure of authentication.
+// AuthFail handles the failure of authentication.
 // It increases the login attempts, sets failure headers on the context, and performs login attempt processing.
-func (a *AuthState) authFail(ctx *gin.Context) {
+func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.setFailureHeaders(ctx)
 	a.loginAttemptProcessing(ctx)
@@ -854,32 +850,7 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 	}
 }
 
-// sendAuthResponse sets the necessary headers for UserInfo service in a Gin context
-// Usage example:
-//
-//	func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
-//	    ...
-//	    if a.Service == global.ServJSON {
-//	        a.sendAuthResponse(ctx, reason)
-//	        return
-//	    }
-//	    ...
-//	}
-//
-// params:
-// - ctx: Gin context
-// - reason: Error reason to include in the response
-func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
-	type errType struct {
-		Error string
-	}
-
-	ctx.Header("Content-Type", "application/json; charset=UTF-8")
-
-	ctx.JSON(a.StatusCodeInternalError, &errType{Error: reason})
-}
-
-// authTempFail sets the necessary headers and status message for temporary authentication failure.
+// AuthTempFail sets the necessary headers and status message for temporary authentication failure.
 // If the service is "user", it also sets headers specific to user information.
 // After setting the headers, it returns the appropriate response based on the service.
 // If the service is not "user", it returns an internal server error response with the status message.
@@ -902,12 +873,12 @@ func (a *AuthState) setUserInfoHeaders(ctx *gin.Context, reason string) {
 //	    ...
 //	  }
 //
-// Declaration and usage of authTempFail:
+// Declaration and usage of AuthTempFail:
 //
 //	A: func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 //	  ...
 //	}
-func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
+func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	ctx.Header("Auth-Status", reason)
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 	a.setSMPTHeaders(ctx)
@@ -915,13 +886,14 @@ func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
 	a.StatusMessage = reason
 
 	if a.Service == definitions.ServJSON {
-		a.setUserInfoHeaders(ctx, reason)
+		ctx.JSON(a.StatusCodeInternalError, gin.H{"error": reason})
 
 		return
 	}
 
 	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
-	level.Info(log.Logger).Log(a.LogLineMail("tempfail", ctx.Request.URL.Path)...)
+
+	level.Info(log.Logger).Log(a.LogLineTemplate("tempfail", ctx.Request.URL.Path)...)
 }
 
 // isMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
@@ -1165,11 +1137,11 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 	return
 }
 
-// handleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
-func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult definitions.AuthResult) {
+// HandleFeatures iterates through the list of enabled features and returns true, if a feature returned positive.
+func (a *AuthState) HandleFeatures(ctx *gin.Context) (authResult definitions.AuthResult) {
 	var accountName string
 
-	// If brute-force is enabled, the account should have been refreshed by calling the checkBruteForce() method.
+	// If brute-force is enabled, the account should have been refreshed by calling the CheckBruteForce() method.
 	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		accountName = a.refreshUserAccount()
 	}
@@ -1253,13 +1225,13 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult definitions.Aut
 
 	if config.LoadableConfig.HasFeature(definitions.FeatureLua) {
 		if config.LoadableConfig.HaveLuaFeatures() {
-			if triggered, abortFeatures, err := a.featureLua(ctx); err != nil {
+			if triggered, abortFeatures, err := a.FeatureLua(ctx); err != nil {
 				return definitions.AuthResultTempFail
 			} else if triggered {
 				a.FeatureName = definitions.FeatureLua
 
 				if config.LoadableConfig.BruteForce.LearnFromFeature(definitions.FeatureLua) {
-					a.updateBruteForceBucketsCounter()
+					a.UpdateBruteForceBucketsCounter()
 				}
 
 				doAction(definitions.LuaActionLua, definitions.LuaActionLuaName)
@@ -1276,7 +1248,7 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult definitions.Aut
 	 */
 
 	if config.LoadableConfig.HasFeature(definitions.FeatureTLSEncryption) {
-		if a.featureTLSEncryption() {
+		if a.FeatureTLSEncryption() {
 			a.FeatureName = definitions.FeatureTLSEncryption
 
 			doAction(definitions.LuaActionTLS, definitions.LuaActionTLSName)
@@ -1286,11 +1258,11 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult definitions.Aut
 	}
 
 	if config.LoadableConfig.HasFeature(definitions.FeatureRelayDomains) {
-		if a.featureRelayDomains() {
+		if a.FeatureRelayDomains() {
 			a.FeatureName = definitions.FeatureRelayDomains
 
 			if config.LoadableConfig.BruteForce.LearnFromFeature(definitions.FeatureRelayDomains) {
-				a.updateBruteForceBucketsCounter()
+				a.UpdateBruteForceBucketsCounter()
 			}
 
 			doAction(definitions.LuaActionRelayDomains, definitions.LuaActionRelayDomainsName)
@@ -1300,13 +1272,13 @@ func (a *AuthState) handleFeatures(ctx *gin.Context) (authResult definitions.Aut
 	}
 
 	if config.LoadableConfig.HasFeature(definitions.FeatureRBL) {
-		if triggered, err := a.featureRBLs(ctx); err != nil {
+		if triggered, err := a.FeatureRBLs(ctx); err != nil {
 			return definitions.AuthResultTempFail
 		} else if triggered {
 			a.FeatureName = definitions.FeatureRBL
 
 			if config.LoadableConfig.BruteForce.LearnFromFeature(definitions.FeatureRBL) {
-				a.updateBruteForceBucketsCounter()
+				a.UpdateBruteForceBucketsCounter()
 			}
 
 			doAction(definitions.LuaActionRBL, definitions.LuaActionRBLName)
@@ -1328,8 +1300,8 @@ func (a *AuthState) getAccountField() string {
 	return *a.AccountField
 }
 
-// postLuaAction sends a Lua action to be executed asynchronously.
-func (a *AuthState) postLuaAction(passDBResult *PassDBResult) {
+// PostLuaAction sends a Lua action to be executed asynchronously.
+func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	if !config.LoadableConfig.HaveLuaActions() {
 		return
 	}
@@ -1411,13 +1383,13 @@ func (a *AuthState) haveMonitoringFlag(flag definitions.Monitoring) bool {
 	return false
 }
 
-// handlePassword handles the authentication process for the password flow.
+// HandlePassword handles the authentication process for the password flow.
 // It performs common validation checks and then proceeds based on the value of ctx.Value(definitions.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
 // Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
 // In the next step, it calls the authenticateUser function to perform further control flow based on cache usage and authentication status.
 // Finally, it returns the authResult which indicates the authentication result of the process.
-func (a *AuthState) handlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
+func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
 	// Common validation checks
 	if authResult = a.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
 		return
@@ -1472,7 +1444,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 // handleLocalCache handles the local cache authentication logic for the AuthState object.
 // It sets the operation mode and initializes the passDBResult.
 // Then, it filters the authentication result through the Lua filter.
-// After that, the postLuaAction is executed on the passDBResult.
+// After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	a.setOperationMode(ctx)
@@ -1482,9 +1454,9 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	authResult := definitions.AuthResultOK
 
 	if !(a.Protocol.Get() == definitions.ProtoOryHydra) {
-		authResult = a.filterLua(passDBResult, ctx)
+		authResult = a.FilterLua(passDBResult, ctx)
 
-		a.postLuaAction(passDBResult)
+		a.PostLuaAction(passDBResult)
 	}
 
 	return authResult
@@ -1521,15 +1493,15 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 		switch db {
 		case definitions.BackendCache:
 			if !(a.haveMonitoringFlag(definitions.MonCache) || a.isMasterUser()) {
-				passDBs = a.appendBackend(passDBs, definitions.BackendCache, cachePassDB)
+				passDBs = a.appendBackend(passDBs, definitions.BackendCache, CachePassDB)
 				useCache = true
 			}
 		case definitions.BackendLDAP:
 			if !config.LoadableConfig.LDAPHavePoolOnly() {
-				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, ldapPassDB)
+				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, LDAPPassDB)
 			}
 		case definitions.BackendLua:
-			passDBs = a.appendBackend(passDBs, definitions.BackendLua, luaPassDB)
+			passDBs = a.appendBackend(passDBs, definitions.BackendLua, LuaPassDB)
 		case definitions.BackendUnknown:
 		case definitions.BackendLocalCache:
 		}
@@ -1759,22 +1731,22 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 		authResult = definitions.AuthResultOK
 	} else {
-		a.updateBruteForceBucketsCounter()
+		a.UpdateBruteForceBucketsCounter()
 
 		authResult = definitions.AuthResultFail
 	}
 
 	if !(a.Protocol.Get() == definitions.ProtoOryHydra) {
-		authResult = a.filterLua(passDBResult, ctx)
+		authResult = a.FilterLua(passDBResult, ctx)
 
-		a.postLuaAction(passDBResult)
+		a.PostLuaAction(passDBResult)
 	}
 
 	return authResult
 }
 
-// filterLua calls Lua filters which can change the backend result.
-func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
+// FilterLua calls Lua filters which can change the backend result.
+func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
 	if !config.LoadableConfig.HaveLuaFilters() {
 		if passDBResult.Authenticated {
 			return definitions.AuthResultOK
@@ -1897,8 +1869,8 @@ func (a *AuthState) filterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 	return definitions.AuthResultFail
 }
 
-// listUserAccounts returns the list of all known users from the account databases.
-func (a *AuthState) listUserAccounts() (accountList AccountList) {
+// ListUserAccounts returns the list of all known users from the account databases.
+func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
 	for _, backendType := range config.LoadableConfig.Server.Backends {
@@ -2130,7 +2102,7 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 	var jsonRequest *JSONRequest
 
 	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
-		handleJSONError(ctx, err)
+		HandleJSONError(ctx, err)
 
 		return
 	}
@@ -2863,18 +2835,18 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 	}
 }
 
-// preproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
+// PreproccessAuthRequest preprocesses the authentication request by checking if the request is already in the local cache.
 // If not found in the cache, it checks if the request is a brute force attack and updates the brute force counter.
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
-func (a *AuthState) preproccessAuthRequest(ctx *gin.Context) (reject bool) {
+func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.getFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 
-		if a.checkBruteForce() {
-			a.updateBruteForceBucketsCounter()
-			a.postLuaAction(&PassDBResult{})
-			a.authFail(ctx)
+		if a.CheckBruteForce() {
+			a.UpdateBruteForceBucketsCounter()
+			a.PostLuaAction(&PassDBResult{})
+			a.AuthFail(ctx)
 
 			return true
 		}

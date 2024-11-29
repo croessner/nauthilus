@@ -100,8 +100,8 @@ func sessionCleaner(ctx *gin.Context) {
 	session.Save()
 }
 
-// Page '/2fa/v1/register'
-func loginGET2FAHandler(ctx *gin.Context) {
+// LoginGET2FAHandler Page '/2fa/v1/register'
+func LoginGET2FAHandler(ctx *gin.Context) {
 	session := sessions.Default(ctx)
 
 	cookieValue := session.Get(definitions.CookieLang)
@@ -248,8 +248,8 @@ func getSessionTOTPSecret(ctx *gin.Context) (string, string, string) {
 	return totpSecret, totpCode, account
 }
 
-// Page '/2fa/v1/register/post'
-func loginPOST2FAHandler(ctx *gin.Context) {
+// LoginPOST2FAHandler Page '/2fa/v1/register/post'
+func LoginPOST2FAHandler(ctx *gin.Context) {
 	var (
 		authCompleteWithOK   bool
 		authCompleteWithFail bool
@@ -276,7 +276,7 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
 	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
-		handleErr(ctx, errors.ErrInvalidUsername)
+		HandleErr(ctx, errors.ErrInvalidUsername)
 
 		return
 	}
@@ -284,14 +284,14 @@ func loginPOST2FAHandler(ctx *gin.Context) {
 	auth.setStatusCodes(definitions.ServOryHydra)
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
 
-	if reject := auth.preproccessAuthRequest(ctx); reject {
-		handleErr(ctx, errors.ErrBruteForceAttack)
+	if reject := auth.PreproccessAuthRequest(ctx); reject {
+		HandleErr(ctx, errors.ErrBruteForceAttack)
 
 		return
 	}
 
 	if authResult == definitions.AuthResultUnset {
-		authResult = auth.handlePassword(ctx)
+		authResult = auth.HandlePassword(ctx)
 
 		// User does not have a TOTP secret
 		if _, found := auth.getTOTPSecretOk(); !found {
@@ -354,7 +354,7 @@ func processAuthResult(ctx *gin.Context, authResult definitions.AuthResult, auth
 	if authResult == definitions.AuthResultOK {
 		if !authCompleteWithOK {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
-				handleErr(ctx, err)
+				HandleErr(ctx, err)
 
 				return
 			}
@@ -364,7 +364,7 @@ func processAuthResult(ctx *gin.Context, authResult definitions.AuthResult, auth
 	} else if authResult == definitions.AuthResultFail {
 		if !authCompleteWithFail {
 			if err := saveSessionData(ctx, authResult, auth); err != nil {
-				handleErr(ctx, err)
+				HandleErr(ctx, err)
 
 				return
 			}
@@ -408,12 +408,12 @@ func processTwoFARedirect(ctx *gin.Context, authComplete bool) {
 // It takes the Gin context, the authentication result, and the AuthState object as inputs.
 // It initializes local variables, including `found`, `account`, `uniqueUserID`, `displayName`, and `totpSecret`.
 // It retrieves the default session from the Gin context.
-// It checks if the `account` is found and if not, calls the `handleErr` function with the `ErrNoAccount` error and returns.
+// It checks if the `account` is found and if not, calls the `HandleErr` function with the `ErrNoAccount` error and returns.
 // If the TOTP secret is found, it sets the `CookieHaveTOTP` value in the session as true.
 // If the `uniqueUserID` is found, it sets the `CookieUniqueUserID` value in the session.
 // If the `displayName` is found, it sets the `CookieDisplayName` value in the session.
 // It sets the `CookieAuthResult`, `CookieUsername`, `CookieAccount`, and `CookieUserBackend` values in the session based on the inputs.
-// It saves the session and, if there is an error, calls the `handleErr` function with the error and returns.
+// It saves the session and, if there is an error, calls the `HandleErr` function with the error and returns.
 // It redirects the context to the 2FA page and logs the authentication result, GUID, username, and URI path.
 //
 // ctx: The Gin context.
@@ -470,7 +470,7 @@ func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 
 	auth.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
 
-	auth.updateBruteForceBucketsCounter()
+	auth.UpdateBruteForceBucketsCounter()
 
 	sessionCleanupTOTP(ctx)
 
@@ -502,8 +502,8 @@ func totpValidation(guid string, code string, account string, totpSecret string)
 	return a.totpValidation(code, account, totpSecret)
 }
 
-// Page '/2fa/v1/register/home'
-func register2FAHomeHandler(ctx *gin.Context) {
+// Register2FAHomeHandler Page '/2fa/v1/register/home'
+func Register2FAHomeHandler(ctx *gin.Context) {
 	var haveTOTP bool
 
 	session := sessions.Default(ctx)
@@ -515,14 +515,14 @@ func register2FAHomeHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(definitions.CookieAuthResult)
 	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
-		handleErr(ctx, errors.ErrNotLoggedIn)
+		HandleErr(ctx, errors.ErrNotLoggedIn)
 
 		return
 	}
 
 	cookieValue = session.Get(definitions.CookieAccount)
 	if cookieValue == nil {
-		handleErr(ctx, errors.ErrNoAccount)
+		HandleErr(ctx, errors.ErrNoAccount)
 
 		return
 	}
@@ -564,8 +564,8 @@ func register2FAHomeHandler(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "home.html", homeData)
 }
 
-// Page '/2fa/v1/totp'
-func registerTotpGETHandler(ctx *gin.Context) {
+// RegisterTotpGETHandler Page '/2fa/v1/totp'
+func RegisterTotpGETHandler(ctx *gin.Context) {
 	var (
 		haveError    bool
 		errorMessage string
@@ -591,14 +591,14 @@ func registerTotpGETHandler(ctx *gin.Context) {
 
 	cookieValue = session.Get(definitions.CookieAuthResult)
 	if cookieValue == nil || definitions.AuthResult(cookieValue.(uint8)) != definitions.AuthResultOK {
-		handleErr(ctx, errors.ErrNotLoggedIn)
+		HandleErr(ctx, errors.ErrNotLoggedIn)
 
 		return
 	}
 
 	cookieValue = session.Get(definitions.CookieAccount)
 	if cookieValue == nil {
-		handleErr(ctx, errors.ErrNoAccount)
+		HandleErr(ctx, errors.ErrNoAccount)
 
 		return
 	}
@@ -613,7 +613,7 @@ func registerTotpGETHandler(ctx *gin.Context) {
 		})
 
 		if err != nil {
-			handleErr(ctx, err)
+			HandleErr(ctx, err)
 
 			return
 		}
@@ -669,8 +669,8 @@ func registerTotpGETHandler(ctx *gin.Context) {
 	ctx.HTML(http.StatusOK, "regtotp.html", totpData)
 }
 
-// Page '/2fa/v1/totp/post'
-func registerTotpPOSTHandler(ctx *gin.Context) {
+// RegisterTotpPOSTHandler Page '/2fa/v1/totp/post'
+func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	var (
 		accountName   string
 		err           error
@@ -683,13 +683,13 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 	cookieValue := session.Get(definitions.CookieTOTPURL)
 	if cookieValue == nil {
-		handleErr(ctx, errors.ErrNoTOTPURL)
+		HandleErr(ctx, errors.ErrNoTOTPURL)
 
 		return
 	}
 
 	if totpKey, err = otp.NewKeyFromURL(cookieValue.(string)); err != nil {
-		handleErr(ctx, err)
+		HandleErr(ctx, err)
 
 		return
 	}
@@ -734,14 +734,14 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 	case uint8(definitions.BackendLua):
 		addTOTPSecret = luaAddTOTPSecret
 	default:
-		handleErr(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
+		HandleErr(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
 			"Database backend not supported"))
 
 		return
 	}
 
 	if err = addTOTPSecret(auth, NewTOTPSecret(totpKey.Secret())); err != nil {
-		handleErr(ctx, err)
+		HandleErr(ctx, err)
 
 		return
 	}
@@ -765,7 +765,7 @@ func registerTotpPOSTHandler(ctx *gin.Context) {
 
 		accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
 		if err != nil {
-			handleErr(ctx, err)
+			HandleErr(ctx, err)
 
 			return
 		}

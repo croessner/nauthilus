@@ -85,8 +85,8 @@ func logAddLocalhost(auth *AuthState, feature string) {
 	auth.AdditionalLogs = append(auth.AdditionalLogs, definitions.Localhost)
 }
 
-// featureLua runs Lua scripts and returns a trigger result.
-func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+// FeatureLua runs Lua scripts and returns a trigger result.
+func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.ClientIP) {
 		logAddLocalhost(a, definitions.FeatureLua)
 
@@ -162,8 +162,8 @@ func (a *AuthState) featureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	return
 }
 
-// featureTLSEncryption checks, if the remote client connection was secured.
-func (a *AuthState) featureTLSEncryption() (triggered bool) {
+// FeatureTLSEncryption checks, if the remote client connection was secured.
+func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 	if isLocalOrEmptyIP(a.ClientIP) {
 		logAddLocalhost(a, definitions.FeatureTLSEncryption)
 
@@ -193,9 +193,9 @@ func (a *AuthState) featureTLSEncryption() (triggered bool) {
 	return
 }
 
-// featureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
+// FeatureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
-func (a *AuthState) featureRelayDomains() (triggered bool) {
+func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 	if config.LoadableConfig.RelayDomains == nil {
 		return
 	}
@@ -361,10 +361,10 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 	return
 }
 
-// featureRBLs is a method that checks if the client IP address is whitelisted, and then performs an RBL check
+// FeatureRBLs is a method that checks if the client IP address is whitelisted, and then performs an RBL check
 // on the client's IP address. If the RBL score exceeds the configured threshold, the 'triggered' flag is set to true.
 // It returns the 'triggered' flag and any error that occurred during the check.
-func (a *AuthState) featureRBLs(ctx *gin.Context) (triggered bool, err error) {
+func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	var (
 		totalRBLScore int
 	)

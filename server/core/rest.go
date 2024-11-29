@@ -111,8 +111,8 @@ type FilterCmd struct {
 	IPAddress []string `json:"ip_addresses,omitempty"`
 }
 
-// handleAuthentication handles the authentication logic based on the selected service type.
-func (a *AuthState) handleAuthentication(ctx *gin.Context) {
+// HandleAuthentication handles the authentication logic based on the selected service type.
+func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 	var mode string
 
 	if a.Service == definitions.ServBasic {
@@ -129,7 +129,7 @@ func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 	}
 
 	if a.ListAccounts {
-		allAccountsList := a.listUserAccounts()
+		allAccountsList := a.ListUserAccounts()
 
 		acceptHeader := ctx.GetHeader("Accept")
 
@@ -153,71 +153,79 @@ func (a *AuthState) handleAuthentication(ctx *gin.Context) {
 	} else {
 		if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
 			//nolint:exhaustive // Ignore some results
-			switch a.handleFeatures(ctx) {
+			switch a.HandleFeatures(ctx) {
 			case definitions.AuthResultFeatureTLS:
-				a.postLuaAction(&PassDBResult{})
-				a.authTempFail(ctx, definitions.TempFailNoTLS)
+				a.PostLuaAction(&PassDBResult{})
+				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
+				ctx.Abort()
 
 				return
 			case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-				a.postLuaAction(&PassDBResult{})
-				a.authFail(ctx)
+				a.PostLuaAction(&PassDBResult{})
+				a.AuthFail(ctx)
+				ctx.Abort()
 
 				return
 			case definitions.AuthResultUnset:
 			case definitions.AuthResultOK:
-			case definitions.AuthResultFail:
 			case definitions.AuthResultTempFail:
-				a.authTempFail(ctx, definitions.TempFailDefault)
-			case definitions.AuthResultEmptyUsername:
-			case definitions.AuthResultEmptyPassword:
+				a.AuthTempFail(ctx, definitions.TempFailDefault)
+				ctx.Abort()
+
+				return
+			default:
+				ctx.AbortWithStatus(a.StatusCodeInternalError)
+
+				return
 			}
 		}
 
 		//nolint:exhaustive // Ignore some results
-		switch a.handlePassword(ctx) {
+		switch a.HandlePassword(ctx) {
 		case definitions.AuthResultOK:
-			a.authOK(ctx)
+			a.AuthOK(ctx)
 		case definitions.AuthResultFail:
-			a.authFail(ctx)
+			a.AuthFail(ctx)
+			ctx.Abort()
 		case definitions.AuthResultTempFail:
-			a.authTempFail(ctx, definitions.TempFailDefault)
+			a.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
 		case definitions.AuthResultEmptyUsername:
-			a.authTempFail(ctx, definitions.TempFailEmptyUser)
+			a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
+			ctx.Abort()
 		case definitions.AuthResultEmptyPassword:
-			a.authFail(ctx)
-		case definitions.AuthResultUnset:
-		case definitions.AuthResultFeatureRBL:
-		case definitions.AuthResultFeatureTLS:
-		case definitions.AuthResultFeatureRelayDomain:
-		case definitions.AuthResultFeatureLua:
+			a.AuthFail(ctx)
+			ctx.Abort()
+		default:
+			ctx.AbortWithStatus(a.StatusCodeInternalError)
 		}
 	}
 }
 
-// handleSASLAuthdAuthentication handles the authentication logic for the handleSASLAuthdAuthentication service.
-func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
-	switch a.handlePassword(ctx) {
+// HandleSASLAuthdAuthentication handles the authentication logic for the HandleSASLAuthdAuthentication service.
+func (a *AuthState) HandleSASLAuthdAuthentication(ctx *gin.Context) {
+	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
-		a.authOK(ctx)
+		a.AuthOK(ctx)
 	case definitions.AuthResultFail:
-		a.authFail(ctx)
+		a.AuthFail(ctx)
+		ctx.Abort()
 	case definitions.AuthResultTempFail:
-		a.authTempFail(ctx, definitions.TempFailDefault)
+		a.AuthTempFail(ctx, definitions.TempFailDefault)
+		ctx.Abort()
 	case definitions.AuthResultEmptyUsername:
-		a.authTempFail(ctx, definitions.TempFailEmptyUser)
+		a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
+		ctx.Abort()
 	case definitions.AuthResultEmptyPassword:
-		a.authFail(ctx)
-	case definitions.AuthResultUnset:
-	case definitions.AuthResultFeatureRBL:
-	case definitions.AuthResultFeatureTLS:
-	case definitions.AuthResultFeatureRelayDomain:
-	case definitions.AuthResultFeatureLua:
+		a.AuthFail(ctx)
+		ctx.Abort()
+	default:
+		ctx.AbortWithStatus(a.StatusCodeInternalError)
 	}
 }
 
-// healthCheck handles the health check functionality by logging a message and returning "pong" as the response.
-func healthCheck(ctx *gin.Context) {
+// HealthCheck handles the health check functionality by logging a message and returning "pong" as the response.
+func HealthCheck(ctx *gin.Context) {
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
 
 	ctx.String(http.StatusOK, "pong")
@@ -344,8 +352,8 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 	return blockedAccounts, err
 }
 
-// hanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
-func hanldeBruteForceList(ctx *gin.Context) {
+// HanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
+func HanldeBruteForceList(ctx *gin.Context) {
 	var filterCmd *FilterCmd
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -355,7 +363,7 @@ func hanldeBruteForceList(ctx *gin.Context) {
 		filterCmd = &FilterCmd{}
 
 		if err := ctx.ShouldBindJSON(filterCmd); err != nil {
-			handleJSONError(ctx, err)
+			HandleJSONError(ctx, err)
 
 			return
 		}
@@ -381,7 +389,7 @@ func hanldeBruteForceList(ctx *gin.Context) {
 	})
 }
 
-// handleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
+// HandleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
 // and attempts to flush the cache according to the *FlushUserCmd in the request's JSON body.
 //
 // Parameters:
@@ -408,14 +416,14 @@ func hanldeBruteForceList(ctx *gin.Context) {
 //  5. If there are no binding errors, the function processes the cache flush.
 //  6. Based on the useCache flag and the outcome of the cache flush operation, the function
 //     updates the statusMsg and sends the cache status to the client.
-func handleUserFlush(ctx *gin.Context) {
+func HandleUserFlush(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &FlushUserCmd{}
 
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatCache, definitions.ServFlush)
 
 	if err := ctx.ShouldBindJSON(userCmd); err != nil {
-		handleJSONError(ctx, err)
+		HandleJSONError(ctx, err)
 
 		return
 	}
@@ -648,13 +656,13 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, statu
 	})
 }
 
-// handleBruteForceRuleFlush handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
+// HandleBruteForceRuleFlush handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
 // It logs information about the action, including the GUID, brute force category, and flush operation.
 // If the IP command fails to bind, an error is logged, and a bad request status is returned.
 // If there is an error processing the brute force rules, an error is logged, and an internal server error status is returned.
 // If the rule flush error flag is true, the status message is set to "not flushed".
 // The function then logs the status message and returns a JSON response containing the GUID, brute force category, flush operation, and the result of the command, including the IP address
-func handleBruteForceRuleFlush(ctx *gin.Context) {
+func HandleBruteForceRuleFlush(ctx *gin.Context) {
 	var (
 		ruleFlushError bool
 		removedKeys    []string
@@ -668,7 +676,7 @@ func handleBruteForceRuleFlush(ctx *gin.Context) {
 	ipCmd := &FlushRuleCmd{}
 
 	if err = ctx.ShouldBindJSON(ipCmd); err != nil {
-		handleJSONError(ctx, err)
+		HandleJSONError(ctx, err)
 
 		return
 	}

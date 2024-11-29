@@ -110,10 +110,10 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 	}
 }
 
-// ldapPassDB implements the LDAP password database backend.
+// LDAPPassDB implements the LDAP password database backend.
 //
 //nolint:gocognit // Backends are complex
-func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		assertOk           bool
 		accountField       string
@@ -262,7 +262,7 @@ func ldapPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	if auth.MasterUserMode {
 		auth.NoAuth = true
 
-		passDBResult, err = ldapPassDB(auth)
+		passDBResult, err = LDAPPassDB(auth)
 
 		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
 	}
