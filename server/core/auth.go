@@ -411,31 +411,7 @@ func (a *AuthState) String() string {
 	return result[1:]
 }
 
-// LogLineTemplate returns an array of key-value pairs used for logging mail information.
-// The array includes the following information:
-// - session: the session GUID
-// - protocol: the protocol used
-// - local_ip: the local IP address
-// - port: the port number
-// - client_ip: the client IP address
-// - client_port: the client port number
-// - client_host: the client host
-// - tls_protocol: the TLS protocol used
-// - tls_cipher: the TLS cipher used
-// - auth_method: the authentication method
-// - username: the username
-// - orig_username: the original username
-// - passdb_backend: the used password database backend
-// - current_password_retries: the number of current password retries
-// - account_passwords_seen: the number of account passwords seen
-// - total_passwords_seen: the total number of passwords seen
-// - user_agent: the user agent
-// - client_id: the client ID
-// - brute_force_bucket: the brute force bucket name
-// - feature: the feature name
-// - status_message: the status message
-// - uri_path: the URI path
-// - authenticated: the authentication status
+// LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.
 func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	var keyvals []any
 
@@ -480,9 +456,9 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	return keyvals
 }
 
-// getAccount returns the account value from the AuthState object. If the account field is not set or the account
+// GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
-func (a *AuthState) getAccount() string {
+func (a *AuthState) GetAccount() string {
 	if a.AccountField == nil {
 		return ""
 	}
@@ -496,16 +472,16 @@ func (a *AuthState) getAccount() string {
 	return ""
 }
 
-// getAccountOk returns the account name of a user. If there is no account, it returns the empty string "". A boolean
+// GetAccountOk returns the account name of a user. If there is no account, it returns the empty string "". A boolean
 // is set to return a "found" flag.
-func (a *AuthState) getAccountOk() (string, bool) {
-	account := a.getAccount()
+func (a *AuthState) GetAccountOk() (string, bool) {
+	account := a.GetAccount()
 
 	return account, account != ""
 }
 
-// getTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
-func (a *AuthState) getTOTPSecret() string {
+// GetTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
+func (a *AuthState) GetTOTPSecret() string {
 	if a.TOTPSecretField == nil {
 		return ""
 	}
@@ -519,16 +495,16 @@ func (a *AuthState) getTOTPSecret() string {
 	return ""
 }
 
-// getTOTPSecretOk returns the TOTP secret for a user. If there is no secret, it returns the empty string "". A boolean
+// GetTOTPSecretOk returns the TOTP secret for a user. If there is no secret, it returns the empty string "". A boolean
 // is set to return a "found" flag.
-func (a *AuthState) getTOTPSecretOk() (string, bool) {
-	totpSecret := a.getTOTPSecret()
+func (a *AuthState) GetTOTPSecretOk() (string, bool) {
+	totpSecret := a.GetTOTPSecret()
 
 	return totpSecret, totpSecret != ""
 }
 
-// getUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
-func (a *AuthState) getUniqueUserID() string {
+// GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
+func (a *AuthState) GetUniqueUserID() string {
 	if a.UniqueUserIDField == nil {
 		return ""
 	}
@@ -545,13 +521,13 @@ func (a *AuthState) getUniqueUserID() string {
 // GetUniqueUserIDOk returns the unique identifier for a user. If there is no id, it returns the empty string "". A boolean
 // is set to return a "found" flag.
 func (a *AuthState) GetUniqueUserIDOk() (string, bool) {
-	uniqueUserID := a.getUniqueUserID()
+	uniqueUserID := a.GetUniqueUserID()
 
 	return uniqueUserID, uniqueUserID != ""
 }
 
-// getDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
-func (a *AuthState) getDisplayName() string {
+// GetDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
+func (a *AuthState) GetDisplayName() string {
 	if a.DisplayNameField == nil {
 		return ""
 	}
@@ -568,7 +544,7 @@ func (a *AuthState) getDisplayName() string {
 // GetDisplayNameOk returns the display name of a user. If there is no account, it returns the empty string "". A boolean
 // is set to return a "found" flag.
 func (a *AuthState) GetDisplayNameOk() (string, bool) {
-	displayName := a.getDisplayName()
+	displayName := a.GetDisplayName()
 
 	return displayName, displayName != ""
 }
@@ -604,7 +580,7 @@ func setCommonHeaders(ctx *gin.Context, a *AuthState) {
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	if a.Service != definitions.ServBasic {
-		if account, found := a.getAccountOk(); found {
+		if account, found := a.GetAccountOk(); found {
 			ctx.Header("Auth-User", account)
 		}
 	}
@@ -896,9 +872,9 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	level.Info(log.Logger).Log(a.LogLineTemplate("tempfail", ctx.Request.URL.Path)...)
 }
 
-// isMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
+// IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
 // It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
-func (a *AuthState) isMasterUser() bool {
+func (a *AuthState) IsMasterUser() bool {
 	if config.LoadableConfig.Server.MasterUser.Enabled {
 		if strings.Count(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
 			parts := strings.Split(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
@@ -911,8 +887,8 @@ func (a *AuthState) isMasterUser() bool {
 	return false
 }
 
-// isInNetwork checks an IP address against a network and returns true if it matches.
-func (a *AuthState) isInNetwork(networkList []string) (matchIP bool) {
+// IsInNetwork checks an IP address against a network and returns true if it matches.
+func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 	return util.IsInNetwork(networkList, *a.GUID, a.ClientIP)
 }
 
@@ -1162,7 +1138,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) (authResult definitions.Aut
 		finished := make(chan action.Done)
 
 		if accountName == "" {
-			accountName = a.getAccount()
+			accountName = a.GetAccount()
 		}
 
 		action.RequestChan <- &action.Action{
@@ -1189,7 +1165,7 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) (authResult definitions.Aut
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
 				Account:             accountName,
-				AccountField:        a.getAccountField(),
+				AccountField:        a.GetAccountField(),
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,
@@ -1290,9 +1266,9 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) (authResult definitions.Aut
 	return definitions.AuthResultOK
 }
 
-// getAccountField returns the value of the AccountField field in the AuthState struct.
+// GetAccountField returns the value of the AccountField field in the AuthState struct.
 // If the AccountField field is nil, it returns an empty string.
-func (a *AuthState) getAccountField() string {
+func (a *AuthState) GetAccountField() string {
 	if a.AccountField == nil {
 		return ""
 	}
@@ -1314,7 +1290,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 		}
 
 		finished := make(chan action.Done)
-		accountName := a.getAccount()
+		accountName := a.GetAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    definitions.LuaActionPost,
@@ -1340,9 +1316,9 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
 				Account:             accountName,
-				AccountField:        a.getAccountField(),
-				UniqueUserID:        a.getUniqueUserID(),
-				DisplayName:         a.getDisplayName(),
+				AccountField:        a.GetAccountField(),
+				UniqueUserID:        a.GetUniqueUserID(),
+				DisplayName:         a.GetDisplayName(),
 				Password:            a.Password,
 				Protocol:            a.Protocol.Get(),
 				BruteForceName:      a.BruteForceName,
@@ -1371,9 +1347,9 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	}()
 }
 
-// haveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
+// HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
 // It iterates over the MonitoringFlags slice and returns true if the flag is found, otherwise it returns false.
-func (a *AuthState) haveMonitoringFlag(flag definitions.Monitoring) bool {
+func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	for _, setFlag := range a.MonitoringFlags {
 		if setFlag == flag {
 			return true
@@ -1395,7 +1371,7 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		return
 	}
 
-	if !(a.haveMonitoringFlag(definitions.MonInMemory) || a.isMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+	if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
 		return a.handleLocalCache(ctx)
 	}
 
@@ -1492,7 +1468,7 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
-			if !(a.haveMonitoringFlag(definitions.MonCache) || a.isMasterUser()) {
+			if !(a.HaveMonitoringFlag(definitions.MonCache) || a.IsMasterUser()) {
 				passDBs = a.appendBackend(passDBs, definitions.BackendCache, CachePassDB)
 				useCache = true
 			}
@@ -1725,7 +1701,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	}
 
 	if passDBResult.Authenticated {
-		if !(a.haveMonitoringFlag(definitions.MonInMemory) || a.isMasterUser()) {
+		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
 			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.EnvConfig.LocalCacheAuthTTL)
 		}
 
@@ -1793,10 +1769,10 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			LocalIP:             a.XLocalIP,
 			LocalPort:           a.XPort,
 			Username:            a.Username,
-			Account:             a.getAccount(),
-			AccountField:        a.getAccountField(),
-			UniqueUserID:        a.getUniqueUserID(),
-			DisplayName:         a.getDisplayName(),
+			Account:             a.GetAccount(),
+			AccountField:        a.GetAccountField(),
+			UniqueUserID:        a.GetUniqueUserID(),
+			DisplayName:         a.GetDisplayName(),
 			Password:            a.Password,
 			Protocol:            a.Protocol.String(),
 			BruteForceName:      "", // unavailable
@@ -2062,10 +2038,10 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 
 	auth.Method = &method
 
-	auth.withClientInfo(ctx)
-	auth.withLocalInfo(ctx)
-	auth.withUserAgent(ctx)
-	auth.withXSSL(ctx)
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
 }
 
 // processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the AuthState object.
@@ -2194,10 +2170,10 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the AuthState object to set client, local, user-agent, and X-SSL information, respectively
 func setupHTTPBasicAuth(ctx *gin.Context, auth *AuthState) {
 	// NOTE: We must get username and password later!
-	auth.withClientInfo(ctx)
-	auth.withLocalInfo(ctx)
-	auth.withUserAgent(ctx)
-	auth.withXSSL(ctx)
+	auth.WithClientInfo(ctx)
+	auth.WithLocalInfo(ctx)
+	auth.WithUserAgent(ctx)
+	auth.WithXSSL(ctx)
 }
 
 // initMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
@@ -2251,7 +2227,7 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 	}
 
 	auth.initMethodAndUserAgent()
-	auth.withDefaults(ctx)
+	auth.WithDefaults(ctx)
 	auth.setOperationMode(ctx)
 }
 
@@ -2294,8 +2270,8 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 	return auth
 }
 
-// withDefaults sets default values for the AuthState structure including the GUID session value.
-func (a *AuthState) withDefaults(ctx *gin.Context) *AuthState {
+// WithDefaults sets default values for the AuthState structure including the GUID session value.
+func (a *AuthState) WithDefaults(ctx *gin.Context) *AuthState {
 	if a == nil {
 		return nil
 	}
@@ -2319,8 +2295,8 @@ func (a *AuthState) withDefaults(ctx *gin.Context) *AuthState {
 	return a
 }
 
-// withLocalInfo adds the local IP and -port headers to the AuthState structure.
-func (a *AuthState) withLocalInfo(ctx *gin.Context) *AuthState {
+// WithLocalInfo adds the local IP and -port headers to the AuthState structure.
+func (a *AuthState) WithLocalInfo(ctx *gin.Context) *AuthState {
 	if a == nil {
 		return nil
 	}
@@ -2331,8 +2307,8 @@ func (a *AuthState) withLocalInfo(ctx *gin.Context) *AuthState {
 	return a
 }
 
-// withClientInfo adds the client IP, -port and -ID headers to the AuthState structure.
-func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
+// WithClientInfo adds the client IP, -port and -ID headers to the AuthState structure.
+func (a *AuthState) WithClientInfo(ctx *gin.Context) *AuthState {
 	var err error
 
 	if a == nil {
@@ -2373,8 +2349,8 @@ func (a *AuthState) withClientInfo(ctx *gin.Context) *AuthState {
 	return a
 }
 
-// withUserAgent adds the User-Agent header to the AuthState structure.
-func (a *AuthState) withUserAgent(ctx *gin.Context) *AuthState {
+// WithUserAgent adds the User-Agent header to the AuthState structure.
+func (a *AuthState) WithUserAgent(ctx *gin.Context) *AuthState {
 	if a == nil {
 		return nil
 	}
@@ -2386,8 +2362,8 @@ func (a *AuthState) withUserAgent(ctx *gin.Context) *AuthState {
 	return a
 }
 
-// withXSSL adds HAProxy header processing to the AuthState structure.
-func (a *AuthState) withXSSL(ctx *gin.Context) *AuthState {
+// WithXSSL adds HAProxy header processing to the AuthState structure.
+func (a *AuthState) WithXSSL(ctx *gin.Context) *AuthState {
 	if a == nil {
 		return nil
 	}
@@ -2715,9 +2691,9 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 	}
 }
 
-// getOauth2SubjectAndClaims retrieves the subject and claims for an OAuth2 client. It takes an OAuth2 client as a
+// GetOauth2SubjectAndClaims retrieves the subject and claims for an OAuth2 client. It takes an OAuth2 client as a
 // parameter and returns the subject and claims as a string and a map
-func (a *AuthState) getOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
+func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
 	var (
 		okay    bool
 		index   int
@@ -2808,14 +2784,14 @@ func (a *AuthState) generateLocalChacheKey() string {
 	)
 }
 
-// getFromLocalCache retrieves the AuthState object from the local cache using the generateLocalChacheKey() as the key.
+// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalChacheKey() as the key.
 // If the object is found in the cache, it updates the fields of the current AuthState object with the cached values.
 // It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
 // If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the AuthState object.
 // It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
 // Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
-func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
-	if a.haveMonitoringFlag(definitions.MonInMemory) {
+func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
+	if a.HaveMonitoringFlag(definitions.MonInMemory) {
 		return false
 	}
 
@@ -2840,7 +2816,7 @@ func (a *AuthState) getFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
-	if found := a.getFromLocalCache(ctx); !found {
+	if found := a.GetFromLocalCache(ctx); !found {
 		stats.CacheMisses.Inc()
 
 		if a.CheckBruteForce() {

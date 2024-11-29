@@ -268,8 +268,8 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 			Method:            &method,
 		}
 
-		auth.withUserAgent(ctx)
-		auth.withXSSL(ctx)
+		auth.WithUserAgent(ctx)
+		auth.WithXSSL(ctx)
 
 		if clientIP == "" {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)

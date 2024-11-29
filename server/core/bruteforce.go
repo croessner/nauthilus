@@ -821,7 +821,7 @@ func (a *AuthState) checkBucketOverLimit(rules []config.BruteForceRule, network 
 func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
 	if config.LoadableConfig.HaveLuaActions() {
 		finished := make(chan action.Done)
-		accountName := a.getAccount()
+		accountName := a.GetAccount()
 
 		action.RequestChan <- &action.Action{
 			LuaAction:    definitions.LuaActionBruteForce,
@@ -847,7 +847,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 				UserAgent:           *a.UserAgent,
 				Username:            a.Username,
 				Account:             accountName,
-				AccountField:        a.getAccountField(),
+				AccountField:        a.GetAccountField(),
 				UniqueUserID:        "", // unavailable
 				DisplayName:         "", // unavailable
 				Password:            a.Password,
@@ -1011,7 +1011,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	}
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
-		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
+		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
 
@@ -1113,7 +1113,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	}
 
 	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
-		if a.isInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
+		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
 			return
 		}
 	}

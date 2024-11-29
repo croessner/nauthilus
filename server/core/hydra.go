@@ -874,7 +874,7 @@ func (a *ApiConfig) handleLoginSkip() {
 		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
 	}
 
-	auth.withDefaults(a.ctx).withClientInfo(a.ctx).withLocalInfo(a.ctx).withUserAgent(a.ctx).withXSSL(a.ctx).initMethodAndUserAgent()
+	auth.WithDefaults(a.ctx).WithClientInfo(a.ctx).WithLocalInfo(a.ctx).WithUserAgent(a.ctx).WithXSSL(a.ctx).initMethodAndUserAgent()
 
 	auth.Username = a.loginRequest.GetSubject()
 
@@ -882,7 +882,7 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
 		if config.LoadableConfig.Oauth2 != nil {
-			_, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
+			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
 		auth.ClientIP = a.ctx.GetString(definitions.CtxClientIPKey)
@@ -1161,7 +1161,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 	}
 
 	auth.setStatusCodes(definitions.ServOryHydra)
-	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx).initMethodAndUserAgent()
+	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx).initMethodAndUserAgent()
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return nil, errors.ErrBruteForceAttack
@@ -1242,7 +1242,7 @@ func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
 func (a *ApiConfig) processAuthOkLogin(ctx *gin.Context, auth *AuthState, oldAuthResult definitions.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool, needLuaFilterAndPost bool) (authResult definitions.AuthResult, err error) {
 	var redirectFlag bool
 
-	account, found := auth.getAccountOk()
+	account, found := auth.GetAccountOk()
 	if !found {
 		return oldAuthResult, errors.ErrNoAccount
 	}
@@ -1302,7 +1302,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string
 
 	oauth2Client := a.loginRequest.GetClient()
 	if config.LoadableConfig.Oauth2 != nil {
-		subject, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
+		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
 
 	if subject == "" {
@@ -1337,7 +1337,7 @@ func (a *ApiConfig) handleNonPost2FA(auth *AuthState, session sessions.Session, 
 		return false, nil
 	}
 
-	if _, found := auth.getTOTPSecretOk(); found {
+	if _, found := auth.GetTOTPSecretOk(); found {
 		if err := a.setSessionVariablesForAuth(session, authResult, subject); err != nil {
 			return false, err
 		}
@@ -1365,7 +1365,7 @@ func (a *ApiConfig) handlePost2FA(auth *AuthState, account string) error {
 		return errors.ErrNoTOTPCode
 	}
 
-	totpSecret, found := auth.getTOTPSecretOk()
+	totpSecret, found := auth.GetTOTPSecretOk()
 	if !found {
 		return errors.ErrNoTOTPCode
 	}
@@ -1587,7 +1587,7 @@ func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult definitions
 
 	if !post2FA {
 		if !config.GetSkipTOTP(*a.clientId) {
-			if _, found := auth.getTOTPSecretOk(); found {
+			if _, found := auth.GetTOTPSecretOk(); found {
 				session.Set(definitions.CookieAuthResult, uint8(authResult))
 				session.Set(definitions.CookieUsername, a.ctx.Request.Form.Get("username"))
 
@@ -1639,7 +1639,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult definitio
 		err       error
 	)
 
-	if authResult == definitions.AuthResultOK && auth.isMasterUser() {
+	if authResult == definitions.AuthResultOK && auth.IsMasterUser() {
 		userFound = true
 	} else {
 		userFound, err = auth.userExists()
