@@ -957,7 +957,7 @@ func (a *AuthState) checkRepeatingBruteForcer(rules []config.BruteForceRule, net
 	return withError, alreadyTriggered, ruleNumber
 }
 
-// checkBruteForce is a method of the `AuthState` struct and is responsible for
+// CheckBruteForce is a method of the `AuthState` struct and is responsible for
 // telling whether the client IP should be blocked due to unrestricted unauthorized access attempts
 // (i.e., a Brute Force attack on the system).
 //
@@ -974,7 +974,7 @@ func (a *AuthState) checkRepeatingBruteForcer(rules []config.BruteForceRule, net
 //     the appropriate message, and runs a Lua script for handling the detected brute force attempt.
 //
 // It returns 'true' if a Brute Force attack is detected, otherwise returns 'false'.
-func (a *AuthState) checkBruteForce() (blockClientIP bool) {
+func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	var (
 		ruleTriggered bool
 		message       string
@@ -1055,7 +1055,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 	return a.processBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
 }
 
-// updateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
+// UpdateBruteForceBucketsCounter updates the brute force buckets counter for the current authentication
 // It checks if brute force is enabled for the current protocol and if the client IP is not in the whitelist
 // Then it iterates through the loaded brute force rules and saves the bucket counter to Redis
 // The method also logs debug information related to the authentication
@@ -1064,7 +1064,7 @@ func (a *AuthState) checkBruteForce() (blockClientIP bool) {
 //   - a: a pointer to the AuthState struct which contains the authentication details
 //
 // Returns: none
-func (a *AuthState) updateBruteForceBucketsCounter() {
+func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}

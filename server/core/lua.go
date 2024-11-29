@@ -23,8 +23,8 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 )
 
-// luaPassDB implements the Lua password database backend.
-func luaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+// LuaPassDB implements the Lua password database backend.
+func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var luaBackendResult *lualib.LuaBackendResult
 
 	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "lua_backend_request_total")

@@ -23,8 +23,8 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 )
 
-// cachePassDB implements the redis password database backend.
-func cachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+// CachePassDB implements the redis password database backend.
+func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		accountName string
 		ppc         *backend.PositivePasswordCache

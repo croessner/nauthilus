@@ -455,7 +455,7 @@ type ApiConfig struct {
 	challenge string
 }
 
-// handleErr handles an error by logging the error details and printing a goroutine dump.
+// HandleErr handles an error by logging the error details and printing a goroutine dump.
 // It sets the "failure" and "message" values in the context, and then calls the notifyGETHandler function.
 // If the error is of type *errors.DetailedError, it logs the error details along with the error message.
 // Otherwise, it logs only the error message.
@@ -464,12 +464,12 @@ type ApiConfig struct {
 //
 // ctx: The Gin context.
 // err: The error to handle.
-func handleErr(ctx *gin.Context, err error) {
+func HandleErr(ctx *gin.Context, err error) {
 	processErrorLogging(ctx, err)
 	sessionCleaner(ctx)
 	ctx.Set("failure", true)
 	ctx.Set("message", err)
-	notifyGETHandler(ctx)
+	NotifyGETHandler(ctx)
 }
 
 // processErrorLogging logs the error details and prints a goroutine dump.
@@ -482,7 +482,7 @@ func handleErr(ctx *gin.Context, err error) {
 // err: The error to log.
 // Usage example:
 //
-//	handleErr(ctx, err)
+//	HandleErr(ctx, err)
 //	sessionCleaner(ctx)
 //	ctx.Set("failure", true)
 //	ctx.Set("message", err)
@@ -529,10 +529,10 @@ func logError(ctx *gin.Context, err error) {
 	}
 }
 
-// notifyGETHandler handles the GET request for the notification page.
+// NotifyGETHandler handles the GET request for the notification page.
 // It sets the HTTP status code, status title, and notification message based on the context.
 // It also prepares the data for rendering the notify.html template and executes the HTML rendering.
-func notifyGETHandler(ctx *gin.Context) {
+func NotifyGETHandler(ctx *gin.Context) {
 	var (
 		found          bool
 		msg            string
@@ -615,29 +615,29 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 }
 
 // handleHydraErr handles an error by checking the status code of the http response.
-// If the status code is StatusNotFound, it calls the handleErr function with errors.ErrUnknownJSON as the error.
-// If the status code is StatusGone, it calls the handleErr function with errors.ErrHTTPRequestGone as the error.
-// Otherwise, it calls the handleErr function with the original error.
-// If the http response is nil, it calls the handleErr function with the original error.
+// If the status code is StatusNotFound, it calls the HandleErr function with errors.ErrUnknownJSON as the error.
+// If the status code is StatusGone, it calls the HandleErr function with errors.ErrHTTPRequestGone as the error.
+// Otherwise, it calls the HandleErr function with the original error.
+// If the http response is nil, it calls the HandleErr function with the original error.
 //
 // ctx: The Gin context.
 // err: The error to handle.
 // httpResponse: The http response object.
-// handleErr: The function that handles an error.
+// HandleErr: The function that handles an error.
 // errors.ErrUnknownJSON: The error representing an unknown JSON response.
 // errors.ErrHTTPRequestGone: The error representing a gone http request.
 func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 	if httpResponse != nil {
 		switch httpResponse.StatusCode {
 		case http.StatusNotFound:
-			handleErr(ctx, errors.ErrUnknownJSON)
+			HandleErr(ctx, errors.ErrUnknownJSON)
 		case http.StatusGone:
-			handleErr(ctx, errors.ErrHTTPRequestGone)
+			HandleErr(ctx, errors.ErrHTTPRequestGone)
 		default:
-			handleErr(ctx, err)
+			HandleErr(ctx, err)
 		}
 	} else {
-		handleErr(ctx, err)
+		HandleErr(ctx, err)
 	}
 }
 
@@ -679,14 +679,14 @@ func setLanguageDetails(langFromURL string, langFromCookie string) (lang string,
 	return lang, needCookie, needRedirect
 }
 
-// withLanguageMiddleware is a middleware function that handles the language setup for the application.
+// WithLanguageMiddleware is a middleware function that handles the language setup for the application.
 // It tries to get the language tag from the URL and the cookie.
 // It sets the language details and creates a localizer based on the selected language.
 // It also handles CSRF token and localization in the context.
 // If the language is not found in the catalog, it aborts the request with a "Language Not Found" error.
 // If the language needs to be saved in a cookie or redirection is required, it does so accordingly.
 // Finally, it calls the next handler in the chain.
-func withLanguageMiddleware() gin.HandlerFunc {
+func WithLanguageMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			langFromURL    string
@@ -880,14 +880,14 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	auth.setStatusCodes(definitions.ServOryHydra)
 
-	if authStatus := auth.handlePassword(a.ctx); authStatus == definitions.AuthResultOK {
+	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
 		if config.LoadableConfig.Oauth2 != nil {
 			_, claims = auth.getOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
 		auth.ClientIP = a.ctx.GetString(definitions.CtxClientIPKey)
 
-		auth.updateBruteForceBucketsCounter()
+		auth.UpdateBruteForceBucketsCounter()
 		a.ctx.AbortWithError(http.StatusInternalServerError, errors.ErrUnknownCause)
 
 		return
@@ -1103,8 +1103,8 @@ func (a *ApiConfig) logInfoLoginNoSkip() {
 	)
 }
 
-// Page '/login'
-func loginGETHandler(ctx *gin.Context) {
+// LoginGETHandler Page '/login'
+func LoginGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -1112,7 +1112,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1136,7 +1136,7 @@ func loginGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1163,7 +1163,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 	auth.setStatusCodes(definitions.ServOryHydra)
 	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx).initMethodAndUserAgent()
 
-	if reject := auth.preproccessAuthRequest(ctx); reject {
+	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return nil, errors.ErrBruteForceAttack
 	}
 
@@ -1609,7 +1609,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
 	auth.ClientIP = a.ctx.GetString(definitions.CtxClientIPKey)
 
-	auth.updateBruteForceBucketsCounter()
+	auth.UpdateBruteForceBucketsCounter()
 
 	a.ctx.Redirect(
 		http.StatusFound,
@@ -1668,15 +1668,15 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult definitio
 		Attributes:        auth.Attributes,
 	}
 
-	authResult = auth.filterLua(passDBResult, ctx)
+	authResult = auth.FilterLua(passDBResult, ctx)
 
-	auth.postLuaAction(passDBResult)
+	auth.PostLuaAction(passDBResult)
 
 	return authResult
 }
 
-// Page '/login/post'
-func loginPOSTHandler(ctx *gin.Context) {
+// LoginPOSTHandler Page '/login/post'
+func LoginPOSTHandler(ctx *gin.Context) {
 	var (
 		post2FA         bool
 		authResult      definitions.AuthResult
@@ -1687,7 +1687,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.PostForm("ory.hydra.login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1700,14 +1700,14 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	auth, err := initializeAuthLogin(ctx)
 	if err != nil {
-		handleErr(ctx, err)
+		HandleErr(ctx, err)
 
 		return
 	}
 
 	authResult, recentSubject, rememberPost2FA, post2FA, err = handleSessionDataLogin(ctx, auth)
 	if err != nil {
-		handleErr(ctx, err)
+		HandleErr(ctx, err)
 
 		return
 	}
@@ -1724,7 +1724,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1732,7 +1732,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 	apiConfig.clientName = oauth2Client.GetClientName()
 
 	if authResult == definitions.AuthResultUnset || authResult == definitions.AuthResultOK {
-		authResult = auth.handlePassword(ctx)
+		authResult = auth.HandlePassword(ctx)
 	}
 
 	oldAuthResult := authResult
@@ -1749,7 +1749,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 		case definitions.AuthResultOK:
 			authResult, err = apiConfig.processAuthOkLogin(ctx, auth, oldAuthResult, rememberPost2FA, recentSubject, post2FA, needLuaFilterAndPost)
 			if err != nil {
-				handleErr(ctx, err)
+				HandleErr(ctx, err)
 			}
 
 			// If auth-results have changed, filters must have ran. Do not run them again...
@@ -1766,7 +1766,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 			have2FA, err = apiConfig.processAuthFailLogin(auth, oldAuthResult, post2FA)
 			if err != nil {
-				handleErr(ctx, err)
+				HandleErr(ctx, err)
 
 				return
 			}
@@ -1786,7 +1786,7 @@ func loginPOSTHandler(ctx *gin.Context) {
 
 			return
 		default:
-			handleErr(ctx, errors.ErrUnknownCause)
+			HandleErr(ctx, errors.ErrUnknownCause)
 			ctx.AbortWithStatus(http.StatusInternalServerError)
 
 			return
@@ -1794,8 +1794,8 @@ func loginPOSTHandler(ctx *gin.Context) {
 	}
 }
 
-// Page '/device'
-func deviceGETHandler(ctx *gin.Context) {
+// DeviceGETHandler Page '/device'
+func DeviceGETHandler(ctx *gin.Context) {
 	var (
 		wantAbout    bool
 		wantPolicy   bool
@@ -1816,7 +1816,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -1836,7 +1836,7 @@ func deviceGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -1917,9 +1917,9 @@ func deviceGETHandler(ctx *gin.Context) {
 	)
 }
 
-// Page '/device/post'
-func devicePOSTHandler(ctx *gin.Context) {
-	handleErr(ctx, stderrors.New("not implemented yet"))
+// DevicePOSTHandler Page '/device/post'
+func DevicePOSTHandler(ctx *gin.Context) {
+	HandleErr(ctx, stderrors.New("not implemented yet"))
 }
 
 // handleRequestedScopes is a function that analyzes requested scopes from the user in a session.
@@ -2259,8 +2259,8 @@ func (a *ApiConfig) logInfoRedirectWithConsent() {
 	)
 }
 
-// Page '/consent'
-func consentGETHandler(ctx *gin.Context) {
+// ConsentGETHandler Page '/consent'
+func ConsentGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2268,7 +2268,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.Query("consent_challenge")
 	if consentChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2292,7 +2292,7 @@ func consentGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -2494,8 +2494,8 @@ func (a *ApiConfig) logInfoConsentReject() {
 	)
 }
 
-// Page '/consent/post'
-func consentPOSTHandler(ctx *gin.Context) {
+// ConsentPOSTHandler Page '/consent/post'
+func ConsentPOSTHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2503,7 +2503,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
 	if consentChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2526,7 +2526,7 @@ func consentPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		handleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErr(ctx, errors.ErrHydraNoClientId)
 
 		return
 	}
@@ -2587,8 +2587,8 @@ func (a *ApiConfig) logInfoLogout() {
 	)
 }
 
-// Page '/logout'
-func logoutGETHandler(ctx *gin.Context) {
+// LogoutGETHandler Page '/logout'
+func LogoutGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2602,7 +2602,7 @@ func logoutGETHandler(ctx *gin.Context) {
 			ctx.Redirect(http.StatusFound, redirectTo)
 		} else {
 			ctx.Set("message", "No active session for user found")
-			notifyGETHandler(ctx)
+			NotifyGETHandler(ctx)
 		}
 
 		return
@@ -2610,7 +2610,7 @@ func logoutGETHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.Query("logout_challenge")
 	if logoutChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}
@@ -2744,8 +2744,8 @@ func (a *ApiConfig) logInfoLogoutReject() {
 	)
 }
 
-// Page '/logout/post'
-func logoutPOSTHandler(ctx *gin.Context) {
+// LogoutPOSTHandler Page '/logout/post'
+func LogoutPOSTHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2753,7 +2753,7 @@ func logoutPOSTHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
 	if logoutChallenge == "" {
-		handleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErr(ctx, errors.ErrNoLoginChallenge)
 
 		return
 	}

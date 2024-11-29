@@ -166,9 +166,9 @@ func (w *customWriter) Write(data []byte) (numBytes int, err error) {
 }
 
 //nolint:gocognit // Main logic
-func requestHandler(ctx *gin.Context) {
+func RequestHandler(ctx *gin.Context) {
 	if ctx.FullPath() == "/ping" {
-		healthCheck(ctx)
+		HealthCheck(ctx)
 	} else {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
@@ -179,15 +179,15 @@ func requestHandler(ctx *gin.Context) {
 				return
 			}
 
-			if reject := auth.preproccessAuthRequest(ctx); reject {
+			if reject := auth.PreproccessAuthRequest(ctx); reject {
 				return
 			}
 
 			switch ctx.Param("service") {
 			case definitions.ServBasic, definitions.ServNginx, definitions.ServHeader, definitions.ServJSON:
-				auth.handleAuthentication(ctx)
+				auth.HandleAuthentication(ctx)
 			case definitions.ServSaslauthd:
-				auth.handleSASLAuthdAuthentication(ctx)
+				auth.HandleSASLAuthdAuthentication(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -195,7 +195,7 @@ func requestHandler(ctx *gin.Context) {
 		case definitions.CatBruteForce:
 			switch ctx.Param("service") {
 			case definitions.ServList:
-				hanldeBruteForceList(ctx)
+				HanldeBruteForceList(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
 			}
@@ -206,8 +206,8 @@ func requestHandler(ctx *gin.Context) {
 	}
 }
 
-// customRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
-func customRequestHandler(ctx *gin.Context) {
+// CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
+func CustomRequestHandler(ctx *gin.Context) {
 	if result, err := hook.RunLuaHook(ctx); err != nil {
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 	} else if result != nil {
@@ -215,7 +215,7 @@ func customRequestHandler(ctx *gin.Context) {
 	}
 }
 
-// httpCacheHandler handles the HTTP requests for cache related operations.
+// CacheHandler handles the HTTP requests for cache related operations.
 // It takes a gin.Context as a parameter.
 //
 // Procedure:
@@ -223,33 +223,33 @@ func customRequestHandler(ctx *gin.Context) {
 //  2. It uses a switch statement to handle different category values.
 //  3. For the "cache" category, it retrieves the "service" parameter and uses a switch statement
 //     to handle different service values.
-//  4. For the "flush" service, it calls the handleUserFlush function.
+//  4. For the "flush" service, it calls the HandleUserFlush function.
 //  5. For the "bruteforce" category, it retrieves the "service" parameter and uses a switch statement
 //     to handle different service values.
-//  6. For the "flush" service, it calls the handleBruteForceRuleFlush function.
-func httpCacheHandler(ctx *gin.Context) {
+//  6. For the "flush" service, it calls the HandleBruteForceRuleFlush function.
+func CacheHandler(ctx *gin.Context) {
 	//nolint:gocritic // Prepared for future commands
 	switch ctx.Param("category") {
 	case definitions.CatCache:
 		switch ctx.Param("service") {
 		case definitions.ServFlush:
-			handleUserFlush(ctx)
+			HandleUserFlush(ctx)
 		}
 
 	case definitions.CatBruteForce:
 		switch ctx.Param("service") {
 		case definitions.ServFlush:
-			handleBruteForceRuleFlush(ctx)
+			HandleBruteForceRuleFlush(ctx)
 		}
 	}
 }
 
-// `protectEndpointMiddleware` is a middleware function for Gin Web Framework that provides security features for an endpoint.
+// ProtectEndpointMiddleware is a middleware function for Gin Web Framework that provides security features for an endpoint.
 // It extracts the request's client information such as GUID, Client-IP, Protocol, and UserAgent from the context of the request.
 // The function also checks for brute force attacks, and if detected, it updates the counter for brute force attempts and fails the authentication.
 // Further, it handles security features such as TLS, Domain Relay, RBL, and Lua, and in case of their failure, it stops further execution of the request.
 // This middleware function should be used in the setup of routing to ensure the security of the endpoint it is applied to.
-func protectEndpointMiddleware() gin.HandlerFunc {
+func ProtectEndpointMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
 
@@ -291,26 +291,26 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
-		if auth.checkBruteForce() {
-			auth.updateBruteForceBucketsCounter()
-			auth.postLuaAction(&PassDBResult{})
-			auth.authFail(ctx)
+		if auth.CheckBruteForce() {
+			auth.UpdateBruteForceBucketsCounter()
+			auth.PostLuaAction(&PassDBResult{})
+			auth.AuthFail(ctx)
 			ctx.Abort()
 
 			return
 		}
 
 		//nolint:exhaustive // Ignore some results
-		switch auth.handleFeatures(ctx) {
+		switch auth.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
-			auth.postLuaAction(&PassDBResult{})
-			handleErr(ctx, errors.ErrNoTLS)
+			auth.PostLuaAction(&PassDBResult{})
+			HandleErr(ctx, errors.ErrNoTLS)
 			ctx.Abort()
 
 			return
 		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-			auth.postLuaAction(&PassDBResult{})
-			auth.authFail(ctx)
+			auth.PostLuaAction(&PassDBResult{})
+			auth.AuthFail(ctx)
 			ctx.Abort()
 
 			return
@@ -318,8 +318,8 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 		case definitions.AuthResultOK:
 		case definitions.AuthResultFail:
 		case definitions.AuthResultTempFail:
-			auth.postLuaAction(&PassDBResult{})
-			auth.authTempFail(ctx, definitions.TempFailDefault)
+			auth.PostLuaAction(&PassDBResult{})
+			auth.AuthTempFail(ctx, definitions.TempFailDefault)
 			ctx.Abort()
 
 			return
@@ -331,14 +331,14 @@ func protectEndpointMiddleware() gin.HandlerFunc {
 	}
 }
 
-// basicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic AuthState.
+// BasicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic AuthState.
 // It first checks for specified parameters in the incoming request context.
 // If the request already contains BasicAuth in its header, it attempts to authenticate the credentials. Hashed values
 // of the supplied username and password are compared in constant time against expected username and password hashes.
 // If the credentials match, it allows the equest to proceed; else terminates the request with HTTP 403 Forbidden status.
 // If BasicAuth wasn't provided in request, it asks the client to provide credentials responding with HTTP 401 Unauthorized,
 // and inserts a WWW-Authenticate field into response header.
-func basicAuthMiddleware() gin.HandlerFunc {
+func BasicAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 
@@ -379,7 +379,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// loggerMiddleware is a middleware function that logs information about the incoming HTTP request and response.
+// LoggerMiddleware is a middleware function that logs information about the incoming HTTP request and response.
 // It sets a GUID (generated using ksuid.New().String()) in the Gin context with the key defined by definitions.CtxGUIDKey.
 // The function starts a timer to measure the latency of the request.
 // It then proceeds to the next middleware or handler in the chain by calling ctx.Next().
@@ -390,7 +390,7 @@ func basicAuthMiddleware() gin.HandlerFunc {
 // The function stops the timer and calculates the latency.
 // It then collects additional information about the request, such as negotiatedProtocol and cipherSuiteName.
 // Finally, it calls logWrapper(logger).Log() to log the request information with the appropriate logger, logKey, and values.
-func loggerMiddleware() gin.HandlerFunc {
+func LoggerMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			logWrapper func(logger kitlog.Logger) kitlog.Logger
@@ -455,10 +455,10 @@ func loggerMiddleware() gin.HandlerFunc {
 	}
 }
 
-// luaContextMiddleware is a middleware function that adds a Lua context to the Gin context.
+// LuaContextMiddleware is a middleware function that adds a Lua context to the Gin context.
 // It sets the value of definitions.CtxDataExchangeKey in the Gin context to a new instance of Context created by lualib.NewContext().
 // The function then calls the Next() method in the Gin context to proceed to the next middleware or handler in the chain.
-func luaContextMiddleware() gin.HandlerFunc {
+func LuaContextMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
@@ -472,16 +472,16 @@ func luaContextMiddleware() gin.HandlerFunc {
 // The middleware chain consists of the following middlewares in order:
 // - sessions.Sessions: middleware for session management using the provided session store.
 // - adapter.Wrap: middleware that wraps the provided nosurf CSRF protection middleware.
-// - luaContextMiddleware: custom middleware that adds a Lua context to the Gin context.
-// - protectEndpointMiddleware: custom middleware that performs authentication and authorization checks.
-// - withLanguageMiddleware: custom middleware that sets the language for the request.
+// - LuaContextMiddleware: custom middleware that adds a Lua context to the Gin context.
+// - ProtectEndpointMiddleware: custom middleware that performs authentication and authorization checks.
+// - WithLanguageMiddleware: custom middleware that sets the language for the request.
 func createMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		sessions.Sessions(definitions.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
-		luaContextMiddleware(),
-		withLanguageMiddleware(),
-		protectEndpointMiddleware(),
+		LuaContextMiddleware(),
+		WithLanguageMiddleware(),
+		ProtectEndpointMiddleware(),
 	}
 }
 
@@ -568,11 +568,11 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 	}
 }
 
-// `prometheusMiddleware` is a middleware function for Gin Web Framework that collects metrics using Prometheus.
+// PrometheusMiddleware is a middleware function for Gin Web Framework that collects metrics using Prometheus.
 // It measures the duration of the HTTP request and increments a counter for the number of requests for each path.
 // The collected metrics are stored in the Prometheus histogram, counter, and summary variables.
 // This middleware function should be used in the setup of routing to collect metrics for each HTTP request.
-func prometheusMiddleware() gin.HandlerFunc {
+func PrometheusMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
@@ -611,32 +611,32 @@ func prometheusMiddleware() gin.HandlerFunc {
 // This function adds the following endpoints to the router:
 //
 //  1. GET endpoint with the path specified by "login_page" configuration value and handles the user login endpoint.
-//     It calls the loginGETHandler handler to handle the request.
+//     It calls the LoginGETHandler handler to handle the request.
 //
 //  2. GET endpoint with the path specified by "device_page" configuration value and handles the U2F/FIDO2 login endpoint.
-//     It calls the deviceGETHandler handler to handle the request.
+//     It calls the DeviceGETHandler handler to handle the request.
 //
 //  3. GET endpoint with the path specified by "consent_page" configuration value and handles the user consent endpoint.
-//     It calls the consentGETHandler handler to handle the request.
+//     It calls the ConsentGETHandler handler to handle the request.
 //
 //  4. GET endpoint with the path specified by "logout_page" configuration value and handles the user logout endpoint.
-//     It calls the logoutGETHandler handler to handle the request.
+//     It calls the LogoutGETHandler handler to handle the request.
 //
 // Usage:
 //
 //	setupHydraEndpoints(router, sessionStore)
 func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 	// This page handles the user login endpoint
-	routerGroup(viper.GetString("login_page"), router, store, loginGETHandler, loginPOSTHandler)
+	routerGroup(viper.GetString("login_page"), router, store, LoginGETHandler, LoginPOSTHandler)
 
 	// This page handles the U2F/FIDO2 login endpoint
-	routerGroup(viper.GetString("device_page"), router, store, deviceGETHandler, devicePOSTHandler)
+	routerGroup(viper.GetString("device_page"), router, store, DeviceGETHandler, DevicePOSTHandler)
 
 	// This page handles the user consent endpoint
-	routerGroup(viper.GetString("consent_page"), router, store, consentGETHandler, consentPOSTHandler)
+	routerGroup(viper.GetString("consent_page"), router, store, ConsentGETHandler, ConsentPOSTHandler)
 
 	// This page handles the user logout endpoint
-	routerGroup(viper.GetString("logout_page"), router, store, logoutGETHandler, logoutPOSTHandler)
+	routerGroup(viper.GetString("logout_page"), router, store, LogoutGETHandler, LogoutPOSTHandler)
 }
 
 // setup2FAEndpoints is a function that sets up the 2FA (Two-Factor AuthState) endpoints in the given Gin router.
@@ -648,12 +648,12 @@ func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 // This function adds the following endpoints to the router:
 //
 //  1. GET endpoint with the path "/2fa/v1/home" or "/2fa/v1/home/:languageTag" and handles the user registration home page for 2FA.
-//     It calls the register2FAHomeHandler handler to handle the request.
+//     It calls the Register2FAHomeHandler handler to handle the request.
 //
 //  2. GET endpoint with the path "/2fa/v1/:totp_page" and handles the TOTP registration.
-//     It calls the registerTotpGETHandler handler to handle the request.
+//     It calls the RegisterTotpGETHandler handler to handle the request.
 //
-// Note: The implementation of register2FAHomeHandler and registerTotpGETHandler is not provided here.
+// Note: The implementation of Register2FAHomeHandler and RegisterTotpGETHandler is not provided here.
 // Please refer to their respective declarations for more information on the function implementation.
 //
 // Usage:
@@ -664,12 +664,12 @@ func setup2FAEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 		group := router.Group(definitions.TwoFAv1Root)
 
 		// This page handles the user login request to do a two-factor authentication
-		twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, loginGET2FAHandler, loginPOST2FAHandler)
-		twoFactorGroup.GET("/home", register2FAHomeHandler)
-		twoFactorGroup.GET("/home/:languageTag", register2FAHomeHandler)
+		twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, LoginGET2FAHandler, LoginPOST2FAHandler)
+		twoFactorGroup.GET("/home", Register2FAHomeHandler)
+		twoFactorGroup.GET("/home/:languageTag", Register2FAHomeHandler)
 
 		// This page handles the TOTP registration
-		routerGroup(viper.GetString("totp_page"), group, sessionStore, registerTotpGETHandler, registerTotpPOSTHandler)
+		routerGroup(viper.GetString("totp_page"), group, sessionStore, RegisterTotpGETHandler, RegisterTotpPOSTHandler)
 	}
 }
 
@@ -697,14 +697,14 @@ func setupStaticContent(router *gin.Engine) {
 // This function creates a group in the router with the path specified in the "notify_page" configuration value.
 // It adds a middleware to the group that sets up the session store for the requests.
 // It then adds two GET endpoints to the group:
-// - An endpoint with the path "/" and a middlewares: luaContextMiddleware, protectEndpointMiddleware, withLanguageMiddleware, notifyGETHandler
-// - An endpoint with the path "/:languageTag" and a middlewares: luaContextMiddleware, protectEndpointMiddleware, withLanguageMiddleware, notifyGETHandler
+// - An endpoint with the path "/" and a middlewares: LuaContextMiddleware, ProtectEndpointMiddleware, WithLanguageMiddleware, NotifyGETHandler
+// - An endpoint with the path "/:languageTag" and a middlewares: LuaContextMiddleware, ProtectEndpointMiddleware, WithLanguageMiddleware, NotifyGETHandler
 func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 	group := router.Group(viper.GetString("notify_page"))
 
 	group.Use(sessions.Sessions(definitions.SessionName, sessionStore))
-	group.GET("/", luaContextMiddleware(), protectEndpointMiddleware(), withLanguageMiddleware(), notifyGETHandler)
-	group.GET("/:languageTag", luaContextMiddleware(), protectEndpointMiddleware(), withLanguageMiddleware(), notifyGETHandler)
+	group.GET("/", LuaContextMiddleware(), ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
+	group.GET("/:languageTag", LuaContextMiddleware(), ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
 }
 
 // setupBackChannelEndpoints is a function that sets up the endpoints for the back channel in the given Gin router.
@@ -716,21 +716,21 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 // it adds a middleware to the group that implements basic authentication.
 //
 // It then adds three endpoints to the group:
-// - A GET endpoint with the path "/:category/:service" that is handled by the luaContextMiddleware and requestHandler functions.
-// - A POST endpoint with the path "/:category/:service" that is also handled by the luaContextMiddleware and requestHandler functions.
-// - A DELETE endpoint with the path "/:category/:service" that is handled by the httpCacheHandler function.
+// - A GET endpoint with the path "/:category/:service" that is handled by the LuaContextMiddleware and RequestHandler functions.
+// - A POST endpoint with the path "/:category/:service" that is also handled by the LuaContextMiddleware and RequestHandler functions.
+// - A DELETE endpoint with the path "/:category/:service" that is handled by the CacheHandler function.
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
 	if config.LoadableConfig.Server.BasicAuth.Enabled {
-		group.Use(basicAuthMiddleware())
+		group.Use(BasicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", luaContextMiddleware(), requestHandler)
-	group.POST("/:category/:service", luaContextMiddleware(), requestHandler)
-	group.DELETE("/:category/:service", httpCacheHandler)
+	group.GET("/:category/:service", LuaContextMiddleware(), RequestHandler)
+	group.POST("/:category/:service", LuaContextMiddleware(), RequestHandler)
+	group.DELETE("/:category/:service", CacheHandler)
 
-	group.Any("/custom/:hook", luaContextMiddleware(), customRequestHandler)
+	group.Any("/custom/:hook", LuaContextMiddleware(), CustomRequestHandler)
 }
 
 // setupWebAuthnEndpoints is a function that sets up the endpoints related to WebAuthn in the given Gin router.
@@ -741,16 +741,16 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 // Inside this group, it creates another group with the path specified by the configuration value "webauthn_page" retrieved from viper.GetString("webauthn_page").
 // It adds a middleware to this sub-group that enables session management using the provided session store.
 // It then adds two endpoints to this sub-group:
-// - A GET endpoint at the path "/register/begin" which is handled by the beginRegistration function.
-// - A POST endpoint at the path "/register/finish" which is handled by the finishRegistration function.
+// - A GET endpoint at the path "/register/begin" which is handled by the BeginRegistration function.
+// - A POST endpoint at the path "/register/finish" which is handled by the FinishRegistration function.
 func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 	if tags.IsDevelopment {
 		group := router.Group(definitions.TwoFAv1Root)
 
 		regGroup := group.Group(viper.GetString("webauthn_page"))
 		regGroup.Use(sessions.Sessions(definitions.SessionName, sessionStore))
-		regGroup.GET("/register/begin", beginRegistration)
-		regGroup.POST("/register/finish", finishRegistration)
+		regGroup.GET("/register/begin", BeginRegistration)
+		regGroup.POST("/register/finish", FinishRegistration)
 	}
 }
 
@@ -968,13 +968,13 @@ func setupRouter(router *gin.Engine) {
 	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
 
 	// Add Prometheus middleware
-	router.Use(prometheusMiddleware())
+	router.Use(PrometheusMiddleware())
 
 	// Prometheus endpoint
 	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
 
 	// Healthcheck
-	router.GET("/ping", requestHandler)
+	router.GET("/ping", RequestHandler)
 
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
@@ -1017,7 +1017,7 @@ func HTTPApp(ctx context.Context) {
 	router.Use(limitCounter.Middleware())
 
 	// Wrap the GoKit logger
-	router.Use(loggerMiddleware())
+	router.Use(LoggerMiddleware())
 
 	httpServer := setupHTTPServer(router)
 

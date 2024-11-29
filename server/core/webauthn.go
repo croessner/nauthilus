@@ -115,8 +115,8 @@ func updateUser(ctx *gin.Context, user *backend.User) {
 	backend.SaveWebAuthnToRedis(ctx, user, config.LoadableConfig.Server.Redis.PosCacheTTL)
 }
 
-// Page: '/2fa/v1/webauthn/register/begin'
-func beginRegistration(ctx *gin.Context) {
+// BeginRegistration Page: '/2fa/v1/webauthn/register/begin'
+func BeginRegistration(ctx *gin.Context) {
 	var (
 		userName     string
 		displayName  string
@@ -233,8 +233,8 @@ func beginRegistration(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, options)
 }
 
-// Page: '/2fa/v1/webauthn/register/finish'
-func finishRegistration(ctx *gin.Context) {
+// FinishRegistration Page: '/2fa/v1/webauthn/register/finish'
+func FinishRegistration(ctx *gin.Context) {
 	var (
 		userName     string
 		uniqueUserID string
