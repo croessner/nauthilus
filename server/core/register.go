@@ -282,7 +282,7 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 	}
 
 	auth.setStatusCodes(definitions.ServOryHydra)
-	auth.withDefaults(ctx).withClientInfo(ctx).withLocalInfo(ctx).withUserAgent(ctx).withXSSL(ctx)
+	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx)
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		HandleErr(ctx, errors.ErrBruteForceAttack)
@@ -294,7 +294,7 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 		authResult = auth.HandlePassword(ctx)
 
 		// User does not have a TOTP secret
-		if _, found := auth.getTOTPSecretOk(); !found {
+		if _, found := auth.GetTOTPSecretOk(); !found {
 			if authResult == definitions.AuthResultOK {
 				authCompleteWithOK = true
 			}
@@ -430,11 +430,11 @@ func saveSessionData(ctx *gin.Context, authResult definitions.AuthResult, auth *
 
 	session := sessions.Default(ctx)
 
-	if account, found = auth.getAccountOk(); !found {
+	if account, found = auth.GetAccountOk(); !found {
 		return errors.ErrNoAccount
 	}
 
-	if totpSecret, found = auth.getTOTPSecretOk(); found {
+	if totpSecret, found = auth.GetTOTPSecretOk(); found {
 		session.Set(definitions.CookieHaveTOTP, true)
 		session.Set(definitions.CookieTOTPSecret, totpSecret)
 	}

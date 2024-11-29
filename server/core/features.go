@@ -99,7 +99,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		defer stopTimer()
 	}
 
-	accountName := a.getAccount()
+	accountName := a.GetAccount()
 
 	featureRequest := feature.Request{
 		Context: a.Context,
@@ -122,7 +122,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 			LocalPort:           a.XPort,
 			Username:            a.Username,
 			Account:             accountName,
-			AccountField:        a.getAccountField(),
+			AccountField:        a.GetAccountField(),
 			UniqueUserID:        "", // unavailable
 			DisplayName:         "", // unavailable
 			Password:            a.Password,
@@ -180,7 +180,7 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 		defer stopTimer()
 	}
 
-	if !a.isInNetwork(config.LoadableConfig.ClearTextList) {
+	if !a.IsInNetwork(config.LoadableConfig.ClearTextList) {
 		logAddMessage(a, definitions.NoTLS, definitions.FeatureTLSEncryption)
 
 		triggered = true
@@ -379,7 +379,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if a.isInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
+	if a.IsInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
 		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
