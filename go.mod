@@ -35,7 +35,7 @@ require (
 	github.com/quic-go/quic-go v0.48.2
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/segmentio/ksuid v1.0.4
-	github.com/shirou/gopsutil/v4 v4.24.10
+	github.com/shirou/gopsutil/v4 v4.24.11
 	github.com/simia-tech/crypt v0.5.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.19.0
