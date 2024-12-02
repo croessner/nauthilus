@@ -278,7 +278,7 @@ input[type=text].totp-digit {
 /*
  * Media adjustments for smaller display sizes
  */
-@media (max-width: 400px) {
+@media (max-width: 600px) {
   .logo {
     width: 150px;
   }
