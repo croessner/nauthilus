@@ -165,6 +165,8 @@ func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName stri
 		L.PreloadModule(modName, metrics.LoaderModPrometheus)
 	case definitions.LuaModPsnet:
 		L.PreloadModule(modName, connmgr.LoaderModPsnet(ctx))
+	case definitions.LuaModSoftWhitelist:
+		L.PreloadModule(modName, LoaderModSoftWhitelist)
 	default:
 		return
 	}

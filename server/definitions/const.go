@@ -986,6 +986,9 @@ const (
 	// LuaModPrometheus is a constant that identifies the Prometheus module for monitoring and metrics collection.
 	LuaModPrometheus = "nauthilus_prometheus"
 
+	// LuaModSoftWhitelist is a constant that represents the module name for soft whitelist functionality in the application.
+	LuaModSoftWhitelist = "nauthilus_soft_whitelist"
+
 	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
 	LuaModGLuaCrypto = "nauthilus_gluacrypto"
 
@@ -1277,6 +1280,15 @@ const (
 
 	// LuaFnGetConnectionTarget retrieves the target connection within the Lua scripting environment.
 	LuaFnGetConnectionTarget = "get_connection_target"
+
+	// LuaFnSoftWhitelistSet is a constant representing the function name for setting a soft whitelist in the system.
+	LuaFnSoftWhitelistSet = "soft_whitelist_set"
+
+	// LuaFnSoftWhitelistGet represents the function name for retrieving a soft whitelist in the system.
+	LuaFnSoftWhitelistGet = "soft_whitelist_get"
+
+	// LuaFnSoftWhitelistDelete is a constant representing the operation to delete an entry from the soft whitelist.
+	LuaFnSoftWhitelistDelete = "soft_whitelist_delete"
 )
 
 const (
@@ -1587,6 +1599,9 @@ const (
 	// Whitelisted is a constant string representing the status of a client being whitelisted.
 	Whitelisted = "Client is whitelisted"
 
+	// SoftWhitelisted is a constant string indicating a username is soft whitelisted. This implies a less strict whitelist check.
+	SoftWhitelisted = "Username is whitelisted" +
+		""
 	// NoTLS represents a constant string indicating that the client does not have transport security.
 	NoTLS = "Client has no transport security"
 )

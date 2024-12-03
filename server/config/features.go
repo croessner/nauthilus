@@ -18,6 +18,7 @@ package config
 import "fmt"
 
 type RelayDomainsSection struct {
+	SoftWhitelist `mapstructure:"soft_whitelist"`
 	StaticDomains []string `mapstructure:"static"`
 }
 

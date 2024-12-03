@@ -18,9 +18,10 @@ package config
 import "fmt"
 
 type BruteForceSection struct {
-	IPWhitelist []string         `mapstructure:"ip_whitelist"`
-	Buckets     []BruteForceRule `mapstructure:"buckets"`
-	Learning    []*Feature       `mapstructure:"learning"`
+	SoftWhitelist `mapstructure:"soft_whitelist"`
+	IPWhitelist   []string         `mapstructure:"ip_whitelist"`
+	Buckets       []BruteForceRule `mapstructure:"buckets"`
+	Learning      []*Feature       `mapstructure:"learning"`
 }
 
 func (b *BruteForceSection) String() string {

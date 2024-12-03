@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -401,4 +402,223 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	return
+}
+
+// initializeAccountName initializes the account name if it is not already set by calling refreshUserAccount.
+func (a *AuthState) initializeAccountName() {
+	if a.refreshUserAccount() == "" {
+		a.refreshUserAccount()
+	}
+}
+
+// logFeatureWhitelisting appends the given feature name and a soft whitelisted message to the additional logs of AuthState.
+func (a *AuthState) logFeatureWhitelisting(featureName string) {
+	a.AdditionalLogs = append(a.AdditionalLogs, featureName, definitions.SoftWhitelisted)
+}
+
+// checkFeatureWithWhitelist checks if a feature is enabled and if a whitelist applies, executes the feature check function.
+// If the feature is enabled and the whitelist applies, logs the event and returns false.
+// Executes the checkFunc when the feature is enabled and not whitelisted, returning its outcome.
+// Returns false if the feature is not enabled in the configuration.
+func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted func() bool, checkFunc func()) {
+	if config.LoadableConfig.HasFeature(featureName) {
+		if isWhitelisted() {
+			a.logFeatureWhitelisting(featureName)
+		} else {
+			checkFunc()
+		}
+	}
+}
+
+// checkLuaFeature evaluates Lua-based features for the given authentication context.
+// It determines if a feature is triggered or if further processing should be aborted.
+// It uses a whitelist check and processes feature actions if the Lua feature is activated.
+// Returns 'triggered' if a Lua feature is triggered, 'abortFeatures' if further features should be halted.
+func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	checkFunc := func() {
+		triggered, abortFeatures, err = a.FeatureLua(ctx)
+		if err != nil {
+			a.FeatureName = ""
+		}
+
+		if triggered {
+			a.processFeatureAction(definitions.FeatureLua, definitions.LuaActionLua, definitions.LuaActionLuaName)
+		}
+
+		if abortFeatures {
+			a.FeatureName = ""
+			abortFeatures = true
+		}
+	}
+
+	a.checkFeatureWithWhitelist(definitions.FeatureLua, func() bool { return false }, checkFunc)
+
+	return
+}
+
+// checkTLSEncryptionFeature determines if the TLS encryption feature should be processed for the current authentication state.
+// It uses a whitelist check to decide if the feature action needs to be executed based on the current auth state.
+func (a *AuthState) checkTLSEncryptionFeature() (triggered bool) {
+	checkFunc := func() {
+		if triggered = a.FeatureTLSEncryption(); triggered {
+			a.processFeatureAction(definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
+		}
+	}
+
+	a.checkFeatureWithWhitelist(definitions.FeatureTLSEncryption, func() bool { return false }, checkFunc)
+
+	return
+}
+
+// checkRelayDomainsFeature evaluates if the relay domains feature should be activated for the given AuthState instance.
+// It checks if the client is whitelisted and processes the feature action accordingly.
+func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
+	isWhitelisted := func() bool {
+		return config.LoadableConfig.RelayDomains.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.RelayDomains.SoftWhitelist)
+	}
+
+	checkFunc := func() {
+		if triggered = a.FeatureRelayDomains(); triggered {
+			a.processFeatureAction(definitions.FeatureRelayDomains, definitions.LuaActionRelayDomains, definitions.LuaActionRelayDomainsName)
+		}
+	}
+
+	a.checkFeatureWithWhitelist(definitions.FeatureRelayDomains, isWhitelisted, checkFunc)
+
+	return
+}
+
+// checkRBLFeature checks if a Real-time Blackhole List (RBL) feature is triggered for the current request.
+// Returns true if the feature is triggered and processed, otherwise false.
+func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error) {
+	isWhitelisted := func() bool {
+		return config.LoadableConfig.RBLs.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.RBLs.SoftWhitelist)
+	}
+
+	checkFunc := func() {
+		triggered, err = a.FeatureRBLs(ctx)
+		if err != nil || !triggered {
+			a.FeatureName = ""
+		}
+
+		a.processFeatureAction(definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
+	}
+
+	a.checkFeatureWithWhitelist(definitions.FeatureRBL, isWhitelisted, checkFunc)
+
+	return
+}
+
+// processFeatureAction updates the feature and increments the brute force counter if learning is enabled for the feature.
+// It executes a specified Lua action using the provided action name.
+func (a *AuthState) processFeatureAction(featureName string, luaAction definitions.LuaAction, luaActionName string) {
+	a.FeatureName = featureName
+
+	if config.LoadableConfig.BruteForce.LearnFromFeature(featureName) {
+		a.UpdateBruteForceBucketsCounter()
+	}
+
+	a.performAction(luaAction, luaActionName)
+}
+
+// performAction triggers the execution of a specified Lua action if Lua actions are enabled in the configuration.
+// It initializes an account name if absent, sends the action request to the RequestChan channel,
+// and waits for the action to complete.
+func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName string) {
+	if !config.LoadableConfig.HaveLuaActions() {
+		return
+	}
+
+	stopTimer := stats.PrometheusTimer(definitions.PromAction, luaActionName)
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	finished := make(chan action.Done)
+
+	if a.GetAccount() == "" {
+		a.initializeAccountName()
+	}
+
+	action.RequestChan <- &action.Action{
+		LuaAction:    luaAction,
+		Context:      a.Context,
+		FinishedChan: finished,
+		HTTPRequest:  a.HTTPClientContext.Request,
+		CommonRequest: &lualib.CommonRequest{
+			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			UserFound:           func() bool { return a.GetAccount() != "" }(),
+			NoAuth:              a.NoAuth,
+			Service:             a.Service,
+			Session:             *a.GUID,
+			ClientIP:            a.ClientIP,
+			ClientPort:          a.XClientPort,
+			ClientHost:          a.ClientHost,
+			ClientID:            a.XClientID,
+			LocalIP:             a.XLocalIP,
+			LocalPort:           a.XPort,
+			UserAgent:           *a.UserAgent,
+			Username:            a.Username,
+			Account:             a.GetAccount(),
+			AccountField:        a.GetAccountField(),
+			Password:            a.Password,
+			Protocol:            a.Protocol.Get(),
+			FeatureName:         a.FeatureName,
+			StatusMessage:       &a.StatusMessage,
+			XSSL:                a.XSSL,
+			XSSLSessionID:       a.XSSLSessionID,
+			XSSLClientVerify:    a.XSSLClientVerify,
+			XSSLClientDN:        a.XSSLClientDN,
+			XSSLClientCN:        a.XSSLClientCN,
+			XSSLIssuer:          a.XSSLIssuer,
+			XSSLClientNotBefore: a.XSSLClientNotBefore,
+			XSSLClientNotAfter:  a.XSSLClientNotAfter,
+			XSSLSubjectDN:       a.XSSLSubjectDN,
+			XSSLIssuerDN:        a.XSSLIssuerDN,
+			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+			XSSLProtocol:        a.XSSLProtocol,
+			XSSLCipher:          a.XSSLCipher,
+			SSLSerial:           a.SSLSerial,
+			SSLFingerprint:      a.SSLFingerprint,
+		},
+	}
+
+	<-finished
+}
+
+// HandleFeatures processes multiple security features associated with authentication requests and returns the result.
+// It checks for various features like TLS encryption, relay domains, RBL, and Lua scripting.
+// The method returns an appropriate authentication result based on the features that are triggered or aborted.
+func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
+	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
+		a.initializeAccountName()
+	}
+
+	if triggered, abortFeatures, err := a.checkLuaFeature(ctx); err != nil {
+		return definitions.AuthResultTempFail
+	} else if triggered {
+		return definitions.AuthResultFeatureLua
+	} else if abortFeatures {
+		return definitions.AuthResultOK
+	}
+
+	if a.checkTLSEncryptionFeature() {
+		return definitions.AuthResultFeatureTLS
+	}
+
+	if a.checkRelayDomainsFeature() {
+		return definitions.AuthResultFeatureRelayDomain
+	}
+
+	if triggered, err := a.checkRBLFeature(ctx); err != nil {
+		return definitions.AuthResultTempFail
+	} else if triggered {
+		return definitions.AuthResultFeatureRBL
+	}
+
+	return definitions.AuthResultOK
 }
