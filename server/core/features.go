@@ -439,6 +439,8 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 		triggered, abortFeatures, err = a.FeatureLua(ctx)
 		if err != nil {
 			a.FeatureName = ""
+
+			return
 		}
 
 		if triggered {
@@ -501,6 +503,8 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 		triggered, err = a.FeatureRBLs(ctx)
 		if err != nil || !triggered {
 			a.FeatureName = ""
+
+			return
 		}
 
 		a.processFeatureAction(definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
