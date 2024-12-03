@@ -1010,19 +1010,19 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
-		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
+	if config.LoadableConfig.BruteForce.HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.BruteForce.SoftWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
 			return false
 		}
 	}
 
-	if config.LoadableConfig.BruteForce.HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.BruteForce.SoftWhitelist) {
+	if len(config.LoadableConfig.BruteForce.IPWhitelist) > 0 {
+		if a.IsInNetwork(config.LoadableConfig.BruteForce.IPWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
 
 			return false
 		}
