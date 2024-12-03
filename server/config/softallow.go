@@ -14,7 +14,7 @@ type SoftWhitelist map[string][]string
 
 // NewSoftWhitelist creates and returns a new instance of SoftWhitelist initialized as an empty map of string slices.
 func NewSoftWhitelist() SoftWhitelist {
-	return make(map[string][]string)
+	return make(SoftWhitelist, 1)
 }
 
 func (s SoftWhitelist) String() string {
@@ -104,8 +104,8 @@ func (s SoftWhitelist) Delete(username, network string) {
 
 	defer mu.Unlock()
 
-	networks := s.Get(username)
-	if networks == nil {
+	networks, exists := s[username]
+	if !exists {
 		return
 	}
 
