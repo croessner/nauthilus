@@ -3,7 +3,10 @@ package config
 import (
 	"net"
 	"strings"
+	"sync"
 )
+
+var mu = &sync.RWMutex{}
 
 // SoftWhitelist is a type that represents a map linking a string key to a slice of string values.
 // Typically used to associate users with a list of CIDR networks.
@@ -32,6 +35,10 @@ func (s SoftWhitelist) HasSoftWhitelist() bool {
 		return false
 	}
 
+	mu.RLock()
+
+	defer mu.RUnlock()
+
 	return len(s) > 0
 }
 
@@ -48,6 +55,10 @@ func (s SoftWhitelist) Set(username, network string) {
 	if s == nil {
 		return
 	}
+
+	mu.Lock()
+
+	defer mu.Unlock()
 
 	if len(username) == 0 {
 		return
@@ -69,6 +80,10 @@ func (s SoftWhitelist) Get(username string) []string {
 		return nil
 	}
 
+	mu.RLock()
+
+	defer mu.RUnlock()
+
 	for k, v := range s {
 		if k == username {
 			return v
@@ -84,6 +99,10 @@ func (s SoftWhitelist) Delete(username, network string) {
 	if s == nil {
 		return
 	}
+
+	mu.Lock()
+
+	defer mu.Unlock()
 
 	networks := s.Get(username)
 	if networks == nil {
