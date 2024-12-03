@@ -18,9 +18,10 @@ package config
 import "fmt"
 
 type RBLSection struct {
-	Lists       []RBL
-	Threshold   int
-	IPWhiteList []string `mapstructure:"ip_whitelist"`
+	SoftWhitelist `mapstructure:"soft_whitelist"`
+	Lists         []RBL
+	Threshold     int
+	IPWhiteList   []string `mapstructure:"ip_whitelist"`
 }
 
 func (r *RBLSection) String() string {

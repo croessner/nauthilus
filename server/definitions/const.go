@@ -1587,6 +1587,9 @@ const (
 	// Whitelisted is a constant string representing the status of a client being whitelisted.
 	Whitelisted = "Client is whitelisted"
 
+	// SoftWhitelisted is a constant string indicating a username is soft whitelisted. This implies a less strict whitelist check.
+	SoftWhitelisted = "Username is whitelisted" +
+		""
 	// NoTLS represents a constant string indicating that the client does not have transport security.
 	NoTLS = "Client has no transport security"
 )

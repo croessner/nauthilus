@@ -1019,6 +1019,15 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		}
 	}
 
+	if config.LoadableConfig.BruteForce.HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.BruteForce.SoftWhitelist) {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
+
+			return false
+		}
+	}
+
 	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range config.LoadableConfig.Server.BruteForceProtocols {
 		if bruteForceService.Get() != a.Protocol.Get() {

@@ -364,6 +364,17 @@ func IsInNetwork(networkList []string, guid, clientIP string) (matchIP bool) {
 	return
 }
 
+// IsSoftWhitelisted checks whether a given clientIP is in the soft whitelist associated with a username.
+// Returns true if the clientIP matches any networks in the soft whitelist, otherwise false.
+func IsSoftWhitelisted(username, clientIP, guid string, softWhitelist config.SoftWhitelist) bool {
+	networks := softWhitelist.Get(username)
+	if networks == nil {
+		return false
+	}
+
+	return IsInNetwork(networks, guid, clientIP)
+}
+
 // logForwarderFound logs the finding of the header "X-Forwarded-For" in the debug module.
 func logForwarderFound(guid string) {
 	DebugModule(
