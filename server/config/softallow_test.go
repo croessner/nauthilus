@@ -146,3 +146,51 @@ func equalSlices(a, b []string) bool {
 
 	return true
 }
+
+func TestSoftWhitelist_Delete(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        SoftWhitelist
+		username string
+		network  string
+		want     map[string][]string
+	}{
+		{"DeleteFromNilWhitelist", nil, "user1", "192.168.1.0/24", nil},
+		{"DeleteFromEmptyWhitelist", NewSoftWhitelist(), "user1", "192.168.1.0/24", map[string][]string{}},
+		{"DeleteNonExistentNetwork", SoftWhitelist{"user1": {"192.168.1.0/24"}}, "user1", "10.0.0.0/8", SoftWhitelist{"user1": {"192.168.1.0/24"}}},
+		{"DeleteExistingNetwork", SoftWhitelist{"user1": {"192.168.1.0/24", "10.0.0.0/8"}}, "user1", "192.168.1.0/24", SoftWhitelist{"user1": {"10.0.0.0/8"}}},
+		{"DeleteOnlyNetwork", SoftWhitelist{"user1": {"192.168.1.0/24"}}, "user1", "192.168.1.0/24", map[string][]string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.s.Delete(tt.username, tt.network)
+			if !equalMaps(tt.s, tt.want) {
+				t.Errorf("Delete() result = %v, want %v", tt.s, tt.want)
+			}
+		})
+	}
+}
+
+func equalMaps(a, b SoftWhitelist) bool {
+	if a == nil && b == nil {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	if len(a) != len(b) {
+		return false
+	}
+
+	for k, v := range a {
+		bv, ok := b[k]
+		if !ok || !equalSlices(v, bv) {
+			return false
+		}
+	}
+
+	return true
+}

@@ -75,3 +75,32 @@ func (s SoftWhitelist) Get(username string) []string {
 
 	return nil
 }
+
+// Delete removes the specified network from the user's whitelist in the SoftWhitelist. If the network is the only entry,
+// the user is removed from the whitelist. The function does nothing if the whitelist is nil or if the user does not exist.
+func (s SoftWhitelist) Delete(username, network string) {
+	if s == nil {
+		return
+	}
+
+	networks := s.Get(username)
+	if networks == nil {
+		return
+	}
+
+	if len(networks) > 1 {
+		for i, n := range networks {
+			if n == network {
+				networks = append(networks[:i], networks[i+1:]...)
+
+				break
+			}
+		}
+
+		s[username] = networks
+	} else {
+		if s[username][0] == network {
+			delete(s, username)
+		}
+	}
+}
