@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+// SoftWhitelist is a type that represents a map linking a string key to a slice of string values.
+// Typically used to associate users with a list of CIDR networks.
 type SoftWhitelist map[string][]string
 
 // NewSoftWhitelist creates and returns a new instance of SoftWhitelist initialized as an empty map of string slices.
