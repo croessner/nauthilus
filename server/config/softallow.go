@@ -8,13 +8,29 @@ import (
 
 var mu = &sync.RWMutex{}
 
+// SoftWhitelistProvider defines the methods for managing a soft whitelist of networks associated with usernames.
+// The interface allows checking the existence of a whitelist, retrieving, setting, and deleting networks.
+type SoftWhitelistProvider interface {
+	// HasSoftWhitelist checks if there is at least one entry in the soft whitelist, returning true if it exists, otherwise false.
+	HasSoftWhitelist() bool
+
+	// Get retrieves the list of networks associated with the given username from the soft whitelist.
+	Get(username string) []string
+
+	// Set adds a specified network to a user's whitelist if the network is valid and the username is not empty.
+	Set(username, network string)
+
+	// Delete removes a specified network from the user's soft whitelist identified by the provided username.
+	Delete(username, network string)
+}
+
 // SoftWhitelist is a type that represents a map linking a string key to a slice of string values.
 // Typically used to associate users with a list of CIDR networks.
 type SoftWhitelist map[string][]string
 
 // NewSoftWhitelist creates and returns a new instance of SoftWhitelist initialized as an empty map of string slices.
 func NewSoftWhitelist() SoftWhitelist {
-	return make(SoftWhitelist, 1)
+	return make(SoftWhitelist)
 }
 
 func (s SoftWhitelist) String() string {
@@ -125,3 +141,5 @@ func (s SoftWhitelist) Delete(username, network string) {
 		}
 	}
 }
+
+var _ SoftWhitelistProvider = (*SoftWhitelist)(nil)

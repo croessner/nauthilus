@@ -6,25 +6,8 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-// SoftWhitelistProvider defines the methods for managing a soft whitelist of networks associated with usernames.
-// The interface allows checking the existence of a whitelist, retrieving, setting, and deleting networks.
-type SoftWhitelistProvider interface {
-	// HasSoftWhitelist checks if there is at least one entry in the soft whitelist, returning true if it exists, otherwise false.
-	HasSoftWhitelist() bool
-
-	// Get retrieves the list of networks associated with the given username from the soft whitelist.
-	Get(username string) []string
-
-	// Set adds a specified network to a user's whitelist if the network is valid and the username is not empty.
-	Set(username, network string)
-
-	// Delete removes a specified network from the user's soft whitelist identified by the provided username.
-	Delete(username, network string)
-}
-
-// softWhitelistSet sets a network for a user in the soft whitelist based on the specified feature category.
 func softWhitelistSet(L *lua.LState) int {
-	var provider SoftWhitelistProvider
+	var provider config.SoftWhitelistProvider
 
 	username := L.CheckString(1)
 	network := L.CheckString(2)
@@ -32,28 +15,40 @@ func softWhitelistSet(L *lua.LState) int {
 
 	switch feature {
 	case definitions.FeatureBruteForce:
+		if !config.LoadableConfig.BruteForce.HasSoftWhitelist() {
+			config.LoadableConfig.BruteForce.SoftWhitelist = config.NewSoftWhitelist()
+		}
+
 		provider = config.LoadableConfig.BruteForce
 	case definitions.FeatureRelayDomains:
+		if !config.LoadableConfig.RelayDomains.HasSoftWhitelist() {
+			config.LoadableConfig.RelayDomains.SoftWhitelist = config.NewSoftWhitelist()
+		}
+
 		provider = config.LoadableConfig.RelayDomains
 	case definitions.FeatureRBL:
+		if !config.LoadableConfig.RBLs.HasSoftWhitelist() {
+			config.LoadableConfig.RBLs.SoftWhitelist = config.NewSoftWhitelist()
+		}
+
 		provider = config.LoadableConfig.RBLs
 	default:
-		return 0
-	}
+		L.Push(lua.LString("invalid feature category"))
 
-	if !provider.HasSoftWhitelist() {
-		provider = config.NewSoftWhitelist()
+		return 1
 	}
 
 	provider.Set(username, network)
 
-	return 0
+	L.Push(lua.LNil)
+
+	return 1
 }
 
 // getNetworks retrieves a list of networks associated with a username for a specified feature if a soft whitelist exists.
 // The feature can be one of "brute_force", "relay_domains", or "rbl". Returns nil if the feature is not recognized or no whitelist exists.
 func getNetworks(username, feature string) []string {
-	var provider SoftWhitelistProvider
+	var provider config.SoftWhitelistProvider
 
 	switch feature {
 	case definitions.FeatureBruteForce:
@@ -79,17 +74,21 @@ func softWhitelistGet(L *lua.LState) int {
 	feature := L.CheckString(2)
 	networks := getNetworks(username, feature)
 
-	for _, network := range networks {
-		L.Push(lua.LString(network))
+	resultTable := L.NewTable()
+
+	for i, network := range networks {
+		L.RawSetInt(resultTable, i+1, lua.LString(network))
 	}
 
-	return len(networks)
+	L.Push(resultTable)
+
+	return 1
 }
 
 // softWhitelistDelete removes a network from a user's soft whitelist for a specified feature, given username and network.
 // It applies to features such as brute force protection, relay domains, or RBLs by accessing appropriate configurations.
 func softWhitelistDelete(L *lua.LState) int {
-	var provider SoftWhitelistProvider
+	var provider config.SoftWhitelistProvider
 
 	username := L.CheckString(1)
 	network := L.CheckString(2)
