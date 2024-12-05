@@ -151,14 +151,14 @@ function nauthilus_call_filter(request)
         if nauthilus_util.is_table(backend_servers) then
             num_of_bs = nauthilus_util.table_length(backend_servers)
 
-            local server_ip = ""
-            local new_server_ip = ""
+            local server_host = ""
+            local new_server_host = ""
 
             local session = get_dovecot_session()
             if session then
                 local maybe_server = get_server_from_sessions(session)
                 if maybe_server then
-                    server_ip = maybe_server
+                    server_host = maybe_server
                 end
             end
 
@@ -168,13 +168,13 @@ function nauthilus_call_filter(request)
                 local b = nauthilus_backend_result.new()
 
                 for _, server in ipairs(backend_servers) do
-                    new_server_ip = server.ip
+                    new_server_host = server.host
 
-                    if server_ip == new_server_ip then
-                        attributes["Proxy-Host"] = server_ip
+                    if server_host == new_server_host then
+                        attributes["Proxy-Host"] = server_host
 
-                        add_session(session, server_ip)
-                        nauthilus_builtin.custom_log_add(N .. "_backend_server_current", server_ip)
+                        add_session(session, server_host)
+                        nauthilus_builtin.custom_log_add(N .. "_backend_server_current", server_host)
 
                         b:attributes(attributes)
                         nauthilus_backend.apply_backend_result(b)
@@ -183,13 +183,13 @@ function nauthilus_call_filter(request)
                     end
                 end
 
-                if server_ip ~= new_server_ip then
+                if server_host ~= new_server_host then
                     -- Put your own logic here to select a proper server for the user. In this demo, the last server
                     -- available is always used.
-                    attributes["Proxy-Host"] = new_server_ip
+                    attributes["Proxy-Host"] = new_server_host
 
-                    add_session(session, new_server_ip)
-                    nauthilus_builtin.custom_log_add(N .. "_backend_server_new", new_server_ip)
+                    add_session(session, new_server_host)
+                    nauthilus_builtin.custom_log_add(N .. "_backend_server_new", new_server_host)
 
                     b:attributes(attributes)
                     nauthilus_backend.apply_backend_result(b)

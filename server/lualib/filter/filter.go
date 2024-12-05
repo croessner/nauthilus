@@ -34,7 +34,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	lua "github.com/yuin/gopher-lua"
+	"github.com/yuin/gopher-lua"
 )
 
 // httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
@@ -255,11 +255,15 @@ func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 	}, nil
 }
 
+// Request represents a structure used for handling and processing requests within the system.
 type Request struct {
+	// BackendServers holds a list of backend server configurations that are used for handling requests.
 	BackendServers []*config.BackendServer
 
+	// UsedBackendAddress indicates the specific backend server address selected for processing the current request.
 	UsedBackendAddress *string
 
+	// UsedBackendPort represents the port of the backend server that was used for the current request execution.
 	UsedBackendPort *int
 
 	// Log is used to capture logging information.
@@ -268,15 +272,38 @@ type Request struct {
 	// Context includes context data from the caller.
 	*lualib.Context
 
+	// CommonRequest represents a common request object with various properties used in different functionalities.
 	*lualib.CommonRequest
 }
 
+// LuaBackendServer represents a server configuration for a Lua script backend.
 type LuaBackendServer struct {
-	Protocol  string
-	IP        string
-	Port      int
+	// Protocol specifies the communication protocol (e.g., HTTP, HTTPS) used by the server.
+	Protocol string
+
+	// Host specifies the hostname or IP address of the server used in the backend configuration.
+	Host string
+
+	// RequestURL represents the request URL path used by the Lua backend server.
+	RequestURL string
+
+	// TestUsername is a placeholder used for testing purposes, representing the username required for server authentication.
+	TestUsername string
+
+	// TestPassword is a placeholder used for testing purposes, representing the password required for server authentication.
+	TestPassword string
+
+	// Port represents the network port number used by the server for communication.
+	Port int
+
+	// HAProxyV2 indicates whether HAProxy version 2 protocol is enabled for the backend server configuration.
 	HAProxyV2 bool
-	TLS       bool
+
+	// TLS indicates whether Transport Layer Security (TLS) should be enabled for the server connection.
+	TLS bool
+
+	// TLSSKipVerify indicates whether to skip verification of the server's TLS certificate.
+	TLSSKipVerify bool
 }
 
 // The userData constellation method:
@@ -301,14 +328,22 @@ func indexMethod(L *lua.LState) int {
 	switch field {
 	case "protocol":
 		L.Push(lua.LString(server.Protocol))
-	case "ip":
-		L.Push(lua.LString(server.IP))
+	case "host":
+		L.Push(lua.LString(server.Host))
 	case "port":
 		L.Push(lua.LNumber(server.Port))
+	case "request_url":
+		L.Push(lua.LString(server.RequestURL))
+	case "test_username":
+		L.Push(lua.LString(server.TestUsername))
+	case "test_password":
+		L.Push(lua.LString(server.TestPassword))
 	case "haproxy_v2":
 		L.Push(lua.LBool(server.HAProxyV2))
 	case "tls":
 		L.Push(lua.LBool(server.TLS))
+	case "tls_skip_verify":
+		L.Push(lua.LBool(server.TLSSKipVerify))
 	default:
 		return 0 // The field does not exist
 	}
@@ -316,15 +351,7 @@ func indexMethod(L *lua.LState) int {
 	return 1 // Number of return values
 }
 
-// getBackendServers is a higher-order function that returns a LGFunction.
-// The returned LGFunction creates a new Lua table and populates it with userdata objects representing backend servers.
-// Each userdata object has a metatable set, allowing Lua code to index the object and retrieve its properties.
-// The userdata objects are created based on the provided backendServers slice.
-// The userdata values are instances of the LuaBackendServer struct, with Protocol, IP, Port, and HAProxyV2 fields.
-// The metatable of the userdata objects has __index method set to the indexMethod function.
-// The indexMethod function retrieves the corresponding property value from the userdata object based on the requested field name.
-// The userdata objects are added to the created Lua table.
-// The created Lua table is pushed onto the Lua stack before returning from the LGFunction.
+// getBackendServers creates a Lua function that returns a table of backend server configurations as userdata.
 func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 	return func(L *lua.LState) int {
 		servers := L.NewTable()
@@ -343,11 +370,15 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 			serverUserData := L.NewUserData()
 
 			serverUserData.Value = &LuaBackendServer{
-				Protocol:  backendServer.Protocol,
-				IP:        backendServer.IP,
-				Port:      backendServer.Port,
-				HAProxyV2: backendServer.HAProxyV2,
-				TLS:       backendServer.TLS,
+				Protocol:      backendServer.Protocol,
+				Host:          backendServer.Host,
+				RequestURL:    backendServer.RequestURI,
+				TestUsername:  backendServer.TestUsername,
+				TestPassword:  backendServer.TestPassword,
+				Port:          backendServer.Port,
+				HAProxyV2:     backendServer.HAProxyV2,
+				TLS:           backendServer.TLS,
+				TLSSKipVerify: backendServer.TLSSkipVerify,
 			}
 
 			L.SetMetatable(serverUserData, L.GetTypeMetatable(definitions.LuaBackendServerTypeName))
@@ -362,15 +393,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 	}
 }
 
-// selectBackendServer is a function that takes a server pointer (expected to be a string) and a port
-// pointer (expected to be an integer) as parameters. It returns a Lua function. This Lua function
-// wraps the functionality of checking the count of passed arguments and assigning the values of
-// server and port based on Lua's stack. The Lua function throws an error if the count of passed
-// arguments is not 2. If the argument count is correct, it gets the server and port values from the
-// 1st and the 2nd positions in the Lua stack respectively, and assigns them to the server and port pointers.
-//
-// It's important to note that this function doesn't perform any kind of connection or communication
-// with a server or port. It only assigns values based on Lua stack positions.
+// selectBackendServer returns a Lua function that assigns a server address and port from Lua state arguments.
 func selectBackendServer(server **string, port **int) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() != 2 {
@@ -389,16 +412,7 @@ func selectBackendServer(server **string, port **int) lua.LGFunction {
 	}
 }
 
-// applyBackendResult is a function that returns a Lua LGFunction.
-// The returned function is used to assign the value of the backendResult to the LuaBackendResult
-// extracted from the provided user data. If the user data does not contain a LuaBackendResult,
-// the backendResult remains unchanged.
-//
-// Params:
-// - backendResult: A double pointer to a LuaBackendResult
-//
-// Returns:
-// - A Lua LGFunction that assigns the value of the userData to the backendResult
+// applyBackendResult sets the backendResult pointer to the value from Lua userdata if it's of type LuaBackendResult.
 func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction {
 	return func(L *lua.LState) int {
 		userData := L.CheckUserData(1)
@@ -413,22 +427,8 @@ func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction 
 	}
 }
 
-// removeFromBackendResult is a function that creates and returns a Lua LGFunction.
-// The LGFunction takes a Lua state as argument and modifies a slice (attributes)
-// by appending values from a Lua table passed as argument to the LGFunction.
-// The function returns 0, indicating no values are returned to Lua.
-// If the attributes slice is nil, the function returns 0 immediately.
-// The function extracts a Lua table from the Lua stack and iterates over its
-// values. For each value, it appends its string representation to the attributes slice.
-// Finally, the function returns 0 to Lua.
-//
-// Params:
-//
-//	attributes *[]string : Pointer to a slice of strings to store the extracted attributes
-//
-// Returns:
-//
-//	the LGFunction that takes a Lua state as argument and modifies the attributes slice
+// removeFromBackendResult is a Lua function generator that populates a given slice with strings
+// from a Lua table passed as an argument. If the attributes slice is nil, the function does nothing.
 func removeFromBackendResult(attributes *[]string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if attributes == nil {

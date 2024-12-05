@@ -249,7 +249,8 @@ func backendResultGetSetAttributes(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
 	if L.GetTop() == 2 {
-		backendResult.Attributes = convert.LuaValueToGo(L.CheckTable(2)).(map[any]any)
+		attributes := convert.LuaValueToGo(L.CheckTable(2)).(map[any]any)
+		backendResult.Attributes = attributes
 
 		return 0
 	}

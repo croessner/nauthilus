@@ -31,11 +31,15 @@ func (r *RelayDomainsSection) String() string {
 }
 
 type BackendServer struct {
-	Protocol  string `mapstructure:"protocol"`
-	IP        string `mapstructure:"ip"`
-	Port      int    `mapstructure:"port"`
-	TLS       bool   `mapstructure:"tls"`
-	HAProxyV2 bool   `mapstructure:"haproxy_v2"`
+	Protocol      string `mapstructure:"protocol"`
+	Host          string `mapstructure:"host"`
+	RequestURI    string `mapstructure:"request_uri"`
+	TestUsername  string `mapstructure:"test_username"`
+	TestPassword  string `mapstructure:"test_password"`
+	Port          int    `mapstructure:"port"`
+	TLS           bool   `mapstructure:"tls"`
+	TLSSkipVerify bool   `mapstructure:"tls_skip_verify"`
+	HAProxyV2     bool   `mapstructure:"haproxy_v2"`
 }
 
 func (n *BackendServer) String() string {
@@ -43,7 +47,8 @@ func (n *BackendServer) String() string {
 		return "BackendServer: <nil>"
 	}
 
-	return fmt.Sprintf("BackendServers: {Protocol: %s, IP: %s, Port: %d}", n.Protocol, n.IP, n.Port)
+	return fmt.Sprintf("BackendServer: {Protocol: %s, Host: %s, RequestURI: %s, TestUsername: %s, TestPassword: <hidden>, Port: %d, TLS: %t, TLSSkipVerify: %t, HAProxyV2: %t}",
+		n.Protocol, n.Host, n.RequestURI, n.TestUsername, n.Port, n.TLS, n.TLSSkipVerify, n.HAProxyV2)
 }
 
 type BackendServerMonitoring struct {

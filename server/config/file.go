@@ -145,7 +145,7 @@ func (f *File) GetBackendServerIP(protocol string) string {
 	}
 
 	if f.GetBackendServer(protocol) != nil {
-		return f.GetBackendServer(protocol).IP
+		return f.GetBackendServer(protocol).Host
 	}
 
 	return ""

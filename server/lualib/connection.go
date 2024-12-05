@@ -16,56 +16,50 @@
 package lualib
 
 import (
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/monitoring"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// CheckBackendConnection is a Lua function that checks the connection to a backend server.
-// It receives the server IP address, port number, a boolean flag indicating whether the server runs with HAProxy V2 protocol,
-// and a boolean flag indicating whether TLS should be used.
-// The function calls the CheckBackendConnection method of the provided monitoring.Monitor instance
-// and returns an error message if there is an error, or nil if the connection is successful.
+// getNumberFromTable retrieves an integer value from a Lua table for the given key. If the key is missing or nil, returns 0.
 //
-// Params:
-//   - monitor monitoring.Monitor : The monitoring.Monitor instance used to check the backend connection.
+// Parameters:
+// - table: The Lua table to search in.
+// - key: The key to look for in the table.
 //
 // Returns:
-//   - int : The number of return values pushed to the Lua stack, always 1.
-//
-// Lua stack requirements:
-//   - 4 arguments are expected in the following order:
-//     1. string : The server IP address.
-//     2. int : The server port number.
-//     3. boolean : Whether the server runs with HAProxy V2 protocol.
-//     4. boolean : Whether TLS should be used.
-//   - The arguments should be of the expected types; otherwise, an error will be raised.
-//   - The function expects to have 1 return value on the stack - nil if the connection is successful,
-//     or a string with an error message if there is an error.
-//
-// Example:
-//
-//	connection_error = check_backend_connection("192.168.0.1", 8080, false, true)
-//	if connection_error ~= nil then
-//	    log("Connection failed: " .. connection_error)
-//	else
-//	    log("Connection successful")
-//	end
-//
-// Note: The above example is in Lua language and should be executed in a Lua environment.
+// - The integer value associated with the key, or 0 if the key is not present or value is nil.
+func getNumberFromTable(table *lua.LTable, key string) int {
+	value := table.RawGet(lua.LString(key))
+
+	if value == nil {
+		return 0
+	}
+
+	return int(value.(lua.LNumber))
+}
+
+// CheckBackendConnection attempts to verify the connection to a backend server using the provided monitor.
+// It extracts necessary configuration details such as protocol, IP address, port, and credentials from the given Lua table.
+// The function then calls the monitor's CheckBackendConnection method to perform the actual connectivity check.
+// If the connection check encounters an error, this error is pushed onto the Lua stack.
+// If the connection check is successful, a nil value is pushed onto the Lua stack.
+// It returns an integer indicating the number of results pushed onto the Lua stack.
 func CheckBackendConnection(monitor monitoring.Monitor) lua.LGFunction {
 	return func(L *lua.LState) int {
-		if L.GetTop() != 4 {
-			L.RaiseError("Invalid number of arguments. Expected 4, got %d", L.GetTop())
+		table := L.CheckTable(1)
 
-			return 0
-		}
+		server := &config.BackendServer{}
 
-		server := L.CheckString(1)
-		port := L.CheckInt(2)
-		haproxyV2 := L.CheckBool(3)
-		tls := L.CheckBool(4)
+		server.Protocol = getStringFromTable(table, "protocol")
+		server.Host = getStringFromTable(table, "ip_address")
+		server.Port = getNumberFromTable(table, "port")
+		server.HAProxyV2 = getBoolFromTable(table, "haproxy_v2")
+		server.TLS = getBoolFromTable(table, "tls")
+		server.TestUsername = getStringFromTable(table, "test_username")
+		server.TestPassword = getStringFromTable(table, "test_password")
 
-		if err := monitor.CheckBackendConnection(server, port, haproxyV2, tls); err != nil {
+		if err := monitor.CheckBackendConnection(server); err != nil {
 			L.Push(lua.LString(err.Error()))
 
 			return 1
