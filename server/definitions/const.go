@@ -175,11 +175,8 @@ const (
 	// LogKeyLuaScripttimeout represents timeout setting for lua scripts
 	LogKeyLuaScripttimeout = "lua_script_timeout"
 
-	// LogKeyBackendServerIP represents the IP address of the backend server.
-	LogKeyBackendServerIP = "backend_server_ip"
-
-	// LogKeyBackendServerPort represents the port of the backend server.
-	LogKeyBackendServerPort = "backend_server_port"
+	// LogKeyBackendServer represents the IP address of the backend server.
+	LogKeyBackendServer = "backend_server"
 
 	// NotAvailable is used when data for a particular field is not available.
 	NotAvailable = "N/A"

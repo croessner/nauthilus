@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
-	lua "github.com/yuin/gopher-lua"
+	"github.com/yuin/gopher-lua"
 )
 
 func TestGetBackendServers(t *testing.T) {
@@ -38,7 +38,7 @@ func TestGetBackendServers(t *testing.T) {
 			serversInput: []*config.BackendServer{
 				{
 					Protocol:  "http",
-					IP:        "192.168.1.1",
+					Host:      "192.168.1.1",
 					Port:      8000,
 					HAProxyV2: false,
 					TLS:       false,
@@ -51,7 +51,7 @@ func TestGetBackendServers(t *testing.T) {
 			serversInput: []*config.BackendServer{
 				{
 					Protocol:  "http",
-					IP:        "192.168.1.1",
+					Host:      "192.168.1.1",
 					Port:      8000,
 					HAProxyV2: false,
 					TLS:       false,
@@ -59,7 +59,7 @@ func TestGetBackendServers(t *testing.T) {
 				nil,
 				{
 					Protocol:  "https",
-					IP:        "192.168.1.2",
+					Host:      "192.168.1.2",
 					Port:      443,
 					HAProxyV2: true,
 					TLS:       true,

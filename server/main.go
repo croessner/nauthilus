@@ -853,9 +853,7 @@ func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyMsg, err,
 		definitions.LogKeyMsg, "Server down",
-		definitions.LogKeyProtocol, server.Protocol,
-		definitions.LogKeyBackendServerIP, server.IP,
-		definitions.LogKeyBackendServerPort, server.Port,
+		definitions.LogKeyBackendServer, server,
 	)
 }
 
@@ -869,9 +867,7 @@ func logBackendServerDebug(server *config.BackendServer) {
 	util.DebugModule(
 		definitions.DbgFeature,
 		definitions.LogKeyMsg, "Server alive",
-		definitions.LogKeyProtocol, server.Protocol,
-		definitions.LogKeyBackendServerIP, server.IP,
-		definitions.LogKeyBackendServerPort, server.Port,
+		definitions.LogKeyBackendServer, server,
 	)
 }
 
@@ -911,7 +907,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := monitoring.NewMonitor().CheckBackendConnection(server.IP, server.Port, server.HAProxyV2, server.TLS)
+			err := monitoring.NewMonitor().CheckBackendConnection(server)
 
 			backendServersLiveness.mu.Lock()
 
