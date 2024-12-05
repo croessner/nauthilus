@@ -127,7 +127,7 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	_, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log("Error reading SMTP initial response", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading SMTP initial response, error: %s", err))
 
 		return
 	}
@@ -136,14 +136,14 @@ func checkSMTP(conn net.Conn, username string, password string) {
 	for {
 		response, err := tp.ReadLine()
 		if err != nil {
-			level.Error(log.Logger).Log("Error reading SMTP EHLO response", "error", err)
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading SMTP EHLO response, error: %v", err))
 
 			return
 		}
 
 		if response[:3] != "250" {
 			if response[0] >= '4' {
-				level.Error(log.Logger).Log("EHLO command failed", "response", response)
+				level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("EHLO command failed, response: %s", response))
 
 				return
 			}
@@ -160,7 +160,7 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	_, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log("Error in SMTP AUTH LOGIN", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error in SMTP AUTH LOGIN, error: %v", err))
 
 		return
 	}
@@ -171,7 +171,7 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	_, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log("Error sending SMTP username", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error sending SMTP username, error: %v", err))
 
 		return
 	}
@@ -182,7 +182,7 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	response, err := tp.ReadLine()
 	if err != nil || response[:3] != "235" {
-		level.Error(log.Logger).Log("SMTP AUTH LOGIN failed", "error", err, "response", response)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("SMTP AUTH LOGIN failed, error: %v", err), "response", response)
 
 		return
 	}
@@ -198,13 +198,13 @@ func checkPOP3(conn net.Conn, username string, password string) {
 
 	greeting, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(fmt.Sprintf("Error reading POP3 greeting: %v\n", err))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 greeting, error: %v", err))
 
 		return
 	}
 
 	if !isOkResponsePOP3(greeting) {
-		level.Error(log.Logger).Log(fmt.Sprintf("POP3 greeting failed: %s\n", greeting))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 greeting failed, error: %s", greeting))
 
 		return
 	}
@@ -217,13 +217,13 @@ func checkPOP3(conn net.Conn, username string, password string) {
 
 	response, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(fmt.Sprintf("Error reading POP3 response after USER command: %v\n", err))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 response after USER command, error %v", err))
 
 		return
 	}
 
 	if !isOkResponsePOP3(response) {
-		level.Error(log.Logger).Log(fmt.Sprintf("POP3 USER command failed: %s\n", response))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 USER command failed, error: %s", response))
 
 		return
 	}
@@ -232,13 +232,13 @@ func checkPOP3(conn net.Conn, username string, password string) {
 
 	response, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(fmt.Sprintf("Error reading POP3 response after PASS command: %v\n", err))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 response after PASS command: %v\n", err))
 
 		return
 	}
 
 	if !isOkResponsePOP3(response) {
-		level.Error(log.Logger).Log(fmt.Sprintf("POP3 login failed: %s\n", response))
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 login failed: %s\n", response))
 	}
 }
 
@@ -258,12 +258,12 @@ func checkIMAP(conn net.Conn, username string, password string) {
 
 	greeting, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Error reading IMAP greeting", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading IMAP greeting, error: %v", err))
 		return
 	}
 
 	if !isOkResponseIMAP(greeting) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "IMAP greeting failed", "response", greeting)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("IMAP greeting failed, response: %s", greeting))
 
 		return
 	}
@@ -276,13 +276,13 @@ func checkIMAP(conn net.Conn, username string, password string) {
 
 	response, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Error reading IMAP response", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading IMAP response, error: %v", err))
 
 		return
 	}
 
 	if !isOkResponseIMAP(response) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "IMAP login failed", "response", response)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("IMAP login failed, response: %s", response))
 	}
 }
 
@@ -309,7 +309,7 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 
 	_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n%sUser-Agent: Nauthilus\r\nAccept: */*\r\n\r\n", requestURI, hostname, authHeader)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Error sending HTTP request", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error sending HTTP request, error: %v", err))
 
 		return err
 	}
@@ -319,20 +319,20 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 
 	statusLine, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Error reading HTTP status line", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading HTTP status line, error: %v", err))
 
 		return err
 	}
 
 	if !isOkResponseHTTP(statusLine) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "HTTP request failed", "response", statusLine)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("HTTP request failed, response: %s", statusLine))
 
 		return fmt.Errorf("HTTP request failed: %s", statusLine)
 	}
 
 	_, err = tp.ReadMIMEHeader()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Error reading HTTP headers", "error", err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading HTTP headers, error: %v", err))
 
 		return err
 	}
