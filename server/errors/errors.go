@@ -221,3 +221,9 @@ var (
 var (
 	ErrInvalidRange = errors.New("invalid range")
 )
+
+// connection.
+
+var (
+	ErrMissingTLS = errors.New("missing TLS connection")
+)

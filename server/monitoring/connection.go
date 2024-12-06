@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/textproto"
@@ -29,6 +29,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/pires/go-proxyproto"
@@ -117,13 +118,22 @@ func handleProtocol(server *config.BackendServer, conn net.Conn) (err error) {
 		err = checkPOP3(conn, server.TestUsername, server.TestPassword)
 	case "imap":
 		err = checkIMAP(conn, server.TestUsername, server.TestPassword)
+	case "sieve":
+		err = checkSieve(conn, server.Host, server.TestUsername, server.TestPassword, server.TLSSkipVerify)
 	case "http":
 		err = checkHTTP(conn, server.Host, server.RequestURI, server.TestUsername, server.TestPassword)
 	default:
-		err = errors.New("unsupported protocol")
+		err = stderrors.New("unsupported protocol")
 	}
 
 	return err
+}
+
+// isTLSConnection determines if the provided network connection is a TLS connection.
+func isTLSConnection(conn net.Conn) bool {
+	_, isTLS := conn.(*tls.Conn)
+
+	return isTLS
 }
 
 // checkSMTP performs SMTP authentication using the provided username and password over a given network connection.
@@ -172,6 +182,10 @@ func checkSMTP(conn net.Conn, protocol string, username string, password string)
 
 	if protocol == "lmtp" || username == "" || password == "" {
 		return nil
+	}
+
+	if !isTLSConnection(conn) {
+		return errors.ErrMissingTLS
 	}
 
 	fmt.Fprintf(conn, "AUTH LOGIN\r\n")
@@ -235,6 +249,10 @@ func checkPOP3(conn net.Conn, username string, password string) error {
 		return nil
 	}
 
+	if !isTLSConnection(conn) {
+		return errors.ErrMissingTLS
+	}
+
 	fmt.Fprintf(conn, "USER %s\r\n", username)
 
 	response, err := tp.ReadLine()
@@ -287,6 +305,10 @@ func checkIMAP(conn net.Conn, username string, password string) error {
 		return nil
 	}
 
+	if !isTLSConnection(conn) {
+		return errors.ErrMissingTLS
+	}
+
 	fmt.Fprintf(conn, "a1 LOGIN %s %s\r\n", username, password)
 
 	response, err := tp.ReadLine()
@@ -306,6 +328,84 @@ func isOkResponseIMAP(response string) bool {
 	return bytes.HasPrefix([]byte(response), []byte("* OK")) || bytes.HasPrefix([]byte(response), []byte("a1 OK"))
 }
 
+// checkSieve authenticates with a Sieve server using an existing network connection.
+// It sends an AUTHENTICATE PLAIN command with encoded username and password.
+func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerify bool) error {
+	reader := bufio.NewReader(conn)
+	tp := textproto.NewReader(reader)
+
+	defer fmt.Fprintf(conn, "LOGOUT\r\n")
+
+	// Read server greeting
+	greeting, err := tp.ReadLine()
+	if err != nil {
+		return err
+	}
+
+	if !isOkResponseSieve(greeting) {
+		//goland:noinspection GoErrorStringFormat
+		return fmt.Errorf("Sieve greeting failed: %s", greeting)
+	}
+
+	// Send STARTTLS command
+	fmt.Fprintf(conn, "STARTTLS\r\n")
+
+	// Read STARTTLS response
+	response, err := tp.ReadLine()
+	if err != nil {
+		return err
+	}
+
+	if !isOkResponseSieve(response) {
+		return fmt.Errorf("STARTTLS command failed: %s", response)
+	}
+
+	// Upgrade to TLS connection
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: tlsSkipVerify,
+		ServerName:         hostname,
+	}
+
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err = tlsConn.Handshake(); err != nil {
+		return fmt.Errorf("TLS handshake failed: %s", err)
+	}
+
+	if username == "" || password == "" {
+		return nil
+	}
+
+	if !isTLSConnection(conn) {
+		return errors.ErrMissingTLS
+	}
+
+	// Switch to TLS-wrapped connection for further communication
+	conn = tlsConn
+	reader = bufio.NewReader(conn)
+	tp = textproto.NewReader(reader)
+
+	// Authenticate using PLAIN mechanism
+	authString := fmt.Sprintf("\x00%s\x00%s", username, password)
+	fmt.Fprintf(conn, "AUTHENTICATE \"PLAIN\" {%d+}\r\n%s", len(authString), authString)
+
+	response, err = tp.ReadLine()
+	if err != nil {
+		return err
+	}
+
+	if !isOkResponseSieve(response) {
+		//goland:noinspection GoErrorStringFormat
+		return fmt.Errorf("Sieve AUTHENTICATE command failed: %s", response)
+	}
+
+	return nil
+}
+
+// isOkResponseSieve checks if the Sieve server response starts with "OK", indicating a successful operation.
+func isOkResponseSieve(response string) bool {
+	return response[:2] == "OK"
+}
+
 // checkHTTP performs an HTTP GET request with Basic Authentication using a given username and password.
 // It encodes the credentials, sends the request over a provided connection, and checks the response for success.
 // Errors related to request sending or response handling are logged and returned.
@@ -313,6 +413,10 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 	authHeader := ""
 
 	if username != "" && password != "" {
+		if !isTLSConnection(conn) {
+			return errors.ErrMissingTLS
+		}
+
 		auth := username + ":" + password
 		encoded := base64.StdEncoding.EncodeToString([]byte(auth))
 		authHeader = "Authorization: Basic " + encoded + "\r\n"
