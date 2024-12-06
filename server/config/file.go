@@ -116,56 +116,6 @@ func (f *File) GetBackendServer(protocol string) *BackendServer {
 	return nil
 }
 
-// GetBackendServerIP is a method for the File struct which
-// attempts to get the IP address of a backend server
-// for a specified protocol. The method first calls
-// GetBackendServer with the given protocol and checks
-// if it returns a non-nil value. If the value is not nil,
-// it retrieves the IP attribute of the backend server.
-// If the returned value is nil, indicating that there is
-// no backend server for the given protocol, the method
-// returns an empty string.
-//
-// Parameters:
-//
-//	protocol: A string that specifies the protocol for
-//	          which the backend server's IP address
-//	          is to be retrieved. This could be "http",
-//	          "https", etc.
-//
-// Returns:
-//
-//	A string representing the IP address of the backend
-//	server for the given protocol. If there is no backend
-//	server for the specified protocol, the method returns
-//	an empty string.
-func (f *File) GetBackendServerIP(protocol string) string {
-	if f == nil {
-		return ""
-	}
-
-	if f.GetBackendServer(protocol) != nil {
-		return f.GetBackendServer(protocol).Host
-	}
-
-	return ""
-}
-
-// GetBackendServerPort checks the specific protocol's backend server in the File structure.
-// If the server exists, it returns the port of the server.
-// If the server does not exist, it returns 0.
-func (f *File) GetBackendServerPort(protocol string) int {
-	if f == nil {
-		return 0
-	}
-
-	if f.GetBackendServer(protocol) != nil {
-		return f.GetBackendServer(protocol).Port
-	}
-
-	return 0
-}
-
 /*
  * LDAP Config
  */

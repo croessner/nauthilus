@@ -276,39 +276,9 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
-// LuaBackendServer represents a server configuration for a Lua script backend.
-type LuaBackendServer struct {
-	// Protocol specifies the communication protocol (e.g., HTTP, HTTPS) used by the server.
-	Protocol string
-
-	// Host specifies the hostname or IP address of the server used in the backend configuration.
-	Host string
-
-	// RequestURL represents the request URL path used by the Lua backend server.
-	RequestURL string
-
-	// TestUsername is a placeholder used for testing purposes, representing the username required for server authentication.
-	TestUsername string
-
-	// TestPassword is a placeholder used for testing purposes, representing the password required for server authentication.
-	TestPassword string
-
-	// Port represents the network port number used by the server for communication.
-	Port int
-
-	// HAProxyV2 indicates whether HAProxy version 2 protocol is enabled for the backend server configuration.
-	HAProxyV2 bool
-
-	// TLS indicates whether Transport Layer Security (TLS) should be enabled for the server connection.
-	TLS bool
-
-	// TLSSKipVerify indicates whether to skip verification of the server's TLS certificate.
-	TLSSKipVerify bool
-}
-
 // The userData constellation method:
-func newLuaBackendServer(userData *lua.LUserData) *LuaBackendServer {
-	if v, ok := userData.Value.(*LuaBackendServer); ok {
+func newLuaBackendServer(userData *lua.LUserData) *config.BackendServer {
+	if v, ok := userData.Value.(*config.BackendServer); ok {
 		return v
 	}
 
@@ -332,8 +302,8 @@ func indexMethod(L *lua.LState) int {
 		L.Push(lua.LString(server.Host))
 	case "port":
 		L.Push(lua.LNumber(server.Port))
-	case "request_url":
-		L.Push(lua.LString(server.RequestURL))
+	case "request_uri":
+		L.Push(lua.LString(server.RequestURI))
 	case "test_username":
 		L.Push(lua.LString(server.TestUsername))
 	case "test_password":
@@ -343,7 +313,9 @@ func indexMethod(L *lua.LState) int {
 	case "tls":
 		L.Push(lua.LBool(server.TLS))
 	case "tls_skip_verify":
-		L.Push(lua.LBool(server.TLSSKipVerify))
+		L.Push(lua.LBool(server.TLSSkipVerify))
+	case "deep_check":
+		L.Push(lua.LBool(server.DeepCheck))
 	default:
 		return 0 // The field does not exist
 	}
@@ -368,18 +340,7 @@ func getBackendServers(backendServers []*config.BackendServer) lua.LGFunction {
 
 			// Create an userdata and set its metatable
 			serverUserData := L.NewUserData()
-
-			serverUserData.Value = &LuaBackendServer{
-				Protocol:      backendServer.Protocol,
-				Host:          backendServer.Host,
-				RequestURL:    backendServer.RequestURI,
-				TestUsername:  backendServer.TestUsername,
-				TestPassword:  backendServer.TestPassword,
-				Port:          backendServer.Port,
-				HAProxyV2:     backendServer.HAProxyV2,
-				TLS:           backendServer.TLS,
-				TLSSKipVerify: backendServer.TLSSkipVerify,
-			}
+			serverUserData.Value = backendServer
 
 			L.SetMetatable(serverUserData, L.GetTypeMetatable(definitions.LuaBackendServerTypeName))
 
