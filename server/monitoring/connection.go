@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 	"net/textproto"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -109,9 +110,9 @@ func checkBackendConnection(server *config.BackendServer) error {
 // This function currently does not support plain connections requiring StartTLS.
 func handleProtocol(server *config.BackendServer, conn net.Conn) (err error) {
 	// Limited support only. Plain connections requireing StartTLS are not supported at the moment!
-	switch server.Protocol {
-	case "smtp":
-		err = checkSMTP(conn, server.TestUsername, server.TestPassword)
+	switch strings.ToLower(server.Protocol) {
+	case "smtp", "lmtp":
+		err = checkSMTP(conn, server.Protocol, server.TestUsername, server.TestPassword)
 	case "pop3":
 		err = checkPOP3(conn, server.TestUsername, server.TestPassword)
 	case "imap":
@@ -127,9 +128,10 @@ func handleProtocol(server *config.BackendServer, conn net.Conn) (err error) {
 
 // checkSMTP performs SMTP authentication using the provided username and password over a given network connection.
 // It sends EHLO and AUTH LOGIN commands to the SMTP server, encodes credentials in base64, and logs errors if authentication fails.
-func checkSMTP(conn net.Conn, username string, password string) error {
+func checkSMTP(conn net.Conn, protocol string, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
+	protocol = strings.ToLower(protocol)
 
 	defer fmt.Fprintf(conn, "QUIT\r\n")
 
@@ -140,11 +142,16 @@ func checkSMTP(conn net.Conn, username string, password string) error {
 
 	// We asume submission endpoints here! Not using postfix-postscreen multi-line features!
 	if greeting[:4] != "220 " {
-		return fmt.Errorf("SMTP greeting failed, response: %s", greeting)
+		return fmt.Errorf("S/LMTP greeting failed, response: %s", greeting)
+	}
+
+	cmd := "EHLO"
+	if protocol == "lmtp" {
+		cmd = "LHLO"
 	}
 
 	// Normally submission must not validate FQDN or DNS resolution for MUAs
-	fmt.Fprintf(conn, "EHLO localhost.localdomain\r\n")
+	fmt.Fprintf(conn, fmt.Sprintf("%s localhost.localdomain\r\n", cmd))
 
 	response := ""
 
@@ -156,14 +163,14 @@ func checkSMTP(conn net.Conn, username string, password string) error {
 
 		if response[:4] != "250 " {
 			if response[0] >= '4' {
-				return fmt.Errorf("SMTP EHLO failed, response: %s", response)
+				return fmt.Errorf("L/SMTP EHLO/LHLO failed, response: %s", response)
 			}
 		} else {
 			break
 		}
 	}
 
-	if username == "" || password == "" {
+	if protocol == "lmtp" || username == "" || password == "" {
 		return nil
 	}
 
