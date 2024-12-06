@@ -851,8 +851,7 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 //	err: the error that has occurred
 func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
-		definitions.LogKeyMsg, err,
-		definitions.LogKeyMsg, "Server down",
+		definitions.LogKeyMsg, fmt.Sprintf("Server down: %v", err),
 		definitions.LogKeyBackendServer, server,
 	)
 }

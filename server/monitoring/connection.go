@@ -97,9 +97,11 @@ func checkBackendConnection(server *config.BackendServer) error {
 		conn = net.Conn(tlsConn)
 	}
 
-	handleProtocol(server, conn)
+	if server.DeepCheck {
+		err = handleProtocol(server, conn)
+	}
 
-	return nil
+	return err
 }
 
 // handleProtocol processes authentication for a test user over a network connection based on the specified protocol.
@@ -136,13 +138,18 @@ func checkSMTP(conn net.Conn, username string, password string) error {
 		return err
 	}
 
+	// We asume submission endpoints here! Not using postfix-postscreen multi-line features!
 	if greeting[:4] != "220 " {
 		return fmt.Errorf("SMTP greeting failed, response: %s", greeting)
 	}
 
+	// Normally submission must not validate FQDN or DNS resolution for MUAs
 	fmt.Fprintf(conn, "EHLO localhost.localdomain\r\n")
+
+	response := ""
+
 	for {
-		response, err := tp.ReadLine()
+		response, err = tp.ReadLine()
 		if err != nil {
 			return err
 		}
@@ -151,7 +158,7 @@ func checkSMTP(conn net.Conn, username string, password string) error {
 			if response[0] >= '4' {
 				return fmt.Errorf("SMTP EHLO failed, response: %s", response)
 			}
-
+		} else {
 			break
 		}
 	}
@@ -162,26 +169,38 @@ func checkSMTP(conn net.Conn, username string, password string) error {
 
 	fmt.Fprintf(conn, "AUTH LOGIN\r\n")
 
-	_, err = tp.ReadLine()
+	response, err = tp.ReadLine()
 	if err != nil {
 		return err
+	}
+
+	if response[:3] != "334" {
+		return fmt.Errorf("SMTP AUTH LOGIN failed: %s", response)
 	}
 
 	usernameEnc := base64.StdEncoding.EncodeToString([]byte(username))
 
 	fmt.Fprintf(conn, "%s\r\n", usernameEnc)
 
-	_, err = tp.ReadLine()
+	response, err = tp.ReadLine()
 	if err != nil {
 		return err
+	}
+
+	if response[:3] != "334" {
+		return fmt.Errorf("SMTP AUTH LOGIN failed: %s", response)
 	}
 
 	passwordEnc := base64.StdEncoding.EncodeToString([]byte(password))
 
 	fmt.Fprintf(conn, "%s\r\n", passwordEnc)
 
-	response, err := tp.ReadLine()
-	if err != nil || response[:3] != "235" {
+	response, err = tp.ReadLine()
+	if err != nil {
+		return err
+	}
+
+	if response[:3] != "235" {
 		return fmt.Errorf("SMTP AUTH LOGIN failed: %s", response)
 	}
 

@@ -33,6 +33,7 @@ func (r *RelayDomainsSection) String() string {
 type BackendServer struct {
 	Protocol      string `mapstructure:"protocol"`
 	Host          string `mapstructure:"host"`
+	DeepCheck     bool   `mapstructure:"deep_check"`
 	RequestURI    string `mapstructure:"request_uri"`
 	TestUsername  string `mapstructure:"test_username"`
 	TestPassword  string `mapstructure:"test_password"`

@@ -56,8 +56,11 @@ func CheckBackendConnection(monitor monitoring.Monitor) lua.LGFunction {
 		server.Port = getNumberFromTable(table, "port")
 		server.HAProxyV2 = getBoolFromTable(table, "haproxy_v2")
 		server.TLS = getBoolFromTable(table, "tls")
+		server.TLSSkipVerify = getBoolFromTable(table, "tls_skip_verify")
 		server.TestUsername = getStringFromTable(table, "test_username")
 		server.TestPassword = getStringFromTable(table, "test_password")
+		server.RequestURI = getStringFromTable(table, "request_uri")
+		server.DeepCheck = getBoolFromTable(table, "deep_check")
 
 		if err := monitor.CheckBackendConnection(server); err != nil {
 			L.Push(lua.LString(err.Error()))
