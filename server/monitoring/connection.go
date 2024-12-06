@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/textproto"
@@ -66,6 +67,9 @@ func checkBackendConnection(server *config.BackendServer) error {
 		return err
 	}
 
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
 	defer conn.Close()
 
 	if server.HAProxyV2 {
@@ -101,51 +105,51 @@ func checkBackendConnection(server *config.BackendServer) error {
 // handleProtocol processes authentication for a test user over a network connection based on the specified protocol.
 // Supported protocols include SMTP, POP3, IMAP, and HTTP. If an unsupported protocol is specified, a warning is logged.
 // This function currently does not support plain connections requiring StartTLS.
-func handleProtocol(server *config.BackendServer, conn net.Conn) {
+func handleProtocol(server *config.BackendServer, conn net.Conn) (err error) {
 	// Limited support only. Plain connections requireing StartTLS are not supported at the moment!
 	switch server.Protocol {
 	case "smtp":
-		checkSMTP(conn, server.TestUsername, server.TestPassword)
+		err = checkSMTP(conn, server.TestUsername, server.TestPassword)
 	case "pop3":
-		checkPOP3(conn, server.TestUsername, server.TestPassword)
+		err = checkPOP3(conn, server.TestUsername, server.TestPassword)
 	case "imap":
-		checkIMAP(conn, server.TestUsername, server.TestPassword)
+		err = checkIMAP(conn, server.TestUsername, server.TestPassword)
 	case "http":
-		checkHTTP(conn, server.Host, server.RequestURI, server.TestUsername, server.TestPassword)
+		err = checkHTTP(conn, server.Host, server.RequestURI, server.TestUsername, server.TestPassword)
 	default:
-		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unsupported protocol", "protocol", server.Protocol)
+		err = errors.New("unsupported protocol")
 	}
+
+	return err
 }
 
 // checkSMTP performs SMTP authentication using the provided username and password over a given network connection.
 // It sends EHLO and AUTH LOGIN commands to the SMTP server, encodes credentials in base64, and logs errors if authentication fails.
-func checkSMTP(conn net.Conn, username string, password string) {
+func checkSMTP(conn net.Conn, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
 	defer fmt.Fprintf(conn, "QUIT\r\n")
 
-	_, err := tp.ReadLine()
+	greeting, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading SMTP initial response, error: %s", err))
-
-		return
+		return err
 	}
 
-	fmt.Fprintf(conn, "EHLO localhost\r\n")
+	if greeting[:4] != "220 " {
+		return fmt.Errorf("SMTP greeting failed, response: %s", greeting)
+	}
+
+	fmt.Fprintf(conn, "EHLO localhost.localdomain\r\n")
 	for {
 		response, err := tp.ReadLine()
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading SMTP EHLO response, error: %v", err))
-
-			return
+			return err
 		}
 
-		if response[:3] != "250" {
+		if response[:4] != "250 " {
 			if response[0] >= '4' {
-				level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("EHLO command failed, response: %s", response))
-
-				return
+				return fmt.Errorf("SMTP EHLO failed, response: %s", response)
 			}
 
 			break
@@ -153,16 +157,14 @@ func checkSMTP(conn net.Conn, username string, password string) {
 	}
 
 	if username == "" || password == "" {
-		return
+		return nil
 	}
 
 	fmt.Fprintf(conn, "AUTH LOGIN\r\n")
 
 	_, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error in SMTP AUTH LOGIN, error: %v", err))
-
-		return
+		return err
 	}
 
 	usernameEnc := base64.StdEncoding.EncodeToString([]byte(username))
@@ -171,9 +173,7 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	_, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error sending SMTP username, error: %v", err))
-
-		return
+		return err
 	}
 
 	passwordEnc := base64.StdEncoding.EncodeToString([]byte(password))
@@ -182,15 +182,15 @@ func checkSMTP(conn net.Conn, username string, password string) {
 
 	response, err := tp.ReadLine()
 	if err != nil || response[:3] != "235" {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("SMTP AUTH LOGIN failed, error: %v", err), "response", response)
-
-		return
+		return fmt.Errorf("SMTP AUTH LOGIN failed: %s", response)
 	}
+
+	return nil
 }
 
 // checkPOP3 performs POP3 authentication using the provided username and password over a given network connection.
 // It sends USER and PASS commands to the POP3 server, validates responses, and logs errors if authentication fails.
-func checkPOP3(conn net.Conn, username string, password string) {
+func checkPOP3(conn net.Conn, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
@@ -198,48 +198,40 @@ func checkPOP3(conn net.Conn, username string, password string) {
 
 	greeting, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 greeting, error: %v", err))
-
-		return
+		return err
 	}
 
 	if !isOkResponsePOP3(greeting) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 greeting failed, error: %s", greeting))
-
-		return
+		return err
 	}
 
 	if username == "" || password == "" {
-		return
+		return nil
 	}
 
 	fmt.Fprintf(conn, "USER %s\r\n", username)
 
 	response, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 response after USER command, error %v", err))
-
-		return
+		return err
 	}
 
 	if !isOkResponsePOP3(response) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 USER command failed, error: %s", response))
-
-		return
+		return fmt.Errorf("POP3 USER command failed: %s", response)
 	}
 
 	fmt.Fprintf(conn, "PASS %s\r\n", password)
 
 	response, err = tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading POP3 response after PASS command: %v\n", err))
-
-		return
+		return fmt.Errorf("POP3 PASS command failed: %s", response)
 	}
 
 	if !isOkResponsePOP3(response) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("POP3 login failed: %s\n", response))
+		return fmt.Errorf("POP3 PASS command failed: %s", response)
 	}
+
+	return nil
 }
 
 // isOkResponsePOP3 checks if the provided POP3 server response starts with "+OK".
@@ -250,7 +242,7 @@ func isOkResponsePOP3(response string) bool {
 // checkIMAP authenticates to an IMAP server using provided username and password over an existing network connection.
 // It sends an IMAP LOGIN command and checks if the response indicates a successful login.
 // Errors in reading responses or unsuccessful logins are logged for diagnostic purposes.
-func checkIMAP(conn net.Conn, username string, password string) {
+func checkIMAP(conn net.Conn, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
@@ -258,32 +250,29 @@ func checkIMAP(conn net.Conn, username string, password string) {
 
 	greeting, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading IMAP greeting, error: %v", err))
-		return
+		return err
 	}
 
 	if !isOkResponseIMAP(greeting) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("IMAP greeting failed, response: %s", greeting))
-
-		return
+		return fmt.Errorf("IMAP greeting failed: %s", greeting)
 	}
 
 	if username == "" || password == "" {
-		return
+		return nil
 	}
 
 	fmt.Fprintf(conn, "a1 LOGIN %s %s\r\n", username, password)
 
 	response, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading IMAP response, error: %v", err))
-
-		return
+		return err
 	}
 
 	if !isOkResponseIMAP(response) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("IMAP login failed, response: %s", response))
+		return fmt.Errorf("IMAP LOGIN command failed: %s", response)
 	}
+
+	return nil
 }
 
 // isOkResponseIMAP checks if the given IMAP server response starts with "* OK" or "a1 OK".
@@ -309,8 +298,6 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 
 	_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n%sUser-Agent: Nauthilus\r\nAccept: */*\r\n\r\n", requestURI, hostname, authHeader)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error sending HTTP request, error: %v", err))
-
 		return err
 	}
 
@@ -319,21 +306,15 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 
 	statusLine, err := tp.ReadLine()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading HTTP status line, error: %v", err))
-
 		return err
 	}
 
 	if !isOkResponseHTTP(statusLine) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("HTTP request failed, response: %s", statusLine))
-
 		return fmt.Errorf("HTTP request failed: %s", statusLine)
 	}
 
 	_, err = tp.ReadMIMEHeader()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Error reading HTTP headers, error: %v", err))
-
 		return err
 	}
 
