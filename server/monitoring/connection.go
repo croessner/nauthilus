@@ -85,6 +85,7 @@ func checkBackendConnection(server *config.BackendServer) error {
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: server.TLSSkipVerify,
 			ServerName:         server.Host,
+			MinVersion:         tls.VersionTLS12,
 		}
 
 		tlsConn := tls.Client(conn, tlsConfig)
@@ -336,27 +337,21 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	defer fmt.Fprintf(conn, "LOGOUT\r\n")
 
-	// Read server greeting
-	greeting, err := tp.ReadLine()
-	if err != nil {
+	// Wait for initial greeting
+	if response, err := isOkResponseSieve(tp); err != nil {
 		return err
-	}
-
-	if !isOkResponseSieve(greeting) {
+	} else if response != "OK" {
 		//goland:noinspection GoErrorStringFormat
-		return fmt.Errorf("Sieve greeting failed: %s", greeting)
+		return fmt.Errorf("Sieve greeting failed: %s", response)
 	}
 
 	// Send STARTTLS command
 	fmt.Fprintf(conn, "STARTTLS\r\n")
 
 	// Read STARTTLS response
-	response, err := tp.ReadLine()
-	if err != nil {
+	if response, err := isOkResponseSieve(tp); err != nil {
 		return err
-	}
-
-	if !isOkResponseSieve(response) {
+	} else if response != "OK" {
 		return fmt.Errorf("STARTTLS command failed: %s", response)
 	}
 
@@ -364,10 +359,11 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: tlsSkipVerify,
 		ServerName:         hostname,
+		MinVersion:         tls.VersionTLS12,
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
-	if err = tlsConn.Handshake(); err != nil {
+	if err := tlsConn.Handshake(); err != nil {
 		return fmt.Errorf("TLS handshake failed: %s", err)
 	}
 
@@ -375,7 +371,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 		return nil
 	}
 
-	if !isTLSConnection(conn) {
+	if !isTLSConnection(tlsConn) {
 		return errors.ErrMissingTLS
 	}
 
@@ -388,12 +384,9 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 	authString := fmt.Sprintf("\x00%s\x00%s", username, password)
 	fmt.Fprintf(conn, "AUTHENTICATE \"PLAIN\" {%d+}\r\n%s", len(authString), authString)
 
-	response, err = tp.ReadLine()
-	if err != nil {
+	if response, err := isOkResponseSieve(tp); err != nil {
 		return err
-	}
-
-	if !isOkResponseSieve(response) {
+	} else if response != "OK" {
 		//goland:noinspection GoErrorStringFormat
 		return fmt.Errorf("Sieve AUTHENTICATE command failed: %s", response)
 	}
@@ -402,8 +395,21 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 }
 
 // isOkResponseSieve checks if the Sieve server response starts with "OK", indicating a successful operation.
-func isOkResponseSieve(response string) bool {
-	return response[:2] == "OK"
+func isOkResponseSieve(tp *textproto.Reader) (response string, err error) {
+	for {
+		response, err = tp.ReadLine()
+		if err != nil {
+			return "", err
+		}
+
+		if response[:2] == "OK" {
+			return response[:2], nil
+		}
+
+		if response[:2] == "NO" {
+			return response, nil
+		}
+	}
 }
 
 // checkHTTP performs an HTTP GET request with Basic Authentication using a given username and password.
