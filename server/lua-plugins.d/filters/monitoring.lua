@@ -72,7 +72,7 @@ function nauthilus_call_filter(request)
             end
         else
             if length == 1 then
-                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
+                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 900)
                 nauthilus_util.if_error_raise(err_redis_expire)
             end
         end
@@ -101,9 +101,9 @@ function nauthilus_call_filter(request)
         if err_redis_hget then
             if err_redis_hget ~= "redis: nil" then
                 nauthilus_builtin.custom_log_add(N .. "_redis_hget_error", err_redis_hget)
-            end
 
-            return nil
+                return nil
+            end
         end
 
         if server_from_session ~= "" then
@@ -141,82 +141,84 @@ function nauthilus_call_filter(request)
     local server_host
     local session = get_dovecot_session()
 
-    if session then
-        local result = {}
+    if session == nil then
+        session = request.protocol
+    end
 
-        local valid_servers = preprocess_backend_servers(nauthilus_backend.get_backend_servers())
-        local num_of_bs = nauthilus_util.table_length(valid_servers)
+    local result = {}
 
-        if request.debug then
-            result.caller = N .. ".lua"
-            result.level = "debug"
-            result.ts = nauthilus_util.get_current_timestamp()
-            result.session = request.session
-            result.dovecot_session = session
-            result.protocol = request.protocol
-            result.account = request.account
-            result.backend_servers_alive = tostring(num_of_bs)
+    local valid_servers = preprocess_backend_servers(nauthilus_backend.get_backend_servers())
+    local num_of_bs = nauthilus_util.table_length(valid_servers)
 
-            local backend_servers_hosts = {}
-            for _, server in ipairs(valid_servers) do
-                table.insert(backend_servers_hosts, server.host)
-            end
+    if request.debug then
+        result.caller = N .. ".lua"
+        result.level = "debug"
+        result.ts = nauthilus_util.get_current_timestamp()
+        result.session = request.session
+        result.dovecot_session = session
+        result.protocol = request.protocol
+        result.account = request.account
+        result.backend_servers_alive = tostring(num_of_bs)
 
-            result.backend_servers = table.concat(backend_servers_hosts, ", ")
+        local backend_servers_hosts = {}
+        for _, server in ipairs(valid_servers) do
+            table.insert(backend_servers_hosts, server.host)
         end
 
-        if num_of_bs > 0 then
-            local maybe_server = get_server_from_sessions(session)
+        result.backend_servers = table.concat(backend_servers_hosts, ", ")
+    end
 
-            if maybe_server then
-                for _, server in ipairs(valid_servers) do
-                    if server.host == maybe_server then
-                        server_host = maybe_server
-                        result.backend_server_selected = server_host
+    if num_of_bs > 0 then
+        local maybe_server = get_server_from_sessions(session)
 
-                        break
-                    end
-                end
-
-                if not server_host then
-                    invalidate_stale_sessions()
-
-                    server_host = valid_servers[math.random(1, num_of_bs)].host
+        if maybe_server then
+            for _, server in ipairs(valid_servers) do
+                if server.host == maybe_server then
+                    server_host = maybe_server
                     result.backend_server_selected = server_host
+
+                    break
                 end
-            else
+            end
+
+            if not server_host then
+                invalidate_stale_sessions()
+
                 server_host = valid_servers[math.random(1, num_of_bs)].host
                 result.backend_server_selected = server_host
             end
+        else
+            server_host = valid_servers[math.random(1, num_of_bs)].host
+            result.backend_server_selected = server_host
+        end
+    end
+
+    if server_host then
+        local backend_result = nauthilus_backend_result.new()
+        local attributes = {}
+
+        add_session(session, server_host)
+
+        local expected_server = get_server_from_sessions(session)
+
+        -- Another client might have been faster at the same point in time...
+        if expected_server and  server_host ~= expected_server then
+            server_host = expected_server
+            result.backend_server_selected = server_host
         end
 
-        if server_host then
-            local backend_result = nauthilus_backend_result.new()
-            local attributes = {}
+        attributes["Proxy-Host"] = server_host
 
-            add_session(session, server_host)
+        nauthilus_builtin.custom_log_add(N .. "_backend_server", server_host)
 
-            local expected_server = get_server_from_sessions(session)
+        backend_result:attributes(attributes)
+        nauthilus_backend.apply_backend_result(backend_result)
+    end
 
-            -- Another client might have been faster at the same point in time...
-            if expected_server and  server_host ~= expected_server then
-                server_host = expected_server
-                result.backend_server_selected = server_host
-            end
+    nauthilus_util.print_result({ log_format = request.log_format }, result, nil)
 
-            attributes["Proxy-Host"] = server_host
-
-            nauthilus_builtin.custom_log_add(N .. "_backend_server", server_host)
-
-            backend_result:attributes(attributes)
-            nauthilus_backend.apply_backend_result(backend_result)
-        end
-
-        nauthilus_util.print_result({ log_format = request.log_format }, result, nil)
-
-        if server_host == nil then
-            error("No backend servers are available")
-        end
+    if server_host == nil then
+        error("No backend servers are available")
     end
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
