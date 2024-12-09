@@ -179,7 +179,7 @@ function nauthilus_call_filter(request)
             if expected_server and  server_host ~= expected_server then
                 server_host = expected_server
             end
-            
+
             attributes["Proxy-Host"] = server_host
 
             nauthilus_builtin.custom_log_add(N .. "_backend_server", server_host)
@@ -187,13 +187,13 @@ function nauthilus_call_filter(request)
             backend_result:attributes(attributes)
             nauthilus_backend.apply_backend_result(backend_result)
         end
-    end
 
-    if server_host == nil then
-        nauthilus_builtin.custom_log_add(N .. "_backend_server", "failed")
-        nauthilus_builtin.status_message_set("No backend servers are available")
+        if server_host == nil then
+            nauthilus_builtin.custom_log_add(N .. "_backend_server", "failed")
+            nauthilus_builtin.status_message_set("No backend servers are available")
 
-        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
+            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
+        end
     end
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
