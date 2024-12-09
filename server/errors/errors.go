@@ -214,6 +214,7 @@ var (
 	ErrNoFiltersDefined         = errors.New("no filters defined")
 	ErrFilterLuaNameMissing     = errors.New("filter 'name' sttribute missing")
 	ErrFilterLuaScriptPathEmpty = errors.New("filter 'script_path' attribute missing")
+	ErrFilterFailed             = errors.New("filter failed")
 )
 
 // misc.
