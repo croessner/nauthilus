@@ -18,7 +18,6 @@ package filter
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -27,13 +26,11 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	"github.com/yuin/gopher-lua"
 )
@@ -462,22 +459,16 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 
 	packagePathErr := lualib.PackagePath(L)
 	if packagePathErr != nil {
-		logError(r, script, packagePathErr)
-
 		return false, packagePathErr
 	}
 
 	scriptErr := lualib.DoCompiledFile(L, script.CompiledScript)
 	if scriptErr != nil {
-		logError(r, script, scriptErr)
-
 		return false, scriptErr
 	}
 
 	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(definitions.LuaFnCallFilter), NRet: 2, Protect: true}, request)
 	if callErr != nil {
-		logError(r, script, callErr)
-
 		return false, callErr
 	}
 
@@ -489,25 +480,11 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 
 	logResult(r, script, action, result)
 
-	if result != 0 {
-		err = fmt.Errorf("%v: %s", errors.ErrFilterFailed, script.Name)
-	}
-
 	if action {
 		return true, err
 	}
 
 	return false, err
-}
-
-// logError is a function that logs error information when a LuaFilter script fails during a Request session.
-// It logs the Session GUID, the name of the script, and the error message to the default error logger with an Error level.
-func logError(r *Request, script *LuaFilter, err error) {
-	level.Error(log.Logger).Log(
-		definitions.LogKeyGUID, r.Session,
-		"name", script.Name,
-		definitions.LogKeyMsg, err,
-	)
 }
 
 // logResult logs the output of a LuaFilter execution for a given request.
@@ -523,9 +500,11 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 		"result", resultMap[ret],
 	}
 
-	if r.Logs != nil {
-		for index := range *r.Logs {
-			logs = append(logs, (*r.Logs)[index])
+	if ret != 0 {
+		if r.Logs != nil {
+			for index := range *r.Logs {
+				logs = append(logs, (*r.Logs)[index])
+			}
 		}
 	}
 
