@@ -142,8 +142,28 @@ function nauthilus_call_filter(request)
     local session = get_dovecot_session()
 
     if session then
+        local result = {}
+
         local valid_servers = preprocess_backend_servers(nauthilus_backend.get_backend_servers())
         local num_of_bs = nauthilus_util.table_length(valid_servers)
+
+        if request.debug then
+            result.caller = N .. ".lua"
+            result.level = "debug"
+            result.ts = nauthilus_util.get_current_timestamp()
+            result.session = request.session
+            result.dovecot_session = session
+            result.protocol = request.protocol
+            result.account = request.account
+            result.backend_servers_alive = tostring(num_of_bs)
+
+            local backend_servers_hosts = {}
+            for _, server in ipairs(valid_servers) do
+                table.insert(backend_servers_hosts, server.host)
+            end
+
+            result.backend_servers = table.concat(backend_servers_hosts, ", ")
+        end
 
         if num_of_bs > 0 then
             local maybe_server = get_server_from_sessions(session)
@@ -152,6 +172,7 @@ function nauthilus_call_filter(request)
                 for _, server in ipairs(valid_servers) do
                     if server.host == maybe_server then
                         server_host = maybe_server
+                        result.backend_server_selected = server_host
 
                         break
                     end
@@ -161,9 +182,11 @@ function nauthilus_call_filter(request)
                     invalidate_stale_sessions()
 
                     server_host = valid_servers[math.random(1, num_of_bs)].host
+                    result.backend_server_selected = server_host
                 end
             else
                 server_host = valid_servers[math.random(1, num_of_bs)].host
+                result.backend_server_selected = server_host
             end
         end
 
@@ -178,6 +201,7 @@ function nauthilus_call_filter(request)
             -- Another client might have been faster at the same point in time...
             if expected_server and  server_host ~= expected_server then
                 server_host = expected_server
+                result.backend_server_selected = server_host
             end
 
             attributes["Proxy-Host"] = server_host
@@ -188,11 +212,10 @@ function nauthilus_call_filter(request)
             nauthilus_backend.apply_backend_result(backend_result)
         end
 
-        if server_host == nil then
-            nauthilus_builtin.custom_log_add(N .. "_backend_server", "failed")
-            nauthilus_builtin.status_message_set("No backend servers are available")
+        nauthilus_util.print_result({ log_format = request.log_format }, result, nil)
 
-            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
+        if server_host == nil then
+            error("No backend servers are available")
         end
     end
 
