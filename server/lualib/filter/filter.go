@@ -18,6 +18,7 @@ package filter
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -445,6 +446,8 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 // It also calls the Lua function with the given parameters and logs the result.
 // The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
+	var err error
+
 	stopTimer := stats.PrometheusTimer(definitions.PromFilter, script.Name)
 
 	if stopTimer != nil {
@@ -486,11 +489,15 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 
 	logResult(r, script, action, result)
 
-	if action {
-		return true, nil
+	if result != 0 {
+		err = fmt.Errorf("%v: %s", errors.ErrFilterFailed, script.Name)
 	}
 
-	return false, nil
+	if action {
+		return true, err
+	}
+
+	return false, err
 }
 
 // logError is a function that logs error information when a LuaFilter script fails during a Request session.
@@ -516,12 +523,9 @@ func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 		"result", resultMap[ret],
 	}
 
-	if ret != 0 {
-
-		if r.Logs != nil {
-			for index := range *r.Logs {
-				logs = append(logs, (*r.Logs)[index])
-			}
+	if r.Logs != nil {
+		for index := range *r.Logs {
+			logs = append(logs, (*r.Logs)[index])
 		}
 	}
 

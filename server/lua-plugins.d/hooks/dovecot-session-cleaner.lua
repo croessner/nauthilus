@@ -21,9 +21,6 @@ local nauthilus_redis = require("nauthilus_redis")
 dynamic_loader("nauthilus_http_request")
 local nauthilus_http_request = require("nauthilus_http_request")
 
-dynamic_loader("nauthilus_gluacrypto")
-local crypto = require("crypto")
-
 dynamic_loader("nauthilus_gll_json")
 local json = require("json")
 
@@ -108,7 +105,7 @@ function nauthilus_run_hook(logging, session)
 
     if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" or result.category == "service:sieve" then
         if result.dovecot_session ~= "unknown" then
-            local redis_key = "ntc:DS:" .. crypto.md5(result.user)
+            local redis_key = "ntc:DS:" .. result.user
 
             if is_cmd_noop then
                 result.cmd = "NOOP"
