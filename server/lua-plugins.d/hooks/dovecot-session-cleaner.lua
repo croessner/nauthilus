@@ -26,6 +26,13 @@ local json = require("json")
 
 local N = "callback"
 
+local CATEGORIES = {
+    ["service:imap"] = true,
+    ["service:pop3"] = true,
+    ["service:lmtp"] = true,
+    ["service:sieve"] = true,
+}
+
 function nauthilus_run_hook(logging, session)
     local result = {}
 
@@ -61,7 +68,6 @@ function nauthilus_run_hook(logging, session)
     end
 
     result.state = "client disconnected"
-    result.dovecot_session = "unknown"
 
     local is_cmd_noop = false
 
@@ -69,7 +75,7 @@ function nauthilus_run_hook(logging, session)
         if k == "categories" then
             if nauthilus_util.is_table(v) then
                 for _, category in ipairs(v) do
-                    if category == "service:imap" or category == "service:lmtp" then
+                    if CATEGORIES[category] then
                         result.category = category
                     end
                 end
@@ -103,17 +109,17 @@ function nauthilus_run_hook(logging, session)
         end
     end
 
-    if result.category == "service:imap" or result.category == "service:pop3" or result.category == "service:lmtp" or result.category == "service:sieve" then
-        if result.dovecot_session ~= "unknown" then
-            local redis_key = "ntc:DS:" .. result.user
+    if CATEGORIES[result.category] then
+        local redis_key = "ntc:DS:" .. result.user
 
-            if is_cmd_noop then
-                result.cmd = "NOOP"
-                result.state = "client session refreshed"
+        if is_cmd_noop then
+            result.cmd = "NOOP"
+            result.state = "client session refreshed"
 
-                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
-                nauthilus_util.if_error_raise(err_redis_expire)
-            else
+            local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 900)
+            nauthilus_util.if_error_raise(err_redis_expire)
+        else
+            if result.dovecot_session then
                 -- Cleanup dovecot session
                 local deleted, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, redis_key, result.dovecot_session)
                 if err_redis_hdel then
