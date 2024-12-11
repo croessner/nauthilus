@@ -13,42 +13,42 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_http_request")
+local nauthilus_http_request = require("nauthilus_http_request")
+
 dynamic_loader("nauthilus_backend")
 local nauthilus_backend = require("nauthilus_backend")
 
 local N = "director"
 
-local WANTED_PROTOCOLS = {
-    imap = true,
-    imapa = true,
-    pop3 = true,
-    pop3s = true,
-    lmtp = true,
-    lmtps = true,
-    sieve = true,
-}
+local function get_service()
+    local header = nauthilus_http_request.get_http_request_header("X-Nauthilus-Service")
+    if nauthilus_util.table_length(header) == 1 then
+        return header[1]
+    end
+
+    return nil
+end
+
+local function get_dovecot_session()
+    local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
+    if nauthilus_util.table_length(header) == 1 then
+        return header[1]
+    end
+
+    return nil
+end
 
 function nauthilus_call_filter(request)
     if not request.authenticated then
         return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    if not WANTED_PROTOCOLS[request.protocol] then
+    local service = get_service()
+    if service ~= "Dovecot" then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
-    end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_http_request")
-    local nauthilus_http_request = require("nauthilus_http_request")
-
-    local function get_dovecot_session()
-        local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
-        if nauthilus_util.table_length(header) == 1 then
-            return header[1]
-        end
-
-        return nil
     end
 
     dynamic_loader("nauthilus_redis")
