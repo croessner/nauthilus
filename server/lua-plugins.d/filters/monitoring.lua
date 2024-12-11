@@ -218,7 +218,7 @@ function nauthilus_call_filter(request)
     nauthilus_util.print_result({ log_format = request.log_format }, result, nil)
 
     if server_host == nil then
-        error("No backend servers are available")
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
     end
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
