@@ -151,6 +151,192 @@ type JSONRequest struct {
 	SSLFingerprint string `json:"ssl_fingerprint,omitempty"`
 }
 
+// State is implemented by AuthState and defines the methods to interact with the authentication process.
+type State interface {
+	// SetUsername sets the username for the current authentication state.
+	SetUsername(username string)
+
+	// SetPassword sets the password for the current authentication state.
+	SetPassword(password string)
+
+	// SetClientIP sets the client's IP address used during the authentication process.
+	SetClientIP(clientIP string)
+
+	// SetClientPort sets the client's port as a string.
+	SetClientPort(clientPort string)
+
+	// SetClientHost sets the client host information for the current state using the provided hostname string.
+	SetClientHost(clientHost string)
+
+	// SetStatusCodes sets the current status code associated with the authentication process.
+	SetStatusCodes(statusCode string)
+
+	// SetOperationMode sets the operation mode for the authentication process based on the provided gin context.
+	SetOperationMode(ctx *gin.Context)
+
+	// SetNoAuth sets the authentication state to no authentication required when true, or requires authentication when false.
+	SetNoAuth(bool)
+
+	// SetProtocol sets the authentication protocol to be used during the authentication process.
+	SetProtocol(protocol *config.Protocol)
+
+	// GetGUID retrieves the globally unique identifier (GUID) associated with the current authentication state.
+	GetGUID() string
+
+	// GetUsername retrieves the username currently stored in the state and returns it as a string.
+	GetUsername() string
+
+	// GetPassword retrieves the current password stored in the authentication state as a string.
+	GetPassword() string
+
+	// GetProtocol retrieves the protocol configuration associated with the current state.
+	GetProtocol() *config.Protocol
+
+	// SetLoginAttempts sets the number of login attempts for the current authentication process.
+	SetLoginAttempts(uint)
+
+	// SetMethod sets the authentication method used during the authentication process.
+	SetMethod(method string)
+
+	// SetUserAgent sets the user agent information for the current authentication state.
+	SetUserAgent(userAgent string)
+
+	// SetLocalIP sets the local IP address for the current state.
+	SetLocalIP(localIP string)
+
+	// SetLocalPort sets the local port for the authentication state.
+	SetLocalPort(localPort string)
+
+	// SetSSL sets the SSL parameter to the specified value for the authentication process.
+	SetSSL(ssl string)
+
+	// SetSSLSessionID sets the SSL session ID associated with the current state for tracking and verification purposes.
+	SetSSLSessionID(sslSessionID string)
+
+	// SetSSLClientVerify sets the verification result of the SSL client as a string. Typically used for SSL client validation.
+	SetSSLClientVerify(sslClientVerify string)
+
+	// SetSSLClientDN sets the SSL client distinguished name (DN) for the current authentication state.
+	SetSSLClientDN(sslClientDN string)
+
+	// SetSSLClientCN sets the Common Name (CN) from the SSL client certificate for the current authentication state.
+	SetSSLClientCN(sslClientCN string)
+
+	// SetSSLIssuer sets the SSL issuer string for the current authentication state.
+	SetSSLIssuer(sslIssuer string)
+
+	// SetSSLClientNotBefore sets the "not before" validity period for the SSL client certificate.
+	SetSSLClientNotBefore(sslClientNotBefore string)
+
+	// SetSSLClientNotAfter sets the expiration date and time of the SSL client certificate.
+	SetSSLClientNotAfter(sslClientNotAfter string)
+
+	// SetSSLSubjectDN sets the SSL subject distinguished name (DN) associated with the current authentication state.
+	SetSSLSubjectDN(sslSubjectDN string)
+
+	// SetSSLIssuerDN sets the distinguished name (DN) of the SSL issuer for the current state.
+	SetSSLIssuerDN(sslIssuerDN string)
+
+	// SetSSLClientSubjectDN sets the distinguished name (DN) of the SSL client certificate's subject.
+	SetSSLClientSubjectDN(sslClientSubjectDN string)
+
+	// SetSSLClientIssuerDN sets the distinguished name (DN) of the SSL client issuer to the provided string value.
+	SetSSLClientIssuerDN(sslClientIssuerDN string)
+
+	// SetSSLProtocol sets the SSL security protocol for the current authentication session.
+	SetSSLProtocol(sslProtocol string)
+
+	// SetSSLCipher sets the SSL cipher used for the client connection.
+	SetSSLCipher(sslCipher string)
+
+	// SetSSLSerial sets the SSL serial number for the authentication state.
+	SetSSLSerial(sslSerial string)
+
+	// SetSSLFingerprint sets the SSL fingerprint value for the current state.
+	SetSSLFingerprint(sslFingerprint string)
+
+	// GetAccountOk returns the account field value and a boolean indicating if the account field is present and valid.
+	GetAccountOk() (string, bool)
+
+	// GetTOTPSecretOk retrieves the TOTP secret if available and returns it along with a bool indicating its presence.
+	GetTOTPSecretOk() (string, bool)
+
+	// GetAccountField retrieves the current account field associated with the authentication process.
+	GetAccountField() string
+
+	// GetTOTPSecretField retrieves the TOTP secret field associated with the current authentication state.
+	GetTOTPSecretField() string
+
+	// GetTOTPRecoveryField retrieves the TOTP recovery field used during the authentication process.
+	GetTOTPRecoveryField() string
+
+	// GetUniqueUserIDField returns the name of the field or attribute that represents a unique user identifier in the database.
+	GetUniqueUserIDField() string
+
+	// GetDisplayNameField retrieves the display name field of a user from the current state.
+	GetDisplayNameField() string
+
+	// GetUsedPassDBBackend returns the backend used for the password database during the authentication process.
+	GetUsedPassDBBackend() definitions.Backend
+
+	// GetAttributes retrieves a map of database attributes where keys are field names and values are the corresponding data.
+	GetAttributes() backend.DatabaseResult
+
+	// GetAdditionalLogs retrieves a slice of additional log entries, useful for appending context-specific logging details.
+	GetAdditionalLogs() []any
+
+	// GetOauth2SubjectAndClaims retrieves the OAuth2 subject and claims for a given OAuth2 client.
+	// Returns the subject as a string and the claims as a map.
+	GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any)
+
+	// PreproccessAuthRequest preprocesses the authentication request and determines if it should be rejected.
+	PreproccessAuthRequest(ctx *gin.Context) bool
+
+	// UpdateBruteForceBucketsCounter increments counters to track brute-force attack attempts for the associated client IP.
+	UpdateBruteForceBucketsCounter()
+
+	// HandleAuthentication processes the primary authentication logic based on the request context and service parameters.
+	HandleAuthentication(ctx *gin.Context)
+
+	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
+	HandlePassword(ctx *gin.Context) definitions.AuthResult
+
+	// HandleSASLAuthdAuthentication processes authentication requests using the SASL auth daemon protocol.
+	HandleSASLAuthdAuthentication(ctx *gin.Context)
+
+	// FilterLua applies Lua-based filtering logic to the provided PassDBResult and execution context.
+	// It returns an AuthResult indicating the outcome of the filtering process.
+	FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult
+
+	// PostLuaAction performs actions or post-processing after executing Lua scripts during authentication workflow.
+	PostLuaAction(passDBResult *PassDBResult)
+
+	// WithDefaults configures the State with default values derived from the provided gin.Context.
+	WithDefaults(ctx *gin.Context) State
+
+	// WithClientInfo adds client-related information from the provided context to the current authentication state and returns it.
+	WithClientInfo(ctx *gin.Context) State
+
+	// WithLocalInfo enriches the authentication state with the client's local information based on the provided context.
+	WithLocalInfo(ctx *gin.Context) State
+
+	// WithUserAgent updates the State object with information extracted from the request's User-Agent header.
+	WithUserAgent(ctx *gin.Context) State
+
+	// WithXSSL sets XSSL-related context for the authentication process and returns the updated State object.
+	WithXSSL(ctx *gin.Context) State
+
+	// InitMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
+	InitMethodAndUserAgent() State
+
+	// userExists checks if the user exists in the authentication backend.
+	// It returns a boolean indicating existence and an error if any issues are encountered.
+	userExists() (bool, error)
+
+	// IsMasterUser determines if the authenticated user has master-level privileges, returning true if they do.
+	IsMasterUser() bool
+}
+
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
 	// StartTime represents the starting time of a client request.
@@ -174,13 +360,13 @@ type AuthState struct {
 	// LoginAttempts is a counter incremented for each failed login request
 	LoginAttempts uint
 
-	// StatusCodeOk is the HTTP status code that is set by setStatusCodes.
+	// StatusCodeOk is the HTTP status code that is set by SetStatusCodes.
 	StatusCodeOK int
 
-	// StatusCodeInternalError is the HTTP status code that is set by setStatusCodes.
+	// StatusCodeInternalError is the HTTP status code that is set by SetStatusCodes.
 	StatusCodeInternalError int
 
-	// StatusCodeFail is the HTTP status code that is set by setStatusCodes.
+	// StatusCodeFail is the HTTP status code that is set by SetStatusCodes.
 	StatusCodeFail int
 
 	// GUID is a global unique identifier inherited in all functions and methods that deal with the
@@ -317,6 +503,8 @@ type AuthState struct {
 	*lualib.Context
 }
 
+var _ State = (*AuthState)(nil)
+
 // PassDBResult is used in all password databases to store final results of an authentication process.
 type PassDBResult struct {
 	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
@@ -411,6 +599,229 @@ func (a *AuthState) String() string {
 	return result[1:]
 }
 
+// SetUsername sets the username for the AuthState instance to the given value.
+func (a *AuthState) SetUsername(username string) {
+	a.Username = username
+}
+
+// SetPassword sets the password for the AuthState instance.
+func (a *AuthState) SetPassword(password string) {
+	a.Password = password
+}
+
+// SetClientIP sets the client's IP address in the AuthState structure.
+func (a *AuthState) SetClientIP(clientIP string) {
+	a.ClientIP = clientIP
+}
+
+// SetClientPort sets the client's port information to the provided clientPort value.
+func (a *AuthState) SetClientPort(clientPort string) {
+	a.XClientPort = clientPort
+}
+
+// SetClientHost sets the client host value in the AuthState instance.
+func (a *AuthState) SetClientHost(clientHost string) {
+	a.ClientHost = clientHost
+}
+
+// SetClientID sets the client ID for the authentication state using the provided clientID string.
+func (a *AuthState) SetClientID(clientID string) {
+	a.XClientID = clientID
+}
+
+// SetSSLSessionID sets the SSL session ID for the AuthState instance.
+func (a *AuthState) SetSSLSessionID(sslSessionID string) {
+	a.XSSLSessionID = sslSessionID
+}
+
+// SetSSLClientVerify sets the SSL client verification value for the AuthState.
+func (a *AuthState) SetSSLClientVerify(sslClientVerify string) {
+	a.XSSLClientVerify = sslClientVerify
+}
+
+// SetSSLClientDN sets the distinguished name (DN) of the SSL client in the AuthState struct.
+func (a *AuthState) SetSSLClientDN(sslClientDN string) {
+	a.XSSLClientDN = sslClientDN
+}
+
+// SetSSLClientCN sets the value of the SSL client common name (CN) for the AuthState instance.
+func (a *AuthState) SetSSLClientCN(sslClientCN string) {
+	a.XSSLClientCN = sslClientCN
+}
+
+// SetSSLIssuer sets the issuer for the XSSL certificate in the AuthState.
+func (a *AuthState) SetSSLIssuer(xSSLIssuer string) {
+	a.XSSLIssuer = xSSLIssuer
+}
+
+// SetSSLClientNotBefore sets the SSL client certificate's "Not Before" value in the AuthState.
+func (a *AuthState) SetSSLClientNotBefore(sslClientNotBefore string) {
+	a.XSSLClientNotBefore = sslClientNotBefore
+}
+
+// SetSSLClientNotAfter sets the XSSLClientNotAfter field with the provided SSL client expiration date.
+func (a *AuthState) SetSSLClientNotAfter(sslClientNotAfter string) {
+	a.XSSLClientNotAfter = sslClientNotAfter
+}
+
+// SetSSLSubjectDN sets the SSL subject distinguished name to the provided string value.
+func (a *AuthState) SetSSLSubjectDN(sslSubjectDN string) {
+	a.XSSLSubjectDN = sslSubjectDN
+}
+
+// SetSSLIssuerDN sets the X.509 SSL issuer distinguished name for the AuthState.
+func (a *AuthState) SetSSLIssuerDN(xSSLIssuerDN string) {
+	a.XSSLIssuerDN = xSSLIssuerDN
+}
+
+// SetSSLClientSubjectDN sets the subject distinguished name (DN) for the SSL client in the AuthState object.
+func (a *AuthState) SetSSLClientSubjectDN(sslClientSubjectDN string) {
+	a.XSSLClientSubjectDN = sslClientSubjectDN
+}
+
+// SetSSLClientIssuerDN sets the SSL client issuer distinguished name for the authentication state.
+func (a *AuthState) SetSSLClientIssuerDN(sslClientIssuerDN string) {
+	a.XSSLClientIssuerDN = sslClientIssuerDN
+}
+
+// SetSSLCipher sets the SSL cipher suite for the current authentication state.
+func (a *AuthState) SetSSLCipher(sslCipher string) {
+	a.XSSLCipher = sslCipher
+}
+
+// SetSSLSerial sets the SSL serial number for the AuthState instance.
+func (a *AuthState) SetSSLSerial(sslSerial string) {
+	a.SSLSerial = sslSerial
+}
+
+// SetSSLFingerprint sets the SSL fingerprint for the AuthState instance. It updates the SSLFingerprint field with the provided value.
+func (a *AuthState) SetSSLFingerprint(sslFingerprint string) {
+	a.SSLFingerprint = sslFingerprint
+}
+
+// SetNoAuth configures the authentication state to enable or disable "NoAuth" mode based on the provided boolean value.
+func (a *AuthState) SetNoAuth(noAuth bool) {
+	a.NoAuth = noAuth
+}
+
+// SetProtocol sets the protocol for the AuthState using the given Protocol configuration.
+func (a *AuthState) SetProtocol(protocol *config.Protocol) {
+	a.Protocol = protocol
+}
+
+// SetLoginAttempts sets the number of login attempts for the AuthState instance.
+func (a *AuthState) SetLoginAttempts(loginAttempts uint) {
+	a.LoginAttempts = loginAttempts
+}
+
+// SetMethod sets the authentication method for the AuthState instance by assigning it to the Method field.
+func (a *AuthState) SetMethod(method string) {
+	a.Method = &method
+}
+
+// SetUserAgent sets the UserAgent field for the AuthState with the provided userAgent value.
+func (a *AuthState) SetUserAgent(userAgent string) {
+	a.UserAgent = &userAgent
+}
+
+// SetLocalIP sets the local IP address for the AuthState instance.
+func (a *AuthState) SetLocalIP(localIP string) {
+	a.XLocalIP = localIP
+}
+
+// SetLocalPort sets the local port for the AuthState instance to the given port string.
+func (a *AuthState) SetLocalPort(port string) {
+	a.XPort = port
+}
+
+// SetSSL sets the XSSL property of the AuthState to the provided SSL value.
+func (a *AuthState) SetSSL(ssl string) {
+	a.XSSL = ssl
+}
+
+// SetSSLProtocol sets the SSL protocol version to be used for the connection by updating the XSSLProtocol field.
+func (a *AuthState) SetSSLProtocol(sslProtocol string) {
+	a.XSSLProtocol = sslProtocol
+}
+
+// GetGUID retrieves the GUID from the AuthState. Returns an empty string if the GUID is nil.
+func (a *AuthState) GetGUID() string {
+	if a.GUID == nil {
+		return ""
+	}
+
+	return *a.GUID
+}
+
+// GetUsername retrieves the username from the AuthState structure.
+func (a *AuthState) GetUsername() string {
+	return a.Username
+}
+
+// GetPassword retrieves the password stored in the AuthState instance. It returns the password as a string.
+func (a *AuthState) GetPassword() string {
+	return a.Password
+}
+
+// GetProtocol retrieves the configured Protocol for the AuthState. If no Protocol is set, it returns a default Protocol instance.
+func (a *AuthState) GetProtocol() *config.Protocol {
+	if a.Protocol == nil {
+		a.Protocol = &config.Protocol{}
+	}
+
+	return a.Protocol
+}
+
+// GetTOTPSecretField retrieves the TOTP secret field from the AuthState. Returns an empty string if the field is nil.
+func (a *AuthState) GetTOTPSecretField() string {
+	if a.TOTPSecretField == nil {
+		return ""
+	}
+
+	return *a.TOTPSecretField
+}
+
+// GetTOTPRecoveryField retrieves the TOTP recovery field value from AuthState. Returns an empty string if not set.
+func (a *AuthState) GetTOTPRecoveryField() string {
+	if a.TOTPRecoveryField == nil {
+		return ""
+	}
+
+	return *a.TOTPRecoveryField
+}
+
+// GetUniqueUserIDField retrieves the value of the UniqueUserIDField if set; returns an empty string otherwise.
+func (a *AuthState) GetUniqueUserIDField() string {
+	if a.UniqueUserIDField == nil {
+		return ""
+	}
+
+	return *a.UniqueUserIDField
+}
+
+// GetDisplayNameField retrieves the display name field from the AuthState. Returns an empty string if it's nil.
+func (a *AuthState) GetDisplayNameField() string {
+	if a.DisplayNameField == nil {
+		return ""
+	}
+
+	return *a.DisplayNameField
+}
+
+// GetUsedPassDBBackend returns the currently used backend for password database operations.
+func (a *AuthState) GetUsedPassDBBackend() definitions.Backend {
+	return a.UsedPassDBBackend
+}
+
+// GetAttributes retrieves the stored database attributes from the AuthState and returns them as a DatabaseResult.
+func (a *AuthState) GetAttributes() backend.DatabaseResult {
+	return a.Attributes
+}
+
+func (a *AuthState) GetAdditionalLogs() []any {
+	return a.AdditionalLogs
+}
+
 // LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.
 func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	var keyvals []any
@@ -486,7 +897,7 @@ func (a *AuthState) GetTOTPSecret() string {
 		return ""
 	}
 
-	if totpSecret, okay := a.Attributes[*a.TOTPSecretField]; okay {
+	if totpSecret, okay := a.Attributes[a.GetTOTPSecretField()]; okay {
 		if value, assertOk := totpSecret[definitions.LDAPSingleValue].(string); assertOk {
 			return value
 		}
@@ -1062,8 +1473,8 @@ func updateAuthentication(a *AuthState, passDBResult *PassDBResult, passDB *Pass
 	}
 }
 
-// setStatusCodes sets different status codes for various services.
-func (a *AuthState) setStatusCodes(service string) {
+// SetStatusCodes sets different status codes for various services.
+func (a *AuthState) SetStatusCodes(service string) {
 	switch service {
 	case definitions.ServNginx:
 		a.StatusCodeOK = http.StatusOK
@@ -1270,7 +1681,7 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 // After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
-	a.setOperationMode(ctx)
+	a.SetOperationMode(ctx)
 
 	passDBResult := a.initializePassDBResult()
 
@@ -1790,13 +2201,13 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	return
 }
 
-// setOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.
+// SetOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.
 // It retrieves the GUID from the gin context and uses it for logging purposes.
 // The operation mode can be "no-auth" or "list-accounts".
 // If the mode is "no-auth", it sets the NoAuth field of the AuthState object to true.
 // If the mode is "list-accounts", it sets the ListAccounts field of the AuthState object to true.
 // The function "util.DebugModule" is used for logging debug messages with the appropriate module name and function name.
-// Example usage of setOperationMode:
+// Example usage of SetOperationMode:
 //
 //	a.setOperationMode(ctx)
 //
@@ -1804,7 +2215,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 //	  //...
 //	  auth.setOperationMode(ctx)
 //	}
-func (a *AuthState) setOperationMode(ctx *gin.Context) {
+func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// We reset flags, because they might have been cached in the in-memory cahce.
@@ -1845,30 +2256,31 @@ func (a *AuthState) setOperationMode(ctx *gin.Context) {
 // If it is set to "no-auth", it sets the NoAuth field of the authentication object to true.
 // If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
-func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
+func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	auth.Username = ctx.GetHeader(config.LoadableConfig.GetUsername())
-	auth.Password = ctx.GetHeader(config.LoadableConfig.GetPassword())
+	auth.SetUsername(ctx.GetHeader(config.LoadableConfig.GetUsername()))
+	auth.SetPassword(ctx.GetHeader(config.LoadableConfig.GetPassword()))
 
 	encoded := ctx.GetHeader(config.LoadableConfig.GetPasswordEncoded())
 	if encoded == "1" {
-		padding := len(auth.Password) % 4
+		password := auth.GetPassword()
+
+		padding := len(password) % 4
 		if padding > 0 {
-			auth.Password += string(bytes.Repeat([]byte("="), 4-padding))
+			password += string(bytes.Repeat([]byte("="), 4-padding))
 		}
 
-		if password, err := base64.URLEncoding.DecodeString(auth.Password); err != nil {
-			auth.Password = ""
+		if decodedPassword, err := base64.URLEncoding.DecodeString(password); err != nil {
+			auth.SetPassword("")
 
 			ctx.Error(errors.ErrPasswordEncoding)
 		} else {
-			auth.Password = string(password)
+			auth.SetPassword(string(decodedPassword))
 		}
 	}
 
-	auth.Protocol.Set(ctx.GetHeader(config.LoadableConfig.GetProtocol()))
-
-	auth.LoginAttempts = func() uint {
+	auth.GetProtocol().Set(ctx.GetHeader(config.LoadableConfig.GetProtocol()))
+	auth.SetLoginAttempts(func() uint {
 		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.LoadableConfig.GetLoginAttempt()))
 		if err != nil {
 			return 0
@@ -1879,12 +2291,9 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 		}
 
 		return uint(loginAttempts)
-	}()
+	}())
 
-	method := ctx.GetHeader(config.LoadableConfig.GetAuthMethod())
-
-	auth.Method = &method
-
+	auth.SetMethod(ctx.GetHeader(config.LoadableConfig.GetAuthMethod()))
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
 	auth.WithUserAgent(ctx)
@@ -1895,25 +2304,24 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth *AuthState) {
 // It extracts the values for the fields method, realm, user_agent, username, password, protocol, port, tls, and security from the request form.
 // If the realm field is not empty, it appends "@" + realm to the username field in the AuthState object.
 // It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
-func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
-	method := ctx.PostForm("method")
+func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 	realm := ctx.PostForm("realm")
-	userAgent := ctx.PostForm("user_agent")
-
 	if len(realm) > 0 {
-		auth.Username += "@" + realm
+		username := auth.GetUsername()
+		username += "@" + realm
+
+		auth.SetUsername(username)
 	}
 
-	auth.Method = &method
-	auth.UserAgent = &userAgent
-	auth.Username = ctx.PostForm("username")
-	auth.Password = ctx.PostForm("password")
-	auth.Protocol = &config.Protocol{}
-	auth.Protocol.Set(ctx.PostForm("protocol"))
-	auth.XLocalIP = definitions.Localhost4
-	auth.XPort = ctx.PostForm("port")
-	auth.XSSL = ctx.PostForm("tls")
-	auth.XSSLProtocol = ctx.PostForm("security")
+	auth.SetMethod(ctx.PostForm("method"))
+	auth.SetUserAgent(ctx.PostForm("user_agent"))
+	auth.SetUsername(ctx.PostForm("username"))
+	auth.SetPassword(ctx.PostForm("password"))
+	auth.SetProtocol(config.NewProtocol(ctx.PostForm("protocol")))
+	auth.SetLocalIP(definitions.Localhost4)
+	auth.SetLocalPort(ctx.PostForm("port"))
+	auth.SetSSL(ctx.PostForm("tls"))
+	auth.SetSSLProtocol(ctx.PostForm("security"))
 }
 
 // processApplicationJSON takes a gin Context and an AuthState object.
@@ -1921,7 +2329,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth *AuthState) {
 // If there is an error in the binding process, it sets the error type to "gin.ErrorTypeBind" and returns.
 // Otherwise, it calls the setAuthenticationFields function with the AuthState object and the JSONRequest object,
 // and sets additional fields in the AuthState object using the XSSL method.
-func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
+func processApplicationJSON(ctx *gin.Context, auth State) {
 	var jsonRequest *JSONRequest
 
 	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
@@ -1960,33 +2368,33 @@ func processApplicationJSON(ctx *gin.Context, auth *AuthState) {
 //
 // setAuthenticationFields(auth, request)
 // // After the function call, the fields of auth would be populated with the values from request
-func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
-	auth.Method = &request.Method
-	auth.UserAgent = &request.ClientID
-	auth.Username = request.Username
-	auth.Password = request.Password
-	auth.ClientIP = request.ClientIP
-	auth.XClientPort = request.ClientPort
-	auth.ClientHost = request.ClientHostname
-	auth.XLocalIP = request.LocalIP
-	auth.XPort = request.LocalPort
-	auth.Protocol = config.NewProtocol(request.Service)
-	auth.XSSL = request.XSSL
-	auth.XSSLSessionID = request.XSSLSessionID
-	auth.XSSLClientVerify = request.XSSLClientVerify
-	auth.XSSLClientDN = request.XSSLClientDN
-	auth.XSSLClientCN = request.XSSLClientCN
-	auth.XSSLIssuer = request.XSSLIssuer
-	auth.XSSLClientNotBefore = request.XSSLClientNotBefore
-	auth.XSSLClientNotAfter = request.XSSLClientNotAfter
-	auth.XSSLSubjectDN = request.XSSLSubjectDN
-	auth.XSSLIssuerDN = request.XSSLIssuerDN
-	auth.XSSLClientSubjectDN = request.XSSLClientSubjectDN
-	auth.XSSLClientIssuerDN = request.XSSLIssuerDN
-	auth.XSSLProtocol = request.XSSLProtocol
-	auth.XSSLCipher = request.XSSLCipher
-	auth.SSLSerial = request.SSLSerial
-	auth.SSLFingerprint = request.SSLFingerprint
+func setAuthenticationFields(auth State, request *JSONRequest) {
+	auth.SetMethod(request.Method)
+	auth.SetUserAgent(request.ClientID)
+	auth.SetUsername(request.Username)
+	auth.SetPassword(request.Password)
+	auth.SetClientIP(request.ClientIP)
+	auth.SetClientPort(request.ClientPort)
+	auth.SetClientHost(request.ClientHostname)
+	auth.SetLocalIP(request.LocalIP)
+	auth.SetLocalPort(request.LocalPort)
+	auth.SetProtocol(config.NewProtocol(request.Service))
+	auth.SetSSL(request.XSSL)
+	auth.SetSSLSessionID(request.XSSLSessionID)
+	auth.SetSSLClientVerify(request.XSSLClientVerify)
+	auth.SetSSLClientDN(request.XSSLClientDN)
+	auth.SetSSLClientCN(request.XSSLClientCN)
+	auth.SetSSLIssuer(request.XSSLIssuer)
+	auth.SetSSLClientNotBefore(request.XSSLClientNotBefore)
+	auth.SetSSLClientNotAfter(request.XSSLClientNotAfter)
+	auth.SetSSLSubjectDN(request.XSSLSubjectDN)
+	auth.SetSSLIssuerDN(request.XSSLIssuerDN)
+	auth.SetSSLClientSubjectDN(request.XSSLClientSubjectDN)
+	auth.SetSSLClientIssuerDN(request.XSSLIssuerDN)
+	auth.SetSSLProtocol(request.XSSLProtocol)
+	auth.SetSSLCipher(request.XSSLCipher)
+	auth.SetSSLSerial(request.SSLSerial)
+	auth.SetSSLFingerprint(request.SSLFingerprint)
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
@@ -1997,7 +2405,7 @@ func setAuthenticationFields(auth *AuthState, request *JSONRequest) {
 // it calls the processApplicationJSON function passing the Context and AuthState object.
 // If neither of the above conditions match, it sets the error associated with unsupported media type
 // and sets the error type to gin.ErrorTypeBind on the Context.
-func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
+func setupBodyBasedAuth(ctx *gin.Context, auth State) {
 	if ctx.Request.Method == "POST" {
 		contentType := ctx.GetHeader("Content-Type")
 
@@ -2015,7 +2423,7 @@ func setupBodyBasedAuth(ctx *gin.Context, auth *AuthState) {
 // setupHTTPBasicAuth sets up basic authentication for HTTP requests.
 // It takes in a gin.Context object and a pointer to an AuthState object.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the AuthState object to set client, local, user-agent, and X-SSL information, respectively
-func setupHTTPBasicAuth(ctx *gin.Context, auth *AuthState) {
+func setupHTTPBasicAuth(ctx *gin.Context, auth State) {
 	// NOTE: We must get username and password later!
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
@@ -2023,8 +2431,8 @@ func setupHTTPBasicAuth(ctx *gin.Context, auth *AuthState) {
 	auth.WithXSSL(ctx)
 }
 
-// initMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
-func (a *AuthState) initMethodAndUserAgent() *AuthState {
+// InitMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
+func (a *AuthState) InitMethodAndUserAgent() State {
 	if a.Method == nil {
 		method := ""
 		a.Method = &method
@@ -2053,8 +2461,8 @@ func (a *AuthState) initMethodAndUserAgent() *AuthState {
 //	ctx := gin.Context{}
 //	ctx.SetParam("service", "nginx")
 //	setupAuth(&ctx, auth)
-func setupAuth(ctx *gin.Context, auth *AuthState) {
-	auth.Protocol = &config.Protocol{}
+func setupAuth(ctx *gin.Context, auth State) {
+	auth.SetProtocol(&config.Protocol{})
 
 	switch ctx.Param("service") {
 	case definitions.ServNginx, definitions.ServHeader:
@@ -2066,49 +2474,27 @@ func setupAuth(ctx *gin.Context, auth *AuthState) {
 	}
 
 	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != definitions.ServBasic {
-		if !util.ValidateUsername(auth.Username) {
-			auth.Username = ""
-
+		if !util.ValidateUsername(auth.GetUsername()) {
+			auth.SetUsername("")
 			ctx.Error(errors.ErrInvalidUsername)
 		}
 	}
 
-	auth.initMethodAndUserAgent()
+	auth.InitMethodAndUserAgent()
 	auth.WithDefaults(ctx)
-	auth.setOperationMode(ctx)
+	auth.SetOperationMode(ctx)
 }
 
-// logNewAuthState logs the initialization of an AuthState object.
-// It takes a GUID string and an AuthState pointer as parameters.
-// It creates a debug log entry using util.DebugModule function, passing
-// DbgAuth as the module parameter, and the GUID and "AuthState initialized"
-// as the key-value pairs. Additionally, it includes the string representation
-// of the auth parameter in the log entry.
-func logNewAuthState(guid string, auth *AuthState) {
-	util.DebugModule(
-		definitions.DbgAuth,
-		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, "AuthState initialized",
-		"auth_state", fmt.Sprintf("%v", auth),
-	)
-}
-
-// NewAuthState creates a new instance of the AuthState struct.
+// NewAuthStateWithSetup creates a new instance of the AuthState struct.
 // It takes a gin.Context object as a parameter and sets it as the HTTPClientContext field of the AuthState struct.
-// If an error occurs while setting the StatusCode field using the setStatusCodes function, it logs the error and returns nil.
+// If an error occurs while setting the StatusCode field using the SetStatusCodes function, it logs the error and returns nil.
 // Otherwise, it calls the setupAuth function to setup the AuthState struct based on the service parameter from the gin.Context object.
 // Finally, it returns the created AuthState struct.
-func NewAuthState(ctx *gin.Context) *AuthState {
-	auth := &AuthState{
-		StartTime:         time.Now(),
-		HTTPClientContext: ctx.Copy(),
-	}
+func NewAuthStateWithSetup(ctx *gin.Context) State {
+	auth := NewAuthStateFromContext(ctx)
 
-	guid := ctx.GetString(definitions.CtxGUIDKey)
-
-	auth.setStatusCodes(ctx.Param("service"))
+	auth.SetStatusCodes(ctx.Param("service"))
 	setupAuth(ctx, auth)
-	logNewAuthState(guid, auth)
 
 	if ctx.Errors.Last() != nil {
 		return nil
@@ -2117,8 +2503,19 @@ func NewAuthState(ctx *gin.Context) *AuthState {
 	return auth
 }
 
+// NewAuthStateFromContext initializes and returns an AuthState using the provided gin.Context.
+// It sets the context to a copied HTTPClientContext and assigns the current time to the StartTime field.
+func NewAuthStateFromContext(ctx *gin.Context) State {
+	auth := &AuthState{
+		StartTime:         time.Now(),
+		HTTPClientContext: ctx.Copy(),
+	}
+
+	return auth
+}
+
 // WithDefaults sets default values for the AuthState structure including the GUID session value.
-func (a *AuthState) WithDefaults(ctx *gin.Context) *AuthState {
+func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	if a == nil {
 		return nil
 	}
@@ -2143,7 +2540,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) *AuthState {
 }
 
 // WithLocalInfo adds the local IP and -port headers to the AuthState structure.
-func (a *AuthState) WithLocalInfo(ctx *gin.Context) *AuthState {
+func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 	if a == nil {
 		return nil
 	}
@@ -2155,7 +2552,7 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) *AuthState {
 }
 
 // WithClientInfo adds the client IP, -port and -ID headers to the AuthState structure.
-func (a *AuthState) WithClientInfo(ctx *gin.Context) *AuthState {
+func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	var err error
 
 	if a == nil {
@@ -2197,7 +2594,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) *AuthState {
 }
 
 // WithUserAgent adds the User-Agent header to the AuthState structure.
-func (a *AuthState) WithUserAgent(ctx *gin.Context) *AuthState {
+func (a *AuthState) WithUserAgent(ctx *gin.Context) State {
 	if a == nil {
 		return nil
 	}
@@ -2210,7 +2607,7 @@ func (a *AuthState) WithUserAgent(ctx *gin.Context) *AuthState {
 }
 
 // WithXSSL adds HAProxy header processing to the AuthState structure.
-func (a *AuthState) WithXSSL(ctx *gin.Context) *AuthState {
+func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 	if a == nil {
 		return nil
 	}

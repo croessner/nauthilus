@@ -172,7 +172,7 @@ func RequestHandler(ctx *gin.Context) {
 	} else {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
-			auth := NewAuthState(ctx)
+			auth := NewAuthStateWithSetup(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
 
