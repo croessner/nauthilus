@@ -281,7 +281,7 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 		return
 	}
 
-	auth.setStatusCodes(definitions.ServOryHydra)
+	auth.SetStatusCodes(definitions.ServOryHydra)
 	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx)
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {

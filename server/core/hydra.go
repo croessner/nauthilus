@@ -868,24 +868,20 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	oauth2Client := a.loginRequest.GetClient()
 
-	auth := &AuthState{
-		HTTPClientContext: a.ctx.Copy(),
-		NoAuth:            true,
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
-	}
+	auth := NewAuthStateFromContext(a.ctx)
 
-	auth.WithDefaults(a.ctx).WithClientInfo(a.ctx).WithLocalInfo(a.ctx).WithUserAgent(a.ctx).WithXSSL(a.ctx).initMethodAndUserAgent()
-
-	auth.Username = a.loginRequest.GetSubject()
-
-	auth.setStatusCodes(definitions.ServOryHydra)
+	auth.SetNoAuth(true)
+	auth.SetProtocol(config.NewProtocol(definitions.ProtoOryHydra))
+	auth.WithDefaults(a.ctx).WithClientInfo(a.ctx).WithLocalInfo(a.ctx).WithUserAgent(a.ctx).WithXSSL(a.ctx).InitMethodAndUserAgent()
+	auth.SetUsername(a.loginRequest.GetSubject())
+	auth.SetStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
 		if config.LoadableConfig.Oauth2 != nil {
 			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
-		auth.ClientIP = a.ctx.GetString(definitions.CtxClientIPKey)
+		auth.SetClientIP(a.ctx.GetString(definitions.CtxClientIPKey))
 
 		auth.UpdateBruteForceBucketsCounter()
 		a.ctx.AbortWithError(http.StatusInternalServerError, errors.ErrUnknownCause)
@@ -1147,21 +1143,20 @@ func LoginGETHandler(ctx *gin.Context) {
 }
 
 // initializeAuthLogin initializes the AuthState struct with the necessary information for logging in.
-func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
-	auth := &AuthState{
-		HTTPClientContext: ctx.Copy(),
-		Username:          ctx.PostForm("username"),
-		Password:          ctx.PostForm("password"),
-		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
-	}
+func initializeAuthLogin(ctx *gin.Context) (State, error) {
+	auth := NewAuthStateFromContext(ctx)
+
+	auth.SetProtocol(config.NewProtocol(definitions.ProtoOryHydra))
+	auth.SetUsername(ctx.PostForm("username"))
+	auth.SetPassword(ctx.PostForm("password"))
 
 	// It might be the second call after 2FA! In this case, there does not exist any username or password.
-	if auth.Username != "" && !util.ValidateUsername(auth.Username) {
+	if auth.GetUsername() != "" && !util.ValidateUsername(auth.GetUsername()) {
 		return nil, errors.ErrInvalidUsername
 	}
 
-	auth.setStatusCodes(definitions.ServOryHydra)
-	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx).initMethodAndUserAgent()
+	auth.SetStatusCodes(definitions.ServOryHydra)
+	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx).InitMethodAndUserAgent()
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return nil, errors.ErrBruteForceAttack
@@ -1182,7 +1177,7 @@ func initializeAuthLogin(ctx *gin.Context) (*AuthState, error) {
 // - rememberPost2FA: The remember value after the second factor authentication.
 // - post2FA: A bool indicating if a second factor authentication is required.
 // - err: An error object if saving the session failed, or nil otherwise.
-func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
+func handleSessionDataLogin(ctx *gin.Context, auth State) (
 	authResult definitions.AuthResult, recentSubject string, rememberPost2FA string, post2FA bool, err error,
 ) {
 	var cookieValue any
@@ -1192,8 +1187,8 @@ func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
 	// Restore authentication data from first call to login.html
 	if cookieValue = session.Get(definitions.CookieUsername); cookieValue != nil {
 		if cookieValue.(string) != "" {
-			auth.Username = cookieValue.(string)
-			auth.NoAuth = true
+			auth.SetUsername(cookieValue.(string))
+			auth.SetNoAuth(true)
 		}
 
 		session.Delete(definitions.CookieUsername)
@@ -1239,7 +1234,7 @@ func handleSessionDataLogin(ctx *gin.Context, auth *AuthState) (
 //
 // Returns:
 // - err: an error if any occurred during the process
-func (a *ApiConfig) processAuthOkLogin(ctx *gin.Context, auth *AuthState, oldAuthResult definitions.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool, needLuaFilterAndPost bool) (authResult definitions.AuthResult, err error) {
+func (a *ApiConfig) processAuthOkLogin(ctx *gin.Context, auth State, oldAuthResult definitions.AuthResult, rememberPost2FA string, recentSubject string, post2FA bool, needLuaFilterAndPost bool) (authResult definitions.AuthResult, err error) {
 	var redirectFlag bool
 
 	account, found := auth.GetAccountOk()
@@ -1294,7 +1289,7 @@ func (a *ApiConfig) processAuthOkLogin(ctx *gin.Context, auth *AuthState, oldAut
 // If the OAuth2 client is not available or the subject is empty, it uses the account as the subject.
 // If the subject is empty, it logs a warning message using the `guid` field from the `ApiConfig` object and the account value.
 // It returns the subject and claims as a string and map respectively.
-func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string, map[string]any) {
+func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map[string]any) {
 	var (
 		subject string
 		claims  map[string]any
@@ -1332,7 +1327,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth *AuthState) (string
 // Returns:
 // - bool: Indicates whether redirection is performed or not.
 // - error: The error if any occurs.
-func (a *ApiConfig) handleNonPost2FA(auth *AuthState, session sessions.Session, authResult definitions.AuthResult, subject string) (bool, error) {
+func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authResult definitions.AuthResult, subject string) (bool, error) {
 	if config.GetSkipTOTP(*a.clientId) {
 		return false, nil
 	}
@@ -1359,7 +1354,7 @@ func (a *ApiConfig) handleNonPost2FA(auth *AuthState, session sessions.Session, 
 // If both the code and secret are present, it performs TOTP validation using the code, account, and secret.
 // If the validation is successful, it returns nil.
 // Otherwise, it returns an error, specifically ErrNoTOTPCode if either the code or secret is missing.
-func (a *ApiConfig) handlePost2FA(auth *AuthState, account string) error {
+func (a *ApiConfig) handlePost2FA(auth State, account string) error {
 	code := a.ctx.PostForm("code")
 	if code == "" {
 		return errors.ErrNoTOTPCode
@@ -1447,7 +1442,7 @@ func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember 
 }
 
 // logInfoLoginAccept logs the information for an authentication event with the given subject and redirect URL.
-func (a *ApiConfig) logInfoLoginAccept(subject string, auth *AuthState) {
+func (a *ApiConfig) logInfoLoginAccept(subject string, auth State) {
 	logs := []any{
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyClientID, *a.clientId,
@@ -1458,8 +1453,9 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, auth *AuthState) {
 		definitions.LogKeyUriPath, viper.GetString("login_page") + "/post",
 	}
 
-	if len(auth.AdditionalLogs) > 0 && len(auth.AdditionalLogs)%2 == 0 {
-		logs = append(logs, auth.AdditionalLogs...)
+	additionalLogs := auth.GetAdditionalLogs()
+	if len(additionalLogs) > 0 && len(additionalLogs)%2 == 0 {
+		logs = append(logs, additionalLogs...)
 	}
 
 	level.Info(log.Logger).Log(logs...)
@@ -1582,7 +1578,7 @@ func (a *ApiConfig) setSessionVariablesForAuth(session sessions.Session, authRes
 // - auth.getTOTPSecretOk(): method to get the TOTP secret for the authentication
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
-func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult definitions.AuthResult, post2FA bool) (have2FA bool, err error) {
+func (a *ApiConfig) processAuthFailLogin(auth State, authResult definitions.AuthResult, post2FA bool) (have2FA bool, err error) {
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
@@ -1605,9 +1601,9 @@ func (a *ApiConfig) processAuthFailLogin(auth *AuthState, authResult definitions
 }
 
 // logFailedLoginAndRedirect logs a failed login attempt and redirects the user to a login page with an error message.
-func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
+func (a *ApiConfig) logFailedLoginAndRedirect(auth State) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
-	auth.ClientIP = a.ctx.GetString(definitions.CtxClientIPKey)
+	auth.SetClientIP(a.ctx.GetString(definitions.CtxClientIPKey))
 
 	auth.UpdateBruteForceBucketsCounter()
 
@@ -1625,15 +1621,16 @@ func (a *ApiConfig) logFailedLoginAndRedirect(auth *AuthState) {
 		definitions.LogKeyUriPath, viper.GetString("login_page") + "/post",
 	}
 
-	if len(auth.AdditionalLogs) > 0 && len(auth.AdditionalLogs)%2 == 0 {
-		logs = append(logs, auth.AdditionalLogs...)
+	additionalLogs := auth.GetAdditionalLogs()
+	if len(additionalLogs) > 0 && len(additionalLogs)%2 == 0 {
+		logs = append(logs, additionalLogs...)
 	}
 
 	level.Info(log.Logger).Log(logs...)
 }
 
 // runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
-func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult definitions.AuthResult) definitions.AuthResult {
+func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.AuthResult) definitions.AuthResult {
 	var (
 		userFound bool
 		err       error
@@ -1645,10 +1642,16 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult definitio
 		userFound, err = auth.userExists()
 		if err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, auth.GetGUID(), definitions.LogKeyMsg, err)
 			}
 		}
 	}
+
+	accountField := auth.GetAccountField()
+	totpSecretField := auth.GetTOTPSecretField()
+	totpRecoveryField := auth.GetTOTPRecoveryField()
+	uniqueUserIDField := auth.GetUniqueUserIDField()
+	displayNameField := auth.GetDisplayNameField()
 
 	passDBResult := &PassDBResult{
 		Authenticated: func() bool {
@@ -1659,13 +1662,13 @@ func runLuaFilterAndPost(ctx *gin.Context, auth *AuthState, authResult definitio
 			return false
 		}(),
 		UserFound:         userFound,
-		AccountField:      auth.AccountField,
-		TOTPSecretField:   auth.TOTPSecretField,
-		TOTPRecoveryField: auth.TOTPRecoveryField,
-		UniqueUserIDField: auth.UniqueUserIDField,
-		DisplayNameField:  auth.DisplayNameField,
-		Backend:           auth.UsedPassDBBackend,
-		Attributes:        auth.Attributes,
+		AccountField:      &accountField,
+		TOTPSecretField:   &totpSecretField,
+		TOTPRecoveryField: &totpRecoveryField,
+		UniqueUserIDField: &uniqueUserIDField,
+		DisplayNameField:  &displayNameField,
+		Backend:           auth.GetUsedPassDBBackend(),
+		Attributes:        auth.GetAttributes(),
 	}
 
 	authResult = auth.FilterLua(passDBResult, ctx)
