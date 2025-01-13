@@ -371,7 +371,9 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 	hook := ctx.Param("hook")
 
 	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
-		return gin.H{}, fmt.Errorf("lua script for location '%s' not found", hook)
+		ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "lua script for location '" + hook + "' not found", "guid": guid})
+
+		return nil, nil
 	}
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
