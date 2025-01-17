@@ -22,6 +22,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/emersion/go-sasl"
@@ -48,6 +49,8 @@ func (bkd *Backend) NewSession(conn *smtp.Conn) (smtp.Session, error) {
 	return &Session{}, nil
 }
 
+var _ smtp.Backend = (*Backend)(nil)
+
 // A Session is returned after EHLO.
 type Session struct {
 	auth bool
@@ -62,14 +65,15 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 		return nil, smtp.ErrAuthUnsupported
 	}
 
-	server := sasl.NewPlainServer(func(identity, username, password string) error {
+	saslServer := sasl.NewPlainServer(func(identity, username, password string) error {
 		s.auth = true
+
 		log.Println(fmt.Sprintf("AUTH username=<%s>", username))
 
 		return nil
 	})
 
-	return server, nil
+	return saslServer, nil
 }
 
 func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
@@ -98,65 +102,196 @@ func (s *Session) Logout() error {
 	return nil
 }
 
-func main() {
-	be := &Backend{}
+var _ smtp.Session = (*Session)(nil)
 
-	s := smtp.NewServer(be)
+type ProxyAndTLSListener struct {
+	ProxyListener *proxyproto.Listener
+	TLSConfig     *tls.Config
+}
 
-	address := os.Getenv("FAKE_SMTP_SERVER_ADDRESS")
+func (p *ProxyAndTLSListener) Accept() (net.Conn, error) {
+	rawConn, err := p.ProxyListener.Accept()
+	if err != nil {
+		return nil, fmt.Errorf("failed to accept connection: %w", err)
+	}
+
+	tlsConn := tls.Server(rawConn, p.TLSConfig)
+
+	return tlsConn, nil
+}
+
+func (p *ProxyAndTLSListener) Close() error {
+	return p.ProxyListener.Close()
+}
+
+func (p *ProxyAndTLSListener) Addr() net.Addr {
+	return p.ProxyListener.Addr()
+}
+
+var _ net.Listener = (*ProxyAndTLSListener)(nil)
+
+func NewProxyAndTLSListener(rawListener net.Listener, tlsConfig *tls.Config) net.Listener {
+	proxyListener := &proxyproto.Listener{
+		Listener: rawListener,
+		ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+			return proxyproto.REQUIRE, nil
+		},
+	}
+
+	return &ProxyAndTLSListener{
+		ProxyListener: proxyListener,
+		TLSConfig:     tlsConfig,
+	}
+}
+
+type ServerConfig struct {
+	Address   string
+	TLSConfig *tls.Config
+}
+
+type SMTPType uint
+
+const (
+	SMTP SMTPType = iota
+	SMTPS
+)
+
+type SMTPServer struct {
+	serverDescription string
+	serverType        SMTPType
+	config            *ServerConfig
+	server            *smtp.Server
+	serverName        string
+}
+
+func NewSMTPServer(serverType SMTPType, serverDescription string, address string, backend *Backend) *SMTPServer {
 	serverName := os.Getenv("FAKE_SMTP_SERVER_NAME")
-	tlsCert := os.Getenv("FAKE_SMTP_SERVER_TLSCERT")
-	tlsKey := os.Getenv("FAKE_SMTP_SERVER_TLSKEY")
-
-	if tlsCert != "" && tlsKey != "" {
-		cer, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			log.Println(err)
-
-			return
-		}
-
-		s.TLSConfig = &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cer},
-		}
-	}
-
-	if address == "" {
-		address = "127.0.0.1:10025"
-	}
-
 	if serverName == "" {
 		serverName = "mail.test"
 	}
 
-	s.Addr = address
-	s.Domain = serverName
+	return &SMTPServer{
+		serverDescription: serverDescription,
+		serverType:        serverType,
+		config: &ServerConfig{
+			Address:   address,
+			TLSConfig: configureTLS(serverName),
+		},
+		server:     smtp.NewServer(backend),
+		serverName: serverName,
+	}
+}
 
-	s.ReadTimeout = 10 * time.Second
-	s.WriteTimeout = 10 * time.Second
+func (s *SMTPServer) configureServer() {
+	s.server.Domain = s.serverName
+	s.server.ReadTimeout = 10 * time.Second
+	s.server.WriteTimeout = 10 * time.Second
+	s.server.MaxMessageBytes = 1024 * 1024
+	s.server.MaxRecipients = 50
+	s.server.AllowInsecureAuth = true
+	s.server.EnableBINARYMIME = true
+	s.server.EnableSMTPUTF8 = true
+	s.server.EnableDSN = true
+}
 
-	s.MaxMessageBytes = 1024 * 1024
-	s.MaxRecipients = 50
+func (s *SMTPServer) Start(wg *sync.WaitGroup) {
+	var listener net.Listener
 
-	s.AllowInsecureAuth = true
-	s.EnableBINARYMIME = true
-	s.EnableSMTPUTF8 = true
-	s.EnableDSN = true
+	defer wg.Done()
 
-	log.Println("Starting fake server at", s.Addr)
+	log.Printf("Starting %s server at %s", s.serverDescription, s.config.Address)
 
-	// Set up listener
-	listener, err := net.Listen("tcp", s.Addr)
+	rawListener, err := net.Listen("tcp", s.config.Address)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to start %s server: %v", s.serverDescription, err)
 	}
 
-	// Wrap listener in proxyproto
-	proxyListener := &proxyproto.Listener{Listener: listener}
+	s.configureServer()
 
-	// Start server
-	if err := s.Serve(proxyListener); err != nil {
-		log.Fatal(err)
+	if s.serverType == SMTPS {
+		listener = NewProxyAndTLSListener(rawListener, s.config.TLSConfig)
+	} else {
+		listener = &proxyproto.Listener{
+			Listener: rawListener,
+			ConnPolicy: func(opts proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+				return proxyproto.REQUIRE, nil
+			},
+		}
+
+		s.server.TLSConfig = s.config.TLSConfig
 	}
+
+	if err := s.server.Serve(listener); err != nil {
+		log.Fatalf("%s server stopped unexpectedly: %v", s.serverDescription, err)
+	}
+}
+
+type ServerManager struct {
+	wg    *sync.WaitGroup
+	smtp  *SMTPServer
+	smtps *SMTPServer
+}
+
+func NewServerManager(backend *Backend) *ServerManager {
+	imapServer := NewSMTPServer(
+		SMTP,
+		"SMTP Submission (StartTLS)",
+		getEnvWithDefault("FAKE_SMTP_SERVER_ADDRESS", "127.0.0.1:10587"),
+		backend,
+	)
+	imapsServer := NewSMTPServer(
+		SMTPS,
+		"SMTPS",
+		getEnvWithDefault("FAKE_SMTPS_SERVER_ADDRESS", "127.0.0.1:10465"),
+		backend,
+	)
+
+	return &ServerManager{
+		wg:    &sync.WaitGroup{},
+		smtp:  imapServer,
+		smtps: imapsServer,
+	}
+}
+
+func (m *ServerManager) StartAll() {
+	m.wg.Add(2)
+
+	go m.smtp.Start(m.wg)
+	go m.smtps.Start(m.wg)
+
+	m.wg.Wait()
+}
+
+func configureTLS(serverName string) *tls.Config {
+	tlsCert := os.Getenv("FAKE_SMTP_SERVER_TLSCERT")
+	tlsKey := os.Getenv("FAKE_SMTP_SERVER_TLSKEY")
+
+	if tlsCert == "" || tlsKey == "" {
+		log.Fatal("TLS certificate and key must be provided for SMTPS")
+	}
+
+	tlsCertificate, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	if err != nil {
+		log.Fatalf("Failed to load TLS certificate: %v", err)
+	}
+
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{tlsCertificate},
+		ServerName:   serverName,
+	}
+}
+
+func getEnvWithDefault(envVar, defaultValue string) string {
+	if value := os.Getenv(envVar); value != "" {
+		return value
+	}
+
+	return defaultValue
+}
+
+func main() {
+	manager := NewServerManager(&Backend{})
+
+	manager.StartAll()
 }
