@@ -80,6 +80,8 @@ func (u *User) Logout() error {
 	return nil
 }
 
+var _ backend.User = (*User)(nil)
+
 type Backend struct{}
 
 func (b *Backend) Login(connInfo *imap.ConnInfo, username string, password string) (user backend.User, err error) {
@@ -94,29 +96,33 @@ func (b *Backend) Login(connInfo *imap.ConnInfo, username string, password strin
 	return user, errContactSupport
 }
 
-type proxyAndTLSListener struct {
-	proxyListener *proxyproto.Listener
-	tlsConfig     *tls.Config
+var _ backend.Backend = (*Backend)(nil)
+
+type ProxyAndTLSListener struct {
+	ProxyListener *proxyproto.Listener
+	TLSConfig     *tls.Config
 }
 
-func (p *proxyAndTLSListener) Accept() (net.Conn, error) {
-	rawConn, err := p.proxyListener.Accept()
+func (p *ProxyAndTLSListener) Accept() (net.Conn, error) {
+	rawConn, err := p.ProxyListener.Accept()
 	if err != nil {
 		return nil, fmt.Errorf("failed to accept connection: %w", err)
 	}
 
-	tlsConn := tls.Server(rawConn, p.tlsConfig)
+	tlsConn := tls.Server(rawConn, p.TLSConfig)
 
 	return tlsConn, nil
 }
 
-func (p *proxyAndTLSListener) Close() error {
-	return p.proxyListener.Close()
+func (p *ProxyAndTLSListener) Close() error {
+	return p.ProxyListener.Close()
 }
 
-func (p *proxyAndTLSListener) Addr() net.Addr {
-	return p.proxyListener.Addr()
+func (p *ProxyAndTLSListener) Addr() net.Addr {
+	return p.ProxyListener.Addr()
 }
+
+var _ net.Listener = (*ProxyAndTLSListener)(nil)
 
 func NewProxyAndTLSListener(rawListener net.Listener, tlsConfig *tls.Config) net.Listener {
 	proxyListener := &proxyproto.Listener{
@@ -126,9 +132,9 @@ func NewProxyAndTLSListener(rawListener net.Listener, tlsConfig *tls.Config) net
 		},
 	}
 
-	return &proxyAndTLSListener{
-		proxyListener: proxyListener,
-		tlsConfig:     tlsConfig,
+	return &ProxyAndTLSListener{
+		ProxyListener: proxyListener,
+		TLSConfig:     tlsConfig,
 	}
 }
 
