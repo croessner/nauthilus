@@ -367,7 +367,7 @@ github.com/montanaflynn/stats
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/nicksnyder/go-i18n/v2 v2.4.1
+# github.com/nicksnyder/go-i18n/v2 v2.5.0
 ## explicit; go 1.18
 github.com/nicksnyder/go-i18n/v2/i18n
 github.com/nicksnyder/go-i18n/v2/i18n/template
