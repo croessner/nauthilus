@@ -88,13 +88,19 @@ function nauthilus_run_hook(logging)
     nauthilus_psnet.register_connection_target("127.0.0.1:3306", "remote", "backend")
 
     -- blocklist.lua
-    nauthilus_prometheus.create_histogram_vec("blocklist_duration_seconds", "HTTP request to the blocklist service", { "http" })
-    nauthilus_psnet.register_connection_target(os.getenv("BLOCKLIST_SERVICE_ENDPOINT"), "remote", "blocklist")
+    local blocklist_addr = os.getenv("BLOCKLIST_SERVICE_ENDPOINT")
+    if blocklist_addr then
+        nauthilus_prometheus.create_histogram_vec("blocklist_duration_seconds", "HTTP request to the blocklist service", { "http" })
+        nauthilus_psnet.register_connection_target(blocklist_addr, "remote", "blocklist")
+    end
 
     -- geoip.lua
-    nauthilus_prometheus.create_histogram_vec("geoippolicyd_duration_seconds", "HTTP request to the geoip-policyd service", { "http" })
-    nauthilus_prometheus.create_counter_vec("geoippolicyd_count", "Count GeoIP countries", { "country", "status" })
-    nauthilus_psnet.register_connection_target(os.getenv("GEOIP_POLICY_SERVICE_ENDPOINT"), "remote", "geoippolicyd")
+    local geoip_policyd_addr = os.getenv("GEOIP_POLICY_SERVICE_ENDPOINT")
+    if geoip_policyd_addr then
+        nauthilus_prometheus.create_histogram_vec("geoippolicyd_duration_seconds", "HTTP request to the geoip-policyd service", { "http" })
+        nauthilus_prometheus.create_counter_vec("geoippolicyd_count", "Count GeoIP countries", { "country", "status" })
+        nauthilus_psnet.register_connection_target(geoip_policyd_addr, "remote", "geoippolicyd")
+    end
 
     result.status = "finished"
 

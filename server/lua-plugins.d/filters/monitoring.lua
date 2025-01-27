@@ -106,7 +106,7 @@ function nauthilus_call_filter(request)
             end
         end
 
-        if server_from_session ~= "" then
+        if server_from_session and server_from_session ~= "" then
             return server_from_session
         end
 
