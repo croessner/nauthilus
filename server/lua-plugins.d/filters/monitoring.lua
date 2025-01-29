@@ -32,8 +32,8 @@ local function get_service()
     return nil
 end
 
-local function get_dovecot_session()
-    local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Session")
+local function get_dovecot_target()
+    local header = nauthilus_http_request.get_http_request_header("X-Dovecot-Proxy-Target")
     if nauthilus_util.table_length(header) == 1 then
         return header[1]
     end
@@ -64,6 +64,7 @@ function nauthilus_call_filter(request)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
+    --[[
     local function set_initial_expiry()
         local length, err_redis_hlen = nauthilus_redis.redis_hlen(custom_pool, redis_key)
         if err_redis_hlen then
@@ -72,16 +73,26 @@ function nauthilus_call_filter(request)
             end
         else
             if length == 1 then
-                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 900)
+                local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 604800)
                 nauthilus_util.if_error_raise(err_redis_expire)
             end
         end
     end
+    ]]--
 
     local function invalidate_stale_sessions()
         local _, err_redis_hdel = nauthilus_redis.redis_del(custom_pool, redis_key)
 
         nauthilus_util.if_error_raise(err_redis_hdel)
+    end
+
+    local function update_target_user_table(session)
+        local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, "ntc:DS_ACCOUNT", session, request.account)
+        if err_redis_hset then
+            nauthilus_builtin.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
+
+            return
+        end
     end
 
     local function add_session(session, server)
@@ -92,8 +103,10 @@ function nauthilus_call_filter(request)
             return
         end
 
-        set_initial_expiry()
-        nauthilus_builtin.custom_log_add(N .. "_dovecot_session", session)
+        -- set_initial_expiry()
+        nauthilus_builtin.custom_log_add(N .. "_dovecot_target", session)
+
+        update_target_user_table(session)
     end
 
     local function get_server_from_sessions(session)
@@ -139,23 +152,19 @@ function nauthilus_call_filter(request)
     end
 
     local server_host
-    local session = get_dovecot_session()
-
-    if session == nil then
-        session = request.protocol
-    end
-
+    local session = get_dovecot_target()
     local result = {}
-
     local valid_servers = preprocess_backend_servers(nauthilus_backend.get_backend_servers())
     local num_of_bs = nauthilus_util.table_length(valid_servers)
 
+    result.caller = N .. ".lua"
+    result.level = "info"
+    result.ts = nauthilus_util.get_current_timestamp()
+
     if request.debug then
-        result.caller = N .. ".lua"
         result.level = "debug"
-        result.ts = nauthilus_util.get_current_timestamp()
         result.session = request.session
-        result.dovecot_session = session
+        result.dovecot_target = session
         result.protocol = request.protocol
         result.account = request.account
         result.backend_servers_alive = tostring(num_of_bs)
