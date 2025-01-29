@@ -30,7 +30,7 @@ local CATEGORIES = {
     ["service:imap-login"] = true,
     ["service:pop3-login"] = true,
     ["service:lmtp"] = true,
-    ["service:sieve"] = true, -- not tested yet
+    ["service:managesieve-login"] = true,
 }
 
 function nauthilus_run_hook(logging, session)
