@@ -27,10 +27,10 @@ local json = require("json")
 local N = "callback"
 
 local CATEGORIES = {
-    ["service:imap"] = true,
-    ["service:pop3"] = true,
+    ["service:imap-login"] = true,
+    ["service:pop3-login"] = true,
     ["service:lmtp"] = true,
-    ["service:sieve"] = true,
+    ["service:sieve"] = true, -- not tested yet
 }
 
 function nauthilus_run_hook(logging, session)
@@ -67,9 +67,25 @@ function nauthilus_run_hook(logging, session)
         return
     end
 
-    result.state = "client disconnected"
+    local function update_target_user_table(target)
+        local account, err_redis_hget = nauthilus_redis.redis_hget(custom_pool, "ntc:DS_ACCOUNT", target)
+        if err_redis_hget then
+            result.update_target_user_table_error = err_redis_hget
 
-    local is_cmd_noop = false
+            return
+        end
+
+        local _, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, "ntc:DS_ACCOUNT", target)
+        if err_redis_hdel then
+            result.update_target_user_table_error = err_redis_hdel
+
+            return
+        end
+
+        return account
+    end
+
+    result.state = "client disconnected"
 
     for k, v in pairs(body_table) do
         if k == "categories" then
@@ -88,21 +104,25 @@ function nauthilus_run_hook(logging, session)
             if nauthilus_util.is_string(v) then
                 result.end_time = v
             end
+        elseif k == "event" then
+            if nauthilus_util.is_string(v) then
+                result.event = v
+            end
         elseif k == "fields" then
             if nauthilus_util.is_table(v) then
                 for field_name, field_value in pairs(v) do
                     if field_name == "user" then
                         result.user = field_value
-                    elseif field_name == "session" then
-                        result.dovecot_session = field_value
+                    elseif field_name == "local_ip" then
+                        result.local_ip = field_value
+                    elseif field_name == "local_port" then
+                        result.local_port = field_value
                     elseif field_name == "remote_ip" then
                         result.remote_ip = field_value
                     elseif field_name == "remote_port" then
                         result.remote_port = field_value
-                    elseif field_name == "cmd_name" then
-                        if field_value == "NOOP" then
-                            is_cmd_noop = true
-                        end
+                    elseif field_name == "session" then
+                        result.session = field_value
                     end
                 end
             end
@@ -110,23 +130,15 @@ function nauthilus_run_hook(logging, session)
     end
 
     if CATEGORIES[result.category] then
-        local redis_key = "ntc:DS:" .. result.user
+        local target = result.remote_ip .. ":" .. result.remote_port
+        local account = update_target_user_table(target)
+        local redis_key = "ntc:DS:" .. account
 
-        if is_cmd_noop then
-            result.cmd = "NOOP"
-            result.state = "client session refreshed"
-
-            local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 900)
-            nauthilus_util.if_error_raise(err_redis_expire)
-        else
-            if result.dovecot_session then
-                -- Cleanup dovecot session
-                local deleted, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, redis_key, result.dovecot_session)
-                if err_redis_hdel then
-                    result.remove_dovecot_session_status = err_redis_hdel
-                else
-                    result.remove_dovecot_session_status = deleted
-                end
+        if account then
+            -- Cleanup dovecot session
+            local _, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, redis_key, target)
+            if err_redis_hdel then
+                result.remove_dovecot_target_error = err_redis_hdel
             end
         end
 
