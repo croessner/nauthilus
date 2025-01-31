@@ -24,6 +24,12 @@ The documentation is found on [https://nauthilus.org](https://nauthilus.org).
 The documentation itself is another project at [https://github.com/croessner/nauthilus-website](https://github.com/croessner/nauthilus-website).
 Feel free to make it better! :-)
 
+## Community
+
+You can subscribe to a mailing list. Available lists can be found here:
+
+[https://lists.nauthilus.org](https://lists.nauthilus.org)
+
 ## License
 
 This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
