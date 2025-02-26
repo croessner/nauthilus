@@ -161,7 +161,7 @@ github.com/emersion/go-imap/commands
 github.com/emersion/go-imap/responses
 github.com/emersion/go-imap/server
 github.com/emersion/go-imap/utf7
-# github.com/emersion/go-message v0.18.1
+# github.com/emersion/go-message v0.18.2
 ## explicit; go 1.14
 # github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 ## explicit; go 1.12
@@ -205,7 +205,7 @@ github.com/gin-gonic/gin/render
 # github.com/go-asn1-ber/asn1-ber v1.5.7
 ## explicit; go 1.13
 github.com/go-asn1-ber/asn1-ber
-# github.com/go-jose/go-jose/v4 v4.0.4
+# github.com/go-jose/go-jose/v4 v4.0.5
 ## explicit; go 1.21
 github.com/go-jose/go-jose/v4
 github.com/go-jose/go-jose/v4/cipher
