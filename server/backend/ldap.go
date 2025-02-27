@@ -1538,7 +1538,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		scope, scopeErr := convertScopeStringToLDAP(fieldValues["scope"].String())
 		if scopeErr != nil {
-			L.RaiseError(scopeErr.Error())
+			L.RaiseError("%s", scopeErr.Error())
 
 			return 1
 		}
