@@ -2124,6 +2124,10 @@ func bindEnvs(i any, parts ...string) error {
 		v := ifv.Field(i)
 		t := ift.Field(i)
 
+		if !t.IsExported() {
+			continue
+		}
+
 		tag := t.Tag.Get("mapstructure")
 		if tag == "" {
 			tag = t.Name

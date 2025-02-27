@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine3.21 AS builder
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
@@ -14,7 +14,7 @@ COPY . ./
 ENV CGO_ENABLED=0
 RUN apk add --no-cache build-base git
 
-RUN cd server && go build -mod=vendor -tags="register2fa" -ldflags="-s -X main.version=dev-dbg" -o nauthilus .
+RUN cd server && go build -mod=vendor -tags="sonic avx" -ldflags="-s -X main.version=dev-dbg" -o nauthilus .
 RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .

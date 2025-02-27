@@ -1,4 +1,5 @@
-{{ if .Versions -}}
+# {{ .Info.Title }}
+
 <a name="unreleased"></a>
 ## [Unreleased]
 
@@ -15,6 +16,7 @@
 {{ range .Versions }}
 <a name="{{ .Tag.Name }}"></a>
 ## {{ if .Tag.Previous }}[{{ .Tag.Name }}]{{ else }}{{ .Tag.Name }}{{ end }} - {{ datetime "2006-01-02" .Tag.Date }}
+
 {{ range .CommitGroups -}}
 ### {{ .Title }}
 {{ range .Commits -}}
@@ -23,14 +25,14 @@
   {{ end -}}
 
 {{- if .RevertCommits -}}
-### Reverts
+### 🔄 Reverts
 {{ range .RevertCommits -}}
 - {{ .Revert.Header }}
   {{ end }}
   {{ end -}}
 
 {{- if .MergeCommits -}}
-### Pull Requests
+### 🔀 Pull Requests
 {{ range .MergeCommits -}}
 - {{ .Header }}
   {{ end }}
@@ -38,19 +40,17 @@
 
 {{- if .NoteGroups -}}
 {{ range .NoteGroups -}}
-### {{ .Title }}
+### ⚠️ {{ .Title }}
 {{ range .Notes }}
-{{ .Body }}
-{{ end }}
-{{ end -}}
-{{ end -}}
-{{ end -}}
+- {{ .Body }}
+  {{ end }}
+  {{ end -}}
+  {{ end -}}
+  {{ end -}}
 
-{{- if .Versions }}
 [Unreleased]: {{ .Info.RepositoryURL }}/compare/{{ $latest := index .Versions 0 }}{{ $latest.Tag.Name }}...HEAD
 {{ range .Versions -}}
 {{ if .Tag.Previous -}}
 [{{ .Tag.Name }}]: {{ $.Info.RepositoryURL }}/compare/{{ .Tag.Previous.Name }}...{{ .Tag.Name }}
-{{ end -}}
 {{ end -}}
 {{ end -}}

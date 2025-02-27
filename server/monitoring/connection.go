@@ -162,7 +162,7 @@ func checkSMTP(conn net.Conn, protocol string, username string, password string)
 	}
 
 	// Normally submission must not validate FQDN or DNS resolution for MUAs
-	fmt.Fprintf(conn, fmt.Sprintf("%s localhost.localdomain\r\n", cmd))
+	fmt.Fprintf(conn, "%s localhost.localdomain\r\n", cmd)
 
 	response := ""
 

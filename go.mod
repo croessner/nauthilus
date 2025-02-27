@@ -1,8 +1,6 @@
 module github.com/croessner/nauthilus
 
-go 1.23.0
-
-toolchain go1.23.3
+go 1.24.0
 
 require (
 	github.com/biter777/countries v1.7.5
