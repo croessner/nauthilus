@@ -70,7 +70,7 @@ func NewLMTPClient(conn net.Conn) (*LMTPClient, error) {
 //
 // This method is used internally by other methods in the LMTPClient struct to send commands to the LMTP server.
 func (l *LMTPClient) cmd(expCode int, cmd string) error {
-	id, err := l.text.Cmd(cmd)
+	id, err := l.text.Cmd("%s", cmd)
 	if err != nil {
 		return err
 	}
