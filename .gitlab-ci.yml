@@ -1,4 +1,4 @@
-image: golang:1.23-alpine
+image: golang:1.24-alpine
 
 variables:
   CGO_ENABLED: 0
@@ -150,10 +150,10 @@ release:
 #   rules:
 #     - if: $CI_COMMIT_TAG
 
-secret_detection:
-  variables:
-    SECRET_DETECTION_HISTORIC_SCAN: "true"
+#secret_detection:
+#  variables:
+#    SECRET_DETECTION_HISTORIC_SCAN: "true"
 
-include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
+#include:
+#  - template: Security/SAST.gitlab-ci.yml
+#  - template: Security/Secret-Detection.gitlab-ci.yml

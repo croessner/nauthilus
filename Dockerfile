@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine3.21 AS builder
 
 WORKDIR /build
 
@@ -10,7 +10,7 @@ RUN apk add --no-cache build-base git
 
 RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     GIT_COMMIT=$(git rev-parse --short HEAD) && echo "commit="${GIT_COMMIT}"" && \
-    cd server && go build -mod=vendor -tags="register2fa" -ldflags="-s -X main.version=${GIT_TAG}-${GIT_COMMIT}" -o nauthilus .
+    cd server && go build -mod=vendor -tags="sonic avx" -ldflags="-s -X main.version=${GIT_TAG}-${GIT_COMMIT}" -o nauthilus .
 
 RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
