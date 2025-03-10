@@ -179,6 +179,10 @@ func LuaValueToGo(value lua.LValue) any {
 			return mp
 		}
 
+		if v.Len() == 0 {
+			return mp
+		}
+
 		array := make([]any, 0, v.Len())
 
 		v.ForEach(func(key lua.LValue, value lua.LValue) {
