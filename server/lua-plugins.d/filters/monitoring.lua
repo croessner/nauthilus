@@ -96,6 +96,10 @@ function nauthilus_call_filter(request)
     end
 
     local function add_session(session, server)
+        if session == nil then
+            return
+        end
+
         local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, redis_key, session, server)
         if err_redis_hset then
             nauthilus_builtin.custom_log_add(N .. "_redis_hset_error", err_redis_hset)
@@ -110,6 +114,10 @@ function nauthilus_call_filter(request)
     end
 
     local function get_server_from_sessions(session)
+        if session == nil then
+            return nil
+        end
+
         local server_from_session, err_redis_hget = nauthilus_redis.redis_hget(custom_pool, redis_key, session)
         if err_redis_hget then
             if err_redis_hget ~= "redis: nil" then
