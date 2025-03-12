@@ -1802,6 +1802,30 @@ func toSnakeCase(fieldName string) string {
 	return result.String()
 }
 
+// prettyFormatValidationErrors formats validation errors into a user-friendly error message string.
+// It iterates through all validation errors, converting each into a descriptive string, including the failed rule and field.
+func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) error {
+	var errorMessages []string
+
+	for _, fieldErr := range validationErrors {
+		message := fmt.Sprintf(
+			"field '%s' (struct field: '%s') failed on the '%s' validation rule",
+			toSnakeCase(fieldErr.Field()), // The field name configured (e.g., Server, Port)
+			fieldErr.StructField(),        // Struct field name (e.g., Server, Port)
+			fieldErr.Tag(),                // Validation rule (e.g., "required", "min")
+		)
+
+		// Include the rule parameter if it exists (e.g., "1" for "min=1")
+		if fieldErr.Param() != "" {
+			message = fmt.Sprintf("%s. Rule parameter: %s", message, fieldErr.Param())
+		}
+
+		errorMessages = append(errorMessages, message)
+	}
+
+	return stderrors.New("validation errors: " + strings.Join(errorMessages, "; "))
+}
+
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *File) handleFile() (err error) {
@@ -1814,12 +1838,12 @@ func (f *File) handleFile() (err error) {
 	defer f.Mu.Unlock()
 
 	if err = viper.UnmarshalExact(f, createDecoderOption()); err != nil {
-		return
+		return err
 	}
 
 	err = f.validate()
 	if err != nil {
-		return
+		return err
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
@@ -1837,25 +1861,7 @@ func (f *File) handleFile() (err error) {
 	var validationErrors validator.ValidationErrors
 
 	if stderrors.As(err, &validationErrors) {
-		var errorMessages []string
-
-		for _, fieldErr := range validationErrors {
-			message := fmt.Sprintf(
-				"field '%s' (struct field: '%s') failed on the '%s' validation rule",
-				toSnakeCase(fieldErr.Field()), // The field name configured (e.g., Server, Port)
-				fieldErr.StructField(),        // Struct field name (e.g., Server, Port)
-				fieldErr.Tag(),                // Validation rule (e.g., "required", "min")
-			)
-
-			// Include the rule parameter if it exists (e.g., "1" for "min=1")
-			if fieldErr.Param() != "" {
-				message = fmt.Sprintf("%s. Rule parameter: %s", message, fieldErr.Param())
-			}
-
-			errorMessages = append(errorMessages, message)
-		}
-
-		return stderrors.New("validation errors: " + strings.Join(errorMessages, "; "))
+		return prettyFormatValidationErrors(validationErrors)
 	}
 
 	return err
