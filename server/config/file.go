@@ -16,6 +16,7 @@
 package config
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unsafe"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -1777,6 +1779,29 @@ func createDecoderOption() viper.DecoderConfigOption {
 	}
 }
 
+// toSnakeCase converts a given camelCase or PascalCase string to snake_case format.
+func toSnakeCase(fieldName string) string {
+	var result strings.Builder
+
+	previousWasUpper := false
+
+	for i, r := range fieldName {
+		if unicode.IsUpper(r) {
+			if i > 0 && !previousWasUpper {
+				result.WriteByte('_')
+			}
+
+			previousWasUpper = true
+		} else {
+			previousWasUpper = false
+		}
+
+		result.WriteRune(unicode.ToLower(r))
+	}
+
+	return result.String()
+}
+
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *File) handleFile() (err error) {
@@ -1801,14 +1826,39 @@ func (f *File) handleFile() (err error) {
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 
-	if err = validate.Struct(f); err != nil {
-		return
+	if err = validate.Struct(f); err == nil {
+		// Throw away unsupported keys
+		f.Other = nil
+
+		return nil
 	}
 
-	// Throw away unsupported keys
-	f.Other = nil
+	// Handle validation errors
+	var validationErrors validator.ValidationErrors
 
-	return
+	if stderrors.As(err, &validationErrors) {
+		var errorMessages []string
+
+		for _, fieldErr := range validationErrors {
+			message := fmt.Sprintf(
+				"field '%s' (struct field: '%s') failed on the '%s' validation rule",
+				toSnakeCase(fieldErr.Field()), // The field name configured (e.g., Server, Port)
+				fieldErr.StructField(),        // Struct field name (e.g., Server, Port)
+				fieldErr.Tag(),                // Validation rule (e.g., "required", "min")
+			)
+
+			// Include the rule parameter if it exists (e.g., "1" for "min=1")
+			if fieldErr.Param() != "" {
+				message = fmt.Sprintf("%s. Rule parameter: %s", message, fieldErr.Param())
+			}
+
+			errorMessages = append(errorMessages, message)
+		}
+
+		return stderrors.New("validation errors: " + strings.Join(errorMessages, "; "))
+	}
+
+	return err
 }
 
 // bindEnvs binds environment variables to the provided struct fields.
