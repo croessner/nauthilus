@@ -15,6 +15,8 @@
 
 package definitions
 
+import "time"
+
 const (
 	// LogKeyGUID represents the session identifier used in log entries.
 	LogKeyGUID = "session"
@@ -247,11 +249,8 @@ const (
 	// LDAPMaxRetries is the maximum number of retries for a failed LDAP operation
 	LDAPMaxRetries = 9
 
-	// RedisAddress is the default Redis server address
-	RedisAddress = Localhost4
-
-	// RedisPort is the default Redis server port
-	RedisPort = 6379
+	// BfRuleMaxPeriod defines the maximum duration for brute-force rule applicability, set to one year.
+	BfRuleMaxPeriod = 24 * 365 * time.Hour
 
 	// RedisPosCacheTTL is the expiry time (in seconds) for positive cache entries in Redis
 	RedisPosCacheTTL = 3600

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -1202,11 +1203,19 @@ func (f *File) validateBruteForce() error {
 	if f.BruteForce != nil {
 		for _, rule := range f.BruteForce.Buckets {
 			if rule.IPv4 && rule.IPv6 {
-				return errors.ErrRuleNoIPv4AndIPv6
+				return fmt.Errorf("%w: %s", errors.ErrRuleNoIPv4AndIPv6, rule.Name)
 			}
 
 			if !(rule.IPv4 || rule.IPv6) {
-				return errors.ErrRuleMissingIPv4AndIPv6
+				return fmt.Errorf("%w: %s", errors.ErrRuleMissingIPv4AndIPv6, rule.Name)
+			}
+
+			if rule.Period < time.Second {
+				rule.Period = rule.Period * time.Second
+
+				if rule.Period > definitions.BfRuleMaxPeriod {
+					return fmt.Errorf("%w: %s", errors.ErrRuleNoIPv4AndIPv6, rule.Name)
+				}
 			}
 		}
 	}

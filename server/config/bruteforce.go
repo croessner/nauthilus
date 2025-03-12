@@ -63,7 +63,7 @@ func (b *BruteForceSection) LearnFromFeature(input string) bool {
 // documentation for a description of the field names.
 type BruteForceRule struct {
 	Name           string        `mapstructure:"name" validate:"required"`
-	Period         time.Duration `mapstructure:"period" validate:"required,min=1s,max=8760h"`
+	Period         time.Duration `mapstructure:"period" validate:"required,gt=0,max=8760h"`
 	CIDR           uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
 	IPv4           bool
 	IPv6           bool
