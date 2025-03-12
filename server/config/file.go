@@ -17,10 +17,8 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"net"
 	"net/url"
-	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -32,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
+	"github.com/go-playground/validator/v10"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
@@ -51,16 +50,16 @@ type GetterHandler interface {
 }
 
 type File struct {
-	Server                  *ServerSection           `mapstructure:"server"`
-	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists"`
-	ClearTextList           []string                 `mapstructure:"cleartext_networks"`
-	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains"`
-	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring"`
-	BruteForce              *BruteForceSection       `mapstructure:"brute_force"`
-	Lua                     *LuaSection
-	Oauth2                  *Oauth2Section
-	LDAP                    *LDAPSection
-	Other                   map[string]any `mapstructure:",remain"`
+	Server                  *ServerSection           `mapstructure:"server" valdiate:"required"`
+	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists" valdiate:"omitempty"`
+	ClearTextList           []string                 `mapstructure:"cleartext_networks" valdiate:"omitempty,dive"`
+	RelayDomains            *RelayDomainsSection     `mapstructure:"relay_domains" valdiate:"omitempty"`
+	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring" valdiate:"omitempty"`
+	BruteForce              *BruteForceSection       `mapstructure:"brute_force" valdiate:"omitempty"`
+	Lua                     *LuaSection              `mapstructure:"lua" valdiate:"omitempty"`
+	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" valdiate:"omitempty"`
+	LDAP                    *LDAPSection             `mapstructure:"ldap" valdiate:"omitempty"`
+	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
 }
 
@@ -1180,57 +1179,6 @@ func (f *File) GetSSLFingerprint() string {
 	return f.Server.DefaultHTTPRequestHeader.SSLFingerprint
 }
 
-// validateBackends is a method on the File struct.
-// It checks if the Server struct has any configured backends.
-// If there are no backends configured, it returns the error ErrNoBackendsConfigured.
-func (f *File) validateBackends() error {
-	if len(f.Server.Backends) == 0 {
-		return errors.ErrNoBackendsConfigured
-	}
-
-	return nil
-}
-
-// validateRBLs is a method on the File struct.
-// It validates the RBLs field in the File struct.
-// If the RBLs field is not nil, it checks if the Threshold value is greater than math.MaxInt and logs a warning if it is.
-// Then, it iterates over each RBL in the Lists field and checks if the Weight value is greater than math.MaxUint8 or less than -math.MaxUint8, logging a warning in each case.
-// Finally, it logs the RBLs field with Debug level.
-//
-// If there are no errors, it returns nil.
-//
-// Example usage:
-//
-//	err := validateRBLs()
-//	if err != nil {
-//	  log.Fatal(err)
-//	}
-func (f *File) validateRBLs() error {
-	if f.RBLs != nil {
-		if f.RBLs.Threshold > math.MaxInt {
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyMsg, "Please use a smaller RBL threshold!",
-				"rbl_threshold", f.RBLs.Threshold)
-		}
-
-		for _, rbl := range f.RBLs.Lists {
-			if rbl.Weight > math.MaxUint8 {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyMsg, "Please use a lower RBL weight!",
-					"rbl_threshold", rbl.Weight,
-					"rbl", rbl.RBL)
-			} else if rbl.Weight < -math.MaxUint8 {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyMsg, "Please use a higher RBL weight!",
-					"rbl_threshold", rbl.Weight,
-					"rbl", rbl.RBL)
-			}
-		}
-	}
-
-	return nil
-}
-
 // validateBruteForce is a method on the File struct.
 //
 // It validates the BruteForce field in the File struct.
@@ -1253,10 +1201,6 @@ func (f *File) validateRBLs() error {
 func (f *File) validateBruteForce() error {
 	if f.BruteForce != nil {
 		for _, rule := range f.BruteForce.Buckets {
-			if rule.Name == "" {
-				return errors.ErrRuleNoName
-			}
-
 			if rule.IPv4 && rule.IPv6 {
 				return errors.ErrRuleNoIPv4AndIPv6
 			}
@@ -1264,85 +1208,6 @@ func (f *File) validateBruteForce() error {
 			if !(rule.IPv4 || rule.IPv6) {
 				return errors.ErrRuleMissingIPv4AndIPv6
 			}
-
-			if rule.CIDR == 0 {
-				return errors.ErrRuleNoCIDR
-			}
-
-			if rule.Period == 0 {
-				return errors.ErrRuleNoPeriod
-			}
-
-			if rule.FailedRequests == 0 {
-				return errors.ErrRuleNoFailedRequests
-			}
-		}
-
-		countIPv4Rules := uint8(0)
-		countIPv6Rules := uint8(0)
-
-		if countIPv4Rules > 1 || countIPv6Rules > 1 {
-			return errors.ErrBruteForceTooManyRules
-		}
-	}
-
-	return nil
-}
-
-// validateSecrets is a method on the File struct.
-// It validates the secrets used in the File struct.
-// If any of the secrets have incorrect sizes or are missing, it returns an error.
-// Possible error values:
-// - ErrCSRFSecretWrongSize: returned if the CSRFSecret length is not 32.
-// - ErrCookieStoreAuthSize: returned if the CookieStoreAuthKey length is not 32.
-// - ErrCookieStoreEncSize: returned if the CookieStoreEncKey length is not 16, 24 or 32.
-// - ErrNoPasswordNonce: returned if the PasswordNonce is empty.
-// It returns nil if all secrets are valid.
-func (f *File) validateSecrets() error {
-	if f.Server.Frontend.Enabled {
-		if len(f.Server.Frontend.CSRFSecret) != 32 {
-			return errors.ErrCSRFSecretWrongSize
-		}
-
-		if len(f.Server.Frontend.CookieStoreAuthKey) != 32 {
-			return errors.ErrCookieStoreAuthSize
-		}
-
-		if !(len(f.Server.Frontend.CookieStoreEncKey) == 16 || len(f.Server.Frontend.CookieStoreEncKey) == 24 || len(f.Server.Frontend.CookieStoreEncKey) == 32) {
-			return errors.ErrCookieStoreEncSize
-		}
-	}
-
-	if f.Server.Redis.PasswordNonce == "" {
-		return errors.ErrNoPasswordNonce
-	}
-
-	return nil
-}
-
-// validatePrometheusLabels is a method on the File struct that validates the Prometheus labels used in the server's Prometheus timer configuration.
-// If the Prometheus timer is enabled, it checks that each label is one of the predefined constants:
-// - definitions.PromAction
-// - definitions.PromAccount
-// - definitions.PromBackend
-// - definitions.PromBruteForce
-// - definitions.PromFeature
-// - definitions.PromFilter
-// - definitions.PromPostAction
-// - definitions.PromRequest
-// - definitions.PromStoreTOTP
-// - definitions.PromDNS
-// If any label is unknown, it returns an error with a message indicating the unknown label.
-// If the Prometheus timer is not enabled, it returns nil.
-func (f *File) validatePrometheusLabels() error {
-	if f.Server.PrometheusTimer.Enabled {
-		for _, label := range f.Server.PrometheusTimer.Labels {
-			switch label {
-			case definitions.PromAction, definitions.PromAccount, definitions.PromBackend, definitions.PromBruteForce, definitions.PromFeature, definitions.PromFilter, definitions.PromPostAction, definitions.PromRequest, definitions.PromStoreTOTP, definitions.PromDNS:
-				continue
-			}
-
-			return fmt.Errorf("the prometheus_timer::label name '%s' is unknown", label)
 		}
 	}
 
@@ -1379,16 +1244,8 @@ func (f *File) validatePassDBBackends() error {
 				return errors.ErrNoLDAPSection
 			}
 
-			if f.LDAP.Config == nil {
-				return errors.ErrNoLDAPConfig
-			}
-
 			if !f.LDAP.Config.PoolOnly && len(f.LDAP.Search) == 0 {
 				return errors.ErrNoLDAPSearchSection
-			}
-
-			if len(f.LDAP.Config.ServerURIs) == 0 {
-				return errors.ErrNoLDAPServerURIs
 			}
 
 			/*
@@ -1419,9 +1276,6 @@ func (f *File) validatePassDBBackends() error {
 				f.LDAP.Config.AuthPoolSize = f.LDAP.Config.AuthIdlePoolSize
 			}
 		case definitions.BackendLua:
-			if f.GetLuaScriptPath() == "" {
-				return errors.ErrNoLuaScriptPath
-			}
 		case definitions.BackendUnknown:
 		case definitions.BackendCache:
 		case definitions.BackendLocalCache:
@@ -1502,61 +1356,6 @@ func (f *File) validateHydraAdminURL() error {
 	return err
 }
 
-// validateTLSCertAndKey is a method on the File struct.
-// It validates the readability of the TLS certificate and key files specified in the Server struct.
-// If any of the files are not readable, it returns an error indicating the file that is not readable.
-// Otherwise, it returns nil.
-// It uses the isFileReadable function to check the validity of each file.
-// The function takes a file path as an argument and checks if the file exists and is readable.
-// If the file is not readable, it returns an error.
-// The validateTLSCertAndKey method iterates over the Cert and Key file paths in the Server struct.
-// For each path, it calls the isFileReadable function.
-// If any of the files are not readable, it returns an error message indicating the file that is not readable.
-// The error message is formatted using the fmt.Errorf function.
-// If all files are readable, it returns nil to indicate that the validation was successful.
-func (f *File) validateTLSCertAndKey() error {
-	if !f.Server.TLS.Enabled {
-		return nil
-	}
-
-	isFileReadable := func(file string) error {
-		_, err := os.Stat(file)
-
-		return err
-	}
-
-	for _, file := range []string{f.Server.TLS.Cert, f.Server.TLS.Key} {
-		if err := isFileReadable(file); err != nil {
-			return fmt.Errorf("TLS certificate or key file %s is not readable: %w", file, err)
-		}
-	}
-
-	return nil
-}
-
-// validateDNSResolver checks whether the provided DNS resolver in the Server configuration is valid.
-// It returns an error if the DNS resolver is not in the correct host:port format, or if either host or port is empty.
-func (f *File) validateDNSResolver() error {
-	if f.Server.DNS.Resolver == "" {
-		return nil
-	}
-
-	host, port, err := net.SplitHostPort(f.Server.DNS.Resolver)
-	if err != nil {
-		return fmt.Errorf("DNS resolver %s is not valid: %w", f.Server.DNS.Resolver, err)
-	}
-
-	if host == "" {
-		return fmt.Errorf("DNS resolver %s is not valid: host is empty", f.Server.DNS.Resolver)
-	}
-
-	if port == "" {
-		return fmt.Errorf("DNS resolver %s is not valid: port is empty", f.Server.DNS.Resolver)
-	}
-
-	return nil
-}
-
 // validateInstanceName is a method on the File struct.
 // It checks if the Server's InstanceName field is empty.
 // If it is empty, it sets the InstanceName to the definitions.InstanceName constant value.
@@ -1577,87 +1376,6 @@ func (f *File) validateInstanceName() error {
 func (f *File) validateDNSTimeout() error {
 	if f.Server.DNS.Timeout == 0 {
 		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
-	}
-
-	// Not less than 1 second
-	if f.Server.DNS.Timeout < 1 {
-		f.Server.DNS.Timeout = 1
-	}
-
-	// Not more than 30 seconds
-	if f.Server.DNS.Timeout > 30 {
-		f.Server.DNS.Timeout = 30
-	}
-
-	return nil
-}
-
-// validateRedisMasterAddress is a method on the File struct.
-// It validates the Redis master address and returns an error if it is invalid.
-// The function first checks if there are multiple sentinel addresses and a specified sentinel master.
-// If so, it assumes that the Redis master address is valid and returns nil.
-// If the Redis master address is empty, it constructs a new address using the global RedisAddress and RedisPort constants.
-// Finally, it calls the checkAddress function to validate the Redis master address and returns any errors.
-// Example usage of the validateRedisMasterAddress method can be found in the validate method of the File struct.
-// Package and other declarations are not shown here for brevity.
-func (f *File) validateRedisMasterAddress() error {
-	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
-		return nil
-	}
-
-	if f.Server.Redis.Master.Address == "" {
-		f.Server.Redis.Master.Address = fmt.Sprintf("%s:%d", definitions.RedisAddress, definitions.RedisPort)
-	}
-
-	return checkAddress(f.Server.Redis.Master.Address)
-}
-
-// validateRedisSentinels is a method on the File struct.
-// It checks if the Redis sentinels addresses are valid and if the Redis master is specified.
-// If the addresses are valid, it calls the checkAddress function for each address.
-// If any of the addresses is invalid, it returns an error.
-// If there is no error or the sentinels addresses are not specified, it returns nil.
-func (f *File) validateRedisSentinels() error {
-	if len(f.Server.Redis.Sentinels.Addresses) > 1 && f.Server.Redis.Sentinels.Master != "" {
-		for _, address := range f.Server.Redis.Sentinels.Addresses {
-			if err := checkAddress(address); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateRedisDatabaseNumber is a method on the File struct.
-// It validates the Redis database number and returns an error if the number is out of range.
-// If the number is less than 0, it returns errors.ErrRedisDatabaseNumber.
-// If the number is greater than 15, it also returns errors.ErrRedisDatabaseNumber.
-// Otherwise, it returns nil indicating no error.
-func (f *File) validateRedisDatabaseNumber() error {
-	if f.Server.Redis.DatabaseNmuber < 0 {
-		return errors.ErrRedisDatabaseNumber
-	}
-
-	if f.Server.Redis.DatabaseNmuber > 15 {
-		return errors.ErrRedisDatabaseNumber
-	}
-
-	return nil
-}
-
-// validateRedisPoolSize is a method on the File struct.
-// It validates the Redis pool size and returns an error if it is less than or equal to 0.
-// If the Redis pool size is valid, it returns nil.
-// The method uses the ErrRedisPoolSize error from the errors package.
-func (f *File) validateRedisPoolSize() error {
-	if f.Server.Redis.PoolSize <= 0 {
-		return errors.ErrRedisPoolSize
-	}
-
-	// Silently ignore negative values!
-	if f.Server.Redis.IdlePoolSize < 0 {
-		f.Server.Redis.IdlePoolSize = 0
 	}
 
 	return nil
@@ -1696,10 +1414,6 @@ func (f *File) validateRedisNegCacheTTL() error {
 func (f *File) validateMasterUserDelimiter() error {
 	if f.Server.MasterUser.Delimiter == "" {
 		f.Server.MasterUser.Delimiter = "*"
-	}
-
-	if len(f.Server.MasterUser.Delimiter) != 1 {
-		f.Server.MasterUser.Delimiter = f.Server.MasterUser.Delimiter[:1]
 	}
 
 	return nil
@@ -1754,16 +1468,12 @@ func (f *File) validateMaxConnections() error {
 		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
 
-	if f.Server.MaxConcurrentRequests < 0 {
-		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
-	}
-
 	return nil
 }
 
 // validateMaxPasswordHistoryEntries sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
 func (f *File) validateMaxPasswordHistoryEntries() error {
-	if f.Server.MaxPasswordHistoryEntries <= 0 {
+	if f.Server.MaxPasswordHistoryEntries == 0 {
 		f.Server.MaxPasswordHistoryEntries = definitions.MaxPasswordHistoryEntries
 	}
 
@@ -1776,21 +1486,11 @@ func (f *File) validateMaxPasswordHistoryEntries() error {
 // If all validators pass, nil is returned.
 func (f *File) validate() (err error) {
 	validators := []func() error{
-		f.validateBackends,
-		f.validateRBLs,
 		f.validateBruteForce,
-		f.validateSecrets,
 		f.validatePassDBBackends,
 		f.validateOAuth2,
 		f.validateAddress,
 		f.validateHydraAdminURL,
-		f.validateTLSCertAndKey,
-		f.validateRedisMasterAddress,
-		f.validateRedisSentinels,
-		f.validateRedisDatabaseNumber,
-		f.validateRedisPoolSize,
-		f.validatePrometheusLabels,
-		f.validateDNSResolver,
 
 		// Without errors, but fixing things
 		f.validateInstanceName,
@@ -1803,8 +1503,8 @@ func (f *File) validate() (err error) {
 		f.validateMaxPasswordHistoryEntries,
 	}
 
-	for _, validator := range validators {
-		if err = validator(); err != nil {
+	for _, validatorFunc := range validators {
+		if err = validatorFunc(); err != nil {
 			return err
 		}
 	}
@@ -2085,6 +1785,14 @@ func (f *File) handleFile() (err error) {
 
 	err = f.validate()
 	if err != nil {
+		return
+	}
+
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
+
+	if err = validate.Struct(f); err != nil {
 		return
 	}
 

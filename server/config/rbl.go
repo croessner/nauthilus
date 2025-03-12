@@ -19,9 +19,9 @@ import "fmt"
 
 type RBLSection struct {
 	SoftWhitelist `mapstructure:"soft_whitelist"`
-	Lists         []RBL
-	Threshold     int
-	IPWhiteList   []string `mapstructure:"ip_whitelist"`
+	Lists         []RBL    `mapstructure:"lists" validate:"required,dive"`
+	Threshold     int      `mapstructure:"threshold" validate:"omitempty,min=0,max=100"`
+	IPWhiteList   []string `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
 }
 
 func (r *RBLSection) String() string {
@@ -33,11 +33,11 @@ func (r *RBLSection) String() string {
 }
 
 type RBL struct {
-	Name         string
-	RBL          string
+	Name         string `mapstructure:"name" validate:"required"`
+	RBL          string `mapstructure:"rbl" validate:"required,hostname"`
 	IPv4         bool
 	IPv6         bool
 	AllowFailure bool   `mapstructure:"allow_failure"`
-	ReturnCode   string `mapstructure:"return_code"`
-	Weight       int
+	ReturnCode   string `mapstructure:"return_code" validate:"required,ip4_addr"`
+	Weight       int    `mapstructure:"weight" validate:"omitempty,min=-100,max=100"`
 }

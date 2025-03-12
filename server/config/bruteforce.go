@@ -15,13 +15,16 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type BruteForceSection struct {
 	SoftWhitelist `mapstructure:"soft_whitelist"`
-	IPWhitelist   []string         `mapstructure:"ip_whitelist"`
-	Buckets       []BruteForceRule `mapstructure:"buckets"`
-	Learning      []*Feature       `mapstructure:"learning"`
+	IPWhitelist   []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	Buckets       []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
+	Learning      []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -59,10 +62,10 @@ func (b *BruteForceSection) LearnFromFeature(input string) bool {
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown
 // documentation for a description of the field names.
 type BruteForceRule struct {
-	Name           string
-	Period         uint
-	CIDR           uint
+	Name           string        `mapstructure:"name" validate:"required"`
+	Period         time.Duration `mapstructure:"period" validate:"required,min=1s,max=8760h"`
+	CIDR           uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
 	IPv4           bool
 	IPv6           bool
-	FailedRequests uint `mapstructure:"failed_requests"`
+	FailedRequests uint `mapstructure:"failed_requests" validate:"required,min=1"`
 }

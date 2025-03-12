@@ -19,7 +19,7 @@ import "fmt"
 
 type RelayDomainsSection struct {
 	SoftWhitelist `mapstructure:"soft_whitelist"`
-	StaticDomains []string `mapstructure:"static"`
+	StaticDomains []string `mapstructure:"static" validate:"required,dive,hostname"`
 }
 
 func (r *RelayDomainsSection) String() string {
@@ -31,13 +31,13 @@ func (r *RelayDomainsSection) String() string {
 }
 
 type BackendServer struct {
-	Protocol      string `mapstructure:"protocol"`
-	Host          string `mapstructure:"host"`
+	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
+	Host          string `mapstructure:"host" validate:"required,hostname|ip"`
 	DeepCheck     bool   `mapstructure:"deep_check"`
-	RequestURI    string `mapstructure:"request_uri"`
-	TestUsername  string `mapstructure:"test_username"`
-	TestPassword  string `mapstructure:"test_password"`
-	Port          int    `mapstructure:"port"`
+	RequestURI    string `mapstructure:"request_uri" validate:"omitempty,url_encoded"`
+	TestUsername  string `mapstructure:"test_username" validate:"omitempty,excludesall= "`
+	TestPassword  string `mapstructure:"test_password" validate:"omitempty,excludesall= "`
+	Port          int    `mapstructure:"port" validate:"omitempty,min=1,max=65535"`
 	TLS           bool   `mapstructure:"tls"`
 	TLSSkipVerify bool   `mapstructure:"tls_skip_verify"`
 	HAProxyV2     bool   `mapstructure:"haproxy_v2"`
@@ -53,7 +53,7 @@ func (n *BackendServer) String() string {
 }
 
 type BackendServerMonitoring struct {
-	BackendServers []*BackendServer `mapstructure:"backend_servers"`
+	BackendServers []*BackendServer `mapstructure:"backend_servers" validate:"required,dive"`
 }
 
 func (n *BackendServerMonitoring) String() string {
