@@ -23,7 +23,7 @@ dep:
 	go get -v -d ./...
 
 build: dep
-	go build -v -ldflags "-X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) .
+	go build -v -ldflags "-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) .
 
 clean: ## Remove previous build
 	[ -x $(OUTPUT) ] && rm -f $(OUTPUT)
