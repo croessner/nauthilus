@@ -1624,11 +1624,6 @@ func (f *File) handleFile() (err error) {
 		return err
 	}
 
-	err = f.validate()
-	if err != nil {
-		return err
-	}
-
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
@@ -1646,6 +1641,8 @@ func (f *File) handleFile() (err error) {
 	if stderrors.As(err, &validationErrors) {
 		return prettyFormatValidationErrors(validationErrors)
 	}
+
+	err = f.validate()
 
 	return err
 }

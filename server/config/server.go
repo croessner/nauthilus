@@ -75,7 +75,7 @@ type Log struct {
 	JSON       bool         `mapstructure:"json"`
 	Color      bool         `mapstructure:"color"`
 	Level      Verbosity    `mapstructure:"level"`
-	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive,oneof=none all auth hydra webauthn statistics whitelist ldap ldappool cache brute_force rbl action feature lua filter"`
+	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
 }
 
 // Insights is a configuration structure for enabling profiling and block profiling capabilities.
