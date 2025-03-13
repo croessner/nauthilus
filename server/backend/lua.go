@@ -336,26 +336,9 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 	return err
 }
 
-// handleReturnTypes handles the different return types from Lua scripts.
-// The function takes the Lua state, the number of return values, the Lua request,
-// and the custom logs as arguments.
-//
-// If the return value is non-zero, it indicates an error in the Lua script. In this case,
-// the function sends an error message with the custom logs to the LuaReplyChan channel
-// and returns.
-//
-// If the Lua request function is LuaCommandPassDB, the function expects the return value
-// to be a user data object of type *LuaBackendResult. If it matches the expected type,
-// the logs are appended to the LuaBackendResult, and it is sent to the LuaReplyChan channel.
-// If the user data object does not match the expected type, an error message is sent
-// with the custom logs to the LuaReplyChan channel.
-//
-// If the Lua request function is LuaCommandListAccounts, the function expects the return value
-// to be a Lua table. The function converts the table to a map using the LuaValueToGo function,
-// assigns it to the Attributes field of a new LuaBackendResult, and sends it to the LuaReplyChan channel.
-//
-// For all other Lua request functions, the function sends an empty LuaBackendResult with the custom logs
-// to the LuaReplyChan channel.
+// handleReturnTypes processes the return values of a Lua script and sends the appropriate response via LuaReplyChan.
+// It handles specific Lua commands such as LuaCommandPassDB and LuaCommandListAccounts, ensuring proper data conversion.
+// If an error occurs or unexpected data is returned, detailed error information is encapsulated and sent.
 func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
 	ret := L.ToInt(-nret)
 	if ret != 0 {
@@ -371,26 +354,44 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 	case definitions.LuaCommandPassDB:
 		userData := L.ToUserData(-1)
 
-		if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
-			luaBackendResult.Logs = logs
+		if userData != nil {
+			if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
+				luaBackendResult.Logs = logs
 
-			util.DebugModule(
-				definitions.DbgLua,
-				definitions.LogKeyGUID, luaRequest.Session,
-				"result", fmt.Sprintf("%+v", luaBackendResult),
-			)
+				util.DebugModule(
+					definitions.DbgLua,
+					definitions.LogKeyGUID, luaRequest.Session,
+					"result", fmt.Sprintf("%+v", luaBackendResult),
+				)
 
-			luaRequest.LuaReplyChan <- luaBackendResult
+				luaRequest.LuaReplyChan <- luaBackendResult
+			} else {
+				luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
+					Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned a wrong user data object"),
+					Logs: logs,
+				}
+			}
 		} else {
 			luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-				Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned a wrong user data object"),
+				Err:  errors.ErrBackendLuaWrongUserData.WithDetail("Lua script returned nil user data"),
 				Logs: logs,
 			}
 		}
 
 	case definitions.LuaCommandListAccounts:
+		var attributes map[any]any
+
+		// Check if L.ToTable(-1) returns a valid table
+		table := L.ToTable(-1)
+		if table != nil {
+			attributes = convert.LuaValueToGo(table).(map[any]any)
+		} else {
+			// Set attributes to an empty map if no table is found
+			attributes = make(map[any]any)
+		}
+
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
-			Attributes: convert.LuaValueToGo(L.ToTable(-1)).(map[any]any),
+			Attributes: attributes,
 			Logs:       logs,
 		}
 
