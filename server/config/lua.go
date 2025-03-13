@@ -26,8 +26,8 @@ type LuaSection struct {
 	Features []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
 	Filters  []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
 	Hooks    []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
-	Config   *LuaConf            `mapstructure:"config" validate:"required"`
-	Search   []LuaSearchProtocol `mapstructure:"search" validate:"required,dive"`
+	Config   *LuaConf            `mapstructure:"config" validate:"omitempty"`
+	Search   []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LuaSection) String() string {
@@ -112,7 +112,7 @@ func (l *LuaFilter) String() string {
 
 type LuaConf struct {
 	PackagePath       string `mapstructure:"package_path"`
-	BackendScriptPath string `mapstructure:"backend_script_path" validate:"required,file"`
+	BackendScriptPath string `mapstructure:"backend_script_path" validate:"omitempty,file"`
 	InitScriptPath    string `mapstructure:"init_script_path" validate:"omitempty,file"`
 }
 
