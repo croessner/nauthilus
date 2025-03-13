@@ -450,12 +450,20 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 
 	if L.GetTop() == 1 {
 		luaResult := L.ToTable(-1)
-		anyTable := convert.LuaValueToGo(luaResult).(map[any]any)
-		result = convert.ToGinH(anyTable)
+		switch value := convert.LuaValueToGo(luaResult).(type) {
+		case map[any]any:
+			result = convert.ToGinH(value)
 
-		if result == nil {
-			result = gin.H{}
-			err = fmt.Errorf("custom location '%s' returned invalid result", hook)
+			if result == nil {
+				result = gin.H{}
+				err = fmt.Errorf("custom location '%s' returned invalid result", hook)
+			}
+		case []any:
+			// An empty Lua table is treated as a list, not a map!
+			if len(value) > 0 {
+				result = gin.H{}
+				err = fmt.Errorf("custom location '%s' returned invalid result, expected a map", hook)
+			}
 		}
 	}
 
