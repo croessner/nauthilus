@@ -249,8 +249,8 @@ const (
 	// LDAPMaxRetries is the maximum number of retries for a failed LDAP operation
 	LDAPMaxRetries = 9
 
-	// BfRuleMaxPeriod defines the maximum duration for brute-force rule applicability, set to one year.
-	BfRuleMaxPeriod = 24 * 365 * time.Hour
+	// DurationMaxPeriod defines the maximum allowable time duration, set to a period of one year (24 * 365 * time.Hour).
+	DurationMaxPeriod = 24 * 365 * time.Hour
 
 	// RedisPosCacheTTL is the expiry time (in seconds) for positive cache entries in Redis
 	RedisPosCacheTTL = 3600

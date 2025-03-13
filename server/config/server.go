@@ -93,18 +93,18 @@ type DNS struct {
 
 // Redis represents the configuration settings for a Redis instance, including master, replica, sentinel, and cluster setups.
 type Redis struct {
-	DatabaseNmuber int       `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
-	Prefix         string    `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
-	PasswordNonce  string    `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
-	PoolSize       int       `mapstructure:"pool_size" validate:"omitempty,gte=1"`
-	IdlePoolSize   int       `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
-	TLS            TLS       `mapstructure:"tls" validate:"omitempty"`
-	PosCacheTTL    uint      `mapstructure:"positive_cache_ttl" validate:"omitempty,min=0,max=86400"`
-	NegCacheTTL    uint      `mapstructure:"negative_cache_ttl" validate:"omitempty,min=0,max=86400"`
-	Master         Master    `mapstructure:"master" validate:"omitempty"`
-	Replica        Replica   `mapstructure:"replica" validate:"omitempty"`
-	Sentinels      Sentinels `mapstructure:"sentinels" validate:"omitempty"`
-	Cluster        Cluster   `mapstructure:"cluster" validate:"omitempty"`
+	DatabaseNmuber int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
+	Prefix         string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
+	PasswordNonce  string        `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
+	PoolSize       int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
+	IdlePoolSize   int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
+	TLS            TLS           `mapstructure:"tls" validate:"omitempty"`
+	PosCacheTTL    time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
+	NegCacheTTL    time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
+	Master         Master        `mapstructure:"master" validate:"omitempty"`
+	Replica        Replica       `mapstructure:"replica" validate:"omitempty"`
+	Sentinels      Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
+	Cluster        Cluster       `mapstructure:"cluster" validate:"omitempty"`
 }
 
 // Master represents the configuration for the master Redis instance.

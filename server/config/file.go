@@ -1078,8 +1078,8 @@ func (f *File) validateBruteForce() error {
 			if rule.Period < time.Second {
 				rule.Period = rule.Period * time.Second
 
-				if rule.Period > definitions.BfRuleMaxPeriod {
-					return fmt.Errorf("%w: %s", errors.ErrRulePeriodTooHigh, rule.String())
+				if rule.Period > definitions.DurationMaxPeriod {
+					return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, rule.String())
 				}
 			}
 		}
@@ -1228,8 +1228,16 @@ func (f *File) setDefaultDnsTimeout() error {
 
 // setDefaultPosCacheTTL sets a default Positive Cache TTL for Redis if it is not already configured.
 func (f *File) setDefaultPosCacheTTL() error {
-	if f.Server.Redis.PosCacheTTL == 0 {
-		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL
+	if f.Server.Redis.PosCacheTTL <= 0 {
+		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL * time.Second
+	}
+
+	if f.Server.Redis.PosCacheTTL < time.Second {
+		f.Server.Redis.PosCacheTTL = f.Server.Redis.PosCacheTTL * time.Second
+
+		if f.Server.Redis.PosCacheTTL > definitions.DurationMaxPeriod {
+			return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, f.Server.Redis.PosCacheTTL.String())
+		}
 	}
 
 	return nil
@@ -1237,8 +1245,16 @@ func (f *File) setDefaultPosCacheTTL() error {
 
 // setDefaultNegCacheTTL sets the default TTL for negative cache entries in Redis if it is not already configured.
 func (f *File) setDefaultNegCacheTTL() error {
-	if f.Server.Redis.NegCacheTTL == 0 {
-		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL
+	if f.Server.Redis.NegCacheTTL <= 0 {
+		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL * time.Second
+	}
+
+	if f.Server.Redis.NegCacheTTL < time.Second {
+		f.Server.Redis.NegCacheTTL = f.Server.Redis.NegCacheTTL * time.Second
+
+		if f.Server.Redis.NegCacheTTL > definitions.DurationMaxPeriod {
+			return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, f.Server.Redis.NegCacheTTL.String())
+		}
 	}
 
 	return nil

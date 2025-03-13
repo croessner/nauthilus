@@ -132,8 +132,9 @@ var (
 // common.
 
 var (
-	ErrNoPassDBResult = errors.New("no pass Database result")
-	ErrUnknownCause   = errors.New("something went wrong")
+	ErrNoPassDBResult  = errors.New("no pass Database result")
+	ErrUnknownCause    = errors.New("something went wrong")
+	ErrDurationTooHigh = errors.New("duration of too high")
 )
 
 // bruteforce.
@@ -141,7 +142,6 @@ var (
 var (
 	ErrRuleNoIPv4AndIPv6      = errors.New("do not set 'ipv4' and 'ipv6' at the same time in a rule")
 	ErrRuleMissingIPv4AndIPv6 = errors.New("neither 'ipv4' nor 'ipv6' specified in rule")
-	ErrRulePeriodTooHigh      = errors.New("period too high")
 	ErrWrongIPAddress         = errors.New("unable to parse IP address")
 )
 

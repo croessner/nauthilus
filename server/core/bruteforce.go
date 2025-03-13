@@ -481,7 +481,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 			definitions.LogKeyMsg, "Increased",
 		)
 
-		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
+		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
@@ -701,7 +701,7 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 	defer stats.RedisWriteCounter.Inc()
 
-	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
+	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
