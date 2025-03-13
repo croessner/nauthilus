@@ -69,3 +69,11 @@ type BruteForceRule struct {
 	IPv6           bool
 	FailedRequests uint `mapstructure:"failed_requests" validate:"required,min=1"`
 }
+
+func (b *BruteForceRule) String() string {
+	if b == nil {
+		return "<nil>"
+	}
+
+	return fmt.Sprintf("Name: %s, Period: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)
+}
