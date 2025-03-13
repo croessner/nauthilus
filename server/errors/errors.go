@@ -79,7 +79,6 @@ func NewDetailedError(err string) *DetailedError {
 // auth.
 
 var (
-	ErrNoBackendsConfigured                    = errors.New("no database backends configured")
 	ErrAllBackendConfigError                   = errors.New("configuration errors in all Database sections")
 	ErrUnsupportedMediaType                    = errors.New("unsupported media type")
 	ErrFeatureBackendServersMonitoringDisabled = errors.New("backend_server_monitoring not enabled")
@@ -102,18 +101,8 @@ var (
 // file.
 
 var (
-	ErrNoLDAPSection          = errors.New("no 'ldap:' section found")
-	ErrNoLDAPSearchSection    = errors.New("no 'ldap::search:' section found")
-	ErrNoLDAPConfig           = errors.New("no 'ldap::config:' section found")
-	ErrNoLDAPServerURIs       = errors.New("no 'ldap::config::server_uri' definition")
-	ErrBruteForceTooManyRules = errors.New("too many rules in 'user'account' section")
-	ErrCSRFSecretWrongSize    = errors.New("csrf secret must exactly be 32 bytes long")
-	ErrCookieStoreAuthSize    = errors.New("cookie store auth key must exactly be 32 bytes")
-	ErrCookieStoreEncSize     = errors.New("cookie store encryption key must exactly be 16, 24 or 32 bytes")
-	ErrNoPasswordNonce        = errors.New("no 'password_nonce' defined")
-	ErrNoLuaScriptPath        = errors.New("no 'lua::config:script_path' definition")
-	ErrRedisDatabaseNumber    = errors.New("server::redis::datavase_number must be >= 0 and < 15")
-	ErrRedisPoolSize          = errors.New("server::redis::pool_size must be > 0")
+	ErrNoLDAPSection       = errors.New("no 'ldap:' section found")
+	ErrNoLDAPSearchSection = errors.New("no 'ldap::search:' section found")
 )
 
 // ldap.
@@ -143,19 +132,16 @@ var (
 // common.
 
 var (
-	ErrNoPassDBResult = errors.New("no pass Database result")
-	ErrUnknownCause   = errors.New("something went wrong")
+	ErrNoPassDBResult  = errors.New("no pass Database result")
+	ErrUnknownCause    = errors.New("something went wrong")
+	ErrDurationTooHigh = errors.New("duration of too high")
 )
 
 // bruteforce.
 
 var (
-	ErrRuleNoName             = errors.New("missing 'name' field in rule")
 	ErrRuleNoIPv4AndIPv6      = errors.New("do not set 'ipv4' and 'ipv6' at the same time in a rule")
 	ErrRuleMissingIPv4AndIPv6 = errors.New("neither 'ipv4' nor 'ipv6' specified in rule")
-	ErrRuleNoCIDR             = errors.New("missing 'cidr' in rule")
-	ErrRuleNoPeriod           = errors.New("missing 'period' in rule")
-	ErrRuleNoFailedRequests   = errors.New("missing 'failed_requests' in rule")
 	ErrWrongIPAddress         = errors.New("unable to parse IP address")
 )
 

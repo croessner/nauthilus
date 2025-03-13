@@ -102,7 +102,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCa
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint, cache *PositivePasswordCache) {
+func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.Duration, cache *PositivePasswordCache) {
 	var result string
 
 	util.DebugModule(
@@ -124,7 +124,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl uint,
 	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, ttl).Result(); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, err,
@@ -223,7 +223,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 // If serialization fails, it logs the error and returns it.
 // If saving to "Redis" fails, it logs the error.
 // Note: User is a struct representing a user in the system.
-func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
+func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) error {
 	var result string
 
 	redisValue, err := json.Marshal(user)
@@ -238,7 +238,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl uint) error {
 	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, time.Duration(ttl)*time.Second).Result(); err != nil {
+	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, ttl).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 	}
 

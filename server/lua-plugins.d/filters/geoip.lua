@@ -98,7 +98,7 @@ function nauthilus_call_filter(request)
         nauthilus_util.if_error_raise(request_err)
 
         if result.status_code ~= 202 then
-            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.code))
+            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
         end
 
         local response, err_jdec = json.decode(result.body)

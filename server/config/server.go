@@ -17,55 +17,57 @@ package config
 
 import (
 	"time"
+
+	"github.com/go-playground/validator/v10"
 )
 
 // ServerSection represents the configuration for a server, including network settings, TLS, logging, backends, features,
 // protocol handling, and integrations with other systems such as Redis and Prometheus.
 type ServerSection struct {
-	Address                   string                   `mapstructure:"address"`
-	MaxConcurrentRequests     int32                    `mapstructure:"max_concurrent_requests"`
-	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries"`
+	Address                   string                   `mapstructure:"address" validate:"omitempty,tcp_addr"`
+	MaxConcurrentRequests     int32                    `mapstructure:"max_concurrent_requests" validate:"required,gte=1"`
+	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
-	TLS                       TLS                      `mapstructure:"tls"`
-	BasicAuth                 BasicAuth                `mapstructure:"basic_auth"`
-	InstanceName              string                   `mapstructure:"instance_name"`
-	Log                       Log                      `maptostructure:"log"`
-	Backends                  []*Backend               `mapstructure:"backends"`
-	Features                  []*Feature               `mapstructure:"features"`
-	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols"`
-	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url"`
-	DNS                       DNS                      `mapstructure:"dns"`
-	Insights                  Insights                 `mapstructure:"insights"`
-	Redis                     Redis                    `mapstructure:"redis"`
-	MasterUser                MasterUser               `mapstructure:"master_user"`
-	Frontend                  Frontend                 `mapstructure:"frontend"`
-	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer"`
-	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header"`
-	HTTPClient                HTTPClient               `mapstructure:"http_client"`
+	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
+	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
+	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
+	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
+	Backends                  []*Backend               `mapstructure:"backends" validate:"required"`
+	Features                  []*Feature               `mapstructure:"features" validate:"omitempty,dive"`
+	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
+	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url" validate:"omitempty,http_url"`
+	DNS                       DNS                      `mapstructure:"dns" validate:"omitempty"`
+	Insights                  Insights                 `mapstructure:"insights" validate:"omitempty"`
+	Redis                     Redis                    `mapstructure:"redis" vslidate:"required"`
+	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
+	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
+	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
+	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
+	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.
 type TLS struct {
 	Enabled              bool   `mapstructure:"enabled"`
-	Cert                 string `mapstructure:"cert"`
-	Key                  string `mapstructure:"key"`
+	Cert                 string `mapstructure:"cert" validate:"omitempty,file"`
+	Key                  string `mapstructure:"key" validate:"omitempty,file"`
 	HTTPClientSkipVerify bool   `mapstructure:"http_client_skip_verify"`
 }
 
 type HTTPClient struct {
-	MaxConnsPerHost     int           `mapstructure:"max_connections_per_host"`
-	MaxIdleConns        int           `mapstructure:"max_idle_connections"`
-	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host"`
-	IdleConnTimeout     time.Duration `mapstructure:"idle_connection_timeout"`
+	MaxConnsPerHost     int           `mapstructure:"max_connections_per_host" validate:"omitempty,gte=1"`
+	MaxIdleConns        int           `mapstructure:"max_idle_connections" validate:"omitempty,gte=1"`
+	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host" validate:"omitempty,gte=0"`
+	IdleConnTimeout     time.Duration `mapstructure:"idle_connection_timeout" validate:"omitempty,gte=0"`
 	Proxy               string        `mapstructure:"proxy"`
 }
 
 // BasicAuth represents the configuration for basic HTTP authentication.
 type BasicAuth struct {
 	Enabled  bool   `mapstructure:"enabled"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
+	Username string `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
 }
 
 // Log represents the configuration for logging.
@@ -73,7 +75,7 @@ type Log struct {
 	JSON       bool         `mapstructure:"json"`
 	Color      bool         `mapstructure:"color"`
 	Level      Verbosity    `mapstructure:"level"`
-	DbgModules []*DbgModule `mapstructure:"debug_modules"`
+	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
 }
 
 // Insights is a configuration structure for enabling profiling and block profiling capabilities.
@@ -84,104 +86,110 @@ type Insights struct {
 
 // DNS represents the Domain Name System configuration settings, including resolver, timeout, and client IP resolution options.
 type DNS struct {
-	Resolver        string        `mapstructure:"resolver"`
-	Timeout         time.Duration `mapstructure:"timeout"`
+	Resolver        string        `mapstructure:"resolver" validate:"omitempty,tcp_addr"`
+	Timeout         time.Duration `mapstructure:"timeout" validate:"omitempty,gt=0,max=30s"`
 	ResolveClientIP bool          `mapstructure:"resolve_client_ip"`
 }
 
 // Redis represents the configuration settings for a Redis instance, including master, replica, sentinel, and cluster setups.
 type Redis struct {
-	DatabaseNmuber int       `mapstructure:"database_number"`
-	Prefix         string    `mapstructure:"prefix"`
-	PasswordNonce  string    `mapstructure:"password_nonce"`
-	PoolSize       int       `mapstructure:"pool_size"`
-	IdlePoolSize   int       `mapstructure:"idle_pool_size"`
-	TLS            TLS       `mapstructure:"tls"`
-	PosCacheTTL    uint      `mapstructure:"positive_cache_ttl"`
-	NegCacheTTL    uint      `mapstructure:"negative_cache_ttl"`
-	Master         Master    `mapstructure:"master"`
-	Replica        Replica   `mapstructure:"replica"`
-	Sentinels      Sentinels `mapstructure:"sentinels"`
-	Cluster        Cluster   `mapstructure:"cluster"`
+	DatabaseNmuber int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
+	Prefix         string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
+	PasswordNonce  string        `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
+	PoolSize       int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
+	IdlePoolSize   int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
+	TLS            TLS           `mapstructure:"tls" validate:"omitempty"`
+	PosCacheTTL    time.Duration `mapstructure:"positive_cache_ttl" validate:"omitempty,max=8760h"`
+	NegCacheTTL    time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=8760h"`
+	Master         Master        `mapstructure:"master" validate:"omitempty"`
+	Replica        Replica       `mapstructure:"replica" validate:"omitempty"`
+	Sentinels      Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
+	Cluster        Cluster       `mapstructure:"cluster" validate:"omitempty"`
 }
 
 // Master represents the configuration for the master Redis instance.
 // Includes fields for address, username, and password for the master instance.
 type Master struct {
-	Address  string `mapstructure:"address"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
+	Address  string `mapstructure:"address" validate:"omitempty,hostname_port"`
+	Username string `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password string `mapstructure:"password" validate:"omitempty,excludesall= "`
 }
 
 // Replica represents the configuration for a Redis replica instance.
 type Replica struct {
-	Address string `mapstructure:"address"`
+	Address string `mapstructure:"address" validate:"omitempty,hostname_port"`
 }
 
 // Sentinels represents the configuration for Redis Sentinel.
 type Sentinels struct {
-	Master    string   `mapstructure:"master"`
-	Addresses []string `mapstructure:"addresses"`
-	Username  string   `mapstructure:"username"`
-	Password  string   `mapstructure:"password"`
+	Master    string   `mapstructure:"master" validate:"required,printascii,excludesall= "`
+	Addresses []string `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username  string   `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password  string   `mapstructure:"password" validate:"omitempty,excludesall= "`
 }
 
 // Cluster represents the configuration for a Redis cluster setup.
 type Cluster struct {
-	Addresses []string `mapstructure:"addresses"`
-	Username  string   `mapstructure:"username"`
-	Password  string   `mapstructure:"password"`
+	Addresses []string `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username  string   `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password  string   `mapstructure:"password" validate:"omitempty,excludesall= "`
 }
 
 // MasterUser represents a user configuration with flags for enabling and setting delimiters.
 type MasterUser struct {
 	Enabled   bool   `mapstructure:"enabled"`
-	Delimiter string `mapstructure:"delimiter"`
+	Delimiter string `mapstructure:"delimiter" validate:"omitempty,len=1,printascii"`
 }
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
 	Enabled            bool   `mapstructure:"enabled"`
-	CSRFSecret         string `mapstructure:"csrf_secret"`
-	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key"`
-	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key"`
+	CSRFSecret         string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumunicode,excludesall= "`
+	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumunicode,excludesall= "`
+	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumunicode,excludesall= ,validateCookieStoreEncKey"`
+}
+
+func validateCookieStoreEncKey(fl validator.FieldLevel) bool {
+	length := len(fl.Field().String())
+
+	return length == 16 || length == 24 || length == 32
 }
 
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.
 type PrometheusTimer struct {
 	Enabled bool     `mapstructure:"enabled"`
-	Labels  []string `mapstructure:"labels"`
+	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns"`
 }
 
 // DefaultHTTPRequestHeader represents the default headers to include in every HTTP request.
 // This struct includes fields for authentication, SSL/TLS, and client/server metadata.
 type DefaultHTTPRequestHeader struct {
-	Username           string `mapstructure:"username"`
-	Password           string `mapstructure:"password"`
-	PasswordEncoded    string `mapstructure:"password_encoded"`
-	Protocol           string `mapstructure:"protocol"`
-	LoginAttempt       string `mapstructure:"login_attempt"`
-	AuthMethod         string `mapstructure:"auth_method"`
-	LocalIP            string `mapstructure:"local_ip"`
-	LocalPort          string `mapstructure:"local_port"`
-	ClientIP           string `mapstructure:"client_ip"`
-	ClientPort         string `mapstructure:"client_port"`
-	ClientHost         string `mapstructure:"client_host"`
-	ClientID           string `mapstructure:"client_id"`
-	SSL                string `mapstructure:"ssl"`
-	SSLSessionID       string `mapstructure:"ssl_session_id"`
-	SSLVerify          string `mapstructure:"ssl_verify"`
-	SSLSubject         string `mapstructure:"ssl_subject"`
-	SSLClientCN        string `mapstructure:"ssl_client_cn"`
-	SSLIssuer          string `mapstructure:"ssl_issuer"`
-	SSLClientNotBefore string `mapstructure:"ssl_client_not_before"`
-	SSLClientNotAfter  string `mapstructure:"ssl_client_not_after"`
-	SSLSubjectDN       string `mapstructure:"ssl_subject_dn"`
-	SSLIssuerDN        string `mapstructure:"ssl_issuer_dn"`
-	SSLClientSubjectDN string `mapstructure:"ssl_client_subject_dn"`
-	SSLClientIssuerDN  string `mapstructure:"ssl_client_issuer_dn"`
-	SSLCipher          string `mapstructure:"ssl_cipher"`
-	SSLProtocol        string `mapstructure:"ssl_protocol"`
-	SSLSerial          string `mapstructure:"ssl_serial"`
-	SSLFingerprint     string `mapstructure:"ssl_fingerprint"`
+	Username           string `mapstructure:"username" validate:"omitempty,printascii,excludesall= "`
+	Password           string `mapstructure:"password" validate:"omitempty,printascii,excludesall= "`
+	PasswordEncoded    string `mapstructure:"password_encoded" validate:"omitempty,printascii,excludesall= "`
+	Protocol           string `mapstructure:"protocol" validate:"omitempty,printascii,excludesall= "`
+	LoginAttempt       string `mapstructure:"login_attempt" validate:"omitempty,printascii,excludesall= "`
+	AuthMethod         string `mapstructure:"auth_method" validate:"omitempty,printascii,excludesall= "`
+	LocalIP            string `mapstructure:"local_ip" validate:"omitempty,printascii,excludesall= "`
+	LocalPort          string `mapstructure:"local_port" validate:"omitempty,printascii,excludesall= "`
+	ClientIP           string `mapstructure:"client_ip" validate:"omitempty,printascii,excludesall= "`
+	ClientPort         string `mapstructure:"client_port" validate:"omitempty,printascii,excludesall= "`
+	ClientHost         string `mapstructure:"client_host" validate:"omitempty,printascii,excludesall= "`
+	ClientID           string `mapstructure:"client_id" validate:"omitempty,printascii,excludesall= "`
+	SSL                string `mapstructure:"ssl" validate:"omitempty,printascii,excludesall= "`
+	SSLSessionID       string `mapstructure:"ssl_session_id" validate:"omitempty,printascii,excludesall= "`
+	SSLVerify          string `mapstructure:"ssl_verify" validate:"omitempty,printascii,excludesall= "`
+	SSLSubject         string `mapstructure:"ssl_subject" validate:"omitempty,printascii,excludesall= "`
+	SSLClientCN        string `mapstructure:"ssl_client_cn" validate:"omitempty,printascii,excludesall= "`
+	SSLIssuer          string `mapstructure:"ssl_issuer" validate:"omitempty,printascii,excludesall= "`
+	SSLClientNotBefore string `mapstructure:"ssl_client_not_before" validate:"omitempty,printascii,excludesall= "`
+	SSLClientNotAfter  string `mapstructure:"ssl_client_not_after" validate:"omitempty,printascii,excludesall= "`
+	SSLSubjectDN       string `mapstructure:"ssl_subject_dn" validate:"omitempty,printascii,excludesall= "`
+	SSLIssuerDN        string `mapstructure:"ssl_issuer_dn" validate:"omitempty,printascii,excludesall= "`
+	SSLClientSubjectDN string `mapstructure:"ssl_client_subject_dn" validate:"omitempty,printascii,excludesall= "`
+	SSLClientIssuerDN  string `mapstructure:"ssl_client_issuer_dn" validate:"omitempty,printascii,excludesall= "`
+	SSLCipher          string `mapstructure:"ssl_cipher" validate:"omitempty,printascii,excludesall= "`
+	SSLProtocol        string `mapstructure:"ssl_protocol" validate:"omitempty,printascii,excludesall= "`
+	SSLSerial          string `mapstructure:"ssl_serial" validate:"omitempty,printascii,excludesall= "`
+	SSLFingerprint     string `mapstructure:"ssl_fingerprint" validate:"omitempty,printascii,excludesall= "`
 }

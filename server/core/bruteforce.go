@@ -307,7 +307,7 @@ func (a *AuthState) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 	}
 
 	key = config.LoadableConfig.Server.Redis.Prefix + "bf:" + fmt.Sprintf(
-		"%d:%d:%d:%s:%s", rule.Period, rule.CIDR, rule.FailedRequests, ipProto, network.String())
+		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
 	logBruteForceRuleRedisKeyDebug(a, rule, network, key)
 
@@ -481,7 +481,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 			definitions.LogKeyMsg, "Increased",
 		)
 
-		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
+		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
@@ -701,7 +701,7 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 	defer stats.RedisWriteCounter.Inc()
 
-	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(config.LoadableConfig.Server.Redis.NegCacheTTL)*time.Second).Err(); err != nil {
+	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
@@ -1127,20 +1127,20 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		}
 	}
 
-	matchedPeriod := uint(0)
+	matchedPeriod := time.Duration(0)
 
 	for _, rule := range config.LoadableConfig.GetBruteForceRules() {
 		if a.BruteForceName != rule.Name {
 			continue
 		}
 
-		matchedPeriod = rule.Period
+		matchedPeriod = rule.Period.Round(time.Second)
 
 		break
 	}
 
 	for _, rule := range config.LoadableConfig.GetBruteForceRules() {
-		if matchedPeriod == 0 || rule.Period >= matchedPeriod {
+		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
 			a.saveBruteForceBucketCounterToRedis(&rule)
 		}
 	}

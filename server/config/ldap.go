@@ -23,8 +23,8 @@ import (
 )
 
 type LDAPSection struct {
-	Config *LDAPConf
-	Search []LDAPSearchProtocol
+	Config *LDAPConf            `mapstructure:"config" validate:"required"`
+	Search []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LDAPSection) String() string {
@@ -59,18 +59,18 @@ type LDAPConf struct {
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 	SASLExternal  bool `mapstructure:"sasl_external"`
 
-	LookupPoolSize     int `mapstructure:"lookup_pool_size"`
-	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size"`
-	AuthPoolSize       int `mapstructure:"auth_pool_size"`
-	AuthIdlePoolSize   int `mapstructure:"auth_idle_pool_size"`
+	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"min=1"`
+	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"min=0"`
+	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"min=1"`
+	AuthIdlePoolSize   int `mapstructure:"auth_idle_pool_size" validate:"min=0"`
 
-	BindDN        string `mapstructure:"bind_dn"`
-	BindPW        string `mapstructure:"bind_pw"`
-	TLSCAFile     string `mapstructure:"tls_ca_cert"`
-	TLSClientCert string `mapstructure:"tls_client_cert"`
-	TLSClientKey  string `mapstructure:"tls_client_key"`
+	BindDN        string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
+	BindPW        string `mapstructure:"bind_pw" validate:"omitempty"`
+	TLSCAFile     string `mapstructure:"tls_ca_cert" validate:"omitempty,file"`
+	TLSClientCert string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
+	TLSClientKey  string `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
-	ServerURIs []string `mapstructure:"server_uri"`
+	ServerURIs []string `mapstructure:"server_uri" validate:"required,dive,uri"`
 }
 
 func (l *LDAPConf) String() string {
@@ -102,35 +102,35 @@ func (l *LDAPConf) String() string {
 }
 
 type LDAPFilter struct {
-	User                string
-	ListAccounts        string `mapstructure:"list_accounts"`
-	WebAuthnCredentials string `mapstructure:"webauthn_credentials"`
+	User                string `mapstructure:"user" validate:"omitempty"`
+	ListAccounts        string `mapstructure:"list_accounts" validate:"omitempty"`
+	WebAuthnCredentials string `mapstructure:"webauthn_credentials" validate:"omitempty"`
 }
 
 type LDAPAttributeMapping struct {
-	AccountField      string `mapstructure:"account_field"`
-	TOTPSecretField   string `mapstructure:"totp_secret_field"`
-	TOTPRecoveryField string `mapstructure:"totp_recovery_field"`
-	DisplayNameField  string `mapstructure:"display_name_field"`
-	CredentialObject  string `mapstructure:"credential_object"`
-	CredentialIDField string `mapstructure:"credential_id_field"`
-	PublicKeyField    string `mapstructure:"public_key_field"`
-	UniqueUserIDField string `mapstructure:"unique_user_id_field"`
-	AAGUIDField       string `mapstructure:"aaguid_field"`
-	SignCountField    string `mapstructure:"sign_count_field"`
+	AccountField      string `mapstructure:"account_field" validate:"required"` // Webauthn is not implemented, yet.
+	TOTPSecretField   string `mapstructure:"totp_secret_field" validate:"omitempty"`
+	TOTPRecoveryField string `mapstructure:"totp_recovery_field" validate:"omitempty"`
+	DisplayNameField  string `mapstructure:"display_name_field" validate:"omitempty"`
+	CredentialObject  string `mapstructure:"credential_object" validate:"omitempty"`
+	CredentialIDField string `mapstructure:"credential_id_field" validate:"omitempty"`
+	PublicKeyField    string `mapstructure:"public_key_field" validate:"omitempty"`
+	UniqueUserIDField string `mapstructure:"unique_user_id_field" validate:"omitempty"`
+	AAGUIDField       string `mapstructure:"aaguid_field" validate:"omitempty"`
+	SignCountField    string `mapstructure:"sign_count_field" validate:"omitempty"`
 }
 
 type LDAPSearchProtocol struct {
-	Protocols []string `mapstructure:"protocol"`
-	CacheName string   `mapstructure:"cache_name"`
-	BaseDN    string   `mapstructure:"base_dn"`
-	Scope     string
+	Protocols []string `mapstructure:"protocol" validate:"required"`
+	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
+	BaseDN    string   `mapstructure:"base_dn" validate:"required,printascii"`
+	Scope     string   `mapstructure:"scope" validate:"omitempty,oneof=base one sub"`
 
-	LDAPFilter           `mapstructure:"filter"`
-	LDAPAttributeMapping `mapstructure:"mapping"`
+	LDAPFilter           `mapstructure:"filter" validate:"required"`
+	LDAPAttributeMapping `mapstructure:"mapping" validate:"required"`
 
 	// LDAP result attributes
-	Attributes []string `mapstructure:"attribute"`
+	Attributes []string `mapstructure:"attribute" validate:"required,dive,printascii,excludesall= "`
 }
 
 // GetAccountField returns the LDAP attribute for an account. It returns a DetailedError, if no value has

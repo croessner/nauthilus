@@ -22,12 +22,12 @@ import (
 )
 
 type LuaSection struct {
-	Actions  []LuaAction
-	Features []LuaFeature
-	Filters  []LuaFilter
-	Hooks    []LuaHooks `mapstructure:"custom_hooks"`
-	Config   *LuaConf
-	Search   []LuaSearchProtocol
+	Actions  []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
+	Features []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
+	Filters  []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
+	Hooks    []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
+	Config   *LuaConf            `mapstructure:"config" validate:"omitempty"`
+	Search   []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LuaSection) String() string {
@@ -57,9 +57,9 @@ func (l *LuaSection) GetProtocols() any {
 var _ GetterHandler = (*LuaSection)(nil)
 
 type LuaAction struct {
-	ActionType string `mapstructure:"type"`
-	ScriptName string `mapstructure:"name"`
-	ScriptPath string `mapstructure:"script_path"`
+	ActionType string `mapstructure:"type" validate:"required,oneof=brute_force rbl tls_encryption relay_domains lua post"`
+	ScriptName string `mapstructure:"name" validate:"required"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
 func (l *LuaAction) String() string {
@@ -85,8 +85,8 @@ func (l *LuaAction) GetAction() (string, string, string) {
 }
 
 type LuaFeature struct {
-	Name       string
-	ScriptPath string `mapstructure:"script_path"`
+	Name       string `mapstructure:"name" validate:"required"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
 func (l *LuaFeature) String() string {
@@ -98,8 +98,8 @@ func (l *LuaFeature) String() string {
 }
 
 type LuaFilter struct {
-	Name       string
-	ScriptPath string `mapstructure:"script_path"`
+	Name       string `mapstructure:"name" validate:"required"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
 func (l *LuaFilter) String() string {
@@ -112,8 +112,8 @@ func (l *LuaFilter) String() string {
 
 type LuaConf struct {
 	PackagePath       string `mapstructure:"package_path"`
-	BackendScriptPath string `mapstructure:"backend_script_path"`
-	InitScriptPath    string `mapstructure:"init_script_path"`
+	BackendScriptPath string `mapstructure:"backend_script_path" validate:"omitempty,file"`
+	InitScriptPath    string `mapstructure:"init_script_path" validate:"omitempty,file"`
 }
 
 func (l *LuaConf) String() string {
@@ -126,7 +126,7 @@ func (l *LuaConf) String() string {
 
 type LuaSearchProtocol struct {
 	Protocols []string `mapstructure:"protocol"`
-	CacheName string   `mapstructure:"cache_name"`
+	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
 }
 
 // GetCacheName returns the Redis cache domain. It returns a DetailedError, if no value has
@@ -140,9 +140,9 @@ func (l *LuaSearchProtocol) GetCacheName() (string, error) {
 }
 
 type LuaHooks struct {
-	Location   string `mapstructure:"http_location"`
-	Method     string `mapstructure:"http_method"`
-	ScriptPath string `mapstructure:"script_path"`
+	Location   string `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
+	Method     string `mapstructure:"http_method" validate:"required,oneof=GET POST PUT DELETE PATCH"`
+	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
 }
 
 func (l *LuaHooks) String() string {
