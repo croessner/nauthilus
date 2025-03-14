@@ -884,12 +884,15 @@ func initializeInstanceInfo() {
 
 // initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
 func initializeHTTPClients() {
-	core.InitHTTPClient()
+	if config.LoadableConfig.Server.Frontend.Enabled {
+		core.InitHTTPClient()
+	}
+
 	backend.InitHTTPClient()
 	action.InitHTTPClient()
-	hook.InitHTTPClient()
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
+	hook.InitHTTPClient()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
