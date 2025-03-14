@@ -35,6 +35,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // The configuration file is briefly documented in the markdown file Configuration-File.md.
@@ -1628,6 +1629,8 @@ func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) e
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
 func (f *File) handleFile() (err error) {
+	var validationErrors validator.ValidationErrors
+
 	if f == nil {
 		return nil
 	}
@@ -1640,27 +1643,56 @@ func (f *File) handleFile() (err error) {
 		return err
 	}
 
+	if EnvConfig.DevMode {
+		dumpConfig(f)
+	}
+
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 
-	if err = validate.Struct(f); err == nil {
-		// Throw away unsupported keys
-		f.Other = nil
+	if err = validate.Struct(f); err != nil {
+		if stderrors.As(err, &validationErrors) {
+			return prettyFormatValidationErrors(validationErrors)
+		}
 
-		return nil
+		return err
 	}
 
-	// Handle validation errors
-	var validationErrors validator.ValidationErrors
-
-	if stderrors.As(err, &validationErrors) {
-		return prettyFormatValidationErrors(validationErrors)
+	if err = f.validate(); err != nil {
+		return err
 	}
 
-	err = f.validate()
+	// Throw away unsupported keys
+	f.Other = nil
 
-	return err
+	return nil
+}
+
+func dumpConfig(f *File) {
+	var intermediateMap map[string]interface{}
+
+	if f == nil {
+		fmt.Println("Config is nil")
+
+		return
+	}
+
+	err := mapstructure.Decode(f, &intermediateMap)
+	if err != nil {
+		fmt.Printf("Failed to convert config to map: %v\n", err)
+
+		return
+	}
+
+	data, err := yaml.Marshal(intermediateMap)
+	if err != nil {
+		fmt.Printf("Failed to PrettyPrint config as YAML: %v\n", err)
+
+		return
+	}
+
+	fmt.Println(string(data))
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.

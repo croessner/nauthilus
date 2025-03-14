@@ -172,6 +172,20 @@ func RequestHandler(ctx *gin.Context) {
 	} else {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
+			disabledEndpointMap := map[string]bool{
+				definitions.ServHeader:    config.LoadableConfig.Server.DisabledEndpoints.AuthHeader,
+				definitions.ServJSON:      config.LoadableConfig.Server.DisabledEndpoints.AuthJSON,
+				definitions.ServBasic:     config.LoadableConfig.Server.DisabledEndpoints.AuthBasic,
+				definitions.ServNginx:     config.LoadableConfig.Server.DisabledEndpoints.AuthNginx,
+				definitions.ServSaslauthd: config.LoadableConfig.Server.DisabledEndpoints.AuthSASLAuthd,
+			}
+
+			if disabledEndpointMap[ctx.Param("service")] {
+				ctx.AbortWithStatus(http.StatusNotFound)
+
+				return
+			}
+
 			auth := NewAuthStateWithSetup(ctx)
 			if auth == nil {
 				ctx.AbortWithStatus(http.StatusBadRequest)
@@ -208,6 +222,12 @@ func RequestHandler(ctx *gin.Context) {
 
 // CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
 func CustomRequestHandler(ctx *gin.Context) {
+	if config.LoadableConfig.Server.DisabledEndpoints.CustomHooks {
+		ctx.AbortWithStatus(http.StatusNotFound)
+
+		return
+	}
+
 	if result, err := hook.RunLuaHook(ctx); err != nil {
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 	} else if result != nil {

@@ -29,11 +29,12 @@ type ServerSection struct {
 	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
+	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
-	Backends                  []*Backend               `mapstructure:"backends" validate:"required"`
+	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
 	Features                  []*Feature               `mapstructure:"features" validate:"omitempty,dive"`
 	BruteForceProtocols       []*Protocol              `mapstructure:"brute_force_protocols" validate:"omitempty,dive"`
 	HydraAdminUrl             string                   `mapstructure:"ory_hydra_admin_url" validate:"omitempty,http_url"`
@@ -45,6 +46,16 @@ type ServerSection struct {
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
+}
+
+// Endpoint defines a structure for configuring various types of authentication and custom hooks.
+type Endpoint struct {
+	AuthHeader    bool `mapstructure:"auth_header"`
+	AuthJSON      bool `mapstructure:"auth_json"`
+	AuthBasic     bool `mapstructure:"auth_basic"`
+	AuthNginx     bool `mapstructure:"auth_nginx"`
+	AuthSASLAuthd bool `mapstructure:"auth_saslauthd"`
+	CustomHooks   bool `mapstructure:"custom_hooks"`
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.
