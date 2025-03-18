@@ -53,8 +53,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-var versionFlag = flag.Bool("version", false, "print version and exit")
-
 // contextTuple represents a tuple that contains a context and a cancel function.
 // This type is used for managing contexts and cancellations in various parts of the application.
 type contextTuple struct {
@@ -99,13 +97,15 @@ func newContextTuple(ctx context.Context) *contextTuple {
 func setupEnvironment() (err error) {
 	config.EnvConfig = config.NewConfig()
 
-	loadLanguageBundles()
-
 	setTimeZone()
 
 	config.LoadableConfig, err = config.NewConfigFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
+	}
+
+	if config.LoadableConfig.Server.Frontend.Enabled {
+		loadLanguageBundles()
 	}
 
 	log.SetupLogging(
@@ -864,6 +864,8 @@ func postEnvironmentDebug() {
 
 // parseFlagsAndPrintVersion parses command-line flags and prints the version information if the "version" flag is set.
 func parseFlagsAndPrintVersion() {
+	var versionFlag = flag.Bool("version", false, "print version and exit")
+
 	flag.Parse()
 
 	if *versionFlag {
@@ -882,12 +884,15 @@ func initializeInstanceInfo() {
 
 // initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
 func initializeHTTPClients() {
-	core.InitHTTPClient()
+	if config.LoadableConfig.Server.Frontend.Enabled {
+		core.InitHTTPClient()
+	}
+
 	backend.InitHTTPClient()
 	action.InitHTTPClient()
-	hook.InitHTTPClient()
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
+	hook.InitHTTPClient()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
