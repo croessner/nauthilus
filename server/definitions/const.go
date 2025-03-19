@@ -1204,6 +1204,27 @@ const (
 	// LuaFnRedisUploadScript represents the function name for uploading a script in Redis.
 	LuaFnRedisUploadScript = "redis_upload_script"
 
+	// LuaFnRedisZAdd represents the Lua function used for the Redis ZADD command for sorted sets.
+	LuaFnRedisZAdd = "redis_zadd"
+
+	// LuaFNRedisZRange represents the Lua function name for retrieving a range of elements from a Redis sorted set.
+	LuaFNRedisZRange = "redis_zrange"
+
+	// LuaFnRedisZRevRange represents the Lua function name for retrieving a reversed range of members from a Redis sorted set.
+	LuaFnRedisZRevRange = "redis_zrevrange"
+
+	// LuaFnRedisZRangeByScore provides functionality to retrieve elements from a Redis sorted set by their score range.
+	LuaFnRedisZRangeByScore = "redis_zrangebyscore"
+
+	// LuaFnRedisZRem represents the Redis ZREM command for removing one or more members from a sorted set.
+	LuaFnRedisZRem = "redis_zrem"
+
+	// LuaFnRedisZRemRangeByScore is a Lua function constant used to remove range of members in a sorted set by their score.
+	LuaFnRedisZRemRangeByScore = "redis_zremrangebyscore"
+
+	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
+	LuaFnRedisZRank = "redis_zrank"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
