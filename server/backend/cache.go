@@ -55,7 +55,7 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 
 	defer stats.RedisReadCounter.Inc()
 
-	accountName, err = rediscli.ReadHandle.HGet(ctx, key, username).Result()
+	accountName, err = rediscli.GetClient().GetReadHandle().HGet(ctx, key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return
@@ -77,7 +77,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCa
 
 	defer stats.RedisReadCounter.Inc()
 
-	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
+	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
 		}
@@ -124,7 +124,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, ttl).Result(); err != nil {
+	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, err,
@@ -201,7 +201,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 	defer stats.RedisReadCounter.Inc()
 
-	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
+	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return nil, err
@@ -238,7 +238,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 	defer stats.RedisWriteCounter.Inc()
 
 	//nolint:lll // Ignore
-	if result, err = rediscli.WriteHandle.Set(ctx, key, redisValue, ttl).Result(); err != nil {
+	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 	}
 

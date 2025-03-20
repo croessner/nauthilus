@@ -40,7 +40,7 @@ import (
 //	redis.sadd("myset", "value1", "value2", 123, true)
 func RedisSAdd(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 		values := make([]any, L.GetTop()-2)
 
@@ -103,7 +103,7 @@ func RedisSAdd(ctx context.Context) lua.LGFunction {
 //	end
 func RedisSIsMember(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		value, err := convert.LuaValue(L.Get(3))
@@ -157,7 +157,7 @@ func RedisSIsMember(ctx context.Context) lua.LGFunction {
 // and it increments the RedisReadCounter to track the read operation.
 func RedisSMembers(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisReadCounter.Inc()
@@ -197,7 +197,7 @@ func RedisSMembers(ctx context.Context) lua.LGFunction {
 //     of removed elements.
 func RedisSRem(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 		values := make([]any, L.GetTop()-2)
 
@@ -242,7 +242,7 @@ func RedisSRem(ctx context.Context) lua.LGFunction {
 // local count = redis_scard("myset")
 func RedisSCard(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisReadCounter.Inc()

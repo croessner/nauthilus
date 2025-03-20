@@ -68,7 +68,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for _, counterType := range []string{definitions.LabelSuccess, definitions.LabelFailure} {
-		if redisValue, err = rediscli.ReadHandle.HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
+		if redisValue, err = rediscli.GetClient().GetReadHandle().HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
 			if errors.Is(err, redis.Nil) {
 				level.Info(log.Logger).Log(definitions.LogKeyMsg, "No statistics on Redis server")
 
@@ -99,7 +99,7 @@ func SaveStatsToRedis(ctx context.Context) {
 	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
 
 	for index := range metrics {
-		if err = rediscli.WriteHandle.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
+		if err = rediscli.GetClient().GetWriteHandle().HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 			return
@@ -120,11 +120,11 @@ func UpdateRedisPoolStats() {
 
 	for range ticker.C {
 		redisStatsMap := map[string]*redis.PoolStats{
-			"default_rw": rediscli.WriteHandle.PoolStats(),
+			"default_rw": rediscli.GetClient().GetWriteHandle().PoolStats(),
 		}
 
-		if rediscli.WriteHandle != rediscli.ReadHandle {
-			redisStatsMap["default_ro"] = rediscli.ReadHandle.PoolStats()
+		if rediscli.GetClient().GetWriteHandle() != rediscli.GetClient().GetReadHandle() {
+			redisStatsMap["default_ro"] = rediscli.GetClient().GetReadHandle().PoolStats()
 		}
 
 		for _, redisStats := range redislib.GetStandaloneStats() {

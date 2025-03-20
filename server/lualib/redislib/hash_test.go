@@ -88,7 +88,7 @@ func TestRedisHGet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("field", lua.LString(tt.field))
@@ -168,7 +168,7 @@ func TestRedisHSet(t *testing.T) {
 				tt.prepareMockRedis(mock)
 			}
 
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -257,7 +257,7 @@ func TestRedisHDel(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			for index, field := range tt.fields {
@@ -335,7 +335,7 @@ func TestRedisHLen(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -416,7 +416,7 @@ func TestRedisHGetAll(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -516,7 +516,7 @@ func TestRedisHIncrBy(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("field", lua.LString(tt.field))
@@ -609,7 +609,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("field", lua.LString(tt.field))
@@ -698,7 +698,7 @@ func TestRedisHExists(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("field", lua.LString(tt.field))

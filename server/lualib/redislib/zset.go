@@ -15,7 +15,7 @@ func RedisZAdd(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		const errorMsg = "Expected a table of string-number pairs"
 
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 
 		key := L.CheckString(2)
 		values := L.CheckTable(3)
@@ -86,7 +86,7 @@ func parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string
 // It pushes the resulting table or an error to the Lua state stack.
 func RedisZRange(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		start := int64(L.CheckNumber(3))
@@ -116,7 +116,7 @@ func RedisZRange(ctx context.Context) lua.LGFunction {
 // RedisZRevRange retrieves a range of elements from a sorted set in reverse order based on their indices.
 func RedisZRevRange(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		start := int64(L.CheckNumber(3))
@@ -148,7 +148,7 @@ func RedisZRevRange(ctx context.Context) lua.LGFunction {
 // Returns a Lua table with the matching elements or an error message if the operation fails.
 func RedisZRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		minScore := L.CheckString(3)    // The minimum score (e.g., "-inf" or a numeric value)
@@ -200,7 +200,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var members []any
 
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 
 		key := L.CheckString(2)
 		membersTable := L.CheckTable(3) // Lua table containing the members to remove
@@ -236,7 +236,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 // Returns the count of removed elements or an error if the operation fails.
 func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 
 		key := L.CheckString(2)      // The key of the sorted set
 		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
@@ -263,7 +263,7 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 // Requires the context, key, and member as inputs.
 func RedisZRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		member := L.CheckString(3) // The member whose rank needs to be retrieved

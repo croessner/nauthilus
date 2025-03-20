@@ -93,7 +93,7 @@ func TestRedisSAdd(t *testing.T) {
 			}
 
 			tt.setupMock(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -176,7 +176,7 @@ func TestRedisSIsMember(t *testing.T) {
 			}
 
 			tt.setupMock(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("value", convert.GoToLuaValue(L, tt.value))
@@ -250,7 +250,7 @@ func TestRedisSMembers(t *testing.T) {
 			}
 
 			tt.setupMock(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -340,7 +340,7 @@ func TestRedisSRem(t *testing.T) {
 			}
 
 			tt.setupMock(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -419,7 +419,7 @@ func TestRedisSCard(t *testing.T) {
 			}
 
 			tt.setupMock(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 

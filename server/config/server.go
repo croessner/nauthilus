@@ -128,7 +128,8 @@ type Master struct {
 
 // Replica represents the configuration for a Redis replica instance.
 type Replica struct {
-	Address string `mapstructure:"address" validate:"omitempty,hostname_port"`
+	Address   string   `mapstructure:"address" validate:"omitempty,hostname_port"`
+	Addresses []string `mapstructure:"addresses" validate:"omitempty,dive,hostname_port"`
 }
 
 // Sentinels represents the configuration for Redis Sentinel.

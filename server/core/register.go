@@ -780,7 +780,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
+			if _, err = rediscli.GetClient().GetWriteHandle().Del(ctx, userKey).Result(); err != nil {
 				stats.RedisWriteCounter.Inc()
 
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)

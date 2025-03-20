@@ -95,7 +95,7 @@ func TestRedisZAdd(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			zSet := make([]redis.Z, 0)
 
@@ -243,7 +243,7 @@ func TestRedisZRange(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			if tt.setupMock != nil {
 				tt.setupMock(mock, tt.key, tt.start, tt.stop)
@@ -361,7 +361,7 @@ func TestRedisZRevRange(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			if tt.setupMock != nil {
 				tt.setupMock(mock, tt.key, tt.start, tt.stop)
@@ -521,7 +521,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			opts := redis.ZRangeBy{
 				Min:    tt.minScore,
@@ -686,7 +686,7 @@ func TestRedisZRem(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			var members []any
 
@@ -794,7 +794,7 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			if tt.setupMock != nil {
 				tt.setupMock(mock, tt.key, tt.minScore, tt.maxScore)
@@ -891,7 +891,7 @@ func TestRedisZRank(t *testing.T) {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
 
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			if tt.setupMock != nil {
 				tt.setupMock(mock, tt.key, tt.member)

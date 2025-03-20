@@ -72,7 +72,7 @@ func TestRedisGet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("valueType", lua.LString(tt.valueType))
@@ -155,7 +155,7 @@ func TestRedisSet(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("value", tt.value)
@@ -235,7 +235,7 @@ func TestRedisExpire(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 			L.SetGlobal("expiration", tt.expiration)
@@ -310,7 +310,7 @@ func TestRedisIncr(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -384,7 +384,7 @@ func TestRedisDel(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("key", lua.LString(tt.key))
 
@@ -462,7 +462,7 @@ func TestRedisRename(t *testing.T) {
 			}
 
 			tt.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L.SetGlobal("oldKey", lua.LString(tt.oldKey))
 			L.SetGlobal("newKey", lua.LString(tt.newKey))
@@ -528,7 +528,7 @@ func TestPing(t *testing.T) {
 
 			tt.prepareMockRedis(mock)
 
-			rediscli.ReadHandle = db
+			rediscli.NewTestClient(db)
 
 			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_ping("default")`)
 			if err != nil {

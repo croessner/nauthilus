@@ -370,11 +370,7 @@ func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTupl
 
 // stopAndRestartRedis gracefully stops the Redis read and write clients, then reinitializes the Redis setup.
 func stopAndRestartRedis(ctx context.Context) {
-	rediscli.WriteHandle.Close()
-
-	if rediscli.ReadHandle != rediscli.WriteHandle {
-		rediscli.ReadHandle.Close()
-	}
+	rediscli.GetClient().Close()
 
 	setupRedis(ctx)
 }
@@ -569,19 +565,19 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 
 // checkRedisConnections validates the availability of both write and read Redis connections using Ping commands.
 func checkRedisConnections(ctx context.Context) bool {
-	if rediscli.WriteHandle == nil {
+	if rediscli.GetClient().GetWriteHandle() == nil {
 		return false
 	}
 
-	if err := rediscli.WriteHandle.Ping(ctx).Err(); err != nil {
+	if err := rediscli.GetClient().GetWriteHandle().Ping(ctx).Err(); err != nil {
 		return false
 	}
 
-	if rediscli.ReadHandle == nil {
+	if rediscli.GetClient().GetReadHandle() == nil {
 		return false
 	}
 
-	if err := rediscli.ReadHandle.Ping(ctx).Err(); err != nil {
+	if err := rediscli.GetClient().GetReadHandle().Ping(ctx).Err(); err != nil {
 		return false
 	}
 
@@ -592,13 +588,6 @@ func checkRedisConnections(ctx context.Context) bool {
 func setupRedis(ctx context.Context) {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
-
-	rediscli.WriteHandle = rediscli.NewRedisClient()
-	rediscli.ReadHandle = rediscli.NewRedisReplicaClient()
-
-	if rediscli.ReadHandle == nil {
-		rediscli.ReadHandle = rediscli.WriteHandle
-	}
 
 	// Retry mechanism to ensure the Redis connections are usable
 	maxRetries := 10
