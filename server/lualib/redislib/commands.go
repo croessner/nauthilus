@@ -32,7 +32,7 @@ import (
 // Example usage: val = redis_get_str("mykey")
 func RedisGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 		valueType := definitions.TypeString
 
@@ -61,7 +61,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 func RedisSet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		expiration := time.Duration(0)
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		value, err := convert.LuaValue(L.Get(3))
@@ -99,7 +99,7 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 // Example usage: val = redis_incr("counter")
 func RedisIncr(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisWriteCounter.Inc()
@@ -124,7 +124,7 @@ func RedisIncr(ctx context.Context) lua.LGFunction {
 // The function expects one argument: the key to delete.
 func RedisDel(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisWriteCounter.Inc()
@@ -150,7 +150,7 @@ func RedisDel(ctx context.Context) lua.LGFunction {
 // Example usage: result = redis_expire("mykey", 60)
 func RedisExpire(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 		expiration := L.CheckNumber(3)
 
@@ -176,7 +176,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 // If an error occurs, it returns nil and the error message as a Lua string.
 func RedisRename(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		oldKey := L.CheckString(2)
 		newKey := L.CheckString(3)
 
@@ -199,7 +199,7 @@ func RedisRename(ctx context.Context) lua.LGFunction {
 // RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
 func RedisPing(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
 		defer stats.RedisReadCounter.Inc()
 

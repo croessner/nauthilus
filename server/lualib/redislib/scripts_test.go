@@ -53,7 +53,7 @@ func TestRedisRunScript(t *testing.T) {
 			}
 
 			tc.prepareMockRedis(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L := lua.NewState()
 
@@ -143,7 +143,7 @@ func TestRedisUploadScript(t *testing.T) {
 			}
 
 			tc.prepareRedisUpload(mock)
-			rediscli.WriteHandle = db
+			rediscli.NewTestClient(db)
 
 			L := lua.NewState()
 

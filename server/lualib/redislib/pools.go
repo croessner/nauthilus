@@ -50,6 +50,12 @@ type ConfigValues struct {
 	// MasterName specifies the name of the Redis master for Sentinel-based Redis failover setups.
 	MasterName string
 
+	// SentinelUsername specifies the username used to authenticate with Redis Sentinel servers.
+	SentinelUsername string
+
+	// SentinelPassword specifies the password used for authenticating with Redis Sentinel servers.
+	SentinelPassword string
+
 	// Username specifies the username required for authenticating with the Redis server.
 	Username string
 
@@ -110,6 +116,8 @@ func getConfigValues(conf *lua.LTable) *ConfigValues {
 
 	configValues.Address = getStringValue(conf, "address")
 	configValues.MasterName = getStringValue(conf, "master_name")
+	configValues.SentinelUsername = getStringValue(conf, "sentinel_username")
+	configValues.SentinelPassword = getStringValue(conf, "sentinel_password")
 	configValues.Username = getStringValue(conf, "username")
 	configValues.Password = getStringValue(conf, "password")
 
@@ -185,15 +193,17 @@ func newRedisClient(conf *ConfigValues) *redis.Client {
 // newRedisFailoverClient creates a new Redis failover client using the provided configuration and read replica flag.
 func newRedisFailoverClient(conf *ConfigValues, readReplica bool) *redis.Client {
 	return redis.NewFailoverClient(&redis.FailoverOptions{
-		MasterName:    conf.MasterName,
-		SentinelAddrs: conf.Addresses,
-		Username:      conf.Username,
-		Password:      conf.Password,
-		DB:            conf.DB,
-		PoolSize:      conf.PoolSize,
-		MinIdleConns:  conf.MinIdleConns,
-		TLSConfig:     rediscli.RedisTLSOptions(conf.RedisTLS),
-		ReplicaOnly:   readReplica,
+		MasterName:       conf.MasterName,
+		SentinelAddrs:    conf.Addresses,
+		SentinelUsername: conf.SentinelUsername,
+		SentinelPassword: conf.SentinelPassword,
+		Username:         conf.Username,
+		Password:         conf.Password,
+		DB:               conf.DB,
+		PoolSize:         conf.PoolSize,
+		MinIdleConns:     conf.MinIdleConns,
+		TLSConfig:        rediscli.RedisTLSOptions(conf.RedisTLS),
+		ReplicaOnly:      readReplica,
 	})
 }
 

@@ -320,7 +320,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 
 	defer stats.RedisReadCounter.Inc()
 
-	if length, err := rediscli.ReadHandle.HLen(a.HTTPClientContext, key).Result(); err != nil {
+	if length, err := rediscli.GetClient().GetReadHandle().HLen(a.HTTPClientContext, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
@@ -355,7 +355,7 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 
 	defer stats.RedisReadCounter.Inc()
 
-	if passwordHistory, err := rediscli.ReadHandle.HGetAll(a.HTTPClientContext, key).Result(); err != nil {
+	if passwordHistory, err := rediscli.GetClient().GetReadHandle().HGetAll(a.HTTPClientContext, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
@@ -460,7 +460,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, a.GUID, "incr_key", keys[index])
 
 		// We can increment a key/value, even it never existed before.
-		if err := rediscli.WriteHandle.HIncrBy(
+		if err := rediscli.GetClient().GetWriteHandle().HIncrBy(
 			a.HTTPClientContext,
 			keys[index],
 			util.GetHash(util.PreparePassword(a.Password)), 1,
@@ -481,7 +481,7 @@ func (a *AuthState) saveFailedPasswordCounterInRedis() {
 			definitions.LogKeyMsg, "Increased",
 		)
 
-		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, keys[index], config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
+		if err := rediscli.GetClient().GetWriteHandle().Expire(a.HTTPClientContext, keys[index], config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 
@@ -503,7 +503,7 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 
 	defer stats.RedisReadCounter.Inc()
 
-	if redisValue, err = rediscli.ReadHandle.Get(ctx, key).Bytes(); err != nil {
+	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
 		if stderrors.Is(err, redis.Nil) {
 			return nil
 		}
@@ -564,14 +564,14 @@ func (a *AuthState) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 		if a.BruteForceName != rule.Name {
 			defer stats.RedisWriteCounter.Inc()
 
-			if err := rediscli.WriteHandle.Incr(a.HTTPClientContext, key).Err(); err != nil {
+			if err := rediscli.GetClient().GetWriteHandle().Incr(a.HTTPClientContext, key).Err(); err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			}
 		}
 
 		defer stats.RedisWriteCounter.Inc()
 
-		if err := rediscli.WriteHandle.Expire(a.HTTPClientContext, key, time.Duration(rule.Period)*time.Second).Err(); err != nil {
+		if err := rediscli.GetClient().GetWriteHandle().Expire(a.HTTPClientContext, key, rule.Period).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 	}
@@ -588,7 +588,7 @@ func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 	} else {
 		defer stats.RedisWriteCounter.Inc()
 
-		if err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, network.String(), a.BruteForceName).Err(); err != nil {
+		if err = rediscli.GetClient().GetWriteHandle().HSet(a.HTTPClientContext, key, network.String(), a.BruteForceName).Err(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 		}
 	}
@@ -611,7 +611,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 	} else {
 		defer stats.RedisReadCounter.Inc()
 
-		if ruleName, err = rediscli.ReadHandle.HGet(a.HTTPClientContext, key, network.String()).Result(); err != nil {
+		if ruleName, err = rediscli.GetClient().GetReadHandle().HGet(a.HTTPClientContext, key, network.String()).Result(); err != nil {
 			if !stderrors.Is(err, redis.Nil) {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			}
@@ -643,7 +643,7 @@ func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleNam
 		} else {
 			defer stats.RedisWriteCounter.Inc()
 
-			if removed, err := rediscli.WriteHandle.HDel(a.HTTPClientContext, key, network.String()).Result(); err != nil {
+			if removed, err := rediscli.GetClient().GetWriteHandle().HDel(a.HTTPClientContext, key, network.String()).Result(); err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 			} else {
 				if removed > 0 {
@@ -679,7 +679,7 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 	defer stats.RedisReadCounter.Inc()
 
-	alreadyLearned, err = rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, a.ClientIP).Result()
+	alreadyLearned, err = rediscli.GetClient().GetReadHandle().SIsMember(a.HTTPClientContext, key, a.ClientIP).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
@@ -695,13 +695,13 @@ func (a *AuthState) processPWHist() (accountName string) {
 
 	defer stats.RedisWriteCounter.Inc()
 
-	if err = rediscli.WriteHandle.SAdd(a.HTTPClientContext, key, a.ClientIP).Err(); err != nil {
+	if err = rediscli.GetClient().GetWriteHandle().SAdd(a.HTTPClientContext, key, a.ClientIP).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
 	defer stats.RedisWriteCounter.Inc()
 
-	if err = rediscli.WriteHandle.Expire(a.HTTPClientContext, key, config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
+	if err = rediscli.GetClient().GetWriteHandle().Expire(a.HTTPClientContext, key, config.LoadableConfig.Server.Redis.NegCacheTTL).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 
@@ -720,7 +720,7 @@ func (a *AuthState) updateAffectedAccount() {
 
 	defer stats.RedisReadCounter.Inc()
 
-	if err := rediscli.ReadHandle.SIsMember(a.HTTPClientContext, key, accountName).Err(); err != nil {
+	if err := rediscli.GetClient().GetReadHandle().SIsMember(a.HTTPClientContext, key, accountName).Err(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 
@@ -730,7 +730,7 @@ func (a *AuthState) updateAffectedAccount() {
 
 	defer stats.RedisWriteCounter.Inc()
 
-	if err := rediscli.WriteHandle.SAdd(a.HTTPClientContext, key, accountName).Err(); err != nil {
+	if err := rediscli.GetClient().GetWriteHandle().SAdd(a.HTTPClientContext, key, accountName).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
 	}
 

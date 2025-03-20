@@ -239,7 +239,7 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 
 	defer stats.RedisReadCounter.Inc()
 
-	ipAddresses, err := rediscli.ReadHandle.HGetAll(ctx, key).Result()
+	ipAddresses, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
@@ -285,7 +285,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 	defer stats.RedisReadCounter.Inc()
 
-	accounts, err := rediscli.ReadHandle.SMembers(ctx, key).Result()
+	accounts, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
@@ -325,7 +325,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 			var accountIPs []string
 
 			key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisPWHistIPsKey + ":" + account
-			if accountIPs, err = rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
+			if accountIPs, err = rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 				stats.RedisReadCounter.Inc()
 
 				if !stderrors.Is(err, redis.Nil) {
@@ -500,7 +500,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	// Remove PW_HIST_SET from Redis
 	key := getPWHistIPsRedisKey(accountName)
-	if result, err = rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
+	if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if result > 0 {
@@ -512,7 +512,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	// Remove an account from AFFECTED_ACCOUNTS
 	key = config.LoadableConfig.Server.Redis.Prefix + definitions.RedisAffectedAccountsKey
-	if result, err = rediscli.WriteHandle.SRem(ctx, key, accountName).Result(); err != nil {
+	if result, err = rediscli.GetClient().GetWriteHandle().SRem(ctx, key, accountName).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if result > 0 {
@@ -530,7 +530,7 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 
 	key := getPWHistIPsRedisKey(accountName)
 
-	if result, err := rediscli.ReadHandle.SMembers(ctx, key).Result(); err != nil {
+	if result, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			return nil, err
 		}
@@ -600,9 +600,9 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	defer stats.RedisWriteCounter.Inc()
 
 	if removeHash {
-		err = rediscli.WriteHandle.Del(ctx, redisKey).Err()
+		err = rediscli.GetClient().GetWriteHandle().Del(ctx, redisKey).Err()
 	} else {
-		err = rediscli.WriteHandle.HDel(ctx, redisKey, userCmd.User).Err()
+		err = rediscli.GetClient().GetWriteHandle().HDel(ctx, redisKey, userCmd.User).Err()
 	}
 
 	if err != nil {
@@ -612,7 +612,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	}
 
 	for _, userKey := range userKeys.GetStringSlice() {
-		if result, err = rediscli.WriteHandle.Del(ctx, userKey).Result(); err != nil {
+		if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, userKey).Result(); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 			return removedKeys
@@ -750,7 +750,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 			}
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
-				if result, err := rediscli.WriteHandle.Del(ctx, key).Result(); err != nil {
+				if result, err := rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
 					stats.RedisWriteCounter.Inc()
 
 					ruleFlushError = true

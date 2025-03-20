@@ -2195,7 +2195,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		defer stats.RedisWriteCounter.Inc()
 
-		err = rediscli.WriteHandle.HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
+		err = rediscli.GetClient().GetWriteHandle().HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
 	}
 
 	return

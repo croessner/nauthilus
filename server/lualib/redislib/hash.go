@@ -38,7 +38,7 @@ import (
 // If the operation is successful, it increments a Redis read counter and returns 1.
 func RedisHGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
@@ -82,7 +82,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 2 {
@@ -137,7 +137,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 1 {
@@ -166,7 +166,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 //
 // The function works as follows:
 //  1. It retrieves the first argument from the Lua state, anticipated to be a string representing the key of a Redis hash.
-//  2. It interacts with the Redis ReadHandle to get the length of the Hash (HLen function) associated with the given key.
+//  2. It interacts with the Redis GetClient().GetReadHandle() to get the length of the Hash (HLen function) associated with the given key.
 //     The operation is processed synchronously, and the result is read back. Since the operation can throw an error,
 //     the function also listens for any potential errors thrown by Redis.
 //  3. If an error takes place, the function pushes a nil value and the error into the Lua stack then returns with a value of 2 representing two returned values.
@@ -176,7 +176,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 // rather than the actual results of the Redis HLen operation.
 func RedisHLen(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisReadCounter.Inc()
@@ -199,7 +199,7 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 // which contains the key for the database record it needs to search for, as an argument. It uses the CheckString(1)
 // method on the Lua state object to extract the required key.
 // It then tries to retrieve the record associated with that key from the database using the HGetAll(ctx, key).Result() method
-// on the ReadHandle object of the rediscli.
+// on the GetClient().GetReadHandle() object of the rediscli.
 //
 // In case of an error during the database operation, it pushes the nil value and the error message onto the Lua stack
 // and return 2 (to represent two return values: nil and the error message), quitting the function.
@@ -212,7 +212,7 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 // the database records), thereby ending the function.
 func RedisHGetAll(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.RedisReadCounter.Inc()
@@ -260,7 +260,7 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 // the Lua stack.
 func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := L.CheckInt64(4)
@@ -283,14 +283,14 @@ func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 
 // RedisHIncrByFloat increments the value of a hash field by the provided floating-point increment.
 // It retrieves a string `key`, a hash field `field`, and a floating-point `increment` from the Lua state.
-// The function uses `rediscli.WriteHandle.HIncrByFloat` to handle the increment operation.
+// The function uses `rediscli.GetClient().GetWriteHandle().HIncrByFloat` to handle the increment operation.
 // If the operation is successful, it returns the new value as a Lua number.
 // If an error occurs, it returns nil and an error message as Lua strings.
 // The function is designed to be called from Lua scripts and uses the provided Lua state `L`.
 // Example usage: `result = redis_hincrby_float("mykey", "myfield", 0.5)`.
 func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.WriteHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := float64(L.CheckNumber(4))
@@ -313,7 +313,7 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 
 // RedisHExists is a function that checks if the given field exists in the Redis hash stored at a key.
 // It accepts two flags, 'key' and 'field' to define the location of the data.
-// This function interacts with the Redis instance through the ReadHandle.
+// This function interacts with the Redis instance through the GetClient().GetReadHandle().
 // If an error occurs during the operation, the Lua state is pushed with 'nil' and the error message.
 // If the operation is successful, the Lua state is pushed with either LTrue or LFalse, indicating the existence of the given field.
 //
@@ -326,7 +326,7 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 //	int: The status of the operation. If an error occurs, 2 is returned, otherwise 1.
 func RedisHExists(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.ReadHandle)
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 
