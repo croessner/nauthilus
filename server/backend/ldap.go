@@ -1013,7 +1013,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
-	if config.EnvConfig.DevMode {
+	if config.GetEnvironment().DevMode {
 		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
 	}
 

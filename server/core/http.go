@@ -571,7 +571,7 @@ func setupSessionStore() sessions.Store {
 
 // setupHTTPServer is a function that configures and returns an http.Server instance.
 // It takes a *gin.Engine router as input and sets the router as the HTTP handler for the server.
-// The function sets the server's address, idle timeout, read timeout, read header timeout, and write timeout based on the values from the config.EnvConfig struct.
+// The function sets the server's address, idle timeout, read timeout, read header timeout, and write timeout based on the values from the config.environment struct.
 //
 // Usage:
 // router := gin.New()
@@ -732,7 +732,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 // - router: a pointer to a gin.Engine instance, which represents the Gin router.
 //
 // This function creates a group in the router with the path "/api/v1".
-// If the configuration value "UseBasicAuth" in the EnvConfig struct is set to true,
+// If the configuration value "UseBasicAuth" in the environment struct is set to true,
 // it adds a middleware to the group that implements basic authentication.
 //
 // It then adds three endpoints to the group:
@@ -1019,7 +1019,7 @@ func HTTPApp(ctx context.Context) {
 
 	webAuthn, err = setupWebAuthn()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from EnvConfig", definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
 
 		os.Exit(-1)
 	}

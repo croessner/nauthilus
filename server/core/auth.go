@@ -586,7 +586,7 @@ func (a *AuthState) String() string {
 		case "GUID":
 			continue
 		case "Password":
-			if config.EnvConfig.DevMode {
+			if config.GetEnvironment().DevMode {
 				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
 				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)
@@ -1025,14 +1025,14 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 	} else {
 		switch auth.Protocol.Get() {
 		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", config.EnvConfig.SMTPBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.SMTPBackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().SMTPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().SMTPBackendPort))
 		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", config.EnvConfig.IMAPBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.IMAPBackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().IMAPBackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().IMAPBackendPort))
 		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", config.EnvConfig.POP3BackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.EnvConfig.POP3BackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().POP3BackendAddress)
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().POP3BackendPort))
 		}
 	}
 }
@@ -1140,7 +1140,7 @@ func handleLogging(ctx *gin.Context, auth *AuthState) {
 
 // increaseLoginAttempts increments the number of login attempts for the AuthState object.
 // If the number of login attempts exceeds the maximum value allowed (MaxUint8), it sets it to the maximum value.
-// If the AuthState service is equal to ServNginx and the number of login attempts is less than the maximum login attempts specified in the environment configuration,
+// If the AuthState service is equal to ServNginx and the number of login attempts is less than the maximum login attempts specified in the GetEnvironment() configuration,
 // it increments the number of login attempts by one.
 // The usage example of this method can be found in the AuthFail function.
 func (a *AuthState) increaseLoginAttempts() {
@@ -1149,7 +1149,7 @@ func (a *AuthState) increaseLoginAttempts() {
 	}
 
 	if a.Service == definitions.ServNginx {
-		if a.LoginAttempts < uint(config.EnvConfig.MaxLoginAttempts) {
+		if a.LoginAttempts < uint(config.GetEnvironment().MaxLoginAttempts) {
 			a.LoginAttempts++
 		}
 	}
@@ -1202,7 +1202,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 }
 
 // loginAttemptProcessing performs processing for a failed login attempt.
-// It checks the verbosity level in the environment configuration and logs the failed login attempt if it is greater than LogLevelWarn.
+// It checks the verbosity level in the GetEnvironment() configuration and logs the failed login attempt if it is greater than LogLevelWarn.
 // It then increments the LoginsCounter with the LabelFailure.
 //
 // Example usage:
@@ -1960,7 +1960,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.EnvConfig.LocalCacheAuthTTL)
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().LocalCacheAuthTTL)
 		}
 
 		authResult = definitions.AuthResultOK
@@ -2586,7 +2586,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	}
 
 	if a.ClientHost == "" {
-		// Fallback to environment variable
+		// Fallback to GetEnvironment() variable
 		a.ClientHost = ctx.GetHeader(config.LoadableConfig.GetClientHost())
 	}
 

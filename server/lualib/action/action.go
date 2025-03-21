@@ -88,7 +88,7 @@ type Worker struct {
 	// ctx is a pointer to a Context object used for managing and carrying context deadlines, cancel signals, and other request-scoped values across API boundaries and between processes.
 	ctx context.Context
 
-	// luaActionRequest is a pointer to an Action. This specifies the action to be performed by the Lua scripting environment.
+	// luaActionRequest is a pointer to an Action. This specifies the action to be performed by the Lua scripting GetEnvironment().
 	luaActionRequest *Action
 
 	// actionScripts is a slice of pointers to LuaScriptAction. This holds a collection of scripts that are to be executed by the worker process.
@@ -219,12 +219,12 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 }
 
 // registerDynamicLoader registers a dynamic loader function in the Lua state. The dynamic loader function
-// is called when a Lua module is required or imported, and it loads the module into the Lua environment.
+// is called when a Lua module is required or imported, and it loads the module into the Lua GetEnvironment().
 // The function takes the Lua state and an HTTP request as input parameters. It creates a new Lua function
 // that acts as the dynamic loader. The dynamic loader function checks if the module name is already present
 // in the registry. If it is, the function returns. Otherwise, it registers common Lua libraries, such as
 // lualib.RegisterCommonLuaLibraries, in the Lua state and calls the worker's registerModule method to register
-// the module in the Lua environment. Finally, it sets the global variable "dynamic_loader" to the created
+// the module in the Lua GetEnvironment(). Finally, it sets the global variable "dynamic_loader" to the created
 // dynamic loader function.
 //
 // Note that this documentation assumes familiarity with the Lua programming language and its module system.
@@ -368,7 +368,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
-	if config.EnvConfig.DevMode {
+	if config.GetEnvironment().DevMode {
 		util.DebugModule(definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 

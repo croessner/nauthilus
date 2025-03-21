@@ -646,7 +646,7 @@ func (f *File) HaveServer() bool {
 }
 
 /*
- * Generic EnvConfig mapping
+ * Generic environment mapping
  */
 
 // RetrieveGetterMap returns a map associating each supported backend with its corresponding GetterHandler implementation.
@@ -1643,7 +1643,7 @@ func (f *File) handleFile() (err error) {
 		return err
 	}
 
-	if EnvConfig.DevMode {
+	if environment.DevMode {
 		dumpConfig(f)
 	}
 
@@ -1750,7 +1750,7 @@ func bindEnvs(i any, parts ...string) error {
 func NewConfigFile() (newCfg *File, err error) {
 	newCfg = &File{}
 
-	viper.SetConfigName("nauthilus") // name of EnvConfig file (without extension)
+	viper.SetConfigName("nauthilus") // name of environment file (without extension)
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("/usr/local/etc/nauthilus/")
 	viper.AddConfigPath("/etc/nauthilus/")

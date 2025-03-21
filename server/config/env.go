@@ -26,12 +26,21 @@ import (
 	"github.com/spf13/viper"
 )
 
-// EnvConfig represents the environment configuration for the application
-// It is a pointer to Config type
-var EnvConfig *Config //nolint:gochecknoglobals // System wide configuration
+// environment represents the environment configuration for the application
+// It is a pointer to the Environment type
+var environment *Environment //nolint:gochecknoglobals // System wide configuration
 
-// Config represents overall configuration settings for the application.
-type Config struct {
+// GetEnvironment returns the singleton instance of the Environment configuration. Panics if the environment is uninitialized.
+func GetEnvironment() *Environment {
+	if environment == nil {
+		panic("environment not initialized")
+	}
+
+	return environment
+}
+
+// Environment represents overall configuration settings for the application.
+type Environment struct {
 	// SMTPBackendAddress is the address of the SMTP backend server.
 	SMTPBackendAddress string
 
@@ -222,14 +231,14 @@ func setDefaultEnvVars() {
 }
 
 // String returns the name of the Config object excluding the HTTPOptions.
-func (c *Config) String() string {
+func (env *Environment) String() string {
 	var result string
 
-	if c == nil {
+	if env == nil {
 		return "<nil>"
 	}
 
-	value := reflect.ValueOf(*c)
+	value := reflect.ValueOf(*env)
 	typeOfValue := value.Type()
 
 	for index := 0; index < value.NumField(); index++ {
@@ -252,14 +261,14 @@ func (c *Config) String() string {
 // RedisPort, RedisDB, RedisUsername, RedisPassword, RedisAddressRO, RedisPortRO, RedisPrefix, RedisPosCacheTTL,
 // RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
 // and DevMode.
-func (c *Config) setConfigFromEnvVars() {
-	c.SMTPBackendAddress = viper.GetString("smtp_backend_address")
-	c.SMTPBackendPort = viper.GetInt("smtp_backend_port")
-	c.IMAPBackendAddress = viper.GetString("imap_backend_address")
-	c.IMAPBackendPort = viper.GetInt("imap_backend_port")
-	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
-	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
-	c.DevMode = viper.GetBool("developer_mode")
+func (env *Environment) setConfigFromEnvVars() {
+	env.SMTPBackendAddress = viper.GetString("smtp_backend_address")
+	env.SMTPBackendPort = viper.GetInt("smtp_backend_port")
+	env.IMAPBackendAddress = viper.GetString("imap_backend_address")
+	env.IMAPBackendPort = viper.GetInt("imap_backend_port")
+	env.POP3BackendAddress = viper.GetString("pop3_backend_address")
+	env.POP3BackendPort = viper.GetInt("pop3_backend_port")
+	env.DevMode = viper.GetBool("developer_mode")
 }
 
 // setConfigWaitDelay sets the value of the WaitDelay field in the Config struct based on the value of the "wait_delay" configuration property from the config file.
@@ -270,15 +279,15 @@ func (c *Config) setConfigFromEnvVars() {
 //
 //	c := &Config{}
 //	c.setConfigWaitDelay()
-func (c *Config) setConfigWaitDelay() {
+func (env *Environment) setConfigWaitDelay() {
 	if val := viper.GetUint("wait_delay"); val > 1 {
 		if val < math.MaxUint8 {
-			c.WaitDelay = uint8(val)
+			env.WaitDelay = uint8(val)
 		} else {
-			c.WaitDelay = math.MaxUint8
+			env.WaitDelay = math.MaxUint8
 		}
 	} else {
-		c.WaitDelay = uint8(val)
+		env.WaitDelay = uint8(val)
 	}
 }
 
@@ -287,12 +296,12 @@ func (c *Config) setConfigWaitDelay() {
 // If the value is greater than 0, it checks if it is less than math.MaxUint8.
 // If it is, it assigns the value to c.MaxLoginAttempts as uint8.
 // Otherwise, it assigns math.MaxUint8 to c.MaxLoginAttempts.
-func (c *Config) setConfigMaxLoginAttempts() {
+func (env *Environment) setConfigMaxLoginAttempts() {
 	if val := viper.GetUint("max_login_attempts"); val > 0 {
 		if val < math.MaxUint8 {
-			c.MaxLoginAttempts = uint8(val)
+			env.MaxLoginAttempts = uint8(val)
 		} else {
-			c.MaxLoginAttempts = math.MaxUint8
+			env.MaxLoginAttempts = math.MaxUint8
 		}
 	}
 }
@@ -302,15 +311,15 @@ func (c *Config) setConfigMaxLoginAttempts() {
 // If the retrieved value is greater than 1, it is checked if it is less than math.MaxUint16.
 // If it is, the MaxActionWorkers field is set to that value. Otherwise, it is set to math.MaxUint16.
 // If the retrieved value is not greater than 1, then MaxActionWorkers is set to 1.
-func (c *Config) setConfigMaxActionWorkers() {
+func (env *Environment) setConfigMaxActionWorkers() {
 	if val := viper.GetUint("max_action_workers"); val > 1 {
 		if val < math.MaxUint16 {
-			c.MaxActionWorkers = uint16(val)
+			env.MaxActionWorkers = uint16(val)
 		} else {
-			c.MaxActionWorkers = math.MaxUint16
+			env.MaxActionWorkers = math.MaxUint16
 		}
 	} else {
-		c.MaxActionWorkers = 1
+		env.MaxActionWorkers = 1
 	}
 }
 
@@ -318,38 +327,44 @@ func (c *Config) setConfigMaxActionWorkers() {
 // If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
 // Otherwise, the field will be assigned the value of 5 seconds.
 // Please note that this method does not return errors.
-func (c *Config) setLocalCacheTTL() {
+func (env *Environment) setLocalCacheTTL() {
 	if val := viper.GetDuration("local_cache_auth_ttl"); val*time.Second > 5*time.Second {
 		if val*time.Second < time.Hour {
-			c.LocalCacheAuthTTL = val * time.Second
+			env.LocalCacheAuthTTL = val * time.Second
 		} else {
-			c.LocalCacheAuthTTL = time.Hour
+			env.LocalCacheAuthTTL = time.Hour
 		}
 	} else {
-		c.LocalCacheAuthTTL = 5 * time.Second
+		env.LocalCacheAuthTTL = 5 * time.Second
 	}
 }
 
 // setConfig initializes the configuration options based on the environment variables and flags.
 // It calls several helper methods to set each specific option.
-func (c *Config) setConfig() {
-	c.setConfigWaitDelay()
-	c.setConfigMaxLoginAttempts()
-	c.setConfigMaxActionWorkers()
-	c.setLocalCacheTTL()
+func (env *Environment) setConfig() {
+	env.setConfigWaitDelay()
+	env.setConfigMaxLoginAttempts()
+	env.setConfigMaxActionWorkers()
+	env.setLocalCacheTTL()
 }
 
-// NewConfig initializes a new Config struct and sets its values based on
+// NewEnvironmentConfig initializes a new Config struct and sets its values based on
 // environment variables. It calls various methods to set specific
 // configuration options and returns the new Config struct or an error if
 // any configuration fails.
-func NewConfig() *Config {
+func NewEnvironmentConfig() *Environment {
+	if environment != nil {
+		return environment
+	}
+
 	setDefaultEnvVars()
 
-	newCfg := &Config{}
+	newCfg := &Environment{}
 
 	newCfg.setConfigFromEnvVars()
 	newCfg.setConfig()
+
+	environment = newCfg
 
 	return newCfg
 }

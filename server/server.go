@@ -93,9 +93,9 @@ func newContextTuple(ctx context.Context) *contextTuple {
 	return tuple
 }
 
-// setupEnvironment initializes the application environment by configuring settings, loading resources, and setting up logging.
+// setupEnvironment initializes the application GetEnvironment() by configuring settings, loading resources, and setting up logging.
 func setupEnvironment() (err error) {
-	config.EnvConfig = config.NewConfig()
+	config.NewEnvironmentConfig()
 
 	setTimeZone()
 
@@ -138,7 +138,7 @@ func loadLanguageBundle(lang string) {
 	}
 }
 
-// setTimeZone configures the application's time zone based on the TZ environment variable, logging any errors encountered.
+// setTimeZone configures the application's time zone based on the TZ GetEnvironment() variable, logging any errors encountered.
 func setTimeZone() {
 	var err error
 
@@ -509,7 +509,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 func initializeActionWorkers() []*action.Worker {
 	var workers []*action.Worker
 
-	for i := 0; i < int(config.EnvConfig.MaxActionWorkers); i++ {
+	for i := 0; i < int(config.GetEnvironment().MaxActionWorkers); i++ {
 		workers = append(workers, action.NewWorker())
 	}
 
