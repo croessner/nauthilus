@@ -58,6 +58,8 @@ type GetterHandler interface {
 	GetProtocols() any
 }
 
+// TODO: Cleanup entire configuration file with interfaces...
+
 type File interface {
 	HandleFile() error
 
@@ -152,6 +154,10 @@ type FileSettings struct {
 	Mu                      sync.Mutex
 }
 
+var _ File = (*FileSettings)(nil)
+
+// GetRBLs retrieves the RBLSection configuration from the FileSettings instance.
+// Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetRBLs() *RBLSection {
 	if f == nil {
 		return nil
@@ -160,6 +166,8 @@ func (f *FileSettings) GetRBLs() *RBLSection {
 	return f.RBLs
 }
 
+// GetClearTextList retrieves a list of clear text strings from the FileSettings instance.
+// Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetClearTextList() []string {
 	if f == nil {
 		return nil
@@ -168,6 +176,7 @@ func (f *FileSettings) GetClearTextList() []string {
 	return f.ClearTextList
 }
 
+// GetRelayDomains retrieves the RelayDomainsSection from the FileSettings. Returns nil if the FileSettings is nil.
 func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 	if f == nil {
 		return nil
@@ -176,6 +185,7 @@ func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 	return f.RelayDomains
 }
 
+// GetBruteForce returns the BruteForceSection associated with the FileSettings instance. Returns nil if the instance is nil.
 func (f *FileSettings) GetBruteForce() *BruteForceSection {
 	if f == nil {
 		return nil
@@ -184,6 +194,8 @@ func (f *FileSettings) GetBruteForce() *BruteForceSection {
 	return f.BruteForce
 }
 
+// GetLua retrieves the LuaSection from the FileSettings instance.
+// Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetLua() *LuaSection {
 	if f == nil {
 		return nil
@@ -192,6 +204,7 @@ func (f *FileSettings) GetLua() *LuaSection {
 	return f.Lua
 }
 
+// GetOauth2 returns the Oauth2Section of the FileSettings instance. Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetOauth2() *Oauth2Section {
 	if f == nil {
 		return nil
@@ -200,6 +213,7 @@ func (f *FileSettings) GetOauth2() *Oauth2Section {
 	return f.Oauth2
 }
 
+// GetLDAP retrieves the LDAPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
 func (f *FileSettings) GetLDAP() *LDAPSection {
 	if f == nil {
 		return nil
