@@ -27,11 +27,11 @@ import (
 )
 
 // environment represents the environment configuration for the application
-// It is a pointer to the Environment type
-var environment *Environment //nolint:gochecknoglobals // System wide configuration
+// It is a pointer to the environmentSettings type
+var environment *environmentSettings
 
-// GetEnvironment returns the singleton instance of the Environment configuration. Panics if the environment is uninitialized.
-func GetEnvironment() *Environment {
+// GetEnvironment returns the singleton instance of the environmentSettings configuration. Panics if the environment is uninitialized.
+func GetEnvironment() *environmentSettings {
 	if environment == nil {
 		panic("environment not initialized")
 	}
@@ -39,8 +39,8 @@ func GetEnvironment() *Environment {
 	return environment
 }
 
-// Environment represents overall configuration settings for the application.
-type Environment struct {
+// environmentSettings represents overall configuration settings for the application.
+type environmentSettings struct {
 	// SMTPBackendAddress is the address of the SMTP backend server.
 	SMTPBackendAddress string
 
@@ -231,7 +231,7 @@ func setDefaultEnvVars() {
 }
 
 // String returns the name of the Config object excluding the HTTPOptions.
-func (env *Environment) String() string {
+func (env *environmentSettings) String() string {
 	var result string
 
 	if env == nil {
@@ -261,7 +261,7 @@ func (env *Environment) String() string {
 // RedisPort, RedisDB, RedisUsername, RedisPassword, RedisAddressRO, RedisPortRO, RedisPrefix, RedisPosCacheTTL,
 // RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
 // and DevMode.
-func (env *Environment) setConfigFromEnvVars() {
+func (env *environmentSettings) setConfigFromEnvVars() {
 	env.SMTPBackendAddress = viper.GetString("smtp_backend_address")
 	env.SMTPBackendPort = viper.GetInt("smtp_backend_port")
 	env.IMAPBackendAddress = viper.GetString("imap_backend_address")
@@ -279,7 +279,7 @@ func (env *Environment) setConfigFromEnvVars() {
 //
 //	c := &Config{}
 //	c.setConfigWaitDelay()
-func (env *Environment) setConfigWaitDelay() {
+func (env *environmentSettings) setConfigWaitDelay() {
 	if val := viper.GetUint("wait_delay"); val > 1 {
 		if val < math.MaxUint8 {
 			env.WaitDelay = uint8(val)
@@ -296,7 +296,7 @@ func (env *Environment) setConfigWaitDelay() {
 // If the value is greater than 0, it checks if it is less than math.MaxUint8.
 // If it is, it assigns the value to c.MaxLoginAttempts as uint8.
 // Otherwise, it assigns math.MaxUint8 to c.MaxLoginAttempts.
-func (env *Environment) setConfigMaxLoginAttempts() {
+func (env *environmentSettings) setConfigMaxLoginAttempts() {
 	if val := viper.GetUint("max_login_attempts"); val > 0 {
 		if val < math.MaxUint8 {
 			env.MaxLoginAttempts = uint8(val)
@@ -311,7 +311,7 @@ func (env *Environment) setConfigMaxLoginAttempts() {
 // If the retrieved value is greater than 1, it is checked if it is less than math.MaxUint16.
 // If it is, the MaxActionWorkers field is set to that value. Otherwise, it is set to math.MaxUint16.
 // If the retrieved value is not greater than 1, then MaxActionWorkers is set to 1.
-func (env *Environment) setConfigMaxActionWorkers() {
+func (env *environmentSettings) setConfigMaxActionWorkers() {
 	if val := viper.GetUint("max_action_workers"); val > 1 {
 		if val < math.MaxUint16 {
 			env.MaxActionWorkers = uint16(val)
@@ -327,7 +327,7 @@ func (env *Environment) setConfigMaxActionWorkers() {
 // If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
 // Otherwise, the field will be assigned the value of 5 seconds.
 // Please note that this method does not return errors.
-func (env *Environment) setLocalCacheTTL() {
+func (env *environmentSettings) setLocalCacheTTL() {
 	if val := viper.GetDuration("local_cache_auth_ttl"); val*time.Second > 5*time.Second {
 		if val*time.Second < time.Hour {
 			env.LocalCacheAuthTTL = val * time.Second
@@ -341,7 +341,7 @@ func (env *Environment) setLocalCacheTTL() {
 
 // setConfig initializes the configuration options based on the environment variables and flags.
 // It calls several helper methods to set each specific option.
-func (env *Environment) setConfig() {
+func (env *environmentSettings) setConfig() {
 	env.setConfigWaitDelay()
 	env.setConfigMaxLoginAttempts()
 	env.setConfigMaxActionWorkers()
@@ -352,14 +352,14 @@ func (env *Environment) setConfig() {
 // environment variables. It calls various methods to set specific
 // configuration options and returns the new Config struct or an error if
 // any configuration fails.
-func NewEnvironmentConfig() *Environment {
+func NewEnvironmentConfig() *environmentSettings {
 	if environment != nil {
 		return environment
 	}
 
 	setDefaultEnvVars()
 
-	newCfg := &Environment{}
+	newCfg := &environmentSettings{}
 
 	newCfg.setConfigFromEnvVars()
 	newCfg.setConfig()
