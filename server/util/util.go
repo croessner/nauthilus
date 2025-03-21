@@ -182,7 +182,7 @@ func PreparePassword(password string) string {
 
 // GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
 func GetHash(value string) string {
-	if config.GetEnvironment().DevMode {
+	if config.GetEnvironment().GetDevMode() {
 		return value
 	}
 

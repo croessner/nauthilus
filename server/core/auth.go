@@ -586,7 +586,7 @@ func (a *AuthState) String() string {
 		case "GUID":
 			continue
 		case "Password":
-			if config.GetEnvironment().DevMode {
+			if config.GetEnvironment().GetDevMode() {
 				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
 				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)
@@ -1025,14 +1025,14 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 	} else {
 		switch auth.Protocol.Get() {
 		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", config.GetEnvironment().SMTPBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().SMTPBackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().GetSMTPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetSMTPBackendPort()))
 		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", config.GetEnvironment().IMAPBackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().IMAPBackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().GetIMAPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetIMAPBackendPort()))
 		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", config.GetEnvironment().POP3BackendAddress)
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().POP3BackendPort))
+			ctx.Header("Auth-Server", config.GetEnvironment().GetPOP3BackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetPOP3BackendPort()))
 		}
 	}
 }
@@ -1149,7 +1149,7 @@ func (a *AuthState) increaseLoginAttempts() {
 	}
 
 	if a.Service == definitions.ServNginx {
-		if a.LoginAttempts < uint(config.GetEnvironment().MaxLoginAttempts) {
+		if a.LoginAttempts < uint(config.GetEnvironment().GetMaxLoginAttempts()) {
 			a.LoginAttempts++
 		}
 	}
@@ -1960,7 +1960,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().LocalCacheAuthTTL)
+			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 
 		authResult = definitions.AuthResultOK

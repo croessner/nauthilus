@@ -509,7 +509,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 func initializeActionWorkers() []*action.Worker {
 	var workers []*action.Worker
 
-	for i := 0; i < int(config.GetEnvironment().MaxActionWorkers); i++ {
+	for i := 0; i < int(config.GetEnvironment().GetMaxActionWorkers()); i++ {
 		workers = append(workers, action.NewWorker())
 	}
 

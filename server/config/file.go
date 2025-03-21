@@ -1652,7 +1652,7 @@ func (f *FileSettings) handleFile() (err error) {
 		return err
 	}
 
-	if environment.DevMode {
+	if environment.GetDevMode() {
 		dumpConfig(f)
 	}
 

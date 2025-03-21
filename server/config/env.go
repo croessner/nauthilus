@@ -28,15 +28,51 @@ import (
 
 // environment represents the environment configuration for the application
 // It is a pointer to the EnvironmentSettings type
-var environment *EnvironmentSettings
+var environment Environment
 
 // GetEnvironment returns the singleton instance of the environmentSettings configuration. Panics if the environment is uninitialized.
-func GetEnvironment() *EnvironmentSettings {
+func GetEnvironment() Environment {
 	if environment == nil {
 		panic("environment not initialized")
 	}
 
 	return environment
+}
+
+// Environment defines methods for accessing application configuration settings.
+type Environment interface {
+	// GetSMTPBackendAddress returns the address of the SMTP backend server.
+	GetSMTPBackendAddress() string
+
+	// GetSMTPBackendPort returns the port of the SMTP backend server.
+	GetSMTPBackendPort() int
+
+	// GetIMAPBackendAddress returns the address of the IMAP backend server.
+	GetIMAPBackendAddress() string
+
+	// GetIMAPBackendPort returns the port of the IMAP backend server.
+	GetIMAPBackendPort() int
+
+	// GetPOP3BackendAddress returns the address of the POP3 backend server.
+	GetPOP3BackendAddress() string
+
+	// GetPOP3BackendPort returns the port of the POP3 backend server.
+	GetPOP3BackendPort() int
+
+	// GetWaitDelay returns the delay between connection attempts in seconds.
+	GetWaitDelay() uint8
+
+	// GetMaxLoginAttempts returns the maximum number of allowed login attempts.
+	GetMaxLoginAttempts() uint8
+
+	// GetDevMode indicates whether the application is in developer mode.
+	GetDevMode() bool
+
+	// GetMaxActionWorkers returns the maximum number of simultaneous action workers.
+	GetMaxActionWorkers() uint16
+
+	// GetLocalCacheAuthTTL returns the time-to-live duration for local cache authentication.
+	GetLocalCacheAuthTTL() time.Duration
 }
 
 // EnvironmentSettings represents overall configuration settings for the application.
@@ -73,6 +109,63 @@ type EnvironmentSettings struct {
 
 	// LocalCacheAuthTTL
 	LocalCacheAuthTTL time.Duration
+}
+
+var _ Environment = (*EnvironmentSettings)(nil)
+
+// GetSMTPBackendAddress retrieves the address of the SMTP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetSMTPBackendAddress() string {
+	return env.SMTPBackendAddress
+}
+
+// GetSMTPBackendPort retrieves the port of the SMTP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetSMTPBackendPort() int {
+	return env.SMTPBackendPort
+}
+
+// GetIMAPBackendAddress retrieves the address of the IMAP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetIMAPBackendAddress() string {
+	return env.IMAPBackendAddress
+}
+
+// GetIMAPBackendPort retrieves the port of the IMAP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetIMAPBackendPort() int {
+	return env.IMAPBackendPort
+}
+
+// GetPOP3BackendAddress retrieves the address of the POP3 backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetPOP3BackendAddress() string {
+	return env.POP3BackendAddress
+}
+
+// GetPOP3BackendPort retrieves the port of the POP3 backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetPOP3BackendPort() int {
+	return env.POP3BackendPort
+}
+
+// GetWaitDelay retrieves the wait delay in seconds between connection attempts from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetWaitDelay() uint8 {
+	return env.WaitDelay
+}
+
+// GetMaxLoginAttempts retrieves the maximum allowed number of login attempts from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetMaxLoginAttempts() uint8 {
+	return env.MaxLoginAttempts
+}
+
+// GetDevMode returns the DevMode value, indicating whether the application is running in developer mode.
+func (env *EnvironmentSettings) GetDevMode() bool {
+	return env.DevMode
+}
+
+// GetMaxActionWorkers retrieves the maximum number of action workers allowed from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetMaxActionWorkers() uint16 {
+	return env.MaxActionWorkers
+}
+
+// GetLocalCacheAuthTTL retrieves the time-to-live duration for local cache authentication from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetLocalCacheAuthTTL() time.Duration {
+	return env.LocalCacheAuthTTL
 }
 
 // setCommonDefaultEnvVars sets default values for commonly used environment variables related to backend services configuration.
@@ -282,7 +375,7 @@ func (env *EnvironmentSettings) setConfig() {
 }
 
 // NewEnvironmentConfig initializes and returns a singleton instance of EnvironmentSettings, setting default and custom configurations.
-func NewEnvironmentConfig() *EnvironmentSettings {
+func NewEnvironmentConfig() Environment {
 	if environment != nil {
 		return environment
 	}
