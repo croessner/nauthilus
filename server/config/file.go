@@ -52,6 +52,11 @@ func GetFile() File {
 	return file
 }
 
+// SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
+func SetTestFile(testFile File) {
+	file = testFile
+}
+
 // GetterHandler is an interface that provides methods to retrieve configuration and protocol information.
 type GetterHandler interface {
 	GetConfig() any
