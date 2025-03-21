@@ -694,7 +694,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
 		level.Debug(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
@@ -751,7 +751,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		if backendType.Get() == definitions.BackendCache {
 			useCache = true
 
@@ -761,7 +761,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 	if useCache {
 		userKeys := config.NewStringSet()
-		protocols := config.LoadableConfig.GetAllProtocols()
+		protocols := config.GetFile().GetAllProtocols()
 
 		accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
 		if err != nil {
@@ -774,7 +774,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 			cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+				userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 			}
 		}
 

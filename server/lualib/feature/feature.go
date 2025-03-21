@@ -74,17 +74,17 @@ func InitHTTPClient() {
 // The compiled Lua feature is added to the LuaFeatures variable using the Add method.
 // Finally, it returns nil if there are no errors.
 func PreCompileLuaFeatures() (err error) {
-	if config.LoadableConfig.HaveLuaFeatures() {
+	if config.GetFile().HaveLuaFeatures() {
 		if LuaFeatures == nil {
 			LuaFeatures = &PreCompiledLuaFeatures{}
 		} else {
 			LuaFeatures.Reset()
 		}
 
-		for index := range config.LoadableConfig.Lua.Features {
+		for index := range config.GetFile().GetLua().Features {
 			var luaFeature *LuaFeature
 
-			luaFeature, err = NewLuaFeature(config.LoadableConfig.Lua.Features[index].Name, config.LoadableConfig.Lua.Features[index].ScriptPath)
+			luaFeature, err = NewLuaFeature(config.GetFile().GetLua().Features[index].Name, config.GetFile().GetLua().Features[index].ScriptPath)
 			if err != nil {
 				return err
 			}
@@ -210,7 +210,7 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
 	case definitions.LuaModLDAP:
-		if config.LoadableConfig.HaveLDAPBackend() {
+		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")

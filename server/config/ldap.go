@@ -86,7 +86,7 @@ func (l *LDAPConf) String() string {
 	for index := 0; index < value.NumField(); index++ {
 		switch typeOfValue.Field(index).Name {
 		case "BindPW":
-			if EnvConfig.DevMode {
+			if environment.GetDevMode() {
 				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
 				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)

@@ -494,7 +494,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	if config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -755,7 +755,7 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 func createConfiguration(httpClient *http.Client) *openapi.Configuration {
 	return &openapi.Configuration{
 		HTTPClient: httpClient,
-		Servers:    []openapi.ServerConfiguration{{URL: config.LoadableConfig.Server.HydraAdminUrl}},
+		Servers:    []openapi.ServerConfiguration{{URL: config.GetFile().GetServer().HydraAdminUrl}},
 	}
 }
 
@@ -877,7 +877,7 @@ func (a *ApiConfig) handleLoginSkip() {
 	auth.SetStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
-		if config.LoadableConfig.Oauth2 != nil {
+		if config.GetFile().GetOauth2() != nil {
 			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
@@ -1296,7 +1296,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 	)
 
 	oauth2Client := a.loginRequest.GetClient()
-	if config.LoadableConfig.Oauth2 != nil {
+	if config.GetFile().GetOauth2() != nil {
 		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
 
@@ -1328,7 +1328,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 // - bool: Indicates whether redirection is performed or not.
 // - error: The error if any occurs.
 func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authResult definitions.AuthResult, subject string) (bool, error) {
-	if config.GetSkipTOTP(*a.clientId) {
+	if config.GetFile().GetSkipTOTP(*a.clientId) {
 		return false, nil
 	}
 
@@ -1509,7 +1509,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug && config.EnvConfig.DevMode {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
 		util.DebugModule(
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
@@ -1582,7 +1582,7 @@ func (a *ApiConfig) processAuthFailLogin(auth State, authResult definitions.Auth
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
-		if !config.GetSkipTOTP(*a.clientId) {
+		if !config.GetFile().GetSkipTOTP(*a.clientId) {
 			if _, found := auth.GetTOTPSecretOk(); found {
 				session.Set(definitions.CookieAuthResult, uint8(authResult))
 				session.Set(definitions.CookieUsername, a.ctx.Request.Form.Get("username"))
@@ -2012,8 +2012,8 @@ func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue in
 func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	var scopeDescription string
 
-	if config.LoadableConfig.Oauth2 != nil {
-		for _, customScope := range config.LoadableConfig.Oauth2.CustomScopes {
+	if config.GetFile().GetOauth2() != nil {
+		for _, customScope := range config.GetFile().GetOauth2().CustomScopes {
 			if customScope.Name != requestedScope {
 				continue
 			}
@@ -2053,7 +2053,7 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
 func (a *ApiConfig) HandleConsentSkip() {
-	if !(a.consentRequest.GetSkip() || config.GetSkipConsent(*a.clientId)) {
+	if !(a.consentRequest.GetSkip() || config.GetFile().GetSkipConsent(*a.clientId)) {
 		a.processConsent()
 	} else {
 		a.redirectWithConsent()
@@ -2212,7 +2212,7 @@ func (a *ApiConfig) redirectWithConsent() {
 			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
 			GrantScope:               acceptedScopes,
 			Remember: func() *bool {
-				if config.GetSkipConsent(*a.clientId) {
+				if config.GetFile().GetSkipConsent(*a.clientId) {
 					remember := true
 
 					return &remember
@@ -2306,7 +2306,7 @@ func ConsentGETHandler(ctx *gin.Context) {
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, apiConfig.guid,
 		"skip_hydra", fmt.Sprintf("%v", apiConfig.consentRequest.GetSkip()),
-		"skip_config", fmt.Sprintf("%v", config.GetSkipConsent(*apiConfig.clientId)),
+		"skip_config", fmt.Sprintf("%v", config.GetFile().GetSkipConsent(*apiConfig.clientId)),
 	)
 
 	apiConfig.HandleConsentSkip()
@@ -2891,8 +2891,8 @@ func processGroupsClaim(claimDict map[string]any, claims map[string]any) {
 // - acceptedScopes: A []string representing the list of accepted scopes.
 // - index: An int indicating the index of the accepted scope to process.
 func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int) {
-	for scopeIndex := range config.LoadableConfig.Oauth2.CustomScopes {
-		customScope := config.LoadableConfig.Oauth2.CustomScopes[scopeIndex]
+	for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
+		customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
 
 		if acceptedScopes[index] != customScope.Name {
 			continue

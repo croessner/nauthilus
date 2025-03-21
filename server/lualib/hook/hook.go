@@ -192,7 +192,7 @@ func NewCustomLocation() CustomLocation {
 }
 
 // PreCompileLuaScript pre-compiles the Lua callback script and replaces the current luaScript with the new one.
-// If the LoadableConfig has a Lua callback and the current luaScript is nil, a new instance of PrecompiledLuaScript is created.
+// If the GetFile() has a Lua callback and the current luaScript is nil, a new instance of PrecompiledLuaScript is created.
 // The function calls NewLuaHook to get the new pre-compiled Lua callback script.
 // If an error occurs during the pre-compilation, the function returns the error.
 // If no error occurs, the new Lua callback script replaces the current luaScript's luaScript.
@@ -216,7 +216,7 @@ func PreCompileLuaScript(filePath string) (err error) {
 	LuaScripts[filePath].Replace(luaScriptNew)
 
 	for luaScriptName := range LuaScripts {
-		if luaScriptName != config.LoadableConfig.GetLuaInitScriptPath() {
+		if luaScriptName != config.GetFile().GetLuaInitScriptPath() {
 			if LuaScripts[luaScriptName].GetPrecompiledScript() == nil {
 				delete(LuaScripts, luaScriptName)
 			}
@@ -230,19 +230,19 @@ func PreCompileLuaScript(filePath string) (err error) {
 // configuration and no custom location exists, a new custom location is created. Iterates through the hooks list, precompiles
 // each Lua script, and associates it with the corresponding HTTP method and location.
 func PreCompileLuaHooks() error {
-	if config.LoadableConfig.HaveLuaHooks() {
+	if config.GetFile().HaveLuaHooks() {
 		if customLocation == nil {
 			customLocation = NewCustomLocation()
 		}
 
-		for index := range config.LoadableConfig.Lua.Hooks {
-			script, err := NewLuaHook(config.LoadableConfig.Lua.Hooks[index].ScriptPath)
+		for index := range config.GetFile().GetLua().Hooks {
+			script, err := NewLuaHook(config.GetFile().GetLua().Hooks[index].ScriptPath)
 			if err != nil {
 				return err
 			}
 
 			// Add compiled Lua hook.
-			customLocation.SetScript(config.LoadableConfig.Lua.Hooks[index].Location, config.LoadableConfig.Lua.Hooks[index].Method, script)
+			customLocation.SetScript(config.GetFile().GetLua().Hooks[index].Location, config.GetFile().GetLua().Hooks[index].Method, script)
 		}
 	}
 
@@ -250,7 +250,7 @@ func PreCompileLuaHooks() error {
 }
 
 // setupLogging creates a Lua table and sets up the "log_format" and "log_level" global variables based on the
-// configuration settings in the LoadableConfig.Server.Log.JSON and LoadableConfig.Server.Log.Level.Get values.
+// configuration settings in the GetFile().GetServer().Log.JSON and GetFile().GetServer().Log.Level.Get values.
 // It returns the created Lua table.
 //
 // Parameters:
@@ -262,9 +262,9 @@ func PreCompileLuaHooks() error {
 func setupLogging(L *lua.LState) *lua.LTable {
 	logTable := L.NewTable()
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.LoadableConfig.Server.Log.Level.Get()
+	logLevel := config.GetFile().GetServer().Log.Level.Get()
 
-	if config.LoadableConfig.Server.Log.JSON {
+	if config.GetFile().GetServer().Log.JSON {
 		logFormat = definitions.LogFormatJSON
 	}
 
@@ -314,7 +314,7 @@ func registerModule(L *lua.LState, ctx context.Context, modName string, registry
 			return
 		}
 	case definitions.LuaModLDAP:
-		if config.LoadableConfig.HaveLDAPBackend() {
+		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")

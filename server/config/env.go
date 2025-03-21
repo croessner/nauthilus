@@ -26,12 +26,57 @@ import (
 	"github.com/spf13/viper"
 )
 
-// EnvConfig represents the environment configuration for the application
-// It is a pointer to Config type
-var EnvConfig *Config //nolint:gochecknoglobals // System wide configuration
+// environment represents the environment configuration for the application
+// It is a pointer to the EnvironmentSettings type
+var environment Environment
 
-// Config represents overall configuration settings for the application.
-type Config struct {
+// GetEnvironment returns the singleton instance of the environmentSettings configuration. Panics if the environment is uninitialized.
+func GetEnvironment() Environment {
+	if environment == nil {
+		panic("environment not initialized")
+	}
+
+	return environment
+}
+
+// Environment defines methods for accessing application configuration settings.
+type Environment interface {
+	// GetSMTPBackendAddress returns the address of the SMTP backend server.
+	GetSMTPBackendAddress() string
+
+	// GetSMTPBackendPort returns the port of the SMTP backend server.
+	GetSMTPBackendPort() int
+
+	// GetIMAPBackendAddress returns the address of the IMAP backend server.
+	GetIMAPBackendAddress() string
+
+	// GetIMAPBackendPort returns the port of the IMAP backend server.
+	GetIMAPBackendPort() int
+
+	// GetPOP3BackendAddress returns the address of the POP3 backend server.
+	GetPOP3BackendAddress() string
+
+	// GetPOP3BackendPort returns the port of the POP3 backend server.
+	GetPOP3BackendPort() int
+
+	// GetWaitDelay returns the delay between connection attempts in seconds.
+	GetWaitDelay() uint8
+
+	// GetMaxLoginAttempts returns the maximum number of allowed login attempts.
+	GetMaxLoginAttempts() uint8
+
+	// GetDevMode indicates whether the application is in developer mode.
+	GetDevMode() bool
+
+	// GetMaxActionWorkers returns the maximum number of simultaneous action workers.
+	GetMaxActionWorkers() uint16
+
+	// GetLocalCacheAuthTTL returns the time-to-live duration for local cache authentication.
+	GetLocalCacheAuthTTL() time.Duration
+}
+
+// EnvironmentSettings represents overall configuration settings for the application.
+type EnvironmentSettings struct {
 	// SMTPBackendAddress is the address of the SMTP backend server.
 	SMTPBackendAddress string
 
@@ -66,9 +111,64 @@ type Config struct {
 	LocalCacheAuthTTL time.Duration
 }
 
-// setCommonDefaultEnvVars sets the default environment variables for the application.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
+var _ Environment = (*EnvironmentSettings)(nil)
+
+// GetSMTPBackendAddress retrieves the address of the SMTP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetSMTPBackendAddress() string {
+	return env.SMTPBackendAddress
+}
+
+// GetSMTPBackendPort retrieves the port of the SMTP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetSMTPBackendPort() int {
+	return env.SMTPBackendPort
+}
+
+// GetIMAPBackendAddress retrieves the address of the IMAP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetIMAPBackendAddress() string {
+	return env.IMAPBackendAddress
+}
+
+// GetIMAPBackendPort retrieves the port of the IMAP backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetIMAPBackendPort() int {
+	return env.IMAPBackendPort
+}
+
+// GetPOP3BackendAddress retrieves the address of the POP3 backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetPOP3BackendAddress() string {
+	return env.POP3BackendAddress
+}
+
+// GetPOP3BackendPort retrieves the port of the POP3 backend server from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetPOP3BackendPort() int {
+	return env.POP3BackendPort
+}
+
+// GetWaitDelay retrieves the wait delay in seconds between connection attempts from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetWaitDelay() uint8 {
+	return env.WaitDelay
+}
+
+// GetMaxLoginAttempts retrieves the maximum allowed number of login attempts from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetMaxLoginAttempts() uint8 {
+	return env.MaxLoginAttempts
+}
+
+// GetDevMode returns the DevMode value, indicating whether the application is running in developer mode.
+func (env *EnvironmentSettings) GetDevMode() bool {
+	return env.DevMode
+}
+
+// GetMaxActionWorkers retrieves the maximum number of action workers allowed from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetMaxActionWorkers() uint16 {
+	return env.MaxActionWorkers
+}
+
+// GetLocalCacheAuthTTL retrieves the time-to-live duration for local cache authentication from the EnvironmentSettings instance.
+func (env *EnvironmentSettings) GetLocalCacheAuthTTL() time.Duration {
+	return env.LocalCacheAuthTTL
+}
+
+// setCommonDefaultEnvVars sets default values for commonly used environment variables related to backend services configuration.
 func setCommonDefaultEnvVars() {
 	viper.SetDefault("smtp_backend_address", definitions.SMTPBackendAddress)
 	viper.SetDefault("smtp_backend_port", definitions.SMTPBackendPort)
@@ -83,17 +183,12 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("lua_script_timeout", definitions.LuaMaxExecutionTime)
 }
 
-// setProtectionDefaultEnvVars sets the default environment variables for the application.
-// It initializes various viper configuration variables with default values for
-// brute_force_protection, and trusted_proxies.
-// The default values are taken from the global constants and types defined in the code.
+// setProtectionDefaultEnvVars sets the default environment variables for trusted proxies using the viper configuration package.
 func setProtectionDefaultEnvVars() {
 	viper.SetDefault("trusted_proxies", []string{"127.0.0.1", "::1"})
 }
 
-// setWebDefaultEnvVars sets the default environment variables for the web-related functionality of the application.
-// It initializes various viper configuration variables with default values specific to the web module.
-// The default values are based on the constants and types defined in the code.
+// setWebDefaultEnvVars sets the default environment variables for web content configuration using the viper package.
 func setWebDefaultEnvVars() {
 	viper.SetDefault("html_static_content_path", "/usr/app/static")
 	viper.SetDefault("default_logo_image", "/static/img/logo.png")
@@ -101,10 +196,7 @@ func setWebDefaultEnvVars() {
 	viper.SetDefault("language_resources", "/usr/app/resources")
 }
 
-// setLoginPageDefaultEnvVars sets the default environment variables for the login page.
-// It initializes various viper configuration variables with default values specific to the login page.
-// The default values are taken from the global constants and types defined in the code.
-// SetDefault sets the default value for the "login_page" configuration variable
+// setLoginPageDefaultEnvVars sets the default environment variables for the login page using the viper configuration package.
 func setLoginPageDefaultEnvVars() {
 	viper.SetDefault("login_page", "/login")
 	viper.SetDefault("login_page_logo_image_alt", definitions.ImageCopyright)
@@ -112,9 +204,7 @@ func setLoginPageDefaultEnvVars() {
 	viper.SetDefault("login_page_welcome", "")
 }
 
-// setConsentPageDefaultEnvVars sets the default environment variables for the consent page.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
+// setConsentPageDefaultEnvVars sets the default environment variables for the consent page using the viper configuration package.
 func setConsentPageDefaultEnvVars() {
 	viper.SetDefault("consent_page", "/consent")
 	viper.SetDefault("consent_page_logo_image_alt", definitions.ImageCopyright)
@@ -122,18 +212,13 @@ func setConsentPageDefaultEnvVars() {
 	viper.SetDefault("consent_page_welcome", "")
 }
 
-// setLogoutPageDefaultEnvVars sets the default environment variables for the logout page.
-// It initializes the "logout_page" and "logout_page_welcome" variables with default values.
-// The default values are taken from the global constants and types defined in the code.
+// setLogoutPageDefaultEnvVars sets the default environment variables for the logout page using the viper configuration package.
 func setLogoutPageDefaultEnvVars() {
 	viper.SetDefault("logout_page", "/logout")
 	viper.SetDefault("logout_page_welcome", "")
 }
 
-// setWebAuthnDefaultEnvVars sets the default environment variables for the WebAuthn feature of the application.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
-// These default values are used when the corresponding environment variables are not set.
+// setWebAuthnDefaultEnvVars sets the default environment variables related to WebAuthn configuration using viper.
 func setWebAuthnDefaultEnvVars() {
 	viper.SetDefault("device_page", "/device")
 	viper.SetDefault("webauthn_page", "/webauthn")
@@ -142,17 +227,14 @@ func setWebAuthnDefaultEnvVars() {
 	viper.SetDefault("webauthn_rp_origins", []string{"https://login.nauthilus.me"})
 }
 
-// setRegisterPageDefaultEnvVars sets the default environment variables for the register page.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
+// setRegisterPageDefaultEnvVars sets the default environment variables for the registration page using viper configuration.
 func setRegisterPageDefaultEnvVars() {
 	viper.SetDefault("login_2fa_page", "/register")
 	viper.SetDefault("login_2fa_page_welcome", "")
 	viper.SetDefault("login_2fa_post_page", viper.GetString("login_2fa_page")+"/home")
 }
 
-// setTOTPPageDefaultEnvVars sets the default environment variables for the TOTP page of the application.
-// It initializes various viper configuration variables with default values.
+// setTOTPPageDefaultEnvVars sets the default environment variables for the TOTP page using the viper configuration package.
 func setTOTPPageDefaultEnvVars() {
 	viper.SetDefault("totp_skew", uint(1))
 	viper.SetDefault("totp_page", "/totp")
@@ -161,43 +243,19 @@ func setTOTPPageDefaultEnvVars() {
 	viper.SetDefault("totp_page_logo_image_alt", definitions.ImageCopyright)
 }
 
-// setNotifyPageDefaultEnvVars sets the default environment variables for the notify page.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
+// setNotifyPageDefaultEnvVars sets the default environment variables for the notification page using viper configuration.
 func setNotifyPageDefaultEnvVars() {
 	viper.SetDefault("notify_page", "/notify")
 	viper.SetDefault("notify_page_welcome", "")
 	viper.SetDefault("notify_page_logo_image_alt", definitions.ImageCopyright)
 }
 
-// setLocalCacheDefaults sets the default value for the "local_cache_auth_ttl" configuration key to 30 seconds.
-//
-// Example usage:
-// setLocalCacheDefaults()
+// setLocalCacheDefaults sets the default time-to-live value for local cache authentication using the viper configuration package.
 func setLocalCacheDefaults() {
 	viper.SetDefault("local_cache_auth_ttl", 30*time.Second)
 }
 
-// setDefaultEnvVars sets the default environment variables for the application.
-// It initializes various viper configuration variables with default values.
-// The default values are taken from the global constants and types defined in the code.
-//
-// setDefaultEnvVars() calls the following functions to set the respective configuration variables:
-// - setCommonDefaultEnvVars()
-// - setLocalCacheDefaults()
-// - setRedisDefaultEnvVars()
-// - setProtectionDefaultEnvVars()
-// - setSQLDefaultEnvVars()
-// - setWebDefaultEnvVars()
-// - setLoginPageDefaultEnvVars()
-// - setConsentPageDefaultEnvVars()
-// - setLogoutPageDefaultEnvVars()
-// - setTOTPPageDefaultEnvVars()
-// - setRegisterPageDefaultEnvVars()
-// - setWebAuthnDefaultEnvVars()
-// - setNotifyPageDefaultEnvVars()
-//
-// Finally, it allows empty environment variables and enables automatic environment variable detection for viper.
+// setDefaultEnvVars initializes default environment variables using the viper package for configuration management.
 func setDefaultEnvVars() {
 	viper.SetEnvPrefix("nauthilus")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -222,14 +280,14 @@ func setDefaultEnvVars() {
 }
 
 // String returns the name of the Config object excluding the HTTPOptions.
-func (c *Config) String() string {
+func (env *EnvironmentSettings) String() string {
 	var result string
 
-	if c == nil {
+	if env == nil {
 		return "<nil>"
 	}
 
-	value := reflect.ValueOf(*c)
+	value := reflect.ValueOf(*env)
 	typeOfValue := value.Type()
 
 	for index := 0; index < value.NumField(); index++ {
@@ -244,112 +302,92 @@ func (c *Config) String() string {
 	return result[1:]
 }
 
-// setConfigFromEnvVars sets the configuration values from environment variables using Viper.
-// Each configuration value is retrieved from the corresponding environment variable using Viper's Get method,
-// and then assigned to the corresponding field in the Config struct.
-// The configuration fields that are set in this method include HTTPAddress, HTTPOptions,
-// SMTPBackendAddress, SMTPBackendPort, IMAPBackendAddress, IMAPBackendPort, ResolveIP, RedisAddress,
-// RedisPort, RedisDB, RedisUsername, RedisPassword, RedisAddressRO, RedisPortRO, RedisPrefix, RedisPosCacheTTL,
-// RedisNegCacheTTL, RedisSentinels, RedisSentinelMasterName, RedisSentinelUsername, RedisSentinelPassword, DNSResolver,
-// and DevMode.
-func (c *Config) setConfigFromEnvVars() {
-	c.SMTPBackendAddress = viper.GetString("smtp_backend_address")
-	c.SMTPBackendPort = viper.GetInt("smtp_backend_port")
-	c.IMAPBackendAddress = viper.GetString("imap_backend_address")
-	c.IMAPBackendPort = viper.GetInt("imap_backend_port")
-	c.POP3BackendAddress = viper.GetString("pop3_backend_address")
-	c.POP3BackendPort = viper.GetInt("pop3_backend_port")
-	c.DevMode = viper.GetBool("developer_mode")
+// setConfigFromEnvVars initializes configuration fields from environment variables using the viper package.
+func (env *EnvironmentSettings) setConfigFromEnvVars() {
+	env.SMTPBackendAddress = viper.GetString("smtp_backend_address")
+	env.SMTPBackendPort = viper.GetInt("smtp_backend_port")
+	env.IMAPBackendAddress = viper.GetString("imap_backend_address")
+	env.IMAPBackendPort = viper.GetInt("imap_backend_port")
+	env.POP3BackendAddress = viper.GetString("pop3_backend_address")
+	env.POP3BackendPort = viper.GetInt("pop3_backend_port")
+	env.DevMode = viper.GetBool("developer_mode")
 }
 
-// setConfigWaitDelay sets the value of the WaitDelay field in the Config struct based on the value of the "wait_delay" configuration property from the config file.
-// If the value is greater than 1, it is checked against math.MaxUint8. If it is less than the maximum uint8 value, the value is assigned to c.WaitDelay.
-// If the value is greater than or equal to the maximum uint8 value, c.WaitDelay is set to math.MaxUint8.
-// If the value is less than or equal to 1, c.WaitDelay is set to the value.
-// Example usage:
-//
-//	c := &Config{}
-//	c.setConfigWaitDelay()
-func (c *Config) setConfigWaitDelay() {
+// setConfigWaitDelay sets the WaitDelay field based on the "wait_delay" configuration value from viper.
+// If the value is greater than 1 and less than math.MaxUint8, it is set directly. Otherwise, it is capped at math.MaxUint8.
+func (env *EnvironmentSettings) setConfigWaitDelay() {
 	if val := viper.GetUint("wait_delay"); val > 1 {
 		if val < math.MaxUint8 {
-			c.WaitDelay = uint8(val)
+			env.WaitDelay = uint8(val)
 		} else {
-			c.WaitDelay = math.MaxUint8
+			env.WaitDelay = math.MaxUint8
 		}
 	} else {
-		c.WaitDelay = uint8(val)
+		env.WaitDelay = uint8(val)
 	}
 }
 
-// setConfigMaxLoginAttempts sets the maximum number of login attempts from the configuration file.
-// It retrieves the value of "max_login_attempts" from the configuration using viper.GetUint.
-// If the value is greater than 0, it checks if it is less than math.MaxUint8.
-// If it is, it assigns the value to c.MaxLoginAttempts as uint8.
-// Otherwise, it assigns math.MaxUint8 to c.MaxLoginAttempts.
-func (c *Config) setConfigMaxLoginAttempts() {
+// setConfigMaxLoginAttempts sets the MaxLoginAttempts field from the "max_login_attempts" configuration value using viper.
+// If the value is greater than 0 and less than math.MaxUint8, it is assigned directly. Otherwise, it is capped at math.MaxUint8.
+func (env *EnvironmentSettings) setConfigMaxLoginAttempts() {
 	if val := viper.GetUint("max_login_attempts"); val > 0 {
 		if val < math.MaxUint8 {
-			c.MaxLoginAttempts = uint8(val)
+			env.MaxLoginAttempts = uint8(val)
 		} else {
-			c.MaxLoginAttempts = math.MaxUint8
+			env.MaxLoginAttempts = math.MaxUint8
 		}
 	}
 }
 
-// setConfigMaxActionWorkers sets the value of MaxActionWorkers field in the Config struct.
-// The value is retrieved from the configuration file using viper.GetUint("max_action_workers").
-// If the retrieved value is greater than 1, it is checked if it is less than math.MaxUint16.
-// If it is, the MaxActionWorkers field is set to that value. Otherwise, it is set to math.MaxUint16.
-// If the retrieved value is not greater than 1, then MaxActionWorkers is set to 1.
-func (c *Config) setConfigMaxActionWorkers() {
+// setConfigMaxActionWorkers sets the MaxActionWorkers field based on the "max_action_workers" value from the configuration.
+func (env *EnvironmentSettings) setConfigMaxActionWorkers() {
 	if val := viper.GetUint("max_action_workers"); val > 1 {
 		if val < math.MaxUint16 {
-			c.MaxActionWorkers = uint16(val)
+			env.MaxActionWorkers = uint16(val)
 		} else {
-			c.MaxActionWorkers = math.MaxUint16
+			env.MaxActionWorkers = math.MaxUint16
 		}
 	} else {
-		c.MaxActionWorkers = 1
+		env.MaxActionWorkers = 1
 	}
 }
 
-// setLocalCacheTTL sets the value of the LocalCacheAuthTTL field in the Config struct based on the value retrieved from the configuration file (viper).
-// If the value is greater than 5 seconds, it will be assigned to the field. If it is less than an hour, it will be assigned to the field.
-// Otherwise, the field will be assigned the value of 5 seconds.
-// Please note that this method does not return errors.
-func (c *Config) setLocalCacheTTL() {
+// setLocalCacheTTL sets the LocalCacheAuthTTL field based on the "local_cache_auth_ttl" configuration value using viper.
+// If the value is greater than 5 seconds but less than 1 hour, it is set directly; otherwise, it is capped accordingly.
+func (env *EnvironmentSettings) setLocalCacheTTL() {
 	if val := viper.GetDuration("local_cache_auth_ttl"); val*time.Second > 5*time.Second {
 		if val*time.Second < time.Hour {
-			c.LocalCacheAuthTTL = val * time.Second
+			env.LocalCacheAuthTTL = val * time.Second
 		} else {
-			c.LocalCacheAuthTTL = time.Hour
+			env.LocalCacheAuthTTL = time.Hour
 		}
 	} else {
-		c.LocalCacheAuthTTL = 5 * time.Second
+		env.LocalCacheAuthTTL = 5 * time.Second
 	}
 }
 
-// setConfig initializes the configuration options based on the environment variables and flags.
-// It calls several helper methods to set each specific option.
-func (c *Config) setConfig() {
-	c.setConfigWaitDelay()
-	c.setConfigMaxLoginAttempts()
-	c.setConfigMaxActionWorkers()
-	c.setLocalCacheTTL()
+// setConfig initializes multiple configuration fields for the EnvironmentSettings instance using internal helper methods.
+func (env *EnvironmentSettings) setConfig() {
+	env.setConfigWaitDelay()
+	env.setConfigMaxLoginAttempts()
+	env.setConfigMaxActionWorkers()
+	env.setLocalCacheTTL()
 }
 
-// NewConfig initializes a new Config struct and sets its values based on
-// environment variables. It calls various methods to set specific
-// configuration options and returns the new Config struct or an error if
-// any configuration fails.
-func NewConfig() *Config {
+// NewEnvironmentConfig initializes and returns a singleton instance of EnvironmentSettings, setting default and custom configurations.
+func NewEnvironmentConfig() Environment {
+	if environment != nil {
+		return environment
+	}
+
 	setDefaultEnvVars()
 
-	newCfg := &Config{}
+	newCfg := &EnvironmentSettings{}
 
 	newCfg.setConfigFromEnvVars()
 	newCfg.setConfig()
+
+	environment = newCfg
 
 	return newCfg
 }

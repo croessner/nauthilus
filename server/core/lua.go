@@ -45,7 +45,7 @@ func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		LuaReplyChan:      luaReplyChan,
 		HTTPClientContext: auth.HTTPClientContext,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           false, // set by backend_result
 			Authenticated:       false, // set by backend_result
@@ -168,7 +168,7 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:      config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
 			Service:    auth.Service,
 			Session:    *auth.GUID,
 			ClientIP:   auth.ClientIP,
@@ -220,7 +220,7 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:      config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
 			Service:    auth.Service,
 			Session:    *auth.GUID,
 			Username:   auth.Username,

@@ -200,12 +200,12 @@ type ldapConnectionState struct {
 }
 
 // NewPool creates a new LDAPPool object based on the provided context and poolType.
-// If config.LoadableConfig.LDAP is nil, it returns.
+// If config.GetFile().LDAP is nil, it returns.
 // The poolType can be global.LDAPPoolLookup, global.LDAPPoolUnknown, or definitions.LDAPPoolAuth.
 // It initializes the name and poolSize variables based on the poolType.
 // It creates slices for the "conn" and "conf" variables based on the poolSize.
 // It iterates through the poolSize and initializes each element of conf and conn.
-// Then it assigns values from config.LoadableConfig to each element of conf
+// Then it assigns values from config.GetFile() to each element of conf
 // and sets the state of each element of "conn" to definitions.LDAPStateClosed.
 // Finally, it returns an LDAPPool object with the provided context, name, conn, and conf.
 func NewPool(ctx context.Context, poolType int) *LDAPPool {
@@ -216,21 +216,21 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 		conf     []*config.LDAPConf
 	)
 
-	if config.LoadableConfig.LDAP == nil {
+	if config.GetFile().GetLDAP() == nil {
 		return nil
 	}
 
 	switch poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
 		name = "lookup"
-		poolSize = config.LoadableConfig.GetLDAPConfigLookupPoolSize()
+		poolSize = config.GetFile().GetLDAPConfigLookupPoolSize()
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]*LDAPConnection, poolSize)
 
 	case definitions.LDAPPoolAuth:
 		name = "auth"
-		poolSize = config.LoadableConfig.GetLDAPConfigAuthPoolSize()
+		poolSize = config.GetFile().GetLDAPConfigAuthPoolSize()
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]*LDAPConnection, poolSize)
@@ -242,15 +242,15 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 		conf[index] = &config.LDAPConf{}
 		conn[index] = &LDAPConnection{}
 
-		conf[index].ServerURIs = config.LoadableConfig.GetLDAPConfigServerURIs()
-		conf[index].BindDN = config.LoadableConfig.GetLDAPConfigBindDN()
-		conf[index].BindPW = config.LoadableConfig.GetLDAPConfigBindPW()
-		conf[index].StartTLS = config.LoadableConfig.GetLDAPConfigStartTLS()
-		conf[index].TLSSkipVerify = config.LoadableConfig.GetLDAPConfigTLSSkipVerify()
-		conf[index].TLSCAFile = config.LoadableConfig.GetLDAPConfigTLSCAFile()
-		conf[index].TLSClientCert = config.LoadableConfig.GetLDAPConfigTLSClientCert()
-		conf[index].TLSClientKey = config.LoadableConfig.GetLDAPConfigTLSClientKey()
-		conf[index].SASLExternal = config.LoadableConfig.GetLDAPConfigSASLExternal()
+		conf[index].ServerURIs = config.GetFile().GetLDAPConfigServerURIs()
+		conf[index].BindDN = config.GetFile().GetLDAPConfigBindDN()
+		conf[index].BindPW = config.GetFile().GetLDAPConfigBindPW()
+		conf[index].StartTLS = config.GetFile().GetLDAPConfigStartTLS()
+		conf[index].TLSSkipVerify = config.GetFile().GetLDAPConfigTLSSkipVerify()
+		conf[index].TLSCAFile = config.GetFile().GetLDAPConfigTLSCAFile()
+		conf[index].TLSClientCert = config.GetFile().GetLDAPConfigTLSClientCert()
+		conf[index].TLSClientKey = config.GetFile().GetLDAPConfigTLSClientKey()
+		conf[index].SASLExternal = config.GetFile().GetLDAPConfigSASLExternal()
 
 		conn[index].state = definitions.LDAPStateClosed
 	}
@@ -294,15 +294,15 @@ func (l *LDAPPool) Close() {
 
 // getIdlePoolSize returns the idle pool size based on the LDAP pool type.
 // It checks the value of `l.poolType` and returns the corresponding idle pool size from the configuration.
-// If the pool type is `LDAPPoolLookup` or `LDAPPoolUnknown`, it returns the idle pool size from `config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()`.
-// If the pool type is `LDAPPoolAuth`, it returns the idle pool size from `config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()`.
+// If the pool type is `LDAPPoolLookup` or `LDAPPoolUnknown`, it returns the idle pool size from `config.GetFile().GetLDAPConfigLookupIdlePoolSize()`.
+// If the pool type is `LDAPPoolAuth`, it returns the idle pool size from `config.GetFile().GetLDAPConfigAuthIdlePoolSize()`.
 // For any other pool type, it returns 0.
 func (l *LDAPPool) getIdlePoolSize() int {
 	switch l.poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
-		return config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()
+		return config.GetFile().GetLDAPConfigLookupIdlePoolSize()
 	case definitions.LDAPPoolAuth:
-		return config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()
+		return config.GetFile().GetLDAPConfigAuthIdlePoolSize()
 	default:
 		return 0
 	}
@@ -419,11 +419,11 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 func (l *LDAPPool) updateStatsPoolSize() {
 	switch l.poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
-		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupPoolSize()))
-		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigLookupIdlePoolSize()))
+		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupIdlePoolSize()))
 	case definitions.LDAPPoolAuth:
-		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthPoolSize()))
-		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.LoadableConfig.GetLDAPConfigAuthIdlePoolSize()))
+		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthPoolSize()))
+		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthIdlePoolSize()))
 	}
 }
 
@@ -996,7 +996,7 @@ func (l *LDAPConnection) externalBind(guid *string) error {
 		return err
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 
@@ -1013,7 +1013,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
-	if config.EnvConfig.DevMode {
+	if config.GetEnvironment().GetDevMode() {
 		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
 	}
 
@@ -1026,7 +1026,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 		return err
 	}
 
-	if config.LoadableConfig.Server.Log.Level.Level() >= definitions.LogLevelDebug {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 

@@ -106,7 +106,7 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 // passing the compiled script, the request, and the context.
 // If the context is canceled, LuaMainWorker will send a Done signal to notify the caller.
 func LuaMainWorker(ctx context.Context) {
-	scriptPath := config.LoadableConfig.GetLuaScriptPath()
+	scriptPath := config.GetFile().GetLuaScriptPath()
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
 	if err != nil {
@@ -177,7 +177,7 @@ func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, 
 	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientContext.Request))
 	case definitions.LuaModLDAP:
-		if config.LoadableConfig.HaveLDAPBackend() {
+		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(modName, LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")
@@ -410,7 +410,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyGUID, luaRequest.Session,
-		"script", config.LoadableConfig.GetLuaScriptPath(),
+		"script", config.GetFile().GetLuaScriptPath(),
 		definitions.LogKeyMsg, err,
 	)
 

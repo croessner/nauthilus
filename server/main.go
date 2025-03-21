@@ -36,12 +36,12 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if err := setupEnvironment(); err != nil {
+	if err := setupConfiguration(); err != nil {
 		stdlog.Fatalln("Unable to setup the environment. Error:", err)
 	}
 
 	initializeInstanceInfo()
-	postEnvironmentDebug()
+	debugLoadableConfig()
 
 	if err := setupLuaScripts(); err != nil {
 		stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
