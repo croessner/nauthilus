@@ -43,9 +43,9 @@ import (
 // Returns:
 // - string: the username based on the master user mode flag.
 func handleMasterUserMode(auth *AuthState) string {
-	if config.LoadableConfig.Server.MasterUser.Enabled {
-		if strings.Count(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
-			parts := strings.Split(auth.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
+	if config.GetFile().Server.MasterUser.Enabled {
+		if strings.Count(auth.Username, config.GetFile().Server.MasterUser.Delimiter) == 1 {
+			parts := strings.Split(auth.Username, config.GetFile().Server.MasterUser.Delimiter)
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
 				return auth.Username
@@ -130,7 +130,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
-	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
 	}
 
@@ -290,7 +290,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
-	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
 	}
 
@@ -380,7 +380,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 
 	ldapReplyChan := make(chan *backend.LDAPReply)
 
-	if protocol, err = config.LoadableConfig.GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
 	}
 

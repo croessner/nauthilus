@@ -37,7 +37,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 		if tlsCfg.Cert != "" && tlsCfg.Key != "" {
 			cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.LoadableConfig.Server.InstanceName, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.GetFile().Server.InstanceName, definitions.LogKeyMsg, err)
 
 				return nil
 			}
@@ -90,7 +90,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 // newRedisClient returns a new Redis client that is configured with the provided address and authentication credentials.
 // The client is created using the redis.NewClient function from the "github.com/go-redis/redis" package.
 // The address is used to specify the network address of the Redis server.
-// The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.LoadableConfig.Server.Redis.Master" and
+// The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().Server.Redis.Master" and
 func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:         address,

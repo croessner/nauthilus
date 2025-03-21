@@ -38,10 +38,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The configuration file is briefly documented in the markdown file Configuration-File.md.
+// The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
 
-// LoadableConfig is a variable of type *File that represents the configuration file that can be loaded.
-var LoadableConfig *File //nolint:gochecknoglobals // System wide configuration from nauthilus.yml file
+// LoadableConfig is a variable of type *FileSettings that represents the configuration file that can be loaded.
+var file *FileSettings
+
+// GetFile returns the loaded FileSettings configuration instance.
+func GetFile() *FileSettings {
+	if file == nil {
+		panic("FileSettings not loaded")
+	}
+
+	return file
+}
 
 // GetterHandler is an interface that provides methods to retrieve configuration and protocol information.
 type GetterHandler interface {
@@ -49,9 +58,9 @@ type GetterHandler interface {
 	GetProtocols() any
 }
 
-// File represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
+// FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
 // Lua scripting, OAuth2, LDAP, and other miscellaneous configurations. It includes synchronization via a mutex.
-type File struct {
+type FileSettings struct {
 	Server                  *ServerSection           `mapstructure:"server" valdiate:"required"`
 	RBLs                    *RBLSection              `mapstructure:"realtime_blackhole_lists" valdiate:"omitempty"`
 	ClearTextList           []string                 `mapstructure:"cleartext_networks" valdiate:"omitempty,dive"`
@@ -69,9 +78,9 @@ type File struct {
  * Backend server monitoring
  */
 
-// GetBackendServerMonitoring is a method on the File struct.
-// It returns the BackendServerMonitoring field from the File struct.
-func (f *File) GetBackendServerMonitoring() *BackendServerMonitoring {
+// GetBackendServerMonitoring is a method on the FileSettings struct.
+// It returns the BackendServerMonitoring field from the FileSettings struct.
+func (f *FileSettings) GetBackendServerMonitoring() *BackendServerMonitoring {
 	if f == nil {
 		return nil
 	}
@@ -83,8 +92,8 @@ func (f *File) GetBackendServerMonitoring() *BackendServerMonitoring {
 	return f.BackendServerMonitoring
 }
 
-// GetBackendServers retrieves the list of backend servers for the File instance or returns an empty list if none are configured.
-func (f *File) GetBackendServers() []*BackendServer {
+// GetBackendServers retrieves the list of backend servers for the FileSettings instance or returns an empty list if none are configured.
+func (f *FileSettings) GetBackendServers() []*BackendServer {
 	if f == nil {
 		return []*BackendServer{}
 	}
@@ -96,9 +105,9 @@ func (f *File) GetBackendServers() []*BackendServer {
 	return []*BackendServer{}
 }
 
-// GetBackendServer retrieves the first BackendServer that matches the specified protocol from the File's backend servers.
-// Returns nil if no matching server is found or if the File object is nil.
-func (f *File) GetBackendServer(protocol string) *BackendServer {
+// GetBackendServer retrieves the first BackendServer that matches the specified protocol from the FileSettings's backend servers.
+// Returns nil if no matching server is found or if the FileSettings object is nil.
+func (f *FileSettings) GetBackendServer(protocol string) *BackendServer {
 	if f == nil {
 		return nil
 	}
@@ -118,7 +127,7 @@ func (f *File) GetBackendServer(protocol string) *BackendServer {
 
 // GetLDAPConfigStartTLS determines if StartTLS is enabled for the LDAP configuration in the provided file.
 // Returns false if the file or configuration is nil or not of type *LDAPConf.
-func (f *File) GetLDAPConfigStartTLS() bool {
+func (f *FileSettings) GetLDAPConfigStartTLS() bool {
 	if f == nil {
 		return false
 	}
@@ -137,7 +146,7 @@ func (f *File) GetLDAPConfigStartTLS() bool {
 
 // GetLDAPConfigTLSSkipVerify retrieves the TLSSkipVerify value from the LDAP configuration in the file.
 // Returns false if the file or configuration is nil or not of type *LDAPConf.
-func (f *File) GetLDAPConfigTLSSkipVerify() bool {
+func (f *FileSettings) GetLDAPConfigTLSSkipVerify() bool {
 	if f == nil {
 		return false
 	}
@@ -155,8 +164,8 @@ func (f *File) GetLDAPConfigTLSSkipVerify() bool {
 }
 
 // GetLDAPConfigSASLExternal checks if the LDAP configuration uses SASL External authentication and returns its status.
-// It returns false if the File receiver or the LDAP configuration is nil, or if the type assertion fails.
-func (f *File) GetLDAPConfigSASLExternal() bool {
+// It returns false if the FileSettings receiver or the LDAP configuration is nil, or if the type assertion fails.
+func (f *FileSettings) GetLDAPConfigSASLExternal() bool {
 	if f == nil {
 		return false
 	}
@@ -174,7 +183,7 @@ func (f *File) GetLDAPConfigSASLExternal() bool {
 }
 
 // GetLDAPConfigLookupIdlePoolSize returns the configured idle connection pool size for LDAP lookups or a default value if unset.
-func (f *File) GetLDAPConfigLookupIdlePoolSize() int {
+func (f *FileSettings) GetLDAPConfigLookupIdlePoolSize() int {
 	if f == nil {
 		return definitions.LDAPIdlePoolSize
 	}
@@ -193,7 +202,7 @@ func (f *File) GetLDAPConfigLookupIdlePoolSize() int {
 
 // GetLDAPConfigAuthIdlePoolSize retrieves the authentication idle pool size for the LDAP configuration.
 // It returns the default value if the configuration is nil or not properly set.
-func (f *File) GetLDAPConfigAuthIdlePoolSize() int {
+func (f *FileSettings) GetLDAPConfigAuthIdlePoolSize() int {
 	if f == nil {
 		return definitions.LDAPIdlePoolSize
 	}
@@ -211,7 +220,7 @@ func (f *File) GetLDAPConfigAuthIdlePoolSize() int {
 }
 
 // GetLDAPConfigLookupPoolSize returns the size of the LDAP lookup connection pool, or a default if no configuration exists.
-func (f *File) GetLDAPConfigLookupPoolSize() int {
+func (f *FileSettings) GetLDAPConfigLookupPoolSize() int {
 	if f == nil {
 		return definitions.LDAPIdlePoolSize
 	}
@@ -229,7 +238,7 @@ func (f *File) GetLDAPConfigLookupPoolSize() int {
 }
 
 // GetLDAPConfigAuthPoolSize returns the authentication pool size configured for an LDAP backend or a default value if not set.
-func (f *File) GetLDAPConfigAuthPoolSize() int {
+func (f *FileSettings) GetLDAPConfigAuthPoolSize() int {
 	if f == nil {
 		return definitions.LDAPIdlePoolSize
 	}
@@ -247,7 +256,7 @@ func (f *File) GetLDAPConfigAuthPoolSize() int {
 }
 
 // GetLDAPConfigBindDN returns the BindDN value from the LDAP configuration if available, otherwise it returns an empty string.
-func (f *File) GetLDAPConfigBindDN() string {
+func (f *FileSettings) GetLDAPConfigBindDN() string {
 	if f == nil {
 		return ""
 	}
@@ -265,7 +274,7 @@ func (f *File) GetLDAPConfigBindDN() string {
 }
 
 // GetLDAPConfigBindPW retrieves the BindPW (bind password) from the LDAP configuration if available, or returns an empty string.
-func (f *File) GetLDAPConfigBindPW() string {
+func (f *FileSettings) GetLDAPConfigBindPW() string {
 	if f == nil {
 		return ""
 	}
@@ -283,7 +292,7 @@ func (f *File) GetLDAPConfigBindPW() string {
 }
 
 // GetLDAPConfigTLSCAFile retrieves the TLS CA file for the LDAP configuration if available, returning an empty string if not.
-func (f *File) GetLDAPConfigTLSCAFile() string {
+func (f *FileSettings) GetLDAPConfigTLSCAFile() string {
 	if f == nil {
 		return ""
 	}
@@ -302,7 +311,7 @@ func (f *File) GetLDAPConfigTLSCAFile() string {
 
 // GetLDAPConfigTLSClientCert retrieves the TLS client certificate for the LDAP configuration.
 // Returns an empty string if the file or configuration is nil, or if the assertion of the config type fails.
-func (f *File) GetLDAPConfigTLSClientCert() string {
+func (f *FileSettings) GetLDAPConfigTLSClientCert() string {
 	if f == nil {
 		return ""
 	}
@@ -320,7 +329,7 @@ func (f *File) GetLDAPConfigTLSClientCert() string {
 }
 
 // GetLDAPConfigTLSClientKey retrieves the TLS client key for the LDAP configuration. Returns an empty string if not set.
-func (f *File) GetLDAPConfigTLSClientKey() string {
+func (f *FileSettings) GetLDAPConfigTLSClientKey() string {
 	if f == nil {
 		return ""
 	}
@@ -338,7 +347,7 @@ func (f *File) GetLDAPConfigTLSClientKey() string {
 }
 
 // GetLDAPConfigServerURIs retrieves the LDAP server URIs from the configuration or returns "ldap://localhost" as a default value.
-func (f *File) GetLDAPConfigServerURIs() []string {
+func (f *FileSettings) GetLDAPConfigServerURIs() []string {
 	if f == nil {
 		return []string{"ldap://localhost"}
 	}
@@ -358,7 +367,7 @@ func (f *File) GetLDAPConfigServerURIs() []string {
 // GetLDAPSearchProtocol retrieves the LDAPSearchProtocol configuration based on the specified protocol.
 // If the protocol is not found, it falls back to the default protocol.
 // Returns an error if the configuration or default protocol is missing.
-func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error) {
+func (f *FileSettings) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error) {
 	if f == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -388,7 +397,7 @@ func (f *File) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, erro
  */
 
 // GetLuaScriptPath retrieves the backend Lua script file path from the configuration. Returns an empty string if unavailable.
-func (f *File) GetLuaScriptPath() string {
+func (f *FileSettings) GetLuaScriptPath() string {
 	if f == nil {
 		return ""
 	}
@@ -407,7 +416,7 @@ func (f *File) GetLuaScriptPath() string {
 
 // GetLuaInitScriptPath returns the path to the Lua init script specified in the configuration.
 // If the configuration or LuaConf is nil, it returns an empty string.
-func (f *File) GetLuaInitScriptPath() string {
+func (f *FileSettings) GetLuaInitScriptPath() string {
 	if f == nil {
 		return ""
 	}
@@ -425,7 +434,7 @@ func (f *File) GetLuaInitScriptPath() string {
 }
 
 // GetLuaPackagePath returns the Lua package path based on the file configuration or a default path if not specified.
-func (f *File) GetLuaPackagePath() string {
+func (f *FileSettings) GetLuaPackagePath() string {
 	if f == nil {
 		return definitions.LuaPackagePath
 	}
@@ -446,7 +455,7 @@ func (f *File) GetLuaPackagePath() string {
 // Returns a default LuaSearchProtocol if the protocol cannot be found and protocol is set to ProtoDefault.
 // Returns a DetailedError if the protocol cannot be found and no default is configured.
 // Accepts a string representing the protocol to search for.
-func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error) {
+func (f *FileSettings) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error) {
 	if f == nil {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -471,10 +480,10 @@ func (f *File) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 	return f.GetLuaSearchProtocol(definitions.ProtoDefault)
 }
 
-// HaveLuaFilters is a method on the File struct.
-// It checks if the File struct has Lua filters.
+// HaveLuaFilters is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua filters.
 // It returns true if there are Lua filters, and false otherwise.
-func (f *File) HaveLuaFilters() bool {
+func (f *FileSettings) HaveLuaFilters() bool {
 	if f == nil {
 		return false
 	}
@@ -486,10 +495,10 @@ func (f *File) HaveLuaFilters() bool {
 	return false
 }
 
-// HaveLuaFeatures is a method on the File struct.
-// It checks if the File struct has Lua features.
+// HaveLuaFeatures is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua features.
 // It returns true if there are Lua features, and false otherwise.
-func (f *File) HaveLuaFeatures() bool {
+func (f *FileSettings) HaveLuaFeatures() bool {
 	if f == nil {
 		return false
 	}
@@ -501,8 +510,8 @@ func (f *File) HaveLuaFeatures() bool {
 	return false
 }
 
-// HaveLuaHooks returns true if the File instance has Lua hooks associated with it, otherwise returns false.
-func (f *File) HaveLuaHooks() bool {
+// HaveLuaHooks returns true if the FileSettings instance has Lua hooks associated with it, otherwise returns false.
+func (f *FileSettings) HaveLuaHooks() bool {
 	if f == nil {
 		return false
 	}
@@ -514,10 +523,10 @@ func (f *File) HaveLuaHooks() bool {
 	return false
 }
 
-// HaveLuaActions is a method on the File struct.
-// It checks if the File struct has Lua actions.
-// It returns true if the File struct has Lua actions, otherwise returns false.
-func (f *File) HaveLuaActions() bool {
+// HaveLuaActions is a method on the FileSettings struct.
+// It checks if the FileSettings struct has Lua actions.
+// It returns true if the FileSettings struct has Lua actions, otherwise returns false.
+func (f *FileSettings) HaveLuaActions() bool {
 	if f == nil {
 		return false
 	}
@@ -530,11 +539,11 @@ func (f *File) HaveLuaActions() bool {
 }
 
 // HaveLuaInit checks if the Lua initialization script path is set in the configuration.
-// It first confirms that the File instance supports Lua by invoking HaveLua method.
+// It first confirms that the FileSettings instance supports Lua by invoking HaveLua method.
 // Then, it retrieves the Lua configuration using GetConfig with the definitions.BackendLua constant.
 // If the retrieved configuration is of type *LuaConf and the InitScriptPath is not empty, it returns true.
 // Otherwise, it returns false.
-func (f *File) HaveLuaInit() bool {
+func (f *FileSettings) HaveLuaInit() bool {
 	if f == nil {
 		return false
 	}
@@ -551,10 +560,10 @@ func (f *File) HaveLuaInit() bool {
 	return false
 }
 
-// HaveLua is a method on the File struct.
-// It checks if the Lua field in the File struct is not nil.
+// HaveLua is a method on the FileSettings struct.
+// It checks if the Lua field in the FileSettings struct is not nil.
 // It returns a boolean value indicating whether Lua is present or not.
-func (f *File) HaveLua() bool {
+func (f *FileSettings) HaveLua() bool {
 	if f == nil {
 		return false
 	}
@@ -563,7 +572,7 @@ func (f *File) HaveLua() bool {
 }
 
 // HaveLDAPBackend checks if the configuration includes an LDAP backend and returns true if it exists, otherwise false.
-func (f *File) HaveLDAPBackend() bool {
+func (f *FileSettings) HaveLDAPBackend() bool {
 	if f == nil {
 		return false
 	}
@@ -582,7 +591,7 @@ func (f *File) HaveLDAPBackend() bool {
  */
 
 // GetServerInsightsEnablePprof returns true if the ServerInsights configuration enables pprof; otherwise, returns false.
-func (f *File) GetServerInsightsEnablePprof() bool {
+func (f *FileSettings) GetServerInsightsEnablePprof() bool {
 	if f == nil {
 		return false
 	}
@@ -595,7 +604,7 @@ func (f *File) GetServerInsightsEnablePprof() bool {
 }
 
 // GetServerInsightsEnableBlockProfile checks if the block profiling feature is enabled in the server insights configuration.
-func (f *File) GetServerInsightsEnableBlockProfile() bool {
+func (f *FileSettings) GetServerInsightsEnableBlockProfile() bool {
 	if f == nil {
 		return false
 	}
@@ -607,10 +616,10 @@ func (f *File) GetServerInsightsEnableBlockProfile() bool {
 	return false
 }
 
-// GetServerInsights is a method on the File struct.
-// It returns the Insights field from the Server struct, which is accessed through the GetServer() method on the File struct.
-// If the File struct does not have a Server, it returns nil.
-func (f *File) GetServerInsights() *Insights {
+// GetServerInsights is a method on the FileSettings struct.
+// It returns the Insights field from the Server struct, which is accessed through the GetServer() method on the FileSettings struct.
+// If the FileSettings struct does not have a Server, it returns nil.
+func (f *FileSettings) GetServerInsights() *Insights {
 	if f == nil {
 		return nil
 	}
@@ -622,8 +631,8 @@ func (f *File) GetServerInsights() *Insights {
 	return nil
 }
 
-// GetServer retrieves the ServerSection from the File. Returns nil if the File is nil or if no Server is present.
-func (f *File) GetServer() *ServerSection {
+// GetServer retrieves the ServerSection from the FileSettings. Returns nil if the FileSettings is nil or if no Server is present.
+func (f *FileSettings) GetServer() *ServerSection {
 	if f == nil {
 		return nil
 	}
@@ -635,9 +644,9 @@ func (f *File) GetServer() *ServerSection {
 	return nil
 }
 
-// HaveServer is a method on the File struct.
-// It returns true if the Server field in the File struct is not nil, indicating that a server exists.
-func (f *File) HaveServer() bool {
+// HaveServer is a method on the FileSettings struct.
+// It returns true if the Server field in the FileSettings struct is not nil, indicating that a server exists.
+func (f *FileSettings) HaveServer() bool {
 	if f == nil {
 		return false
 	}
@@ -651,8 +660,8 @@ func (f *File) HaveServer() bool {
 
 // RetrieveGetterMap returns a map associating each supported backend with its corresponding GetterHandler implementation.
 // This method initializes a new map for the backends, and populates it by checking if certain backend sections exist.
-// If the provided File object is nil, it returns nil.
-func (f *File) RetrieveGetterMap() map[definitions.Backend]GetterHandler {
+// If the provided FileSettings object is nil, it returns nil.
+func (f *FileSettings) RetrieveGetterMap() map[definitions.Backend]GetterHandler {
 	if f == nil {
 		return nil
 	}
@@ -670,8 +679,8 @@ func (f *File) RetrieveGetterMap() map[definitions.Backend]GetterHandler {
 	return getterMap
 }
 
-// GetConfig retrieves the configuration for a given backend from the File receiver or returns nil if unavailable.
-func (f *File) GetConfig(backend definitions.Backend) any {
+// GetConfig retrieves the configuration for a given backend from the FileSettings receiver or returns nil if unavailable.
+func (f *FileSettings) GetConfig(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
@@ -691,7 +700,7 @@ func (f *File) GetConfig(backend definitions.Backend) any {
 
 // GetProtocols retrieves protocol configurations for the specified backend type.
 // Returns nil if the backend is not found or has no associated protocols.
-func (f *File) GetProtocols(backend definitions.Backend) any {
+func (f *FileSettings) GetProtocols(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
@@ -709,8 +718,8 @@ func (f *File) GetProtocols(backend definitions.Backend) any {
 	return nil
 }
 
-// GetSection retrieves the section corresponding to the provided backend type from the File. Returns nil if not found.
-func (f *File) GetSection(backend definitions.Backend) any {
+// GetSection retrieves the section corresponding to the provided backend type from the FileSettings. Returns nil if not found.
+func (f *FileSettings) GetSection(backend definitions.Backend) any {
 	if f == nil {
 		return nil
 	}
@@ -726,15 +735,15 @@ func (f *File) GetSection(backend definitions.Backend) any {
 }
 
 // GetBruteForceRules retrieves the list of brute force rules defined in the configuration file.
-// If no rules are defined or the File instance is nil, it returns nil.
-func (f *File) GetBruteForceRules() (rules []BruteForceRule) {
+// If no rules are defined or the FileSettings instance is nil, it returns nil.
+func (f *FileSettings) GetBruteForceRules() (rules []BruteForceRule) {
 	if f == nil {
 		return nil
 	}
 
 	if f.BruteForce != nil {
-		if len(LoadableConfig.BruteForce.Buckets) > 0 {
-			rules = LoadableConfig.BruteForce.Buckets
+		if len(f.BruteForce.Buckets) > 0 {
+			rules = f.BruteForce.Buckets
 		}
 	}
 
@@ -742,7 +751,7 @@ func (f *File) GetBruteForceRules() (rules []BruteForceRule) {
 }
 
 // GetAllProtocols returns a unique slice of strings (a Set) for all defined protocols in the database search sections.
-func (f *File) GetAllProtocols() []string {
+func (f *FileSettings) GetAllProtocols() []string {
 	if f == nil {
 		return nil
 	}
@@ -751,16 +760,16 @@ func (f *File) GetAllProtocols() []string {
 
 	if ldapProtocols := f.GetProtocols(definitions.BackendLDAP); ldapProtocols != nil {
 		for index := range ldapProtocols.([]LDAPSearchProtocol) {
-			for protoIndex := range LoadableConfig.LDAP.Search[index].Protocols {
-				protocols.Set(LoadableConfig.LDAP.Search[index].Protocols[protoIndex])
+			for protoIndex := range f.LDAP.Search[index].Protocols {
+				protocols.Set(f.LDAP.Search[index].Protocols[protoIndex])
 			}
 		}
 	}
 
 	if luaProtocols := f.GetProtocols(definitions.BackendLua); luaProtocols != nil {
 		for index := range luaProtocols.([]LuaSearchProtocol) {
-			for protoIndex := range LoadableConfig.Lua.Search[index].Protocols {
-				protocols.Set(LoadableConfig.Lua.Search[index].Protocols[protoIndex])
+			for protoIndex := range f.Lua.Search[index].Protocols {
+				protocols.Set(f.Lua.Search[index].Protocols[protoIndex])
 			}
 		}
 	}
@@ -769,10 +778,10 @@ func (f *File) GetAllProtocols() []string {
 }
 
 // getOAuth2ClientIndex returns the index and found status of an OAuth-2 client with the given client ID in the LoadableConfig.Oauth2.Clients slice. If the client is found, the index
-func getOAuth2ClientIndex(clientId string) (index int, found bool) {
-	if LoadableConfig.Oauth2 != nil {
-		for index = range LoadableConfig.Oauth2.Clients {
-			if LoadableConfig.Oauth2.Clients[index].ClientId != clientId {
+func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found bool) {
+	if f.Oauth2 != nil {
+		for index = range GetFile().Oauth2.Clients {
+			if f.Oauth2.Clients[index].ClientId != clientId {
 				continue
 			}
 
@@ -786,25 +795,25 @@ func getOAuth2ClientIndex(clientId string) (index int, found bool) {
 }
 
 // GetSkipTOTP returns a boolean true, if TOTP two-factor authentication shall be skipped for an OAuth-2 client.
-func GetSkipTOTP(clientId string) (skip bool) {
-	if index, found := getOAuth2ClientIndex(clientId); found {
-		return LoadableConfig.Oauth2.Clients[index].SkipTOTP
+func (f *FileSettings) GetSkipTOTP(clientId string) (skip bool) {
+	if index, found := f.getOAuth2ClientIndex(clientId); found {
+		return f.Oauth2.Clients[index].SkipTOTP
 	}
 
 	return
 }
 
 // GetSkipConsent returns a boolean true, if the consent dialog shall be skipped for an OAuth-2 client.
-func GetSkipConsent(clientId string) (skip bool) {
-	if index, found := getOAuth2ClientIndex(clientId); found {
-		return LoadableConfig.Oauth2.Clients[index].SkipConsent
+func (f *FileSettings) GetSkipConsent(clientId string) (skip bool) {
+	if index, found := f.getOAuth2ClientIndex(clientId); found {
+		return f.Oauth2.Clients[index].SkipConsent
 	}
 
 	return
 }
 
 // GetUsername returns the HTTP request header for the username
-func (f *File) GetUsername() string {
+func (f *FileSettings) GetUsername() string {
 	if f == nil {
 		return ""
 	}
@@ -813,7 +822,7 @@ func (f *File) GetUsername() string {
 }
 
 // GetPassword returns the HTTP request header for the password
-func (f *File) GetPassword() string {
+func (f *FileSettings) GetPassword() string {
 	if f == nil {
 		return ""
 	}
@@ -822,7 +831,7 @@ func (f *File) GetPassword() string {
 }
 
 // GetPasswordEncoded returns the HTTP request header to indicate if the password was encoded
-func (f *File) GetPasswordEncoded() string {
+func (f *FileSettings) GetPasswordEncoded() string {
 	if f == nil {
 		return ""
 	}
@@ -831,7 +840,7 @@ func (f *File) GetPasswordEncoded() string {
 }
 
 // GetProtocol returns the HTTP request header for the used protocol
-func (f *File) GetProtocol() string {
+func (f *FileSettings) GetProtocol() string {
 	if f == nil {
 		return ""
 	}
@@ -840,7 +849,7 @@ func (f *File) GetProtocol() string {
 }
 
 // GetLoginAttempt returns the HTTP request header for login-attempts
-func (f *File) GetLoginAttempt() string {
+func (f *FileSettings) GetLoginAttempt() string {
 	if f == nil {
 		return ""
 	}
@@ -849,7 +858,7 @@ func (f *File) GetLoginAttempt() string {
 }
 
 // GetAuthMethod returns the HTTP request header for the auth mechanism LOGIN or PLAIN
-func (f *File) GetAuthMethod() string {
+func (f *FileSettings) GetAuthMethod() string {
 	if f == nil {
 		return ""
 	}
@@ -858,7 +867,7 @@ func (f *File) GetAuthMethod() string {
 }
 
 // GetLocalIP returns the HTTP request header that represents the local IP address for the server that accepts client requests
-func (f *File) GetLocalIP() string {
+func (f *FileSettings) GetLocalIP() string {
 	if f == nil {
 		return ""
 	}
@@ -867,7 +876,7 @@ func (f *File) GetLocalIP() string {
 }
 
 // GetLocalPort returns the HTTP request header that represents the local TCP port for the server that accepts client requests
-func (f *File) GetLocalPort() string {
+func (f *FileSettings) GetLocalPort() string {
 	if f == nil {
 		return ""
 	}
@@ -876,7 +885,7 @@ func (f *File) GetLocalPort() string {
 }
 
 // GetClientIP returns the HTTP request header that holds the client IP of the request
-func (f *File) GetClientIP() string {
+func (f *FileSettings) GetClientIP() string {
 	if f == nil {
 		return ""
 	}
@@ -885,7 +894,7 @@ func (f *File) GetClientIP() string {
 }
 
 // GetClientPort returns the HTTP request header that holds the client TCP port of the request
-func (f *File) GetClientPort() string {
+func (f *FileSettings) GetClientPort() string {
 	if f == nil {
 		return ""
 	}
@@ -894,7 +903,7 @@ func (f *File) GetClientPort() string {
 }
 
 // GetClientHost returns the HTTP request header used to retrieve an optional client hostname
-func (f *File) GetClientHost() string {
+func (f *FileSettings) GetClientHost() string {
 	if f == nil {
 		return ""
 	}
@@ -903,7 +912,7 @@ func (f *File) GetClientHost() string {
 }
 
 // GetClientID returns the HTTP request header used to retrieve an optional client ID
-func (f *File) GetClientID() string {
+func (f *FileSettings) GetClientID() string {
 	if f == nil {
 		return ""
 	}
@@ -912,7 +921,7 @@ func (f *File) GetClientID() string {
 }
 
 // GetSSL returns the HTTP request header used to indicate SSL security for the current client connection
-func (f *File) GetSSL() string {
+func (f *FileSettings) GetSSL() string {
 	if f == nil {
 		return ""
 	}
@@ -922,7 +931,7 @@ func (f *File) GetSSL() string {
 
 // GetSSLSessionID retrieves the SSL session ID from the file's default HTTP request header. Returns an empty string
 // if the file is nil.
-func (f *File) GetSSLSessionID() string {
+func (f *FileSettings) GetSSLSessionID() string {
 	if f == nil {
 		return ""
 	}
@@ -931,8 +940,8 @@ func (f *File) GetSSLSessionID() string {
 }
 
 // GetSSLVerify retrieves the SSL verification status from the default HTTP request header configuration.
-// If the File receiver is nil, it returns an empty string.
-func (f *File) GetSSLVerify() string {
+// If the FileSettings receiver is nil, it returns an empty string.
+func (f *FileSettings) GetSSLVerify() string {
 	if f == nil {
 		return ""
 	}
@@ -941,7 +950,7 @@ func (f *File) GetSSLVerify() string {
 }
 
 // GetSSLSubject retrieves the SSL subject from the default HTTP request header. Returns an empty string if the file is nil.
-func (f *File) GetSSLSubject() string {
+func (f *FileSettings) GetSSLSubject() string {
 	if f == nil {
 		return ""
 	}
@@ -950,7 +959,7 @@ func (f *File) GetSSLSubject() string {
 }
 
 // GetSSLClientCN retrieves the SSL client common name (CN) from the default HTTP request header.
-func (f *File) GetSSLClientCN() string {
+func (f *FileSettings) GetSSLClientCN() string {
 	if f == nil {
 		return ""
 	}
@@ -959,7 +968,7 @@ func (f *File) GetSSLClientCN() string {
 }
 
 // GetSSLIssuer retrieves the SSL certificate issuer from the default HTTP request header of the server configuration.
-func (f *File) GetSSLIssuer() string {
+func (f *FileSettings) GetSSLIssuer() string {
 	if f == nil {
 		return ""
 	}
@@ -968,8 +977,8 @@ func (f *File) GetSSLIssuer() string {
 }
 
 // GetSSLClientNotBefore retrieves the "SSLClientNotBefore" value from the default HTTP request header of the server.
-// Returns an empty string if the File instance is nil.
-func (f *File) GetSSLClientNotBefore() string {
+// Returns an empty string if the FileSettings instance is nil.
+func (f *FileSettings) GetSSLClientNotBefore() string {
 	if f == nil {
 		return ""
 	}
@@ -978,8 +987,8 @@ func (f *File) GetSSLClientNotBefore() string {
 }
 
 // GetSSLClientNotAfter retrieves the SSL client certificate's "not after" expiration date as a string. Returns an empty
-// string if the File is nil.
-func (f *File) GetSSLClientNotAfter() string {
+// string if the FileSettings is nil.
+func (f *FileSettings) GetSSLClientNotAfter() string {
 	if f == nil {
 		return ""
 	}
@@ -988,7 +997,7 @@ func (f *File) GetSSLClientNotAfter() string {
 }
 
 // GetSSLSubjectDN returns the SSL subject distinguished name from the Server's default HTTP request header.
-func (f *File) GetSSLSubjectDN() string {
+func (f *FileSettings) GetSSLSubjectDN() string {
 	if f == nil {
 		return ""
 	}
@@ -997,7 +1006,7 @@ func (f *File) GetSSLSubjectDN() string {
 }
 
 // GetSSLIssuerDN retrieves the Distinguished Name (DN) of the SSL issuer from the default HTTP request header.
-func (f *File) GetSSLIssuerDN() string {
+func (f *FileSettings) GetSSLIssuerDN() string {
 	if f == nil {
 		return ""
 	}
@@ -1006,8 +1015,8 @@ func (f *File) GetSSLIssuerDN() string {
 }
 
 // GetSSLClientSubjectDN returns the SSL client subject distinguished name from the default HTTP request header.
-// If the File receiver is nil, it returns an empty string.
-func (f *File) GetSSLClientSubjectDN() string {
+// If the FileSettings receiver is nil, it returns an empty string.
+func (f *FileSettings) GetSSLClientSubjectDN() string {
 	if f == nil {
 		return ""
 	}
@@ -1016,7 +1025,7 @@ func (f *File) GetSSLClientSubjectDN() string {
 }
 
 // GetSSLClientIssuerDN returns the distinguished name (DN) of the SSL client issuer from the default HTTP request header.
-func (f *File) GetSSLClientIssuerDN() string {
+func (f *FileSettings) GetSSLClientIssuerDN() string {
 	if f == nil {
 		return ""
 	}
@@ -1025,8 +1034,8 @@ func (f *File) GetSSLClientIssuerDN() string {
 }
 
 // GetSSLCipher retrieves the SSL cipher from the default HTTP request header of the server configuration.
-// Returns an empty string if the File instance is nil.
-func (f *File) GetSSLCipher() string {
+// Returns an empty string if the FileSettings instance is nil.
+func (f *FileSettings) GetSSLCipher() string {
 	if f == nil {
 		return ""
 	}
@@ -1035,7 +1044,7 @@ func (f *File) GetSSLCipher() string {
 }
 
 // GetSSLProtocol retrieves the SSL protocol from the DefaultHTTPRequestHeader of the Server configuration.
-func (f *File) GetSSLProtocol() string {
+func (f *FileSettings) GetSSLProtocol() string {
 	if f == nil {
 		return ""
 	}
@@ -1044,8 +1053,8 @@ func (f *File) GetSSLProtocol() string {
 }
 
 // GetSSLSerial retrieves the SSL serial number from the default HTTP request header of the server configuration.
-// Returns an empty string if the File receiver is nil.
-func (f *File) GetSSLSerial() string {
+// Returns an empty string if the FileSettings receiver is nil.
+func (f *FileSettings) GetSSLSerial() string {
 	if f == nil {
 		return ""
 	}
@@ -1054,8 +1063,8 @@ func (f *File) GetSSLSerial() string {
 }
 
 // GetSSLFingerprint retrieves the SSL fingerprint from the server's default HTTP request header.
-// If the File is nil, it returns an empty string.
-func (f *File) GetSSLFingerprint() string {
+// If the FileSettings is nil, it returns an empty string.
+func (f *FileSettings) GetSSLFingerprint() string {
 	if f == nil {
 		return ""
 	}
@@ -1063,9 +1072,9 @@ func (f *File) GetSSLFingerprint() string {
 	return f.Server.DefaultHTTPRequestHeader.SSLFingerprint
 }
 
-// validateBruteForce validates the brute force configuration rules in the File object.
+// validateBruteForce validates the brute force configuration rules in the FileSettings object.
 // Returns an error if any rule is invalid or violates constraints; otherwise, returns nil.
-func (f *File) validateBruteForce() error {
+func (f *FileSettings) validateBruteForce() error {
 	if f.BruteForce != nil {
 		for _, rule := range f.BruteForce.Buckets {
 			if rule.IPv4 && rule.IPv6 {
@@ -1090,7 +1099,7 @@ func (f *File) validateBruteForce() error {
 }
 
 // LDAPHavePoolOnly checks if the LDAP configuration is set to use the `PoolOnly` mode. Returns false if any element is nil.
-func (f *File) LDAPHavePoolOnly() bool {
+func (f *FileSettings) LDAPHavePoolOnly() bool {
 	if f == nil || f.LDAP == nil || f.LDAP.Config == nil {
 		return false
 	}
@@ -1101,7 +1110,7 @@ func (f *File) LDAPHavePoolOnly() bool {
 // validatePassDBBackends validates the configuration of password database backends defined in the server's configuration.
 // It ensures required sections, such as 'ldap', are properly configured and assigns default values where applicable.
 // If any backend has invalid or incomplete settings, it returns an appropriate error.
-func (f *File) validatePassDBBackends() error {
+func (f *FileSettings) validatePassDBBackends() error {
 	for _, backend := range f.Server.Backends {
 		switch backend.Get() {
 		case definitions.BackendLDAP:
@@ -1150,8 +1159,8 @@ func (f *File) validatePassDBBackends() error {
 	return nil
 }
 
-// validateOAuth2 validates and processes the OAuth2 configuration in the File struct, ensuring valid custom scope descriptions.
-func (f *File) validateOAuth2() error {
+// validateOAuth2 validates and processes the OAuth2 configuration in the FileSettings struct, ensuring valid custom scope descriptions.
+func (f *FileSettings) validateOAuth2() error {
 	if f.Oauth2 != nil {
 		var descriptions map[string]any
 
@@ -1192,7 +1201,7 @@ func checkAddress(address string) error {
 }
 
 // validateAddress ensures the server address is set and valid, defaulting to HTTPAddress if unset. Returns an error if invalid.
-func (f *File) validateAddress() error {
+func (f *FileSettings) validateAddress() error {
 	if f.Server.Address == "" {
 		f.Server.Address = definitions.HTTPAddress
 	}
@@ -1201,7 +1210,7 @@ func (f *File) validateAddress() error {
 }
 
 // setDefaultHydraAdminUrl sets the Hydra admin URL to a default value if it is not already configured.
-func (f *File) setDefaultHydraAdminUrl() error {
+func (f *FileSettings) setDefaultHydraAdminUrl() error {
 	if f.Server.HydraAdminUrl == "" {
 		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
 	}
@@ -1210,7 +1219,7 @@ func (f *File) setDefaultHydraAdminUrl() error {
 }
 
 // setDefaultInstanceName ensures the Server.InstanceName field is set to a default value if it is currently empty.
-func (f *File) setDefaultInstanceName() error {
+func (f *FileSettings) setDefaultInstanceName() error {
 	if f.Server.InstanceName == "" {
 		f.Server.InstanceName = definitions.InstanceName
 	}
@@ -1219,7 +1228,7 @@ func (f *File) setDefaultInstanceName() error {
 }
 
 // setDefaultDnsTimeout sets the default DNS timeout value for the file's server if not already specified.
-func (f *File) setDefaultDnsTimeout() error {
+func (f *FileSettings) setDefaultDnsTimeout() error {
 	if f.Server.DNS.Timeout == 0 {
 		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
 	}
@@ -1228,7 +1237,7 @@ func (f *File) setDefaultDnsTimeout() error {
 }
 
 // setDefaultPosCacheTTL sets a default Positive Cache TTL for Redis if it is not already configured.
-func (f *File) setDefaultPosCacheTTL() error {
+func (f *FileSettings) setDefaultPosCacheTTL() error {
 	if f.Server.Redis.PosCacheTTL <= 0 {
 		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL * time.Second
 	}
@@ -1245,7 +1254,7 @@ func (f *File) setDefaultPosCacheTTL() error {
 }
 
 // setDefaultNegCacheTTL sets the default TTL for negative cache entries in Redis if it is not already configured.
-func (f *File) setDefaultNegCacheTTL() error {
+func (f *FileSettings) setDefaultNegCacheTTL() error {
 	if f.Server.Redis.NegCacheTTL <= 0 {
 		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL * time.Second
 	}
@@ -1262,7 +1271,7 @@ func (f *File) setDefaultNegCacheTTL() error {
 }
 
 // setDefaultDelimiter sets the default delimiter for the master user if none has been defined and returns any error.
-func (f *File) setDefaultDelimiter() error {
+func (f *FileSettings) setDefaultDelimiter() error {
 	if f.Server.MasterUser.Delimiter == "" {
 		f.Server.MasterUser.Delimiter = "*"
 	}
@@ -1271,7 +1280,7 @@ func (f *File) setDefaultDelimiter() error {
 }
 
 // setDefaultHeaders ensures all default HTTP request headers are set. If any header is empty, it is replaced with its default value.
-func (f *File) setDefaultHeaders() error {
+func (f *FileSettings) setDefaultHeaders() error {
 	defaults := map[string]*string{
 		"Auth-User":            &f.Server.DefaultHTTPRequestHeader.Username,
 		"Auth-Pass":            &f.Server.DefaultHTTPRequestHeader.Password,
@@ -1314,7 +1323,7 @@ func (f *File) setDefaultHeaders() error {
 }
 
 // setDefaultMaxConcurrentRequests ensures that the MaxConcurrentRequests parameter is set to a valid value.
-func (f *File) setDefaultMaxConcurrentRequests() error {
+func (f *FileSettings) setDefaultMaxConcurrentRequests() error {
 	if f.Server.MaxConcurrentRequests == 0 {
 		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
@@ -1323,7 +1332,7 @@ func (f *File) setDefaultMaxConcurrentRequests() error {
 }
 
 // setDefaultPasswordHistory sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
-func (f *File) setDefaultPasswordHistory() error {
+func (f *FileSettings) setDefaultPasswordHistory() error {
 	if f.Server.MaxPasswordHistoryEntries == 0 {
 		f.Server.MaxPasswordHistoryEntries = definitions.MaxPasswordHistoryEntries
 	}
@@ -1331,9 +1340,9 @@ func (f *File) setDefaultPasswordHistory() error {
 	return nil
 }
 
-// validate ensures that the File object is correctly configured by running a series of validation and default-setting functions.
+// validate ensures that the FileSettings object is correctly configured by running a series of validation and default-setting functions.
 // Returns an error if any validation function fails, otherwise returns nil.
-func (f *File) validate() (err error) {
+func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
 		f.validateBruteForce,
 		f.validatePassDBBackends,
@@ -1362,7 +1371,7 @@ func (f *File) validate() (err error) {
 }
 
 // HasFeature checks if the given feature exists in the LoadableConfig's Features list
-func (f *File) HasFeature(feature string) bool {
+func (f *FileSettings) HasFeature(feature string) bool {
 	if f.Server.Features == nil {
 		return false
 	}
@@ -1628,7 +1637,7 @@ func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) e
 
 // handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
-func (f *File) handleFile() (err error) {
+func (f *FileSettings) handleFile() (err error) {
 	var validationErrors validator.ValidationErrors
 
 	if f == nil {
@@ -1669,7 +1678,7 @@ func (f *File) handleFile() (err error) {
 	return nil
 }
 
-func dumpConfig(f *File) {
+func dumpConfig(f *FileSettings) {
 	var intermediateMap map[string]interface{}
 
 	if f == nil {
@@ -1746,9 +1755,9 @@ func bindEnvs(i any, parts ...string) error {
 	return nil
 }
 
-// NewConfigFile is the constructor for a ConfigFile object.
-func NewConfigFile() (newCfg *File, err error) {
-	newCfg = &File{}
+// NewFile is the constructor for a ConfigFile object.
+func NewFile() (newCfg *FileSettings, err error) {
+	newCfg = &FileSettings{}
 
 	viper.SetConfigName("nauthilus") // name of environment file (without extension)
 	viper.SetConfigType("yaml")
@@ -1763,9 +1772,11 @@ func NewConfigFile() (newCfg *File, err error) {
 	}
 
 	// Register all known config variables with env variables.
-	bindEnvs(&File{})
+	bindEnvs(&FileSettings{})
 
 	err = newCfg.handleFile()
+
+	file = newCfg
 
 	return newCfg, err
 }
@@ -1774,7 +1785,7 @@ func NewConfigFile() (newCfg *File, err error) {
 //
 //nolint:forcetypeassert,gocognit // Ignore
 func ReloadConfigFile() (err error) {
-	newCfgReload := &File{}
+	newCfgReload := &FileSettings{}
 
 	if err = viper.ReadInConfig(); err != nil {
 		return
@@ -1786,7 +1797,7 @@ func ReloadConfigFile() (err error) {
 	}
 
 	// Replace existing configuration
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&LoadableConfig)), unsafe.Pointer(newCfgReload))
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&file)), unsafe.Pointer(newCfgReload))
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Reloading configuration file finished")
 

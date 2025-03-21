@@ -91,7 +91,7 @@ func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string,
 	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.Request))
 	case definitions.LuaModLDAP:
-		if config.LoadableConfig.HaveLDAPBackend() {
+		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")
@@ -148,17 +148,17 @@ func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult,
 //
 //	error if any error occurs while initializing the Lua filters
 func PreCompileLuaFilters() (err error) {
-	if config.LoadableConfig.HaveLuaFilters() {
+	if config.GetFile().HaveLuaFilters() {
 		if LuaFilters == nil {
 			LuaFilters = &PreCompiledLuaFilters{}
 		} else {
 			LuaFilters.Reset()
 		}
 
-		for index := range config.LoadableConfig.Lua.Filters {
+		for index := range config.GetFile().Lua.Filters {
 			var luaFilter *LuaFilter
 
-			luaFilter, err = NewLuaFilter(config.LoadableConfig.Lua.Filters[index].Name, config.LoadableConfig.Lua.Filters[index].ScriptPath)
+			luaFilter, err = NewLuaFilter(config.GetFile().Lua.Filters[index].Name, config.GetFile().Lua.Filters[index].ScriptPath)
 			if err != nil {
 				return err
 			}

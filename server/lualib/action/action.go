@@ -125,7 +125,7 @@ func NewWorker() *Worker {
 func (aw *Worker) Work(ctx context.Context) {
 	aw.ctx = ctx
 
-	if !config.LoadableConfig.HaveLuaActions() {
+	if !config.GetFile().HaveLuaActions() {
 		return
 	}
 
@@ -168,8 +168,8 @@ func (aw *Worker) Work(ctx context.Context) {
 //		- script2.lua
 //		- script3.lua
 func (aw *Worker) loadActionScriptsFromConfiguration() {
-	for index := range config.LoadableConfig.Lua.Actions {
-		aw.loadScriptAction(&config.LoadableConfig.Lua.Actions[index])
+	for index := range config.GetFile().Lua.Actions {
+		aw.loadScriptAction(&config.GetFile().Lua.Actions[index])
 	}
 }
 
@@ -180,7 +180,7 @@ func (aw *Worker) loadActionScriptsFromConfiguration() {
 //
 // Example:
 //
-//	actionConfig := &config.LoadableConfig.Lua.Actions[index]
+//	actionConfig := &config.GetFile().Lua.Actions[index]
 //	aw.loadScriptAction(actionConfig)
 func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 	luaAction := &LuaScriptAction{}
@@ -271,7 +271,7 @@ func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modNa
 	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(httpRequest))
 	case definitions.LuaModLDAP:
-		if config.LoadableConfig.HaveLDAPBackend() {
+		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
 		} else {
 			L.RaiseError("LDAP backend not activated")

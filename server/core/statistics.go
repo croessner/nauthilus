@@ -65,7 +65,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 	stats.LoginsCounter.Reset()
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.GetFile().Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.GetFile().Server.InstanceName)
 
 	for _, counterType := range []string{definitions.LabelSuccess, definitions.LabelFailure} {
 		if redisValue, err = rediscli.GetClient().GetReadHandle().HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
@@ -96,7 +96,7 @@ func SaveStatsToRedis(ctx context.Context) {
 	}
 
 	// Prometheus redis variables
-	redisLoginsCounterKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.LoadableConfig.Server.InstanceName)
+	redisLoginsCounterKey := config.GetFile().Server.Redis.Prefix + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.GetFile().Server.InstanceName)
 
 	for index := range metrics {
 		if err = rediscli.GetClient().GetWriteHandle().HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {

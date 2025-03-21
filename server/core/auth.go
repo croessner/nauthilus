@@ -1013,7 +1013,7 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	if config.LoadableConfig.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
 		} else {
@@ -1283,12 +1283,12 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	level.Info(log.Logger).Log(a.LogLineTemplate("tempfail", ctx.Request.URL.Path)...)
 }
 
-// IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the LoadableConfig.
+// IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
 // It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
 func (a *AuthState) IsMasterUser() bool {
-	if config.LoadableConfig.Server.MasterUser.Enabled {
-		if strings.Count(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter) == 1 {
-			parts := strings.Split(a.Username, config.LoadableConfig.Server.MasterUser.Delimiter)
+	if config.GetFile().Server.MasterUser.Enabled {
+		if strings.Count(a.Username, config.GetFile().Server.MasterUser.Delimiter) == 1 {
+			parts := strings.Split(a.Username, config.GetFile().Server.MasterUser.Delimiter)
 			if len(parts[0]) > 0 && len(parts[1]) > 0 {
 				return true
 			}
@@ -1536,7 +1536,7 @@ func (a *AuthState) GetAccountField() string {
 
 // PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
-	if !config.LoadableConfig.HaveLuaActions() {
+	if !config.GetFile().HaveLuaActions() {
 		return
 	}
 
@@ -1556,7 +1556,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+				Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
 				Repeating:           false,
 				UserFound:           func() bool { return passDBResult.UserFound || accountName != "" }(),
 				Authenticated:       passDBResult.Authenticated,
@@ -1718,11 +1718,11 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 // The `backendPos` map stores the position of each backend type in the configuration list.
 // The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
 // The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
-// This method loops through the `config.LoadableConfig.Server.Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
+// This method loops through the `config.GetFile().Server.Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
 func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[definitions.Backend]int)
 
-	for index, backendType := range config.LoadableConfig.Server.Backends {
+	for index, backendType := range config.GetFile().Server.Backends {
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
@@ -1731,7 +1731,7 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 				useCache = true
 			}
 		case definitions.BackendLDAP:
-			if !config.LoadableConfig.LDAPHavePoolOnly() {
+			if !config.GetFile().LDAPHavePoolOnly() {
 				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, LDAPPassDB)
 			}
 		case definitions.BackendLua:
@@ -1868,10 +1868,10 @@ func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
 func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
 	if accountName != "" {
-		redisUserKey := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+		redisUserKey := config.GetFile().Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 		if ppc.Password != "" {
-			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.LoadableConfig.Server.Redis.PosCacheTTL, ppc)
+			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().Server.Redis.PosCacheTTL, ppc)
 		}
 	}
 }
@@ -1981,7 +1981,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
-	if !config.LoadableConfig.HaveLuaFilters() {
+	if !config.GetFile().HaveLuaFilters() {
 		if passDBResult.Authenticated {
 			return definitions.AuthResultOK
 		}
@@ -2010,7 +2010,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		Logs:               nil,
 		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           passDBResult.UserFound,
 			Authenticated:       passDBResult.Authenticated,
@@ -2107,10 +2107,10 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().Server.Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			if !config.LoadableConfig.LDAPHavePoolOnly() {
+			if !config.GetFile().LDAPHavePoolOnly() {
 				accounts = append(accounts, &AccountListMap{
 					definitions.BackendLDAP,
 					ldapAccountDB,
@@ -2173,7 +2173,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 		values   []any
 	)
 
-	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().Server.Redis.Prefix + definitions.RedisUserHashKey
 
 	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName != "" {
@@ -2258,10 +2258,10 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	auth.SetUsername(ctx.GetHeader(config.LoadableConfig.GetUsername()))
-	auth.SetPassword(ctx.GetHeader(config.LoadableConfig.GetPassword()))
+	auth.SetUsername(ctx.GetHeader(config.GetFile().GetUsername()))
+	auth.SetPassword(ctx.GetHeader(config.GetFile().GetPassword()))
 
-	encoded := ctx.GetHeader(config.LoadableConfig.GetPasswordEncoded())
+	encoded := ctx.GetHeader(config.GetFile().GetPasswordEncoded())
 	if encoded == "1" {
 		password := auth.GetPassword()
 
@@ -2279,9 +2279,9 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		}
 	}
 
-	auth.GetProtocol().Set(ctx.GetHeader(config.LoadableConfig.GetProtocol()))
+	auth.GetProtocol().Set(ctx.GetHeader(config.GetFile().GetProtocol()))
 	auth.SetLoginAttempts(func() uint {
-		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.LoadableConfig.GetLoginAttempt()))
+		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.GetFile().GetLoginAttempt()))
 		if err != nil {
 			return 0
 		}
@@ -2293,7 +2293,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		return uint(loginAttempts)
 	}())
 
-	auth.SetMethod(ctx.GetHeader(config.LoadableConfig.GetAuthMethod()))
+	auth.SetMethod(ctx.GetHeader(config.GetFile().GetAuthMethod()))
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
 	auth.WithUserAgent(ctx)
@@ -2545,8 +2545,8 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.XLocalIP = ctx.GetHeader(config.LoadableConfig.GetLocalIP())
-	a.XPort = ctx.GetHeader(config.LoadableConfig.GetLocalPort())
+	a.XLocalIP = ctx.GetHeader(config.GetFile().GetLocalIP())
+	a.XPort = ctx.GetHeader(config.GetFile().GetLocalPort())
 
 	return a
 }
@@ -2559,13 +2559,13 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.ClientIP = ctx.GetHeader(config.LoadableConfig.GetClientIP())
-	a.XClientPort = ctx.GetHeader(config.LoadableConfig.GetClientPort())
-	a.XClientID = ctx.GetHeader(config.LoadableConfig.GetClientID())
+	a.ClientIP = ctx.GetHeader(config.GetFile().GetClientIP())
+	a.XClientPort = ctx.GetHeader(config.GetFile().GetClientPort())
+	a.XClientID = ctx.GetHeader(config.GetFile().GetClientID())
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		if config.LoadableConfig.Server.HAproxyV2 {
+		if config.GetFile().Server.HAproxyV2 {
 			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
@@ -2575,7 +2575,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		}
 	}
 
-	if config.LoadableConfig.Server.DNS.ResolveClientIP {
+	if config.GetFile().Server.DNS.ResolveClientIP {
 		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
 
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
@@ -2587,7 +2587,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 
 	if a.ClientHost == "" {
 		// Fallback to GetEnvironment() variable
-		a.ClientHost = ctx.GetHeader(config.LoadableConfig.GetClientHost())
+		a.ClientHost = ctx.GetHeader(config.GetFile().GetClientHost())
 	}
 
 	return a
@@ -2612,22 +2612,22 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.XSSL = ctx.GetHeader(config.LoadableConfig.GetSSL())
-	a.XSSLSessionID = ctx.GetHeader(config.LoadableConfig.GetSSLSessionID())
-	a.XSSLClientVerify = ctx.GetHeader(config.LoadableConfig.GetSSLVerify())
-	a.XSSLClientDN = ctx.GetHeader(config.LoadableConfig.GetSSLSubject())
-	a.XSSLClientCN = ctx.GetHeader(config.LoadableConfig.GetSSLClientCN())
-	a.XSSLIssuer = ctx.GetHeader(config.LoadableConfig.GetSSLIssuer())
-	a.XSSLClientNotBefore = ctx.GetHeader(config.LoadableConfig.GetSSLClientNotBefore())
-	a.XSSLClientNotAfter = ctx.GetHeader(config.LoadableConfig.GetSSLClientNotAfter())
-	a.XSSLSubjectDN = ctx.GetHeader(config.LoadableConfig.GetSSLSubjectDN())
-	a.XSSLIssuerDN = ctx.GetHeader(config.LoadableConfig.GetSSLIssuerDN())
-	a.XSSLClientSubjectDN = ctx.GetHeader(config.LoadableConfig.GetSSLClientSubjectDN())
-	a.XSSLClientIssuerDN = ctx.GetHeader(config.LoadableConfig.GetSSLClientIssuerDN())
-	a.XSSLCipher = ctx.GetHeader(config.LoadableConfig.GetSSLCipher())
-	a.XSSLProtocol = ctx.GetHeader(config.LoadableConfig.GetSSLProtocol())
-	a.SSLSerial = ctx.GetHeader(config.LoadableConfig.GetSSLSerial())
-	a.SSLFingerprint = ctx.GetHeader(config.LoadableConfig.GetSSLFingerprint())
+	a.XSSL = ctx.GetHeader(config.GetFile().GetSSL())
+	a.XSSLSessionID = ctx.GetHeader(config.GetFile().GetSSLSessionID())
+	a.XSSLClientVerify = ctx.GetHeader(config.GetFile().GetSSLVerify())
+	a.XSSLClientDN = ctx.GetHeader(config.GetFile().GetSSLSubject())
+	a.XSSLClientCN = ctx.GetHeader(config.GetFile().GetSSLClientCN())
+	a.XSSLIssuer = ctx.GetHeader(config.GetFile().GetSSLIssuer())
+	a.XSSLClientNotBefore = ctx.GetHeader(config.GetFile().GetSSLClientNotBefore())
+	a.XSSLClientNotAfter = ctx.GetHeader(config.GetFile().GetSSLClientNotAfter())
+	a.XSSLSubjectDN = ctx.GetHeader(config.GetFile().GetSSLSubjectDN())
+	a.XSSLIssuerDN = ctx.GetHeader(config.GetFile().GetSSLIssuerDN())
+	a.XSSLClientSubjectDN = ctx.GetHeader(config.GetFile().GetSSLClientSubjectDN())
+	a.XSSLClientIssuerDN = ctx.GetHeader(config.GetFile().GetSSLClientIssuerDN())
+	a.XSSLCipher = ctx.GetHeader(config.GetFile().GetSSLCipher())
+	a.XSSLProtocol = ctx.GetHeader(config.GetFile().GetSSLProtocol())
+	a.SSLSerial = ctx.GetHeader(config.GetFile().GetSSLSerial())
+	a.SSLFingerprint = ctx.GetHeader(config.GetFile().GetSSLFingerprint())
 
 	return a
 }
@@ -2811,15 +2811,15 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 // ```
 //
 // Note: This method relies on the following declarations:
-// - `config.LoadableConfig.Oauth2.Clients`: The OAuth2 clients configuration.
+// - `config.GetFile().Oauth2.Clients`: The OAuth2 clients configuration.
 // - `a.Attributes`: The AuthState object's Attributes map.
 // - `util.DebugModule`: A function for logging debug messages.
 // - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `log.Logger`, `definitions.LogKeyMsg`: Various declarations used internally in the method.
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
-	if config.LoadableConfig.Oauth2.Clients[index].Claims.Groups != "" {
-		if value, found := a.Attributes[config.LoadableConfig.Oauth2.Clients[index].Claims.Groups]; found {
+	if config.GetFile().Oauth2.Clients[index].Claims.Groups != "" {
+		if value, found := a.Attributes[config.GetFile().Oauth2.Clients[index].Claims.Groups]; found {
 			var stringSlice []string
 
 			util.DebugModule(
@@ -2865,19 +2865,19 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAuth2Client, claims map[string]any) {
 	var claim any
 
-	customScope := config.LoadableConfig.Oauth2.CustomScopes[scopeIndex]
+	customScope := config.GetFile().Oauth2.CustomScopes[scopeIndex]
 
 	for claimIndex := range customScope.Claims {
 		customClaimName := customScope.Claims[claimIndex].Name
 		customClaimType := customScope.Claims[claimIndex].Type
 
-		for clientIndex := range config.LoadableConfig.Oauth2.Clients {
-			if config.LoadableConfig.Oauth2.Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
+		for clientIndex := range config.GetFile().Oauth2.Clients {
+			if config.GetFile().Oauth2.Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
 				continue
 			}
 
 			assertOk := false
-			if claim, assertOk = config.LoadableConfig.Oauth2.Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
+			if claim, assertOk = config.GetFile().Oauth2.Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
 				break
 			}
 
@@ -2946,12 +2946,12 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		claims  map[string]any
 	)
 
-	if config.LoadableConfig.Oauth2 != nil {
+	if config.GetFile().Oauth2 != nil {
 		claims = make(map[string]any)
 
 		clientIDFound := false
 
-		for index, client = range config.LoadableConfig.Oauth2.Clients {
+		for index, client = range config.GetFile().Oauth2.Clients {
 			if client.ClientId == oauth2Client.GetClientId() {
 				clientIDFound = true
 
@@ -2969,7 +2969,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 			}
 		}
 
-		for scopeIndex := range config.LoadableConfig.Oauth2.CustomScopes {
+		for scopeIndex := range config.GetFile().Oauth2.CustomScopes {
 			a.processCustomClaims(scopeIndex, oauth2Client, claims)
 		}
 

@@ -173,11 +173,11 @@ func RequestHandler(ctx *gin.Context) {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
 			disabledEndpointMap := map[string]bool{
-				definitions.ServHeader:    config.LoadableConfig.Server.DisabledEndpoints.AuthHeader,
-				definitions.ServJSON:      config.LoadableConfig.Server.DisabledEndpoints.AuthJSON,
-				definitions.ServBasic:     config.LoadableConfig.Server.DisabledEndpoints.AuthBasic,
-				definitions.ServNginx:     config.LoadableConfig.Server.DisabledEndpoints.AuthNginx,
-				definitions.ServSaslauthd: config.LoadableConfig.Server.DisabledEndpoints.AuthSASLAuthd,
+				definitions.ServHeader:    config.GetFile().Server.DisabledEndpoints.AuthHeader,
+				definitions.ServJSON:      config.GetFile().Server.DisabledEndpoints.AuthJSON,
+				definitions.ServBasic:     config.GetFile().Server.DisabledEndpoints.AuthBasic,
+				definitions.ServNginx:     config.GetFile().Server.DisabledEndpoints.AuthNginx,
+				definitions.ServSaslauthd: config.GetFile().Server.DisabledEndpoints.AuthSASLAuthd,
 			}
 
 			if disabledEndpointMap[ctx.Param("service")] {
@@ -222,7 +222,7 @@ func RequestHandler(ctx *gin.Context) {
 
 // CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
 func CustomRequestHandler(ctx *gin.Context) {
-	if config.LoadableConfig.Server.DisabledEndpoints.CustomHooks {
+	if config.GetFile().Server.DisabledEndpoints.CustomHooks {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -379,8 +379,8 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 		if httpBasicAuthOk {
 			usernameHash := sha256.Sum256([]byte(username))
 			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Username))
-			expectedPasswordHash := sha256.Sum256([]byte(config.LoadableConfig.Server.BasicAuth.Password))
+			expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().Server.BasicAuth.Username))
+			expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().Server.BasicAuth.Password))
 
 			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
 			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
@@ -555,11 +555,11 @@ func setupWebAuthn() (*webauthn.WebAuthn, error) {
 }
 
 // setupSessionStore is a function that initializes and configures a sessions.Store for session management.
-// It creates a cookie-based store using the keys from config.LoadableConfig.CookieStoreAuthKey and config.LoadableConfig.CookieStoreEncKey.
+// It creates a cookie-based store using the keys from config.GetFile().CookieStoreAuthKey and config.GetFile().CookieStoreEncKey.
 // The function also sets the session options including the path, secure flag, and SameSite mode.
 // The configured session store is then returned.
 func setupSessionStore() sessions.Store {
-	sessionStore := cookie.NewStore([]byte(config.LoadableConfig.Server.Frontend.CookieStoreAuthKey), []byte(config.LoadableConfig.Server.Frontend.CookieStoreEncKey))
+	sessionStore := cookie.NewStore([]byte(config.GetFile().Server.Frontend.CookieStoreAuthKey), []byte(config.GetFile().Server.Frontend.CookieStoreEncKey))
 	sessionStore.Options(sessions.Options{
 		Path:     "/",
 		Secure:   true,
@@ -579,7 +579,7 @@ func setupSessionStore() sessions.Store {
 // err := server.ListenAndServe()
 func setupHTTPServer(router *gin.Engine) *http.Server {
 	return &http.Server{
-		Addr:              config.LoadableConfig.Server.Address,
+		Addr:              config.GetFile().Server.Address,
 		Handler:           router,
 		IdleTimeout:       time.Minute,
 		ReadTimeout:       10 * time.Second, //nolint:gomnd // Ignore
@@ -604,7 +604,7 @@ func PrometheusMiddleware() gin.HandlerFunc {
 		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
-		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
+		if config.GetFile().Server.PrometheusTimer.Enabled {
 			timer = prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
 		}
 
@@ -612,7 +612,7 @@ func PrometheusMiddleware() gin.HandlerFunc {
 
 		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
 
-		if config.LoadableConfig.Server.PrometheusTimer.Enabled {
+		if config.GetFile().Server.PrometheusTimer.Enabled {
 			timer.ObserveDuration()
 		}
 
@@ -742,7 +742,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
-	if config.LoadableConfig.Server.BasicAuth.Enabled {
+	if config.GetFile().Server.BasicAuth.Enabled {
 		group.Use(BasicAuthMiddleware())
 	}
 
@@ -806,9 +806,9 @@ func waitForShutdown3(http3Server *http3.Server, ctx context.Context) {
 }
 
 // prepareHAproxyV2 returns a *proxyproto.Listener which is used to prepare HAProxy V2 version by:
-// 1. Creating a listener on the specified address using `net.Listen` with "tcp" network and the address from `config.LoadableConfig.Server.Address`.
+// 1. Creating a listener on the specified address using `net.Listen` with "tcp" network and the address from `config.GetFile().Server.Address`.
 // 2. Setting the policyFunc to `proxyproto.REQUIRE` using `proxyproto.Listener` to ensure HAProxy V2 requirement.
-// The function returns a pointer to `proxyproto.Listener` if `config.LoadableConfig.Server.HAproxyV2` is true, otherwise returns nil.
+// The function returns a pointer to `proxyproto.Listener` if `config.GetFile().Server.HAproxyV2` is true, otherwise returns nil.
 // It panics if an error occurs while creating the listener.
 func prepareHAproxyV2() *proxyproto.Listener {
 	var (
@@ -817,8 +817,8 @@ func prepareHAproxyV2() *proxyproto.Listener {
 		err           error
 	)
 
-	if config.LoadableConfig.Server.HAproxyV2 {
-		listener, err = net.Listen("tcp", config.LoadableConfig.Server.Address)
+	if config.GetFile().Server.HAproxyV2 {
+		listener, err = net.Listen("tcp", config.GetFile().Server.Address)
 		if err != nil {
 			panic(err)
 		}
@@ -860,7 +860,7 @@ func prepareHAproxyV2() *proxyproto.Listener {
 // and the error is not http.ErrServerClosed, the function logs the error and exits the program
 // with a status code of 1 using the logAndExit function.
 func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
-	if config.LoadableConfig.Server.TLS.Enabled {
+	if config.GetFile().Server.TLS.Enabled {
 		if proxyListener == nil {
 			if err := httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
 				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
@@ -889,7 +889,7 @@ func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener 
 // If both conditions are true, it logs a warning message using the Warn level of the logger provided in the log package.
 // The warning message indicates that PROXY protocol is not available for HTTP/3.
 func logProxyHTTP3() {
-	if config.LoadableConfig.Server.HTTP3 && config.LoadableConfig.Server.HAproxyV2 {
+	if config.GetFile().Server.HTTP3 && config.GetFile().Server.HAproxyV2 {
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
 	}
 }
@@ -908,7 +908,7 @@ func logProxyHTTP3() {
 // If the HTTP/3 server failed to start, the error will be returned.
 // Otherwise, nil is returned.
 func serveHTTPAndHTTP3(ctx context.Context, httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
-	if config.LoadableConfig.Server.HTTP3 {
+	if config.GetFile().Server.HTTP3 {
 		go serveHTTP(httpServer, certFile, keyFile, proxyListener)
 
 		http3Server := &http3.Server{
@@ -944,7 +944,7 @@ func setupGinLoggers() {
 	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
 	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
 
-	if config.LoadableConfig.Server.Log.Level.Level() != definitions.LogLevelDebug {
+	if config.GetFile().Server.Log.Level.Level() != definitions.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -999,7 +999,7 @@ func setupRouter(router *gin.Engine) {
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
-	if config.LoadableConfig.Server.Frontend.Enabled {
+	if config.GetFile().Server.Frontend.Enabled {
 		store := setupSessionStore()
 
 		setupHydraEndpoints(router, store)
@@ -1028,11 +1028,11 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
-	if config.LoadableConfig.GetServerInsightsEnablePprof() {
+	if config.GetFile().GetServerInsightsEnablePprof() {
 		pprof.Register(router)
 	}
 
-	limitCounter := NewLimitCounter(config.LoadableConfig.Server.MaxConcurrentRequests)
+	limitCounter := NewLimitCounter(config.GetFile().Server.MaxConcurrentRequests)
 
 	router.Use(limitCounter.Middleware())
 
@@ -1047,11 +1047,11 @@ func HTTPApp(ctx context.Context) {
 
 	proxyListener := prepareHAproxyV2()
 
-	if config.LoadableConfig.Server.TLS.Enabled {
+	if config.GetFile().Server.TLS.Enabled {
 		httpServer.TLSConfig = configureTLS()
 
-		serveHTTPAndHTTP3(ctx, httpServer, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key, proxyListener)
+		serveHTTPAndHTTP3(ctx, httpServer, config.GetFile().Server.TLS.Cert, config.GetFile().Server.TLS.Key, proxyListener)
 	} else {
-		serveHTTP(httpServer, config.LoadableConfig.Server.TLS.Cert, config.LoadableConfig.Server.TLS.Key, proxyListener)
+		serveHTTP(httpServer, config.GetFile().Server.TLS.Cert, config.GetFile().Server.TLS.Key, proxyListener)
 	}
 }

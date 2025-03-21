@@ -93,26 +93,26 @@ func newContextTuple(ctx context.Context) *contextTuple {
 	return tuple
 }
 
-// setupEnvironment initializes the application GetEnvironment() by configuring settings, loading resources, and setting up logging.
-func setupEnvironment() (err error) {
+// setupConfiguration initializes the application GetEnvironment() by configuring settings, loading resources, and setting up logging.
+func setupConfiguration() (err error) {
 	config.NewEnvironmentConfig()
 
 	setTimeZone()
 
-	config.LoadableConfig, err = config.NewConfigFile()
+	file, err := config.NewFile()
 	if err != nil {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
-	if config.LoadableConfig.Server.Frontend.Enabled {
+	if file.Server.Frontend.Enabled {
 		loadLanguageBundles()
 	}
 
 	log.SetupLogging(
-		config.LoadableConfig.Server.Log.Level.Level(),
-		config.LoadableConfig.Server.Log.JSON,
-		config.LoadableConfig.Server.Log.Color,
-		config.LoadableConfig.Server.InstanceName,
+		file.Server.Log.Level.Level(),
+		file.Server.Log.JSON,
+		file.Server.Log.Color,
+		file.Server.InstanceName,
 	)
 	stdlog.SetOutput(kitlog.NewStdlibAdapter(log.Logger))
 
@@ -176,7 +176,7 @@ func setupLuaScripts() error {
 // PreCompileFeatures pre-compiles Lua features if the Lua feature is enabled in the configuration.
 // Returns an error if the pre-compilation of Lua features fails, otherwise returns nil.
 func PreCompileFeatures() error {
-	if !config.LoadableConfig.HasFeature(definitions.FeatureLua) {
+	if !config.GetFile().HasFeature(definitions.FeatureLua) {
 		return nil
 	}
 
@@ -190,7 +190,7 @@ func PreCompileFeatures() error {
 // PreCompileFilters pre-compiles Lua filters if they are enabled in the configuration.
 // Returns an error if the pre-compilation fails, otherwise returns nil.
 func PreCompileFilters() error {
-	if !config.LoadableConfig.HaveLuaFilters() {
+	if !config.GetFile().HaveLuaFilters() {
 		return nil
 	}
 
@@ -203,11 +203,11 @@ func PreCompileFilters() error {
 
 // PreCompileInit pre-compiles the Lua initialization script if specified in the configuration. Returns an error if it fails.
 func PreCompileInit() error {
-	if !config.LoadableConfig.HaveLuaInit() {
+	if !config.GetFile().HaveLuaInit() {
 		return nil
 	}
 
-	if err := hook.PreCompileLuaScript(config.LoadableConfig.GetLuaInitScriptPath()); err != nil {
+	if err := hook.PreCompileLuaScript(config.GetFile().GetLuaInitScriptPath()); err != nil {
 		return err
 	}
 
@@ -216,7 +216,7 @@ func PreCompileInit() error {
 
 // PreCompileHooks pre-compiles Lua hooks if they are enabled in the configuration; returns an error on failure or nil otherwise.
 func PreCompileHooks() error {
-	if !config.LoadableConfig.HaveLuaHooks() {
+	if !config.GetFile().HaveLuaHooks() {
 		return nil
 	}
 
@@ -257,11 +257,11 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
 
-	if config.LoadableConfig.Server.HTTP3 {
+	if config.GetFile().Server.HTTP3 {
 		<-core.HTTP3EndChan
 	}
 
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().Server.Backends {
 		handleBackend(backendType)
 	}
 
@@ -320,7 +320,7 @@ func handleBackend(passDB *config.Backend) {
 		close(backend.LDAPEndChan)
 		close(backend.LDAPRequestChan)
 
-		if !config.LoadableConfig.LDAPHavePoolOnly() {
+		if !config.GetFile().LDAPHavePoolOnly() {
 			<-backend.LDAPAuthEndChan
 
 			close(backend.LDAPAuthEndChan)
@@ -343,7 +343,7 @@ func handleLDAPBackend(lookup, auth *contextTuple) {
 
 	<-backend.LDAPEndChan
 
-	if !config.LoadableConfig.LDAPHavePoolOnly() {
+	if !config.GetFile().LDAPHavePoolOnly() {
 		stopContext(auth)
 
 		<-backend.LDAPAuthEndChan
@@ -400,7 +400,7 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 func startLDAPWorkers(store *contextStore) {
 	go backend.LDAPMainWorker(store.ldapLookup.ctx)
 
-	if !config.LoadableConfig.LDAPHavePoolOnly() {
+	if !config.GetFile().LDAPHavePoolOnly() {
 		go backend.LDAPAuthWorker(store.ldapAuth.ctx)
 	}
 }
@@ -421,7 +421,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 
 	<-core.HTTPEndChan
 
-	if config.LoadableConfig.Server.HTTP3 {
+	if config.GetFile().Server.HTTP3 {
 		<-core.HTTP3EndChan
 	}
 
@@ -434,7 +434,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		definitions.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().Server.Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
@@ -455,13 +455,13 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		)
 	} else {
 		log.SetupLogging(
-			config.LoadableConfig.Server.Log.Level.Level(),
-			config.LoadableConfig.Server.Log.JSON,
-			config.LoadableConfig.Server.Log.Color,
-			config.LoadableConfig.Server.InstanceName,
+			config.GetFile().Server.Log.Level.Level(),
+			config.GetFile().Server.Log.JSON,
+			config.GetFile().Server.Log.Color,
+			config.GetFile().Server.InstanceName,
 		)
 
-		postEnvironmentDebug()
+		debugLoadableConfig()
 	}
 
 	if err := setupLuaScripts(); err != nil {
@@ -473,11 +473,11 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	enableBlockProfile()
 
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().Server.Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
-			if !config.LoadableConfig.LDAPHavePoolOnly() {
+			if !config.GetFile().LDAPHavePoolOnly() {
 				store.ldapAuth = newContextTuple(ctx)
 			}
 
@@ -520,7 +520,7 @@ func initializeActionWorkers() []*action.Worker {
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
-	for _, backendType := range config.LoadableConfig.Server.Backends {
+	for _, backendType := range config.GetFile().Server.Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			setupLDAPWorker(store, ctx)
@@ -536,14 +536,14 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 // setupLDAPWorker initializes LDAP worker channels and context for processing LDAP requests and optionally authentication.
 // It determines configuration-based pool sizes for lookup and authentication, sets up associated channels, and starts workers.
 func setupLDAPWorker(store *contextStore, ctx context.Context) {
-	lookupPoolSize := config.LoadableConfig.LDAP.Config.LookupPoolSize
+	lookupPoolSize := config.GetFile().LDAP.Config.LookupPoolSize
 
 	backend.LDAPRequestChan = make(chan *backend.LDAPRequest, lookupPoolSize)
 	backend.LDAPEndChan = make(chan backend.Done)
 	store.ldapLookup = newContextTuple(ctx)
 
-	if !config.LoadableConfig.LDAPHavePoolOnly() {
-		authPoolSize := config.LoadableConfig.LDAP.Config.AuthPoolSize
+	if !config.GetFile().LDAPHavePoolOnly() {
+		authPoolSize := config.GetFile().LDAP.Config.AuthPoolSize
 
 		backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
 		backend.LDAPAuthEndChan = make(chan backend.Done)
@@ -626,7 +626,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 		core.HTTPEndChan = make(chan core.Done)
 	}
 
-	if config.LoadableConfig.Server.HTTP3 {
+	if config.GetFile().Server.HTTP3 {
 		if core.HTTP3EndChan == nil {
 			core.HTTP3EndChan = make(chan core.Done)
 		}
@@ -742,11 +742,11 @@ func compareBackendServers(servers []*config.BackendServer, servers2 []*config.B
 // monitoringConfig retrieves and validates the backend server monitoring configuration if the feature is enabled.
 // Returns a slice of backend server configurations or an error if the feature is disabled or no servers are defined.
 func monitoringConfig() ([]*config.BackendServer, error) {
-	if !config.LoadableConfig.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if !config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
 		return nil, errors.ErrFeatureBackendServersMonitoringDisabled
 	}
 
-	backendServers := config.LoadableConfig.GetBackendServers()
+	backendServers := config.GetFile().GetBackendServers()
 	if len(backendServers) == 0 {
 		return nil, errors.ErrMonitoringBackendServersEmpty
 	}
@@ -790,7 +790,7 @@ func startBackendServerMonitoring(store *contextStore, ticker *time.Ticker) erro
 // handleMonitoringError handles errors related to backend server monitoring.
 // Logs specific messages based on the error type and the feature activation status.
 func handleMonitoringError(err error) {
-	if !config.LoadableConfig.HasFeature(definitions.FeatureBackendServersMonitoring) {
+	if !config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if stderrors.Is(err, errors.ErrFeatureBackendServersMonitoringDisabled) {
 			level.Info(log.Logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
 		}
@@ -812,42 +812,42 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, monitoringTi
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
 func enableBlockProfile() {
-	if config.LoadableConfig.GetServerInsightsEnableBlockProfile() {
+	if config.GetFile().GetServerInsightsEnableBlockProfile() {
 		runtime.SetBlockProfileRate(1)
 	} else {
 		runtime.SetBlockProfileRate(-1)
 	}
 }
 
-// postEnvironmentDebug logs the current configuration for debugging, including features such as RBLs, TLS encryption, relay domains,
+// debugLoadableConfig logs the current configuration for debugging, including features such as RBLs, TLS encryption, relay domains,
 // backend server monitoring, brute force detection, OAuth2, and LDAP settings if they are configured.
-func postEnvironmentDebug() {
-	if config.LoadableConfig.RBLs != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureRBL, fmt.Sprintf("%+v", config.LoadableConfig.RBLs))
+func debugLoadableConfig() {
+	if config.GetFile().RBLs != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureRBL, fmt.Sprintf("%+v", config.GetFile().RBLs))
 	}
 
-	if config.LoadableConfig.ClearTextList != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureTLSEncryption, fmt.Sprintf("%+v", config.LoadableConfig.ClearTextList))
+	if config.GetFile().ClearTextList != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureTLSEncryption, fmt.Sprintf("%+v", config.GetFile().ClearTextList))
 	}
 
-	if config.LoadableConfig.RelayDomains != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureRelayDomains, fmt.Sprintf("%+v", config.LoadableConfig.RelayDomains))
+	if config.GetFile().RelayDomains != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureRelayDomains, fmt.Sprintf("%+v", config.GetFile().RelayDomains))
 	}
 
-	if config.LoadableConfig.BackendServerMonitoring != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.LoadableConfig.BackendServerMonitoring))
+	if config.GetFile().BackendServerMonitoring != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.GetFile().BackendServerMonitoring))
 	}
 
-	if config.LoadableConfig.BruteForce != nil {
-		level.Debug(log.Logger).Log(definitions.LogKeyBruteForce, fmt.Sprintf("%+v", config.LoadableConfig.BruteForce))
+	if config.GetFile().BruteForce != nil {
+		level.Debug(log.Logger).Log(definitions.LogKeyBruteForce, fmt.Sprintf("%+v", config.GetFile().BruteForce))
 	}
 
-	if config.LoadableConfig.Oauth2 != nil {
-		level.Debug(log.Logger).Log("oauth2", fmt.Sprintf("%+v", config.LoadableConfig.Oauth2))
+	if config.GetFile().Oauth2 != nil {
+		level.Debug(log.Logger).Log("oauth2", fmt.Sprintf("%+v", config.GetFile().Oauth2))
 	}
 
-	if config.LoadableConfig.LDAP != nil {
-		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.LoadableConfig.LDAP.Config))
+	if config.GetFile().LDAP != nil {
+		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().LDAP.Config))
 	}
 }
 
@@ -866,14 +866,14 @@ func parseFlagsAndPrintVersion() {
 
 // initializeInstanceInfo sets the version and instance name metrics used for monitoring and debugging.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.LoadableConfig.Server.InstanceName, "version": version})
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().Server.InstanceName, "version": version})
 
 	infoMetric.Set(1)
 }
 
 // initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
 func initializeHTTPClients() {
-	if config.LoadableConfig.Server.Frontend.Enabled {
+	if config.GetFile().Server.Frontend.Enabled {
 		core.InitHTTPClient()
 	}
 
@@ -888,7 +888,7 @@ func initializeHTTPClients() {
 func runConnectionManager(ctx context.Context) {
 	manager := connmgr.GetConnectionManager()
 
-	manager.Register(ctx, config.LoadableConfig.Server.Address, "local", "HTTP server")
+	manager.Register(ctx, config.GetFile().Server.Address, "local", "HTTP server")
 
 	go manager.StartTicker(5 * time.Second)
 	go stats.UpdateGenericConnections()
@@ -896,9 +896,9 @@ func runConnectionManager(ctx context.Context) {
 	manager.StartMonitoring(ctx)
 }
 
-// runLuaaInitScript executes the Lua initialization script if it's present in the LoadableConfig.
+// runLuaaInitScript executes the Lua initialization script if it's present in the GetFile().
 func runLuaaInitScript(ctx context.Context) {
-	if config.LoadableConfig.HaveLuaInit() {
-		hook.RunLuaInit(ctx, config.LoadableConfig.GetLuaInitScriptPath())
+	if config.GetFile().HaveLuaInit() {
+		hook.RunLuaInit(ctx, config.GetFile().GetLuaInitScriptPath())
 	}
 }

@@ -51,7 +51,7 @@ type PositivePasswordCache struct {
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-	key := config.LoadableConfig.Server.Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().Server.Redis.Prefix + definitions.RedisUserHashKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -168,7 +168,7 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 	cacheNames = config.NewStringSet()
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
-		if protocolLDAP, _ = config.LoadableConfig.GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
+		if protocolLDAP, _ = config.GetFile().GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
 			if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
 			}
@@ -176,7 +176,7 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 	}
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLua {
-		if protocolLua, _ = config.LoadableConfig.GetLuaSearchProtocol(requestedProtocol); protocolLua != nil {
+		if protocolLua, _ = config.GetFile().GetLuaSearchProtocol(requestedProtocol); protocolLua != nil {
 			if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
 				cacheNames.Set(cacheName)
 			}

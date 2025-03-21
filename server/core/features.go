@@ -105,7 +105,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	featureRequest := feature.Request{
 		Context: a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           func() bool { return accountName != "" }(),
 			Authenticated:       false, // unavailable
@@ -181,7 +181,7 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 		defer stopTimer()
 	}
 
-	if !a.IsInNetwork(config.LoadableConfig.ClearTextList) {
+	if !a.IsInNetwork(config.GetFile().ClearTextList) {
 		logAddMessage(a, definitions.NoTLS, definitions.FeatureTLSEncryption)
 
 		triggered = true
@@ -197,11 +197,11 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 // FeatureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *AuthState) FeatureRelayDomains() (triggered bool) {
-	if config.LoadableConfig.RelayDomains == nil {
+	if config.GetFile().RelayDomains == nil {
 		return
 	}
 
-	if len(config.LoadableConfig.RelayDomains.StaticDomains) == 0 {
+	if len(config.GetFile().RelayDomains.StaticDomains) == 0 {
 		return
 	}
 
@@ -225,7 +225,7 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 			return
 		}
 
-		for _, domain := range config.LoadableConfig.RelayDomains.StaticDomains {
+		for _, domain := range config.GetFile().RelayDomains.StaticDomains {
 			if strings.EqualFold(domain, split[1]) {
 				return
 			}
@@ -334,9 +334,9 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 
 	dnsResolverErr.Store(false)
 	rblChan := make(chan int)
-	numberOfRBLs := len(config.LoadableConfig.RBLs.Lists)
+	numberOfRBLs := len(config.GetFile().RBLs.Lists)
 
-	for _, rbl := range config.LoadableConfig.RBLs.Lists {
+	for _, rbl := range config.GetFile().RBLs.Lists {
 		waitGroup.Add(1)
 
 		go a.processRBL(ctx, &rbl, rblChan, waitGroup, &dnsResolverErr)
@@ -370,7 +370,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		totalRBLScore int
 	)
 
-	if config.LoadableConfig.RBLs == nil {
+	if config.GetFile().RBLs == nil {
 		return
 	}
 
@@ -380,7 +380,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if a.IsInNetwork(config.LoadableConfig.RBLs.IPWhiteList) {
+	if a.IsInNetwork(config.GetFile().RBLs.IPWhiteList) {
 		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
@@ -397,7 +397,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if totalRBLScore >= config.LoadableConfig.RBLs.Threshold {
+	if totalRBLScore >= config.GetFile().RBLs.Threshold {
 		triggered = true
 	}
 
@@ -421,7 +421,7 @@ func (a *AuthState) logFeatureWhitelisting(featureName string) {
 // Executes the checkFunc when the feature is enabled and not whitelisted, returning its outcome.
 // Returns false if the feature is not enabled in the configuration.
 func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted func() bool, checkFunc func()) {
-	if config.LoadableConfig.HasFeature(featureName) {
+	if config.GetFile().HasFeature(featureName) {
 		if isWhitelisted() {
 			a.logFeatureWhitelisting(featureName)
 		} else {
@@ -476,8 +476,8 @@ func (a *AuthState) checkTLSEncryptionFeature() (triggered bool) {
 // It checks if the client is whitelisted and processes the feature action accordingly.
 func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
 	isWhitelisted := func() bool {
-		return config.LoadableConfig.RelayDomains.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.RelayDomains.SoftWhitelist)
+		return config.GetFile().RelayDomains.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.GetFile().RelayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -495,8 +495,8 @@ func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
 // Returns true if the feature is triggered and processed, otherwise false.
 func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error) {
 	isWhitelisted := func() bool {
-		return config.LoadableConfig.RBLs.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.LoadableConfig.RBLs.SoftWhitelist)
+		return config.GetFile().RBLs.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.GetFile().RBLs.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -520,7 +520,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 func (a *AuthState) processFeatureAction(featureName string, luaAction definitions.LuaAction, luaActionName string) {
 	a.FeatureName = featureName
 
-	if config.LoadableConfig.BruteForce.LearnFromFeature(featureName) {
+	if config.GetFile().BruteForce.LearnFromFeature(featureName) {
 		a.UpdateBruteForceBucketsCounter()
 	}
 
@@ -531,7 +531,7 @@ func (a *AuthState) processFeatureAction(featureName string, luaAction definitio
 // It initializes an account name if absent, sends the action request to the RequestChan channel,
 // and waits for the action to complete.
 func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName string) {
-	if !config.LoadableConfig.HaveLuaActions() {
+	if !config.GetFile().HaveLuaActions() {
 		return
 	}
 
@@ -553,7 +553,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		FinishedChan: finished,
 		HTTPRequest:  a.HTTPClientContext.Request,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.LoadableConfig.Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
 			UserFound:           func() bool { return a.GetAccount() != "" }(),
 			NoAuth:              a.NoAuth,
 			Service:             a.Service,
@@ -598,7 +598,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 // It checks for various features like TLS encryption, relay domains, RBL, and Lua scripting.
 // The method returns an appropriate authentication result based on the features that are triggered or aborted.
 func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
-	if !config.LoadableConfig.HasFeature(definitions.FeatureBruteForce) {
+	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
 		a.initializeAccountName()
 	}
 

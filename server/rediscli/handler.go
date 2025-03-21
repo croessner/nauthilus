@@ -69,7 +69,7 @@ func NewClient() Client {
 
 // newRedisClient initializes the redisClient by setting its write handle based on the provided Redis configuration.
 func (clt *redisClient) newRedisClient() {
-	redisCfg := &config.LoadableConfig.Server.Redis
+	redisCfg := &config.GetFile().Server.Redis
 
 	if len(redisCfg.Cluster.Addresses) > 0 {
 		clt.SetWriteHandle(newRedisClusterClient(redisCfg))
@@ -86,7 +86,7 @@ func (clt *redisClient) newRedisClient() {
 
 // newRedisReplicaClient initializes read handles for Redis replicas based on the configuration, supporting multiple setups.
 func (clt *redisClient) newRedisReplicaClient() {
-	redisCfg := &config.LoadableConfig.Server.Redis
+	redisCfg := &config.GetFile().Server.Redis
 
 	if len(redisCfg.Cluster.Addresses) > 0 {
 		return

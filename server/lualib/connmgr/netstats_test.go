@@ -11,7 +11,7 @@ import (
 
 func TestConnectionManager(t *testing.T) {
 	ctx := context.Background()
-	config.LoadableConfig = &config.File{Server: &config.ServerSection{DNS: config.DNS{Timeout: 100 * time.Millisecond}}}
+	config.LoadableConfig = &config.FileSettings{Server: &config.ServerSection{DNS: config.DNS{Timeout: 100 * time.Millisecond}}}
 	manager = GetConnectionManager()
 
 	t.Run("Register and GetCount", func(t *testing.T) {
