@@ -51,7 +51,7 @@ type PositivePasswordCache struct {
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-	key := config.GetFile().Server.Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
 
 	defer stats.RedisReadCounter.Inc()
 

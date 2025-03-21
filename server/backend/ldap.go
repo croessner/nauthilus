@@ -216,7 +216,7 @@ func NewPool(ctx context.Context, poolType int) *LDAPPool {
 		conf     []*config.LDAPConf
 	)
 
-	if config.GetFile().LDAP == nil {
+	if config.GetFile().GetLDAP() == nil {
 		return nil
 	}
 
@@ -996,7 +996,7 @@ func (l *LDAPConnection) externalBind(guid *string) error {
 		return err
 	}
 
-	if config.GetFile().Server.Log.Level.Level() >= definitions.LogLevelDebug {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 
@@ -1026,7 +1026,7 @@ func (l *LDAPConnection) simpleBind(guid *string, ldapConf *config.LDAPConf) err
 		return err
 	}
 
-	if config.GetFile().Server.Log.Level.Level() >= definitions.LogLevelDebug {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug {
 		l.displayWhoAmI(guid)
 	}
 

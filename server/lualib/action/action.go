@@ -168,8 +168,8 @@ func (aw *Worker) Work(ctx context.Context) {
 //		- script2.lua
 //		- script3.lua
 func (aw *Worker) loadActionScriptsFromConfiguration() {
-	for index := range config.GetFile().Lua.Actions {
-		aw.loadScriptAction(&config.GetFile().Lua.Actions[index])
+	for index := range config.GetFile().GetLua().Actions {
+		aw.loadScriptAction(&config.GetFile().GetLua().Actions[index])
 	}
 }
 

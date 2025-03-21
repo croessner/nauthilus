@@ -104,15 +104,15 @@ func setupConfiguration() (err error) {
 		return fmt.Errorf("unable to load config file: %w", err)
 	}
 
-	if file.Server.Frontend.Enabled {
+	if file.GetServer().Frontend.Enabled {
 		loadLanguageBundles()
 	}
 
 	log.SetupLogging(
-		file.Server.Log.Level.Level(),
-		file.Server.Log.JSON,
-		file.Server.Log.Color,
-		file.Server.InstanceName,
+		file.GetServer().Log.Level.Level(),
+		file.GetServer().Log.JSON,
+		file.GetServer().Log.Color,
+		file.GetServer().InstanceName,
 	)
 	stdlog.SetOutput(kitlog.NewStdlibAdapter(log.Logger))
 
@@ -257,11 +257,11 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
 
-	if config.GetFile().Server.HTTP3 {
+	if config.GetFile().GetServer().HTTP3 {
 		<-core.HTTP3EndChan
 	}
 
-	for _, backendType := range config.GetFile().Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		handleBackend(backendType)
 	}
 
@@ -421,7 +421,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 
 	<-core.HTTPEndChan
 
-	if config.GetFile().Server.HTTP3 {
+	if config.GetFile().GetServer().HTTP3 {
 		<-core.HTTP3EndChan
 	}
 
@@ -434,7 +434,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		definitions.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
-	for _, backendType := range config.GetFile().Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
@@ -455,10 +455,10 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		)
 	} else {
 		log.SetupLogging(
-			config.GetFile().Server.Log.Level.Level(),
-			config.GetFile().Server.Log.JSON,
-			config.GetFile().Server.Log.Color,
-			config.GetFile().Server.InstanceName,
+			config.GetFile().GetServer().Log.Level.Level(),
+			config.GetFile().GetServer().Log.JSON,
+			config.GetFile().GetServer().Log.Color,
+			config.GetFile().GetServer().InstanceName,
 		)
 
 		debugLoadableConfig()
@@ -473,7 +473,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	enableBlockProfile()
 
-	for _, backendType := range config.GetFile().Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
@@ -520,7 +520,7 @@ func initializeActionWorkers() []*action.Worker {
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
-	for _, backendType := range config.GetFile().Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			setupLDAPWorker(store, ctx)
@@ -536,14 +536,14 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 // setupLDAPWorker initializes LDAP worker channels and context for processing LDAP requests and optionally authentication.
 // It determines configuration-based pool sizes for lookup and authentication, sets up associated channels, and starts workers.
 func setupLDAPWorker(store *contextStore, ctx context.Context) {
-	lookupPoolSize := config.GetFile().LDAP.Config.LookupPoolSize
+	lookupPoolSize := config.GetFile().GetLDAP().Config.LookupPoolSize
 
 	backend.LDAPRequestChan = make(chan *backend.LDAPRequest, lookupPoolSize)
 	backend.LDAPEndChan = make(chan backend.Done)
 	store.ldapLookup = newContextTuple(ctx)
 
 	if !config.GetFile().LDAPHavePoolOnly() {
-		authPoolSize := config.GetFile().LDAP.Config.AuthPoolSize
+		authPoolSize := config.GetFile().GetLDAP().Config.AuthPoolSize
 
 		backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
 		backend.LDAPAuthEndChan = make(chan backend.Done)
@@ -626,7 +626,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 		core.HTTPEndChan = make(chan core.Done)
 	}
 
-	if config.GetFile().Server.HTTP3 {
+	if config.GetFile().GetServer().HTTP3 {
 		if core.HTTP3EndChan == nil {
 			core.HTTP3EndChan = make(chan core.Done)
 		}
@@ -822,32 +822,32 @@ func enableBlockProfile() {
 // debugLoadableConfig logs the current configuration for debugging, including features such as RBLs, TLS encryption, relay domains,
 // backend server monitoring, brute force detection, OAuth2, and LDAP settings if they are configured.
 func debugLoadableConfig() {
-	if config.GetFile().RBLs != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureRBL, fmt.Sprintf("%+v", config.GetFile().RBLs))
+	if config.GetFile().GetRBLs() != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureRBL, fmt.Sprintf("%+v", config.GetFile().GetRBLs()))
 	}
 
-	if config.GetFile().ClearTextList != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureTLSEncryption, fmt.Sprintf("%+v", config.GetFile().ClearTextList))
+	if config.GetFile().GetClearTextList() != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureTLSEncryption, fmt.Sprintf("%+v", config.GetFile().GetClearTextList()))
 	}
 
-	if config.GetFile().RelayDomains != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureRelayDomains, fmt.Sprintf("%+v", config.GetFile().RelayDomains))
+	if config.GetFile().GetRelayDomains() != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureRelayDomains, fmt.Sprintf("%+v", config.GetFile().GetRelayDomains()))
 	}
 
-	if config.GetFile().BackendServerMonitoring != nil {
-		level.Debug(log.Logger).Log(definitions.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.GetFile().BackendServerMonitoring))
+	if config.GetFile().GetBackendServerMonitoring() != nil {
+		level.Debug(log.Logger).Log(definitions.FeatureBackendServersMonitoring, fmt.Sprintf("%+v", config.GetFile().GetBackendServerMonitoring()))
 	}
 
-	if config.GetFile().BruteForce != nil {
-		level.Debug(log.Logger).Log(definitions.LogKeyBruteForce, fmt.Sprintf("%+v", config.GetFile().BruteForce))
+	if config.GetFile().GetBruteForce() != nil {
+		level.Debug(log.Logger).Log(definitions.LogKeyBruteForce, fmt.Sprintf("%+v", config.GetFile().GetBruteForce()))
 	}
 
-	if config.GetFile().Oauth2 != nil {
-		level.Debug(log.Logger).Log("oauth2", fmt.Sprintf("%+v", config.GetFile().Oauth2))
+	if config.GetFile().GetOauth2() != nil {
+		level.Debug(log.Logger).Log("oauth2", fmt.Sprintf("%+v", config.GetFile().GetOauth2()))
 	}
 
-	if config.GetFile().LDAP != nil {
-		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().LDAP.Config))
+	if config.GetFile().GetLDAP() != nil {
+		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().GetLDAP().Config))
 	}
 }
 
@@ -866,14 +866,14 @@ func parseFlagsAndPrintVersion() {
 
 // initializeInstanceInfo sets the version and instance name metrics used for monitoring and debugging.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().Server.InstanceName, "version": version})
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().GetServer().InstanceName, "version": version})
 
 	infoMetric.Set(1)
 }
 
 // initializeHTTPClients initializes the HTTP clients for core, backend, action, callback, filter, and feature packages.
 func initializeHTTPClients() {
-	if config.GetFile().Server.Frontend.Enabled {
+	if config.GetFile().GetServer().Frontend.Enabled {
 		core.InitHTTPClient()
 	}
 
@@ -888,7 +888,7 @@ func initializeHTTPClients() {
 func runConnectionManager(ctx context.Context) {
 	manager := connmgr.GetConnectionManager()
 
-	manager.Register(ctx, config.GetFile().Server.Address, "local", "HTTP server")
+	manager.Register(ctx, config.GetFile().GetServer().Address, "local", "HTTP server")
 
 	go manager.StartTicker(5 * time.Second)
 	go stats.UpdateGenericConnections()

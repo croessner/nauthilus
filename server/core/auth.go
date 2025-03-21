@@ -1286,9 +1286,9 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 // IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
 // It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
 func (a *AuthState) IsMasterUser() bool {
-	if config.GetFile().Server.MasterUser.Enabled {
-		if strings.Count(a.Username, config.GetFile().Server.MasterUser.Delimiter) == 1 {
-			parts := strings.Split(a.Username, config.GetFile().Server.MasterUser.Delimiter)
+	if config.GetFile().GetServer().MasterUser.Enabled {
+		if strings.Count(a.Username, config.GetFile().GetServer().MasterUser.Delimiter) == 1 {
+			parts := strings.Split(a.Username, config.GetFile().GetServer().MasterUser.Delimiter)
 			if len(parts[0]) > 0 && len(parts[1]) > 0 {
 				return true
 			}
@@ -1556,7 +1556,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
+				Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
 				Repeating:           false,
 				UserFound:           func() bool { return passDBResult.UserFound || accountName != "" }(),
 				Authenticated:       passDBResult.Authenticated,
@@ -1718,11 +1718,11 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 // The `backendPos` map stores the position of each backend type in the configuration list.
 // The `useCache` boolean indicates whether the Cache backend type is used. It is set to true if at least one Cache backend is found in the configuration.
 // The `passDBs` slice holds the PassDBMap objects associated with each backend type in the configuration.
-// This method loops through the `config.GetFile().Server.Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
+// This method loops through the `config.GetFile().GetServer().Backends` slice and processes each Backend object to determine the backend type. It populates the `backendPos` map with the backend type
 func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[definitions.Backend]int)
 
-	for index, backendType := range config.GetFile().Server.Backends {
+	for index, backendType := range config.GetFile().GetServer().Backends {
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
@@ -1868,10 +1868,10 @@ func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
 func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
 	if accountName != "" {
-		redisUserKey := config.GetFile().Server.Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+		redisUserKey := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 		if ppc.Password != "" {
-			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().Server.Redis.PosCacheTTL, ppc)
+			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
 		}
 	}
 }
@@ -2010,7 +2010,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		Logs:               nil,
 		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           passDBResult.UserFound,
 			Authenticated:       passDBResult.Authenticated,
@@ -2107,7 +2107,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
-	for _, backendType := range config.GetFile().Server.Backends {
+	for _, backendType := range config.GetFile().GetServer().Backends {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			if !config.GetFile().LDAPHavePoolOnly() {
@@ -2173,7 +2173,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 		values   []any
 	)
 
-	key := config.GetFile().Server.Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
 
 	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName != "" {
@@ -2565,7 +2565,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		if config.GetFile().Server.HAproxyV2 {
+		if config.GetFile().GetServer().HAproxyV2 {
 			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
@@ -2575,7 +2575,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		}
 	}
 
-	if config.GetFile().Server.DNS.ResolveClientIP {
+	if config.GetFile().GetServer().DNS.ResolveClientIP {
 		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
 
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
@@ -2818,8 +2818,8 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
-	if config.GetFile().Oauth2.Clients[index].Claims.Groups != "" {
-		if value, found := a.Attributes[config.GetFile().Oauth2.Clients[index].Claims.Groups]; found {
+	if config.GetFile().GetOauth2().Clients[index].Claims.Groups != "" {
+		if value, found := a.Attributes[config.GetFile().GetOauth2().Clients[index].Claims.Groups]; found {
 			var stringSlice []string
 
 			util.DebugModule(
@@ -2865,19 +2865,19 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAuth2Client, claims map[string]any) {
 	var claim any
 
-	customScope := config.GetFile().Oauth2.CustomScopes[scopeIndex]
+	customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
 
 	for claimIndex := range customScope.Claims {
 		customClaimName := customScope.Claims[claimIndex].Name
 		customClaimType := customScope.Claims[claimIndex].Type
 
-		for clientIndex := range config.GetFile().Oauth2.Clients {
-			if config.GetFile().Oauth2.Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
+		for clientIndex := range config.GetFile().GetOauth2().Clients {
+			if config.GetFile().GetOauth2().Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
 				continue
 			}
 
 			assertOk := false
-			if claim, assertOk = config.GetFile().Oauth2.Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
+			if claim, assertOk = config.GetFile().GetOauth2().Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
 				break
 			}
 
@@ -2946,12 +2946,12 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		claims  map[string]any
 	)
 
-	if config.GetFile().Oauth2 != nil {
+	if config.GetFile().GetOauth2() != nil {
 		claims = make(map[string]any)
 
 		clientIDFound := false
 
-		for index, client = range config.GetFile().Oauth2.Clients {
+		for index, client = range config.GetFile().GetOauth2().Clients {
 			if client.ClientId == oauth2Client.GetClientId() {
 				clientIDFound = true
 
@@ -2969,7 +2969,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 			}
 		}
 
-		for scopeIndex := range config.GetFile().Oauth2.CustomScopes {
+		for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
 			a.processCustomClaims(scopeIndex, oauth2Client, claims)
 		}
 

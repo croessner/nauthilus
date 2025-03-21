@@ -494,7 +494,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	if config.GetFile().Server.Log.Level.Level() == definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
+	if config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -755,7 +755,7 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 func createConfiguration(httpClient *http.Client) *openapi.Configuration {
 	return &openapi.Configuration{
 		HTTPClient: httpClient,
-		Servers:    []openapi.ServerConfiguration{{URL: config.GetFile().Server.HydraAdminUrl}},
+		Servers:    []openapi.ServerConfiguration{{URL: config.GetFile().GetServer().HydraAdminUrl}},
 	}
 }
 
@@ -877,7 +877,7 @@ func (a *ApiConfig) handleLoginSkip() {
 	auth.SetStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
-		if config.GetFile().Oauth2 != nil {
+		if config.GetFile().GetOauth2() != nil {
 			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
@@ -1296,7 +1296,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 	)
 
 	oauth2Client := a.loginRequest.GetClient()
-	if config.GetFile().Oauth2 != nil {
+	if config.GetFile().GetOauth2() != nil {
 		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
 
@@ -1509,7 +1509,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.GetFile().Server.Log.Level.Level() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
+	if config.GetFile().GetServer().Log.Level.Level() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
 		util.DebugModule(
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
@@ -2012,8 +2012,8 @@ func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue in
 func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	var scopeDescription string
 
-	if config.GetFile().Oauth2 != nil {
-		for _, customScope := range config.GetFile().Oauth2.CustomScopes {
+	if config.GetFile().GetOauth2() != nil {
+		for _, customScope := range config.GetFile().GetOauth2().CustomScopes {
 			if customScope.Name != requestedScope {
 				continue
 			}
@@ -2891,8 +2891,8 @@ func processGroupsClaim(claimDict map[string]any, claims map[string]any) {
 // - acceptedScopes: A []string representing the list of accepted scopes.
 // - index: An int indicating the index of the accepted scope to process.
 func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int) {
-	for scopeIndex := range config.GetFile().Oauth2.CustomScopes {
-		customScope := config.GetFile().Oauth2.CustomScopes[scopeIndex]
+	for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
+		customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
 
 		if acceptedScopes[index] != customScope.Name {
 			continue

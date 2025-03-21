@@ -15,23 +15,23 @@ func softWhitelistSet(L *lua.LState) int {
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		if !config.GetFile().BruteForce.HasSoftWhitelist() {
-			config.GetFile().BruteForce.SoftWhitelist = config.NewSoftWhitelist()
+		if !config.GetFile().GetBruteForce().HasSoftWhitelist() {
+			config.GetFile().GetBruteForce().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().BruteForce
+		provider = config.GetFile().GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		if !config.GetFile().RelayDomains.HasSoftWhitelist() {
-			config.GetFile().RelayDomains.SoftWhitelist = config.NewSoftWhitelist()
+		if !config.GetFile().GetRelayDomains().HasSoftWhitelist() {
+			config.GetFile().GetRelayDomains().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().RelayDomains
+		provider = config.GetFile().GetRelayDomains()
 	case definitions.FeatureRBL:
-		if !config.GetFile().RBLs.HasSoftWhitelist() {
-			config.GetFile().RBLs.SoftWhitelist = config.NewSoftWhitelist()
+		if !config.GetFile().GetRBLs().HasSoftWhitelist() {
+			config.GetFile().GetRBLs().SoftWhitelist = config.NewSoftWhitelist()
 		}
 
-		provider = config.GetFile().RBLs
+		provider = config.GetFile().GetRBLs()
 	default:
 		L.Push(lua.LString("invalid feature category"))
 
@@ -52,11 +52,11 @@ func getNetworks(username, feature string) []string {
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		provider = config.GetFile().BruteForce
+		provider = config.GetFile().GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		provider = config.GetFile().RelayDomains
+		provider = config.GetFile().GetRelayDomains()
 	case definitions.FeatureRBL:
-		provider = config.GetFile().RBLs
+		provider = config.GetFile().GetRBLs()
 	default:
 		return nil
 	}
@@ -96,11 +96,11 @@ func softWhitelistDelete(L *lua.LState) int {
 
 	switch feature {
 	case definitions.FeatureBruteForce:
-		provider = config.GetFile().BruteForce
+		provider = config.GetFile().GetBruteForce()
 	case definitions.FeatureRelayDomains:
-		provider = config.GetFile().RelayDomains
+		provider = config.GetFile().GetRelayDomains()
 	case definitions.FeatureRBL:
-		provider = config.GetFile().RBLs
+		provider = config.GetFile().GetRBLs()
 	default:
 		return 0
 	}

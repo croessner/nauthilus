@@ -155,10 +155,10 @@ func PreCompileLuaFilters() (err error) {
 			LuaFilters.Reset()
 		}
 
-		for index := range config.GetFile().Lua.Filters {
+		for index := range config.GetFile().GetLua().Filters {
 			var luaFilter *LuaFilter
 
-			luaFilter, err = NewLuaFilter(config.GetFile().Lua.Filters[index].Name, config.GetFile().Lua.Filters[index].ScriptPath)
+			luaFilter, err = NewLuaFilter(config.GetFile().GetLua().Filters[index].Name, config.GetFile().GetLua().Filters[index].ScriptPath)
 			if err != nil {
 				return err
 			}

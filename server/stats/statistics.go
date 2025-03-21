@@ -376,11 +376,11 @@ func PrintStats() {
 
 // HavePrometheusLabelEnabled returns true if the specified Prometheus label is enabled in the server configuration, otherwise false.
 func HavePrometheusLabelEnabled(prometheusLabel string) bool {
-	if !config.GetFile().Server.PrometheusTimer.Enabled {
+	if !config.GetFile().GetServer().PrometheusTimer.Enabled {
 		return false
 	}
 
-	for _, label := range config.GetFile().Server.PrometheusTimer.Labels {
+	for _, label := range config.GetFile().GetServer().PrometheusTimer.Labels {
 		if label != prometheusLabel {
 			continue
 		}
@@ -392,9 +392,9 @@ func HavePrometheusLabelEnabled(prometheusLabel string) bool {
 }
 
 // PrometheusTimer is a function that takes a prometheus label (promLabel) and a prometheus observer (prometheusObserver) as arguments.
-// The function first checks if the Prometheus Timer is enabled in the server configuration (config.GetFile().Server.PrometheusTimer.Enabled).
+// The function first checks if the Prometheus Timer is enabled in the server configuration (config.GetFile().GetServer().PrometheusTimer.Enabled).
 // If the Prometheus Timer is not enabled, it returns an empty function.
-// If enabled, it iterates over the labels of the Prometheus Timer specified in the server configuration (config.GetFile().Server.PrometheusTimer.Labels).
+// If enabled, it iterates over the labels of the Prometheus Timer specified in the server configuration (config.GetFile().GetServer().PrometheusTimer.Labels).
 // For each label, it checks if it matches with the provided promLabel. If there is a match, it creates a new timer (timer)
 // with the given prometheus observer and returns a function that observes the duration of the timer when called.
 // If there is no match, it returns an empty function.

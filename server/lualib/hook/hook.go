@@ -235,14 +235,14 @@ func PreCompileLuaHooks() error {
 			customLocation = NewCustomLocation()
 		}
 
-		for index := range config.GetFile().Lua.Hooks {
-			script, err := NewLuaHook(config.GetFile().Lua.Hooks[index].ScriptPath)
+		for index := range config.GetFile().GetLua().Hooks {
+			script, err := NewLuaHook(config.GetFile().GetLua().Hooks[index].ScriptPath)
 			if err != nil {
 				return err
 			}
 
 			// Add compiled Lua hook.
-			customLocation.SetScript(config.GetFile().Lua.Hooks[index].Location, config.GetFile().Lua.Hooks[index].Method, script)
+			customLocation.SetScript(config.GetFile().GetLua().Hooks[index].Location, config.GetFile().GetLua().Hooks[index].Method, script)
 		}
 	}
 
@@ -250,7 +250,7 @@ func PreCompileLuaHooks() error {
 }
 
 // setupLogging creates a Lua table and sets up the "log_format" and "log_level" global variables based on the
-// configuration settings in the GetFile().Server.Log.JSON and GetFile().Server.Log.Level.Get values.
+// configuration settings in the GetFile().GetServer().Log.JSON and GetFile().GetServer().Log.Level.Get values.
 // It returns the created Lua table.
 //
 // Parameters:
@@ -262,9 +262,9 @@ func PreCompileLuaHooks() error {
 func setupLogging(L *lua.LState) *lua.LTable {
 	logTable := L.NewTable()
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().Server.Log.Level.Get()
+	logLevel := config.GetFile().GetServer().Log.Level.Get()
 
-	if config.GetFile().Server.Log.JSON {
+	if config.GetFile().GetServer().Log.JSON {
 		logFormat = definitions.LogFormatJSON
 	}
 

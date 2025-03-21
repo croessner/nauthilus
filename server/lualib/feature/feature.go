@@ -81,10 +81,10 @@ func PreCompileLuaFeatures() (err error) {
 			LuaFeatures.Reset()
 		}
 
-		for index := range config.GetFile().Lua.Features {
+		for index := range config.GetFile().GetLua().Features {
 			var luaFeature *LuaFeature
 
-			luaFeature, err = NewLuaFeature(config.GetFile().Lua.Features[index].Name, config.GetFile().Lua.Features[index].ScriptPath)
+			luaFeature, err = NewLuaFeature(config.GetFile().GetLua().Features[index].Name, config.GetFile().GetLua().Features[index].ScriptPath)
 			if err != nil {
 				return err
 			}

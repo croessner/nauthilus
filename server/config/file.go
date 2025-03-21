@@ -41,10 +41,10 @@ import (
 // The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
 
 // LoadableConfig is a variable of type *FileSettings that represents the configuration file that can be loaded.
-var file *FileSettings
+var file File
 
 // GetFile returns the loaded FileSettings configuration instance.
-func GetFile() *FileSettings {
+func GetFile() File {
 	if file == nil {
 		panic("FileSettings not loaded")
 	}
@@ -56,6 +56,84 @@ func GetFile() *FileSettings {
 type GetterHandler interface {
 	GetConfig() any
 	GetProtocols() any
+}
+
+type File interface {
+	HandleFile() error
+
+	HaveLuaFeatures() bool
+	HaveLuaFilters() bool
+	HaveLuaActions() bool
+	HaveLuaHooks() bool
+	HasFeature(feature string) bool
+	HaveLua() bool
+	HaveLuaInit() bool
+	HaveLDAPBackend() bool
+	LDAPHavePoolOnly() bool
+
+	GetLuaInitScriptPath() string
+	GetBackendServers() []*BackendServer
+	GetServerInsightsEnableBlockProfile() bool
+	GetLuaPackagePath() string
+	GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error)
+	GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
+	GetLDAPConfigLookupPoolSize() int
+	GetLDAPConfigAuthPoolSize() int
+	GetLDAPConfigLookupIdlePoolSize() int
+	GetLDAPConfigAuthIdlePoolSize() int
+	GetLDAPConfigBindDN() string
+	GetLDAPConfigBindPW() string
+	GetLDAPConfigTLSCAFile() string
+	GetLDAPConfigTLSClientCert() string
+	GetLDAPConfigTLSClientKey() string
+	GetLDAPConfigServerURIs() []string
+	GetLDAPConfigStartTLS() bool
+	GetLDAPConfigTLSSkipVerify() bool
+	GetLDAPConfigSASLExternal() bool
+	GetLuaScriptPath() string
+	GetClientIP() string
+	GetClientPort() string
+	GetClientID() string
+	GetLocalIP() string
+	GetLocalPort() string
+	GetClientHost() string
+	GetBruteForceRules() []BruteForceRule
+	GetSSL() string
+	GetSSLSessionID() string
+	GetSSLVerify() string
+	GetSSLSubject() string
+	GetSSLClientCN() string
+	GetSSLIssuer() string
+	GetSSLClientNotBefore() string
+	GetSSLClientNotAfter() string
+	GetSSLSubjectDN() string
+	GetSSLIssuerDN() string
+	GetSSLClientSubjectDN() string
+	GetSSLClientIssuerDN() string
+	GetSSLCipher() string
+	GetSSLProtocol() string
+	GetSSLSerial() string
+	GetSSLFingerprint() string
+	GetUsername() string
+	GetPassword() string
+	GetPasswordEncoded() string
+	GetProtocol() string
+	GetLoginAttempt() string
+	GetAuthMethod() string
+	GetServerInsightsEnablePprof() bool
+	GetSkipTOTP(string) bool
+	GetSkipConsent(string) bool
+	GetAllProtocols() []string
+
+	GetServer() *ServerSection
+	GetRBLs() *RBLSection
+	GetClearTextList() []string
+	GetRelayDomains() *RelayDomainsSection
+	GetBackendServerMonitoring() *BackendServerMonitoring
+	GetBruteForce() *BruteForceSection
+	GetLua() *LuaSection
+	GetOauth2() *Oauth2Section
+	GetLDAP() *LDAPSection
 }
 
 // FileSettings represents a comprehensive configuration structure utilized to manage server settings, blackhole lists, brute force,
@@ -72,6 +150,62 @@ type FileSettings struct {
 	LDAP                    *LDAPSection             `mapstructure:"ldap" valdiate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
+}
+
+func (f *FileSettings) GetRBLs() *RBLSection {
+	if f == nil {
+		return nil
+	}
+
+	return f.RBLs
+}
+
+func (f *FileSettings) GetClearTextList() []string {
+	if f == nil {
+		return nil
+	}
+
+	return f.ClearTextList
+}
+
+func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
+	if f == nil {
+		return nil
+	}
+
+	return f.RelayDomains
+}
+
+func (f *FileSettings) GetBruteForce() *BruteForceSection {
+	if f == nil {
+		return nil
+	}
+
+	return f.BruteForce
+}
+
+func (f *FileSettings) GetLua() *LuaSection {
+	if f == nil {
+		return nil
+	}
+
+	return f.Lua
+}
+
+func (f *FileSettings) GetOauth2() *Oauth2Section {
+	if f == nil {
+		return nil
+	}
+
+	return f.Oauth2
+}
+
+func (f *FileSettings) GetLDAP() *LDAPSection {
+	if f == nil {
+		return nil
+	}
+
+	return f.LDAP
 }
 
 /*
@@ -780,7 +914,7 @@ func (f *FileSettings) GetAllProtocols() []string {
 // getOAuth2ClientIndex returns the index and found status of an OAuth-2 client with the given client ID in the LoadableConfig.Oauth2.Clients slice. If the client is found, the index
 func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found bool) {
 	if f.Oauth2 != nil {
-		for index = range GetFile().Oauth2.Clients {
+		for index = range GetFile().GetOauth2().Clients {
 			if f.Oauth2.Clients[index].ClientId != clientId {
 				continue
 			}
@@ -1635,9 +1769,9 @@ func prettyFormatValidationErrors(validationErrors validator.ValidationErrors) e
 	return stderrors.New("validation errors: " + strings.Join(errorMessages, "; "))
 }
 
-// handleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
+// HandleFile applies the configuration settings loaded from the configuration file. It does sanity checks to make sure
 // Nauthilus has a working configuration.
-func (f *FileSettings) handleFile() (err error) {
+func (f *FileSettings) HandleFile() (err error) {
 	var validationErrors validator.ValidationErrors
 
 	if f == nil {
@@ -1756,7 +1890,7 @@ func bindEnvs(i any, parts ...string) error {
 }
 
 // NewFile is the constructor for a ConfigFile object.
-func NewFile() (newCfg *FileSettings, err error) {
+func NewFile() (newCfg File, err error) {
 	newCfg = &FileSettings{}
 
 	viper.SetConfigName("nauthilus") // name of environment file (without extension)
@@ -1774,7 +1908,7 @@ func NewFile() (newCfg *FileSettings, err error) {
 	// Register all known config variables with env variables.
 	bindEnvs(&FileSettings{})
 
-	err = newCfg.handleFile()
+	err = newCfg.HandleFile()
 
 	file = newCfg
 
@@ -1792,7 +1926,7 @@ func ReloadConfigFile() (err error) {
 	}
 
 	// Construct new configuration
-	if err = newCfgReload.handleFile(); err != nil {
+	if err = newCfgReload.HandleFile(); err != nil {
 		return
 	}
 

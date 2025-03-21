@@ -177,7 +177,7 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 }
 
 func PreparePassword(password string) string {
-	return fmt.Sprintf("%s\x00%s", config.GetFile().Server.Redis.PasswordNonce, password)
+	return fmt.Sprintf("%s\x00%s", config.GetFile().GetServer().Redis.PasswordNonce, password)
 }
 
 // GetHash creates an SHA-256 hash of a plain text password and returns the first 128 bits.
@@ -195,7 +195,7 @@ func GetHash(value string) string {
 
 // ResolveIPAddress returns the hostname for a given IP address.
 func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
-	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().Server.DNS.Timeout*time.Second))
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().DNS.Timeout*time.Second))
 
 	defer cancel()
 
@@ -240,7 +240,7 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 func DebugModule(module definitions.DbgModule, keyvals ...any) {
 	var moduleName string
 
-	if config.GetFile().Server.Log.Level.Level() < definitions.LogLevelDebug {
+	if config.GetFile().GetServer().Log.Level.Level() < definitions.LogLevelDebug {
 		return
 	}
 
@@ -279,8 +279,8 @@ func DebugModule(module definitions.DbgModule, keyvals ...any) {
 		return
 	}
 
-	for index := range config.GetFile().Server.Log.DbgModules {
-		if !(config.GetFile().Server.Log.DbgModules[index].GetModule() == definitions.DbgAll || config.GetFile().Server.Log.DbgModules[index].GetModule() == module) {
+	for index := range config.GetFile().GetServer().Log.DbgModules {
+		if !(config.GetFile().GetServer().Log.DbgModules[index].GetModule() == definitions.DbgAll || config.GetFile().GetServer().Log.DbgModules[index].GetModule() == module) {
 			continue
 		}
 
@@ -518,7 +518,7 @@ func ValidateUsername(username string) bool {
 
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
-	if config.GetFile().Server.DNS.Resolver == "" {
+	if config.GetFile().GetServer().DNS.Resolver == "" {
 		resolver = &net.Resolver{PreferGo: false}
 	} else {
 		resolver = &net.Resolver{
@@ -527,7 +527,7 @@ func NewDNSResolver() (resolver *net.Resolver) {
 					Timeout: time.Duration(10) * time.Second,
 				}
 
-				return dialer.DialContext(ctx, network, config.GetFile().Server.DNS.Resolver)
+				return dialer.DialContext(ctx, network, config.GetFile().GetServer().DNS.Resolver)
 			},
 		}
 	}
@@ -539,8 +539,8 @@ func NewDNSResolver() (resolver *net.Resolver) {
 func NewHTTPClient() *http.Client {
 	var proxyFunc func(*http.Request) (*url.URL, error)
 
-	if config.GetFile().Server.HTTPClient.Proxy != "" {
-		proxyURL, err := url.Parse(config.GetFile().Server.HTTPClient.Proxy)
+	if config.GetFile().GetServer().HTTPClient.Proxy != "" {
+		proxyURL, err := url.Parse(config.GetFile().GetServer().HTTPClient.Proxy)
 		if err != nil {
 			proxyFunc = http.ProxyFromEnvironment
 		} else {
@@ -554,12 +554,12 @@ func NewHTTPClient() *http.Client {
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			Proxy:               proxyFunc,
-			MaxConnsPerHost:     config.GetFile().Server.HTTPClient.MaxConnsPerHost,
-			MaxIdleConns:        config.GetFile().Server.HTTPClient.MaxIdleConns,
-			MaxIdleConnsPerHost: config.GetFile().Server.HTTPClient.MaxIdleConnsPerHost,
-			IdleConnTimeout:     config.GetFile().Server.HTTPClient.IdleConnTimeout,
+			MaxConnsPerHost:     config.GetFile().GetServer().HTTPClient.MaxConnsPerHost,
+			MaxIdleConns:        config.GetFile().GetServer().HTTPClient.MaxIdleConns,
+			MaxIdleConnsPerHost: config.GetFile().GetServer().HTTPClient.MaxIdleConnsPerHost,
+			IdleConnTimeout:     config.GetFile().GetServer().HTTPClient.IdleConnTimeout,
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: config.GetFile().Server.TLS.HTTPClientSkipVerify,
+				InsecureSkipVerify: config.GetFile().GetServer().TLS.HTTPClientSkipVerify,
 			},
 		},
 	}
