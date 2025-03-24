@@ -59,87 +59,269 @@ func SetTestFile(testFile File) {
 
 // GetterHandler is an interface that provides methods to retrieve configuration and protocol information.
 type GetterHandler interface {
+	// GetConfig retrieves the configuration associated with the implementing object or returns nil if unavailable.
 	GetConfig() any
+
+	// GetProtocols retrieves protocol configurations associated with the implementing object or returns nil if unavailable.
 	GetProtocols() any
 }
 
-// TODO: Cleanup entire configuration file with interfaces...
-
+// File represents an interface encapsulating various methods for configuration, file handling, and related operations.
 type File interface {
+	/*
+		General file handling methods
+	*/
+
+	// HandleFile processes the configuration file.
 	HandleFile() error
 
+	/*
+		Lua-related methods
+	*/
+
+	// HaveLuaFeatures checks if Lua features are available.
 	HaveLuaFeatures() bool
+
+	// HaveLuaFilters checks if Lua filters are active.
 	HaveLuaFilters() bool
+
+	// HaveLuaActions checks if Lua actions are enabled.
 	HaveLuaActions() bool
+
+	// HaveLuaHooks checks if Lua hooks are being used.
 	HaveLuaHooks() bool
-	HasFeature(feature string) bool
-	HaveLua() bool
+
+	// HaveLuaInit checks if a Lua initialization script exists.
 	HaveLuaInit() bool
+
+	// HaveLua checks if Lua-based configuration in general is available.
+	HaveLua() bool
+
+	// GetLuaInitScriptPath returns the path to the Lua initialization script.
+	GetLuaInitScriptPath() string
+
+	// GetLuaPackagePath retrieves the Lua package path from the configuration.
+	GetLuaPackagePath() string
+
+	// GetLuaScriptPath returns the path to the Lua script.
+	GetLuaScriptPath() string
+
+	// GetLuaSearchProtocol retrieves the Lua search protocol for a given protocol name.
+	GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
+
+	/*
+		LDAP-related methods
+	*/
+
+	// HaveLDAPBackend checks if an LDAP backend is being used.
 	HaveLDAPBackend() bool
+
+	// LDAPHavePoolOnly checks whether LDAP connections are only handled via a pool.
 	LDAPHavePoolOnly() bool
 
-	GetLuaInitScriptPath() string
-	GetBackendServers() []*BackendServer
-	GetServerInsightsEnableBlockProfile() bool
-	GetLuaPackagePath() string
-	GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error)
-	GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
+	// GetLDAPConfigLookupPoolSize returns the pool size for LDAP lookups.
 	GetLDAPConfigLookupPoolSize() int
+
+	// GetLDAPConfigAuthPoolSize returns the pool size for LDAP authentication.
 	GetLDAPConfigAuthPoolSize() int
+
+	// GetLDAPConfigLookupIdlePoolSize retrieves the idle pool size for LDAP lookups.
 	GetLDAPConfigLookupIdlePoolSize() int
+
+	// GetLDAPConfigAuthIdlePoolSize retrieves the idle pool size for LDAP authentication.
 	GetLDAPConfigAuthIdlePoolSize() int
+
+	// GetLDAPConfigBindDN returns the Bind DN for LDAP.
 	GetLDAPConfigBindDN() string
+
+	// GetLDAPConfigBindPW retrieves the password for the LDAP bind.
 	GetLDAPConfigBindPW() string
+
+	// GetLDAPConfigTLSCAFile returns the TLS CA file for LDAP.
 	GetLDAPConfigTLSCAFile() string
+
+	// GetLDAPConfigTLSClientCert retrieves the TLS client certificate for LDAP.
 	GetLDAPConfigTLSClientCert() string
+
+	// GetLDAPConfigTLSClientKey returns the TLS client key for LDAP.
 	GetLDAPConfigTLSClientKey() string
+
+	// GetLDAPConfigServerURIs retrieves a list of LDAP server URIs.
 	GetLDAPConfigServerURIs() []string
+
+	// GetLDAPConfigStartTLS indicates if StartTLS is enabled for LDAP.
 	GetLDAPConfigStartTLS() bool
+
+	// GetLDAPConfigTLSSkipVerify checks whether TLS verification for LDAP is skipped.
 	GetLDAPConfigTLSSkipVerify() bool
+
+	// GetLDAPConfigSASLExternal checks if SASL External is configured for LDAP.
 	GetLDAPConfigSASLExternal() bool
-	GetLuaScriptPath() string
-	GetClientIP() string
-	GetClientPort() string
-	GetClientID() string
-	GetLocalIP() string
-	GetLocalPort() string
-	GetClientHost() string
-	GetBruteForceRules() []BruteForceRule
-	GetSSL() string
-	GetSSLSessionID() string
-	GetSSLVerify() string
-	GetSSLSubject() string
-	GetSSLClientCN() string
-	GetSSLIssuer() string
-	GetSSLClientNotBefore() string
-	GetSSLClientNotAfter() string
-	GetSSLSubjectDN() string
-	GetSSLIssuerDN() string
-	GetSSLClientSubjectDN() string
-	GetSSLClientIssuerDN() string
-	GetSSLCipher() string
-	GetSSLProtocol() string
-	GetSSLSerial() string
-	GetSSLFingerprint() string
-	GetUsername() string
-	GetPassword() string
-	GetPasswordEncoded() string
-	GetProtocol() string
-	GetLoginAttempt() string
-	GetAuthMethod() string
+
+	// GetLDAPSearchProtocol retrieves the LDAP search protocol for a given protocol name.
+	GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error)
+
+	/*
+		Backend server-related methods
+	*/
+
+	// GetBackendServers returns a list of backend servers.
+	GetBackendServers() []*BackendServer
+
+	// GetBackendServerMonitoring provides the configuration and status of server monitoring.
+	GetBackendServerMonitoring() *BackendServerMonitoring
+
+	/*
+		Features and options
+	*/
+
+	// HasFeature checks whether a specific feature is available.
+	HasFeature(feature string) bool
+
+	// GetServerInsightsEnableBlockProfile checks if block profiling for server insights is enabled.
+	GetServerInsightsEnableBlockProfile() bool
+
+	// GetServerInsightsEnablePprof checks whether pprof profiling is enabled for server insights.
 	GetServerInsightsEnablePprof() bool
+
+	/*
+		Authentication and security methods
+	*/
+
+	// GetClientHost returns the client's hostname.
+	GetClientHost() string
+
+	// GetClientIP retrieves the client's IP address.
+	GetClientIP() string
+
+	// GetClientPort returns the client's port.
+	GetClientPort() string
+
+	// GetClientID retrieves the client's ID.
+	GetClientID() string
+
+	// GetUsername returns the username of the currently authenticated user.
+	GetUsername() string
+
+	// GetPassword retrieves the user's password.
+	GetPassword() string
+
+	// GetPasswordEncoded returns the encoded password.
+	GetPasswordEncoded() string
+
+	// GetLoginAttempt retrieves the current login attempt.
+	GetLoginAttempt() string
+
+	// GetAuthMethod provides the authentication method used.
+	GetAuthMethod() string
+
+	// GetSkipTOTP checks if TOTP (Two-Factor Authentication) is skipped.
 	GetSkipTOTP(string) bool
+
+	// GetSkipConsent checks if consent is skipped.
 	GetSkipConsent(string) bool
+
+	/*
+		SSL and certificate-related methods
+	*/
+
+	// GetSSL retrieves the SSL configuration.
+	GetSSL() string
+
+	// GetSSLSessionID returns the SSL session ID.
+	GetSSLSessionID() string
+
+	// GetSSLVerify checks whether the SSL connection is verified.
+	GetSSLVerify() string
+
+	// GetSSLSubject retrieves the subject certificate of the SSL connection.
+	GetSSLSubject() string
+
+	// GetSSLClientCN returns the common name (CN) of the client certificate.
+	GetSSLClientCN() string
+
+	// GetSSLIssuer returns the issuer of the SSL certificate as a string.
+	GetSSLIssuer() string
+
+	// GetSSLClientNotBefore retrieves the `notBefore` date from the client's SSL certificate as a string.
+	GetSSLClientNotBefore() string
+
+	// GetSSLClientNotAfter retrieves the expiration timestamp of the SSL client certificate as a string.
+	GetSSLClientNotAfter() string
+
+	// GetSSLSubjectDN retrieves the Distinguished Name (DN) from the SSL certificate of the client.
+	GetSSLSubjectDN() string
+
+	// GetSSLIssuerDN retrieves the Distinguished Name (DN) of the SSL certificate issuer.
+	GetSSLIssuerDN() string
+
+	// GetSSLClientSubjectDN retrieves the distinguished name (DN) of the SSL client from the request.
+	GetSSLClientSubjectDN() string
+
+	// GetSSLClientIssuerDN retrieves the Distinguished Name (DN) of the issuer of the client's SSL certificate.
+	GetSSLClientIssuerDN() string
+
+	// GetSSLCipher retrieves the SSL cipher suite used in the connection.
+	GetSSLCipher() string
+
+	// GetSSLProtocol retrieves the SSL protocol version being used for the current connection.
+	GetSSLProtocol() string
+
+	// GetSSLSerial returns the serial number of the SSL certificate as a string.
+	GetSSLSerial() string
+
+	// GetSSLFingerprint returns the SSL fingerprint as a string representation of a hash.
+	GetSSLFingerprint() string
+
+	/*
+		Network-related methods
+	*/
+
+	// GetLocalIP returns the local IP address.
+	GetLocalIP() string
+
+	// GetLocalPort retrieves the local port.
+	GetLocalPort() string
+
+	/*
+		Protocol and rules
+	*/
+
+	// GetProtocol returns the protocol as a string, typically used to retrieve and determine the communication protocol in use.
+	GetProtocol() string
+
+	// GetAllProtocols returns all available protocols.
 	GetAllProtocols() []string
 
+	// GetBruteForceRules retrieves the brute force protection rules.
+	GetBruteForceRules() []BruteForceRule
+
+	/*
+		Configuration and section retrievers
+	*/
+
+	// GetServer retrieves the server section of the configuration.
 	GetServer() *ServerSection
+
+	// GetRBLs retrieves the Realtime Block Lists (RBL).
 	GetRBLs() *RBLSection
+
+	// GetClearTextList returns a list of clear-text entries configured for the application.
 	GetClearTextList() []string
+
+	// GetRelayDomains retrieves the relay domains configuration section of the file.
 	GetRelayDomains() *RelayDomainsSection
-	GetBackendServerMonitoring() *BackendServerMonitoring
+
+	// GetBruteForce retrieves the BruteForceSection configuration, containing brute force protection rules and settings.
 	GetBruteForce() *BruteForceSection
+
+	// GetLua retrieves the LuaSection from the configuration, containing actions, features, filters, hooks, and related config.
 	GetLua() *LuaSection
+
+	// GetOauth2 retrieves the Oauth2Section configuration, containing custom scopes and clients for OAuth2 authentication.
 	GetOauth2() *Oauth2Section
+
+	// GetLDAP returns the LDAPSection object containing configuration and search definitions for LDAP operations.
 	GetLDAP() *LDAPSection
 }
 
