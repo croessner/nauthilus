@@ -489,7 +489,7 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 // handleHAproxyV2Error logs an error related to HAProxy version 2 operations using the global Logger.
 func handleHAproxyV2Error(err error) {
 	level.Error(log.Logger).Log(
-		definitions.LogKeyInstance, definitions.InstanceName,
+		definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
 		definitions.LogKeyMsg, "HAProxy v2 error", "error", err,
 	)
 }

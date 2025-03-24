@@ -48,6 +48,16 @@ type ServerSection struct {
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 }
 
+// GetInstanceName retrieves the instance name defined in the ServerSection configuration.
+func (s *ServerSection) GetInstanceName() string {
+	return s.InstanceName
+}
+
+// GetLog retrieves the logging configuration of the ServerSection instance.
+func (s *ServerSection) GetLog() Log {
+	return s.Log
+}
+
 // Endpoint defines a structure for configuring various types of authentication and custom hooks.
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
@@ -87,6 +97,31 @@ type Log struct {
 	Color      bool         `mapstructure:"color"`
 	Level      Verbosity    `mapstructure:"level"`
 	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
+}
+
+// GetLogLevel returns the name of the current logging level configured in the Log instance.
+func (l Log) GetLogLevel() int {
+	return l.Level.Level()
+}
+
+// GetLogLevelName returns the name of the current logging level as a string.
+func (l Log) GetLogLevelName() string {
+	return l.Level.Get()
+}
+
+// GetDebugModules retrieves the list of debug modules configured in the Log instance.
+func (l Log) GetDebugModules() []*DbgModule {
+	return l.DbgModules
+}
+
+// IsLogFormatJSON indicates whether the log format is set to JSON based on the `JSON` field in the `Log` struct.
+func (l Log) IsLogFormatJSON() bool {
+	return l.JSON
+}
+
+// IsLogUsesColor determines if colored output is enabled for logging.
+func (l Log) IsLogUsesColor() bool {
+	return l.Color
 }
 
 // Insights is a configuration structure for enabling profiling and block profiling capabilities.

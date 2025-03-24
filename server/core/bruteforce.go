@@ -829,7 +829,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
+				Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 				Repeating:           alreadyTriggered,
 				UserFound:           func() bool { return accountName != "" }(),
 				Authenticated:       false, // unavailable

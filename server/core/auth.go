@@ -1556,7 +1556,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 			FinishedChan: finished,
 			HTTPRequest:  a.HTTPClientContext.Request,
 			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
+				Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 				Repeating:           false,
 				UserFound:           func() bool { return passDBResult.UserFound || accountName != "" }(),
 				Authenticated:       passDBResult.Authenticated,
@@ -2010,7 +2010,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		Logs:               nil,
 		Context:            a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           passDBResult.UserFound,
 			Authenticated:       passDBResult.Authenticated,

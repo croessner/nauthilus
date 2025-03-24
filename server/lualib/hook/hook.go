@@ -249,22 +249,13 @@ func PreCompileLuaHooks() error {
 	return nil
 }
 
-// setupLogging creates a Lua table and sets up the "log_format" and "log_level" global variables based on the
-// configuration settings in the GetFile().GetServer().Log.JSON and GetFile().GetServer().Log.Level.Get values.
-// It returns the created Lua table.
-//
-// Parameters:
-//   - L *lua.LState: The Lua state in which the Lua table will be created.
-//
-// Returns:
-//
-//	*lua.LTable: The Lua table containing the "log_format" and "log_level" global variables.
+// setupLogging configures the logging settings in the Lua state and returns a table containing the log format and level.
 func setupLogging(L *lua.LState) *lua.LTable {
 	logTable := L.NewTable()
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().GetServer().Log.Level.Get()
+	logLevel := config.GetFile().GetServer().GetLog().GetLogLevelName()
 
-	if config.GetFile().GetServer().Log.JSON {
+	if config.GetFile().GetServer().GetLog().IsLogFormatJSON() {
 		logFormat = definitions.LogFormatJSON
 	}
 
