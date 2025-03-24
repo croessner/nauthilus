@@ -37,7 +37,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 		if tlsCfg.Cert != "" && tlsCfg.Key != "" {
 			cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.GetFile().GetServer().InstanceName, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(), definitions.LogKeyMsg, err)
 
 				return nil
 			}

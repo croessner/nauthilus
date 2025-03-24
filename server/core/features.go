@@ -105,7 +105,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	featureRequest := feature.Request{
 		Context: a.Context,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 			Repeating:           false, // unavailable
 			UserFound:           func() bool { return accountName != "" }(),
 			Authenticated:       false, // unavailable
@@ -553,7 +553,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		FinishedChan: finished,
 		HTTPRequest:  a.HTTPClientContext.Request,
 		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().Log.Level.Level() == definitions.LogLevelDebug,
+			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 			UserFound:           func() bool { return a.GetAccount() != "" }(),
 			NoAuth:              a.NoAuth,
 			Service:             a.Service,

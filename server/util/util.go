@@ -240,7 +240,7 @@ func RemoveCRLFFromQueryOrFilter(value string, sep string) string {
 func DebugModule(module definitions.DbgModule, keyvals ...any) {
 	var moduleName string
 
-	if config.GetFile().GetServer().Log.Level.Level() < definitions.LogLevelDebug {
+	if config.GetFile().GetServer().GetLog().GetLogLevel() < definitions.LogLevelDebug {
 		return
 	}
 
@@ -279,8 +279,9 @@ func DebugModule(module definitions.DbgModule, keyvals ...any) {
 		return
 	}
 
-	for index := range config.GetFile().GetServer().Log.DbgModules {
-		if !(config.GetFile().GetServer().Log.DbgModules[index].GetModule() == definitions.DbgAll || config.GetFile().GetServer().Log.DbgModules[index].GetModule() == module) {
+	for index := range config.GetFile().GetServer().GetLog().GetDebugModules() {
+		if !(config.GetFile().GetServer().GetLog().GetDebugModules()[index].GetModule() == definitions.DbgAll ||
+			config.GetFile().GetServer().GetLog().GetDebugModules()[index].GetModule() == module) {
 			continue
 		}
 

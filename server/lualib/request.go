@@ -180,9 +180,9 @@ func LoaderModHTTPRequest(httpRequest *http.Request) lua.LGFunction {
 // SetupRequest sets up the request object with the common request properties
 func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().GetServer().Log.Level.Get()
+	logLevel := config.GetFile().GetServer().GetLog().GetLogLevelName()
 
-	if config.GetFile().GetServer().Log.JSON {
+	if config.GetFile().GetServer().GetLog().IsLogFormatJSON() {
 		logFormat = definitions.LogFormatJSON
 	}
 

@@ -944,7 +944,7 @@ func setupGinLoggers() {
 	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
 	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
 
-	if config.GetFile().GetServer().Log.Level.Level() != definitions.LogLevelDebug {
+	if config.GetFile().GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 

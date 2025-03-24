@@ -109,10 +109,10 @@ func setupConfiguration() (err error) {
 	}
 
 	log.SetupLogging(
-		file.GetServer().Log.Level.Level(),
-		file.GetServer().Log.JSON,
-		file.GetServer().Log.Color,
-		file.GetServer().InstanceName,
+		file.GetServer().GetLog().GetLogLevel(),
+		file.GetServer().GetLog().IsLogFormatJSON(),
+		file.GetServer().GetLog().IsLogUsesColor(),
+		file.GetServer().GetInstanceName(),
 	)
 	stdlog.SetOutput(kitlog.NewStdlibAdapter(log.Logger))
 
@@ -455,10 +455,10 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		)
 	} else {
 		log.SetupLogging(
-			config.GetFile().GetServer().Log.Level.Level(),
-			config.GetFile().GetServer().Log.JSON,
-			config.GetFile().GetServer().Log.Color,
-			config.GetFile().GetServer().InstanceName,
+			config.GetFile().GetServer().GetLog().GetLogLevel(),
+			config.GetFile().GetServer().GetLog().IsLogFormatJSON(),
+			config.GetFile().GetServer().GetLog().IsLogUsesColor(),
+			config.GetFile().GetServer().GetInstanceName(),
 		)
 
 		debugLoadableConfig()
@@ -866,7 +866,7 @@ func parseFlagsAndPrintVersion() {
 
 // initializeInstanceInfo sets the version and instance name metrics used for monitoring and debugging.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().GetServer().InstanceName, "version": version})
+	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().GetServer().GetInstanceName(), "version": version})
 
 	infoMetric.Set(1)
 }

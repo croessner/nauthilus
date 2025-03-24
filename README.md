@@ -1,5 +1,7 @@
 [![Release Build](https://github.com/croessner/nauthilus/actions/workflows/build-stable.yaml/badge.svg)](https://github.com/croessner/nauthilus/actions/workflows/build-stable.yaml)
 
+![](static/img/logo_nauthilus.png "Logo Nauthilus")
+
 # Nauthilus
 
 Nauthilus is a universal authentication and authorization platform written in Go, designed as a central hub to handle 
