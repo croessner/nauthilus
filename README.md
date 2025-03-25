@@ -30,6 +30,7 @@ you with peace of mind by ensuring smooth operations.
 
 If you are interested in purchasing commercial support for **Nauthilus**, please contact us for further details or
 visit [https://nauthilus.org](https://nauthilus.org) for more information.
+
 ## License
 
 This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
