@@ -39,7 +39,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	)
 
 	if stats.HavePrometheusLabelEnabled(definitions.PromFeature) {
-		timer := prometheus.NewTimer(stats.RBLDuration.WithLabelValues(rbl.Name))
+		timer := prometheus.NewTimer(stats.GetMetrics().GetRblDuration().WithLabelValues(rbl.Name))
 
 		defer timer.ObserveDuration()
 	}

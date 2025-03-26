@@ -62,7 +62,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 
 	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Load counter statistics from redis")
 
-	stats.LoginsCounter.Reset()
+	stats.GetMetrics().GetLoginsCounter().Reset()
 
 	// Prometheus redis variables
 	redisLoginsCounterKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.GetFile().GetServer().GetInstanceName())
@@ -80,7 +80,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 			return
 		}
 
-		stats.LoginsCounter.WithLabelValues(counterType).Add(redisValue)
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(counterType).Add(redisValue)
 	}
 }
 
@@ -91,8 +91,8 @@ func SaveStatsToRedis(ctx context.Context) {
 	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
-		{Value: getCounterValue(stats.LoginsCounter, definitions.LabelSuccess), Label: definitions.LabelSuccess},
-		{Value: getCounterValue(stats.LoginsCounter, definitions.LabelFailure), Label: definitions.LabelFailure},
+		{Value: getCounterValue(stats.GetMetrics().GetLoginsCounter(), definitions.LabelSuccess), Label: definitions.LabelSuccess},
+		{Value: getCounterValue(stats.GetMetrics().GetLoginsCounter(), definitions.LabelFailure), Label: definitions.LabelFailure},
 	}
 
 	// Prometheus redis variables
@@ -105,7 +105,7 @@ func SaveStatsToRedis(ctx context.Context) {
 			return
 		}
 
-		stats.RedisWriteCounter.Inc()
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
 	}
 }
 
@@ -151,21 +151,21 @@ func UpdateRedisPoolStats() {
 			if previousHit, ok := previousHits[poolName]; ok {
 				hitsDiff := currentHits - previousHit
 				if hitsDiff >= 0 {
-					stats.RedisHits.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(hitsDiff)
+					stats.GetMetrics().GetRedisHits().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(hitsDiff)
 				}
 			}
 
 			if previousMiss, ok := previousMisses[poolName]; ok {
 				missesDiff := currentMisses - previousMiss
 				if missesDiff >= 0 {
-					stats.RedisMisses.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(missesDiff)
+					stats.GetMetrics().GetRedisMisses().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(missesDiff)
 				}
 			}
 
 			if previousTimeout, ok := previousTimeouts[poolName]; ok {
 				timeoutsDiff := currentTimeouts - previousTimeout
 				if timeoutsDiff >= 0 {
-					stats.RedisTimeouts.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(timeoutsDiff)
+					stats.GetMetrics().GetRedisTimeouts().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Add(timeoutsDiff)
 				}
 			}
 
@@ -173,9 +173,9 @@ func UpdateRedisPoolStats() {
 			previousMisses[poolName] = currentMisses
 			previousTimeouts[poolName] = currentTimeouts
 
-			stats.RedisTotalConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
-			stats.RedisIdleConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
-			stats.RedisStaleConns.With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
+			stats.GetMetrics().GetRedisTotalConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.TotalConns))
+			stats.GetMetrics().GetRedisIdleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.IdleConns))
+			stats.GetMetrics().GetRedisStaleConns().With(prometheus.Labels{definitions.ReisPromPoolName: poolName}).Set(float64(redisStats.StaleConns))
 		}
 	}
 }

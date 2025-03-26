@@ -116,7 +116,7 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 
 		atomic.AddInt32(&lc.CurrentConnections, 1)
 
-		stats.CurrentRequests.Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
+		stats.GetMetrics().GetCurrentRequests().Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
 
 		defer atomic.AddInt32(&lc.CurrentConnections, -1)
 
@@ -605,12 +605,12 @@ func PrometheusMiddleware() gin.HandlerFunc {
 		path := ctx.FullPath()
 
 		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
-			timer = prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
+			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))
 		}
 
 		ctx.Next()
 
-		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
+		stats.GetMetrics().GetHttpRequestsTotal().WithLabelValues(path).Inc()
 
 		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
 			timer.ObserveDuration()

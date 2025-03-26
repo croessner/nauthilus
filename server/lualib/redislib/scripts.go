@@ -61,7 +61,7 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 		evalArgs[len(keys)+i] = arg
 	}
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	if uploadScriptName != "" {
 		script = uploads.Get(uploadScriptName)
@@ -83,7 +83,7 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 
 // uploadRedisScript uploads a Lua script to Redis and returns its SHA1 hash or an error if the upload fails.
 func uploadRedisScript(ctx context.Context, client redis.UniversalClient, script string) (any, error) {
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	sha1, err := client.ScriptLoad(ctx, script).Result()
 	if err != nil {

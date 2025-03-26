@@ -382,7 +382,7 @@ func (l *LDAPPool) updateSingleConnectionStatus(index int) int {
 func (l *LDAPPool) closeIdleConnections(openConnections, idlePoolSize, poolSize int) {
 	needClosing := max(openConnections-idlePoolSize, 0)
 
-	stats.LDAPStaleConnections.WithLabelValues(l.name).Set(float64(needClosing))
+	stats.GetMetrics().GetLdapStaleConnections().WithLabelValues(l.name).Set(float64(needClosing))
 	util.DebugModule(definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
 
 	//goland:noinspection GoDfaConstantCondition
@@ -419,11 +419,11 @@ func (l *LDAPPool) closeSingleIdleConnection(index int) bool {
 func (l *LDAPPool) updateStatsPoolSize() {
 	switch l.poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
-		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupPoolSize()))
-		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupIdlePoolSize()))
+		stats.GetMetrics().GetLdapPoolSize().WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupPoolSize()))
+		stats.GetMetrics().GetLdapIdlePoolSize().WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigLookupIdlePoolSize()))
 	case definitions.LDAPPoolAuth:
-		stats.LDAPPoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthPoolSize()))
-		stats.LDAPIdlePoolSize.WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthIdlePoolSize()))
+		stats.GetMetrics().GetLdapPoolSize().WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthPoolSize()))
+		stats.GetMetrics().GetLdapIdlePoolSize().WithLabelValues(l.name).Set(float64(config.GetFile().GetLDAPConfigAuthIdlePoolSize()))
 	}
 }
 
@@ -449,7 +449,7 @@ func (l *LDAPPool) houseKeeper() {
 			return
 		case <-timer.C:
 			openConnections := l.updateConnectionsStatus(poolSize)
-			stats.LDAPOpenConnections.WithLabelValues(l.name).Set(float64(openConnections))
+			stats.GetMetrics().GetLdapOpenConnections().WithLabelValues(l.name).Set(float64(openConnections))
 
 			l.closeIdleConnections(openConnections, idlePoolSize, poolSize)
 			l.updateStatsPoolSize()
@@ -1314,7 +1314,7 @@ func (l *LDAPPool) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ld
 			stopTimer()
 		}
 
-		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
+		stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()
 
@@ -1342,7 +1342,7 @@ func (l *LDAPPool) handleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *
 	connNumber := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
-	stats.LDAPPoolStatus.WithLabelValues(l.name).Inc()
+	stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Inc()
 
 	go l.proccessLookupRequest(connNumber, ldapRequest, ldapWaitGroup)
 }
@@ -1430,7 +1430,7 @@ func (l *LDAPPool) processAuthRequest(index int, ldapAuthRequest *LDAPAuthReques
 			stopTimer()
 		}
 
-		stats.LDAPPoolStatus.WithLabelValues(l.name).Dec()
+		stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Dec()
 		ldapWaitGroup.Done()
 	}()
 
@@ -1454,7 +1454,7 @@ func (l *LDAPPool) handleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitG
 	connNumber := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
-	stats.LDAPPoolStatus.WithLabelValues(l.name).Inc()
+	stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Inc()
 
 	l.processAuthRequest(connNumber, ldapAuthRequest, ldapWaitGroup)
 }

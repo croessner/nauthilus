@@ -47,7 +47,7 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 			valueType = L.CheckString(4)
 		}
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		err := convert.StringCmd(client.HGet(ctx, key, field), valueType, L)
 		if err != nil {
@@ -99,7 +99,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 			kvpairs = append(kvpairs, field, value)
 		}
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.HSet(ctx, key, kvpairs...)
 		if cmd.Err() != nil {
@@ -122,7 +122,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 // It begins by checking the number of arguments passed, if they are valid, fields are
 // appended and prepared for deletion from Redis. If the deletion process encounters an error,
 // the function returns an error message. If the deletion is successful, it increments the
-// RedisWriteCounter stats and return a string "OK". This function use Lua's inbuilt Push
+// GetRedisWriteCounter() stats and return a string "OK". This function use Lua's inbuilt Push
 // method for returning values to the Lua stack. It is used with the L.Push(lua.LNil)
 // and L.Push(lua.LString("Error")), which pushes a nil value and an error string, respectively,
 // in case of an error. On successful deletion, it returns "OK".
@@ -144,7 +144,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 			fields = append(fields, L.CheckString(i))
 		}
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.HDel(ctx, key, fields...)
 		if cmd.Err() != nil {
@@ -179,7 +179,7 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.HLen(ctx, key)
 		if cmd.Err() != nil {
@@ -204,7 +204,7 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 // In case of an error during the database operation, it pushes the nil value and the error message onto the Lua stack
 // and return 2 (to represent two return values: nil and the error message), quitting the function.
 //
-// If the operation is successful, it increments the RedisReadCounter for statistics.
+// If the operation is successful, it increments the GetRedisReadCounter() for statistics.
 // It then creates a new Lua table and sets the fields and their corresponding values from the retrieved record into the table.
 // Regardless of the original type of value in the record, all values are stored as strings in the Lua table.
 //
@@ -215,7 +215,7 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.HGetAll(ctx, key)
 		if cmd.Err() != nil {
@@ -242,7 +242,7 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 // field, and the amount to increment.
 //
 // The function first checks the provided parameters and uses the HIncrBy method of the redis client
-// to perform the increment operation. If successful, the function increments the RedisWriteCounter
+// to perform the increment operation. If successful, the function increments the GetRedisWriteCounter()
 // and pushes the new field value onto the Lua stack, returning 1.
 //
 // In case of an error, the function pushes nil and the error's message onto the Lua stack, then
@@ -265,7 +265,7 @@ func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 		field := L.CheckString(3)
 		increment := L.CheckInt64(4)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.HIncrBy(ctx, key, field, increment)
 		if cmd.Err() != nil {
@@ -295,7 +295,7 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 		field := L.CheckString(3)
 		increment := float64(L.CheckNumber(4))
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.HIncrByFloat(ctx, key, field, increment)
 		if cmd.Err() != nil {
@@ -330,7 +330,7 @@ func RedisHExists(ctx context.Context) lua.LGFunction {
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.HExists(ctx, key, field)
 		if cmd.Err() != nil {

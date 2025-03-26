@@ -494,11 +494,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	restartNgxMonitoring(ctx, store, ngxMonitoringTicker)
 
-	stats.ReloadMutex.Lock()
-
-	stats.LastReloadTime = time.Now()
-
-	stats.ReloadMutex.Unlock()
+	stats.GetReloader().Reload()
 
 	level.Debug(log.Logger).Log(
 		definitions.LogKeyMsg, "Reload complete",
@@ -680,7 +676,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	backendServersLiveness := &backendServersAlive{}
 
-	stats.BackendServerStatus.WithLabelValues("wanted").Set(float64(len(servers)))
+	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("wanted").Set(float64(len(servers)))
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
@@ -704,7 +700,7 @@ func loopBackendServersHealthCheck(servers []*config.BackendServer, oldBackendSe
 
 	wg.Wait()
 
-	stats.BackendServerStatus.WithLabelValues("alive").Set(float64(len(backendServersLiveness.servers)))
+	stats.GetMetrics().GetBackendServerStatus().WithLabelValues("alive").Set(float64(len(backendServersLiveness.servers)))
 
 	if !compareBackendServers(backendServersLiveness.servers, oldBackendServers.servers) {
 		core.BackendServers.Update(backendServersLiveness.servers)
@@ -866,7 +862,7 @@ func parseFlagsAndPrintVersion() {
 
 // initializeInstanceInfo sets the version and instance name metrics used for monitoring and debugging.
 func initializeInstanceInfo() {
-	infoMetric := stats.InstanceInfo.With(prometheus.Labels{"instance_name": config.GetFile().GetServer().GetInstanceName(), "version": version})
+	infoMetric := stats.GetMetrics().GetInstanceInfo().With(prometheus.Labels{"instance_name": config.GetFile().GetServer().GetInstanceName(), "version": version})
 
 	infoMetric.Set(1)
 }

@@ -977,8 +977,8 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 
 	// Only authentication attempts
 	if !(a.NoAuth || a.ListAccounts) {
-		stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
-		stats.LoginsCounter.WithLabelValues(definitions.LabelSuccess).Inc()
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 	}
 }
 
@@ -1213,8 +1213,8 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	level.Info(log.Logger).Log(a.LogLineTemplate("fail", ctx.Request.URL.Path)...)
 
-	stats.RejectedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
-	stats.LoginsCounter.WithLabelValues(definitions.LabelFailure).Inc()
+	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()
 }
 
 // AuthFail handles the failure of authentication.
@@ -2193,7 +2193,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		accountName = strings.Join(accounts, ":")
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		err = rediscli.GetClient().GetWriteHandle().HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
 	}
@@ -3061,7 +3061,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.GetFromLocalCache(ctx); !found {
-		stats.CacheMisses.Inc()
+		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce() {
 			a.UpdateBruteForceBucketsCounter()
@@ -3071,7 +3071,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 			return true
 		}
 	} else {
-		stats.CacheHits.Inc()
+		stats.GetMetrics().GetCacheHits().Inc()
 	}
 
 	return false

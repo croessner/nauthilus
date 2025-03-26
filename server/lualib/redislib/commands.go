@@ -40,7 +40,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 			valueType = L.CheckString(3)
 		}
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		err := convert.StringCmd(client.Get(ctx, key), valueType, L)
 		if err != nil {
@@ -76,7 +76,7 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 			expiration = time.Duration(L.CheckInt(4))
 		}
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.Set(ctx, key, value, expiration*time.Second)
 		if cmd.Err() != nil {
@@ -102,7 +102,7 @@ func RedisIncr(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.Incr(ctx, key)
 		if cmd.Err() != nil {
@@ -127,7 +127,7 @@ func RedisDel(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.Del(ctx, key)
 		if cmd.Err() != nil {
@@ -154,7 +154,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 		key := L.CheckString(2)
 		expiration := L.CheckNumber(3)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.Expire(ctx, key, time.Duration(expiration)*time.Second)
 		if cmd.Err() != nil {
@@ -180,7 +180,7 @@ func RedisRename(ctx context.Context) lua.LGFunction {
 		oldKey := L.CheckString(2)
 		newKey := L.CheckString(3)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.Rename(ctx, oldKey, newKey)
 		if cmd.Err() != nil {
@@ -201,7 +201,7 @@ func RedisPing(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.Ping(ctx)
 		if cmd.Err() != nil {
