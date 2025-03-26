@@ -32,7 +32,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var reloader Reloader
+var (
+	reloader     Reloader
+	initReloader sync.Once
+)
 
 // Reloader defines an interface for components that support reinitialization or refreshing their state or configuration.
 type Reloader interface {
@@ -84,9 +87,9 @@ func NewReloader() Reloader {
 
 // GetReloader returns a singleton instance of Reloader, initializing it if not already created.
 func GetReloader() Reloader {
-	if reloader == nil {
+	initReloader.Do(func() {
 		reloader = NewReloader()
-	}
+	})
 
 	return reloader
 }
@@ -118,7 +121,10 @@ func init() {
 	)
 }
 
-var metrics Metrics
+var (
+	metrics     Metrics
+	initMetrics sync.Once
+)
 
 // Metrics ist ein Interface, das alle Getter-Methoden für Metriken definiert.
 type Metrics interface {
@@ -570,9 +576,9 @@ func NewMetrics() Metrics {
 
 // GetMetrics initializes and returns a singleton instance of the Metrics interface.
 func GetMetrics() Metrics {
-	if metrics == nil {
+	initMetrics.Do(func() {
 		metrics = NewMetrics()
-	}
+	})
 
 	return metrics
 }

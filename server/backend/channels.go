@@ -16,11 +16,16 @@
 package backend
 
 import (
+	"sync"
+
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 )
 
-var channel Channel
+var (
+	channel     Channel
+	initChannel sync.Once
+)
 
 // Channel is an interface comprising methods to retrieve LDAPChannel and LuaChannel instances.
 type Channel interface {
@@ -29,52 +34,40 @@ type Channel interface {
 
 	// GetLuaChannel retrieves and returns the LuaChannel instance associated with the Channel interface implementation.
 	GetLuaChannel() LuaChannel
-
-	// DestroyLdapChannel releases the LDAPChannel instance by setting it to nil, freeing associated resources.
-	DestroyLdapChannel()
-
-	// DestroyLuaChannel releases the LuaChannel instance associated with the Channel implementation by setting it to nil.
-	DestroyLuaChannel()
 }
 
 type channelImpl struct {
 	ldapChannel LDAPChannel
 	luaChannel  LuaChannel
+	ldapOnce    sync.Once
+	luaOnce     sync.Once
 }
 
 // GetLdapChannel retrieves and returns the LDAPChannel instance associated with the channelImpl instance.
 func (c *channelImpl) GetLdapChannel() LDAPChannel {
-	if c.ldapChannel == nil {
+	c.ldapOnce.Do(func() {
 		c.ldapChannel = NewLDAPChannel()
-	}
+	})
 
 	return c.ldapChannel
 }
 
 // GetLuaChannel retrieves and returns the LuaChannel instance associated with the channelImpl.
 func (c *channelImpl) GetLuaChannel() LuaChannel {
-	if c.luaChannel == nil {
+	c.luaOnce.Do(func() {
 		c.luaChannel = NewLuaChannel()
-	}
+	})
 
 	return c.luaChannel
-}
-
-func (c *channelImpl) DestroyLdapChannel() {
-	c.ldapChannel = nil
-}
-
-func (c *channelImpl) DestroyLuaChannel() {
-	c.luaChannel = nil
 }
 
 var _ Channel = &channelImpl{}
 
 // GetChannel returns a singleton instance of the Channel interface, initializing it if not already created.
 func GetChannel() Channel {
-	if channel == nil {
+	initChannel.Do(func() {
 		channel = NewChannel()
-	}
+	})
 
 	return channel
 }
@@ -100,12 +93,6 @@ type LDAPChannel interface {
 
 	// GetAuthRequestChan retrieves the LDAPAuthRequest channel for handling authentication requests.
 	GetAuthRequestChan() chan *LDAPAuthRequest
-
-	// CloseLookup closes the channel used to signal the completion of lookup operations in the LDAP channel.
-	CloseLookup()
-
-	// CloseAuth closes the channel used to signal the completion of authentication operations in the LDAP channel.
-	CloseAuth()
 }
 
 type ldapChannelImpl struct {
@@ -135,24 +122,6 @@ func (c *ldapChannelImpl) GetAuthRequestChan() chan *LDAPAuthRequest {
 	return c.authReqChan
 }
 
-// CloseLookup closes all the channels associated with LDAP lookup and authentication operations in ldapChannelImpl.
-func (c *ldapChannelImpl) CloseLookup() {
-	close(c.lookupEndChan)
-	close(c.lookupReqChan)
-
-	c.lookupEndChan = nil
-	c.lookupReqChan = nil
-}
-
-// CloseAuth closes the channels associated with authentication operations in ldapChannelImpl.
-func (c *ldapChannelImpl) CloseAuth() {
-	close(c.authEndChan)
-	close(c.authReqChan)
-
-	c.authEndChan = nil
-	c.authReqChan = nil
-}
-
 var _ LDAPChannel = &ldapChannelImpl{}
 
 func NewLDAPChannel() LDAPChannel {
@@ -171,9 +140,6 @@ type LuaChannel interface {
 
 	// GetLookupRequestChan retrieves the LuaRequest channel used for managing Lua-related request operations.
 	GetLookupRequestChan() chan *LuaRequest
-
-	// Close terminates any active channels or ongoing operations associated with the LuaChannel.
-	Close()
 }
 
 type LuaChannelImpl struct {
@@ -189,15 +155,6 @@ func (c *LuaChannelImpl) GetLookupEndChan() chan Done {
 // GetLookupRequestChan returns the pointer to a LuaRequest used for handling Lua requests in the channel.
 func (c *LuaChannelImpl) GetLookupRequestChan() chan *LuaRequest {
 	return c.lookupReqChan
-}
-
-// Close shuts down both lookupEndChan and lookupReqChan channels to release resources and stop channel operations.
-func (c *LuaChannelImpl) Close() {
-	close(c.lookupEndChan)
-	close(c.lookupReqChan)
-
-	c.lookupEndChan = nil
-	c.lookupReqChan = nil
 }
 
 var _ LuaChannel = &LuaChannelImpl{}

@@ -317,20 +317,11 @@ func handleBackend(passDB *config.Backend) {
 	case definitions.BackendLDAP:
 		<-backend.GetChannel().GetLdapChannel().GetLookupEndChan()
 
-		backend.GetChannel().GetLdapChannel().CloseLookup()
-
 		if !config.GetFile().LDAPHavePoolOnly() {
 			<-backend.GetChannel().GetLdapChannel().GetAuthEndChan()
-
-			backend.GetChannel().GetLdapChannel().CloseAuth()
 		}
-
-		backend.GetChannel().DestroyLdapChannel()
 	case definitions.BackendLua:
 		<-backend.GetChannel().GetLuaChannel().GetLookupEndChan()
-
-		backend.GetChannel().GetLuaChannel().Close()
-		backend.GetChannel().DestroyLuaChannel()
 	case definitions.BackendCache:
 	default:
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
