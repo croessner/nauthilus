@@ -31,7 +31,9 @@ var (
 
 func GetClient() Client {
 	initClient.Do(func() {
-		client = NewClient()
+		if client == nil {
+			client = NewClient()
+		}
 	})
 
 	return client

@@ -46,7 +46,9 @@ type channelImpl struct {
 // GetLdapChannel retrieves and returns the LDAPChannel instance associated with the channelImpl instance.
 func (c *channelImpl) GetLdapChannel() LDAPChannel {
 	c.ldapOnce.Do(func() {
-		c.ldapChannel = NewLDAPChannel()
+		if c.ldapChannel == nil {
+			c.ldapChannel = NewLDAPChannel()
+		}
 	})
 
 	return c.ldapChannel
@@ -55,7 +57,9 @@ func (c *channelImpl) GetLdapChannel() LDAPChannel {
 // GetLuaChannel retrieves and returns the LuaChannel instance associated with the channelImpl.
 func (c *channelImpl) GetLuaChannel() LuaChannel {
 	c.luaOnce.Do(func() {
-		c.luaChannel = NewLuaChannel()
+		if c.luaChannel == nil {
+			c.luaChannel = NewLuaChannel()
+		}
 	})
 
 	return c.luaChannel
@@ -66,7 +70,9 @@ var _ Channel = &channelImpl{}
 // GetChannel returns a singleton instance of the Channel interface, initializing it if not already created.
 func GetChannel() Channel {
 	initChannel.Do(func() {
-		channel = NewChannel()
+		if channel == nil {
+			channel = NewChannel()
+		}
 	})
 
 	return channel

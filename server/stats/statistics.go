@@ -88,7 +88,9 @@ func NewReloader() Reloader {
 // GetReloader returns a singleton instance of Reloader, initializing it if not already created.
 func GetReloader() Reloader {
 	initReloader.Do(func() {
-		reloader = NewReloader()
+		if reloader == nil {
+			reloader = NewReloader()
+		}
 	})
 
 	return reloader
@@ -577,7 +579,9 @@ func NewMetrics() Metrics {
 // GetMetrics initializes and returns a singleton instance of the Metrics interface.
 func GetMetrics() Metrics {
 	initMetrics.Do(func() {
-		metrics = NewMetrics()
+		if metrics == nil {
+			metrics = NewMetrics()
+		}
 	})
 
 	return metrics
