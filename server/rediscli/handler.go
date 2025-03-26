@@ -17,18 +17,24 @@ package rediscli
 
 import (
 	"math/rand"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisClients provides an interface to interact with Redis, supporting methods for initialization and handle management.
-var client Client
+var (
+	// RedisClients provides an interface to interact with Redis, supporting methods for initialization and handle management.
+	client     Client
+	initClient sync.Once
+)
 
 func GetClient() Client {
-	if client == nil {
-		client = NewClient()
-	}
+	initClient.Do(func() {
+		if client == nil {
+			client = NewClient()
+		}
+	})
 
 	return client
 }

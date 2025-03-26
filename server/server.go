@@ -315,22 +315,13 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
 	case definitions.BackendLDAP:
-		<-backend.LDAPEndChan
-
-		close(backend.LDAPEndChan)
-		close(backend.LDAPRequestChan)
+		<-backend.GetChannel().GetLdapChannel().GetLookupEndChan()
 
 		if !config.GetFile().LDAPHavePoolOnly() {
-			<-backend.LDAPAuthEndChan
-
-			close(backend.LDAPAuthEndChan)
-			close(backend.LDAPAuthRequestChan)
+			<-backend.GetChannel().GetLdapChannel().GetAuthEndChan()
 		}
 	case definitions.BackendLua:
-		<-backend.LuaMainWorkerEndChan
-
-		close(backend.LuaMainWorkerEndChan)
-		close(backend.LuaRequestChan)
+		<-backend.GetChannel().GetLuaChannel().GetLookupEndChan()
 	case definitions.BackendCache:
 	default:
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
@@ -341,12 +332,12 @@ func handleBackend(passDB *config.Backend) {
 func handleLDAPBackend(lookup, auth *contextTuple) {
 	stopContext(lookup)
 
-	<-backend.LDAPEndChan
+	<-backend.GetChannel().GetLdapChannel().GetLookupEndChan()
 
 	if !config.GetFile().LDAPHavePoolOnly() {
 		stopContext(auth)
 
-		<-backend.LDAPAuthEndChan
+		<-backend.GetChannel().GetLdapChannel().GetAuthEndChan()
 	}
 }
 
@@ -354,7 +345,7 @@ func handleLDAPBackend(lookup, auth *contextTuple) {
 func handleLuaBackend(lua *contextTuple) {
 	stopContext(lua)
 
-	<-backend.LuaMainWorkerEndChan
+	<-backend.GetChannel().GetLuaChannel().GetLookupEndChan()
 }
 
 // stopAndRestartActionWorker stops the current action context, waits for workers to complete, and restarts them with a new context.
@@ -529,20 +520,11 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 	}
 }
 
-// setupLDAPWorker initializes LDAP worker channels and context for processing LDAP requests and optionally authentication.
-// It determines configuration-based pool sizes for lookup and authentication, sets up associated channels, and starts workers.
+// setupLDAPWorker initializes the LDAP worker contexts and starts LDAP worker routines for processing requests and authentication.
 func setupLDAPWorker(store *contextStore, ctx context.Context) {
-	lookupPoolSize := config.GetFile().GetLDAP().Config.LookupPoolSize
-
-	backend.LDAPRequestChan = make(chan *backend.LDAPRequest, lookupPoolSize)
-	backend.LDAPEndChan = make(chan backend.Done)
 	store.ldapLookup = newContextTuple(ctx)
 
 	if !config.GetFile().LDAPHavePoolOnly() {
-		authPoolSize := config.GetFile().GetLDAP().Config.AuthPoolSize
-
-		backend.LDAPAuthRequestChan = make(chan *backend.LDAPAuthRequest, authPoolSize)
-		backend.LDAPAuthEndChan = make(chan backend.Done)
 		store.ldapAuth = newContextTuple(ctx)
 	}
 
@@ -551,9 +533,6 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 
 // setupLuaWorker initializes the Lua worker context, channels, and starts the Lua worker goroutine.
 func setupLuaWorker(store *contextStore, ctx context.Context) {
-	backend.LuaRequestChan = make(chan *backend.LuaRequest, definitions.MaxChannelSize)
-	backend.LuaMainWorkerEndChan = make(chan backend.Done)
-
 	store.lua = newContextTuple(ctx)
 
 	startLuaWorker(store)

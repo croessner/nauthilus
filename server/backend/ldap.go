@@ -41,20 +41,6 @@ import (
 	"github.com/yuin/gopher-lua"
 )
 
-var (
-	// LDAPEndChan is the quit-channel for LDAP on shutdown.
-	LDAPEndChan chan Done //nolint:gochecknoglobals // Quit-Channel for LDAP on shutdown
-
-	// LDAPRequestChan is a channel for sending LDAP requests.
-	LDAPRequestChan chan *LDAPRequest //nolint:gochecknoglobals // Needed for LDAP pooling
-
-	// LDAPAuthEndChan is the quit-channel for LDAP authentication on shutdown.
-	LDAPAuthEndChan chan Done //nolint:gochecknoglobals // Quit-Channel for LDAP on shutdown
-
-	// LDAPAuthRequestChan is a channel for sending LDAP authentication requests.
-	LDAPAuthRequestChan chan *LDAPAuthRequest //nolint:gochecknoglobals // Needed for LDAP pooling
-)
-
 // PoolRequest is an interface that represents a request made to a connection pool.
 // It provides a method to retrieve the channel where the LDAP reply will be sent.
 // The type parameter `T` can be any type.
@@ -1377,11 +1363,11 @@ func LDAPMainWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			LDAPEndChan <- Done{}
+			GetChannel().GetLdapChannel().GetLookupEndChan() <- Done{}
 
 			return
 
-		case ldapRequest := <-LDAPRequestChan:
+		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan():
 			// Check that we have enough idle connections.
 			if err := ldapPool.setIdleConnections(true); err != nil {
 				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
@@ -1487,10 +1473,10 @@ func LDAPAuthWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			LDAPAuthEndChan <- Done{}
+			GetChannel().GetLdapChannel().GetAuthEndChan() <- Done{}
 
 			return
-		case ldapAuthRequest := <-LDAPAuthRequestChan:
+		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan():
 			// Check that we have enough idle connections.
 			if err := ldapPool.setIdleConnections(false); err != nil {
 				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
@@ -1545,7 +1531,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(fieldValues, scope, ctx)
 
-		LDAPRequestChan <- ldapRequest
+		GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
 
 		return processReply(L, ldapRequest.GetLDAPReplyChan())
 	}

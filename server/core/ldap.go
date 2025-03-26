@@ -43,9 +43,9 @@ import (
 // Returns:
 // - string: the username based on the master user mode flag.
 func handleMasterUserMode(auth *AuthState) string {
-	if config.GetFile().GetServer().MasterUser.Enabled {
-		if strings.Count(auth.Username, config.GetFile().GetServer().MasterUser.Delimiter) == 1 {
-			parts := strings.Split(auth.Username, config.GetFile().GetServer().MasterUser.Delimiter)
+	if config.GetFile().GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
 				return auth.Username
@@ -177,7 +177,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	// Find user with account status enabled
-	backend.LDAPRequestChan <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -236,7 +236,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			HTTPClientContext: auth.HTTPClientContext,
 		}
 
-		backend.LDAPAuthRequestChan <- ldapUserBindRequest
+		backend.GetChannel().GetLdapChannel().GetAuthRequestChan() <- ldapUserBindRequest
 
 		ldapReply = <-ldapReplyChan
 
@@ -335,7 +335,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	}
 
 	// Find user with account status enabled
-	backend.LDAPRequestChan <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -426,7 +426,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	ldapRequest.ModifyAttributes = make(backend.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
-	backend.LDAPRequestChan <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 

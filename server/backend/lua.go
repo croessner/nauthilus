@@ -34,12 +34,6 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// LuaRequestChan is a channel that carries LuaRequest pointers from various sources.
-var LuaRequestChan chan *LuaRequest
-
-// LuaMainWorkerEndChan is a channel that signals the termination of the main Lua worker.
-var LuaMainWorkerEndChan chan Done
-
 // httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
 var httpClient *http.Client
 
@@ -116,11 +110,11 @@ func LuaMainWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			LuaMainWorkerEndChan <- Done{}
+			GetChannel().GetLuaChannel().GetLookupEndChan() <- Done{}
 
 			return
 
-		case luaRequest := <-LuaRequestChan:
+		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan():
 			go handleLuaRequest(ctx, luaRequest, compiledScript)
 		}
 	}
