@@ -51,9 +51,9 @@ type PositivePasswordCache struct {
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	defer stats.RedisReadCounter.Inc()
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	accountName, err = rediscli.GetClient().GetReadHandle().HGet(ctx, key, username).Result()
 	if err != nil {
@@ -75,7 +75,7 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCache) (isRedisErr bool, err error) {
 	var redisValue []byte
 
-	defer stats.RedisReadCounter.Inc()
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -121,7 +121,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 		return
 	}
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {
@@ -197,9 +197,9 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
 	var redisValue []byte
 
-	key := "as_webauthn:user:" + uniqueUserId
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
 
-	defer stats.RedisReadCounter.Inc()
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
@@ -233,9 +233,9 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 		return err
 	}
 
-	key := "as_webauthn:user:" + user.Id
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	//nolint:lll // Ignore
 	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {

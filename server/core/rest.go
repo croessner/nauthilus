@@ -235,9 +235,9 @@ func HealthCheck(ctx *gin.Context) {
 func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedIPAddresses, error) {
 	blockedIPAddresses := &BlockedIPAddresses{}
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisBruteForceHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
-	defer stats.RedisReadCounter.Inc()
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	ipAddresses, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
@@ -281,9 +281,9 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedAccounts, error) {
 	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisAffectedAccountsKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 
-	defer stats.RedisReadCounter.Inc()
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	accounts, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result()
 	if err != nil {
@@ -324,9 +324,9 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 		for _, account := range accounts {
 			var accountIPs []string
 
-			key = config.GetFile().GetServer().Redis.Prefix + definitions.RedisPWHistIPsKey + ":" + account
+			key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
 			if accountIPs, err = rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result(); err != nil {
-				stats.RedisReadCounter.Inc()
+				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 				if !stderrors.Is(err, redis.Nil) {
 					level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
@@ -342,7 +342,7 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 				continue
 			}
 
-			stats.RedisReadCounter.Inc()
+			stats.GetMetrics().GetRedisReadCounter().Inc()
 			blockedAccounts.Accounts[account] = accountIPs
 		}
 
@@ -445,7 +445,7 @@ func HandleUserFlush(ctx *gin.Context) {
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
 func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		if backendType.Get() != definitions.BackendCache {
 			continue
 		}
@@ -496,7 +496,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	removedKeys = append(removedKeys, removedIPKeys...)
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Remove PW_HIST_SET from Redis
 	key := getPWHistIPsRedisKey(accountName)
@@ -508,10 +508,10 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		}
 	}
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Remove an account from AFFECTED_ACCOUNTS
-	key = config.GetFile().GetServer().Redis.Prefix + definitions.RedisAffectedAccountsKey
+	key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 	if result, err = rediscli.GetClient().GetWriteHandle().SRem(ctx, key, accountName).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
@@ -561,12 +561,12 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 
 	userKeys := config.NewStringSet()
 
-	userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
+	userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
 
 	if ips != nil {
 		for _, ip := range ips {
-			userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
-			userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisPwHashKey + ":" + ip)
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + ip)
 		}
 	}
 
@@ -574,7 +574,7 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 		}
 	}
 
@@ -595,9 +595,9 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 
 	removedKeys := make([]string, 0)
 
-	redisKey := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
+	redisKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	defer stats.RedisWriteCounter.Inc()
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	if removeHash {
 		err = rediscli.GetClient().GetWriteHandle().Del(ctx, redisKey).Err()
@@ -618,7 +618,7 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 			return removedKeys
 		}
 
-		stats.RedisWriteCounter.Inc()
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		if result > 0 {
 			removedKeys = append(removedKeys, userKey)
@@ -751,7 +751,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
 				if result, err := rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
-					stats.RedisWriteCounter.Inc()
+					stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 					ruleFlushError = true
 
@@ -762,7 +762,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
 				}
 
-				stats.RedisWriteCounter.Inc()
+				stats.GetMetrics().GetRedisWriteCounter().Inc()
 			}
 		}
 	}

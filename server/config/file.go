@@ -33,7 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-playground/validator/v10"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
@@ -178,12 +178,6 @@ type File interface {
 	// HasFeature checks whether a specific feature is available.
 	HasFeature(feature string) bool
 
-	// GetServerInsightsEnableBlockProfile checks if block profiling for server insights is enabled.
-	GetServerInsightsEnableBlockProfile() bool
-
-	// GetServerInsightsEnablePprof checks whether pprof profiling is enabled for server insights.
-	GetServerInsightsEnablePprof() bool
-
 	/*
 		Authentication and security methods
 	*/
@@ -220,58 +214,6 @@ type File interface {
 
 	// GetSkipConsent checks if consent is skipped.
 	GetSkipConsent(string) bool
-
-	/*
-		SSL and certificate-related methods
-	*/
-
-	// GetSSL retrieves the SSL configuration.
-	GetSSL() string
-
-	// GetSSLSessionID returns the SSL session ID.
-	GetSSLSessionID() string
-
-	// GetSSLVerify checks whether the SSL connection is verified.
-	GetSSLVerify() string
-
-	// GetSSLSubject retrieves the subject certificate of the SSL connection.
-	GetSSLSubject() string
-
-	// GetSSLClientCN returns the common name (CN) of the client certificate.
-	GetSSLClientCN() string
-
-	// GetSSLIssuer returns the issuer of the SSL certificate as a string.
-	GetSSLIssuer() string
-
-	// GetSSLClientNotBefore retrieves the `notBefore` date from the client's SSL certificate as a string.
-	GetSSLClientNotBefore() string
-
-	// GetSSLClientNotAfter retrieves the expiration timestamp of the SSL client certificate as a string.
-	GetSSLClientNotAfter() string
-
-	// GetSSLSubjectDN retrieves the Distinguished Name (DN) from the SSL certificate of the client.
-	GetSSLSubjectDN() string
-
-	// GetSSLIssuerDN retrieves the Distinguished Name (DN) of the SSL certificate issuer.
-	GetSSLIssuerDN() string
-
-	// GetSSLClientSubjectDN retrieves the distinguished name (DN) of the SSL client from the request.
-	GetSSLClientSubjectDN() string
-
-	// GetSSLClientIssuerDN retrieves the Distinguished Name (DN) of the issuer of the client's SSL certificate.
-	GetSSLClientIssuerDN() string
-
-	// GetSSLCipher retrieves the SSL cipher suite used in the connection.
-	GetSSLCipher() string
-
-	// GetSSLProtocol retrieves the SSL protocol version being used for the current connection.
-	GetSSLProtocol() string
-
-	// GetSSLSerial returns the serial number of the SSL certificate as a string.
-	GetSSLSerial() string
-
-	// GetSSLFingerprint returns the SSL fingerprint as a string representation of a hash.
-	GetSSLFingerprint() string
 
 	/*
 		Network-related methods
@@ -924,47 +866,6 @@ func (f *FileSettings) HaveLDAPBackend() bool {
 /*
  * Dynamic server configuration
  */
-
-// GetServerInsightsEnablePprof returns true if the ServerInsights configuration enables pprof; otherwise, returns false.
-func (f *FileSettings) GetServerInsightsEnablePprof() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveServer() {
-		return f.GetServerInsights().EnablePprof
-	}
-
-	return false
-}
-
-// GetServerInsightsEnableBlockProfile checks if the block profiling feature is enabled in the server insights configuration.
-func (f *FileSettings) GetServerInsightsEnableBlockProfile() bool {
-	if f == nil {
-		return false
-	}
-
-	if f.HaveServer() {
-		return f.GetServerInsights().EnableBlockProfile
-	}
-
-	return false
-}
-
-// GetServerInsights is a method on the FileSettings struct.
-// It returns the Insights field from the Server struct, which is accessed through the GetServer() method on the FileSettings struct.
-// If the FileSettings struct does not have a Server, it returns nil.
-func (f *FileSettings) GetServerInsights() *Insights {
-	if f == nil {
-		return nil
-	}
-
-	if f.HaveServer() {
-		return &f.GetServer().Insights
-	}
-
-	return nil
-}
 
 // GetServer retrieves the ServerSection from the FileSettings. Returns nil if the FileSettings is nil or if no Server is present.
 func (f *FileSettings) GetServer() *ServerSection {

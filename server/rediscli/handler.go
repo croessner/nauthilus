@@ -69,14 +69,14 @@ func NewClient() Client {
 
 // newRedisClient initializes the redisClient by setting its write handle based on the provided Redis configuration.
 func (clt *redisClient) newRedisClient() {
-	redisCfg := &config.GetFile().GetServer().Redis
+	redisCfg := config.GetFile().GetServer().GetRedis()
 
-	if len(redisCfg.Cluster.Addresses) > 0 {
+	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
 		clt.SetWriteHandle(newRedisClusterClient(redisCfg))
-	} else if len(redisCfg.Sentinels.Addresses) > 0 && redisCfg.Sentinels.Master != "" {
+	} else if len(redisCfg.GetSentinel().GetAddresses()) > 0 && redisCfg.GetSentinel().GetMasterName() != "" {
 		clt.SetWriteHandle(newRedisFailoverClient(redisCfg, false))
 	} else {
-		if redisCfg.Master.Address == "" {
+		if redisCfg.GetStandaloneMaster().GetAddress() == "" {
 			panic("no Redis master address provided")
 		}
 
@@ -86,26 +86,26 @@ func (clt *redisClient) newRedisClient() {
 
 // newRedisReplicaClient initializes read handles for Redis replicas based on the configuration, supporting multiple setups.
 func (clt *redisClient) newRedisReplicaClient() {
-	redisCfg := &config.GetFile().GetServer().Redis
+	redisCfg := config.GetFile().GetServer().GetRedis()
 
-	if len(redisCfg.Cluster.Addresses) > 0 {
+	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
 		return
 	}
 
-	if len(redisCfg.Sentinels.Addresses) > 1 && redisCfg.Sentinels.Master != "" {
-		clt.AddReadHandle(redisCfg.Sentinels.Addresses[0], newRedisFailoverClient(redisCfg, true))
+	if len(redisCfg.GetSentinel().GetAddresses()) > 1 && redisCfg.GetSentinel().GetMasterName() != "" {
+		clt.AddReadHandle(redisCfg.GetSentinel().GetAddresses()[0], newRedisFailoverClient(redisCfg, true))
 	}
 
 	// Deprecated
-	if redisCfg.Replica.Address != "" {
-		if redisCfg.Master.Address != redisCfg.Replica.Address {
-			clt.AddReadHandle(redisCfg.Replica.Address, newRedisClient(redisCfg, redisCfg.Replica.Address))
+	if redisCfg.GetStandaloneReplica().GetAddress() != "" {
+		if redisCfg.GetStandaloneMaster().GetAddress() != redisCfg.GetStandaloneReplica().GetAddress() {
+			clt.AddReadHandle(redisCfg.GetStandaloneReplica().GetAddress(), newRedisClient(redisCfg, redisCfg.GetStandaloneReplica().GetAddress()))
 		}
 	}
 
-	if len(redisCfg.Replica.Addresses) > 0 {
-		for _, address := range redisCfg.Replica.Addresses {
-			if address != redisCfg.Master.Address {
+	if len(redisCfg.GetStandaloneReplica().GetAddresses()) > 0 {
+		for _, address := range redisCfg.GetStandaloneReplica().GetAddresses() {
+			if address != redisCfg.GetStandaloneMaster().GetAddress() {
 				clt.AddReadHandle(address, newRedisClient(redisCfg, address))
 			}
 		}

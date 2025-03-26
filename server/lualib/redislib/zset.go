@@ -22,7 +22,7 @@ func RedisZAdd(ctx context.Context) lua.LGFunction {
 
 		redisZSet := parseLuaTableToRedisZSet(L, values, errorMsg)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.ZAdd(ctx, key, redisZSet...)
 		if cmd.Err() != nil {
@@ -92,7 +92,7 @@ func RedisZRange(ctx context.Context) lua.LGFunction {
 		start := int64(L.CheckNumber(3))
 		stop := int64(L.CheckNumber(4))
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.ZRange(ctx, key, start, stop)
 		if cmd.Err() != nil {
@@ -122,7 +122,7 @@ func RedisZRevRange(ctx context.Context) lua.LGFunction {
 		start := int64(L.CheckNumber(3))
 		stop := int64(L.CheckNumber(4))
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.ZRevRange(ctx, key, start, stop)
 		if cmd.Err() != nil {
@@ -174,7 +174,7 @@ func RedisZRangeByScore(ctx context.Context) lua.LGFunction {
 			}
 		}
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.ZRangeByScore(ctx, key, &zrangeOpts)
 		if cmd.Err() != nil {
@@ -215,7 +215,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 			members = append(members, member)
 		})
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.ZRem(ctx, key, members...)
 		if cmd.Err() != nil {
@@ -242,7 +242,7 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
 		maxScore := L.CheckString(4) // Maximum score (e.g., "+inf" or a numeric value)
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.ZRemRangeByScore(ctx, key, minScore, maxScore)
 		if cmd.Err() != nil {
@@ -268,7 +268,7 @@ func RedisZRank(ctx context.Context) lua.LGFunction {
 		key := L.CheckString(2)
 		member := L.CheckString(3) // The member whose rank needs to be retrieved
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.ZRank(ctx, key, member)
 		if cmd.Err() != nil {

@@ -31,11 +31,11 @@ import (
 // If an error occurs while loading the key pair, it logs the error and returns nil.
 // If Redis TLS is disabled, it returns nil.
 func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
-	if tlsCfg != nil && tlsCfg.Enabled {
+	if tlsCfg != nil && tlsCfg.IsEnabled() {
 		var certs []tls.Certificate
 
-		if tlsCfg.Cert != "" && tlsCfg.Key != "" {
-			cert, err := tls.LoadX509KeyPair(tlsCfg.Cert, tlsCfg.Key)
+		if tlsCfg.GetCert() != "" && tlsCfg.GetKey() != "" {
+			cert, err := tls.LoadX509KeyPair(tlsCfg.GetCert(), tlsCfg.GetKey())
 			if err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(), definitions.LogKeyMsg, err)
 
@@ -71,17 +71,17 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 //	client := newRedisFailoverClient(true)
 func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
 	redisHandle = redis.NewFailoverClient(&redis.FailoverOptions{
-		MasterName:       redisCfg.Sentinels.Master,
-		SentinelAddrs:    redisCfg.Sentinels.Addresses,
+		MasterName:       redisCfg.GetSentinel().GetMasterName(),
+		SentinelAddrs:    redisCfg.GetSentinel().GetAddresses(),
 		ReplicaOnly:      slavesOnly,
-		DB:               redisCfg.DatabaseNmuber,
-		SentinelUsername: redisCfg.Sentinels.Username,
-		SentinelPassword: redisCfg.Sentinels.Password,
-		Username:         redisCfg.Master.Username,
-		Password:         redisCfg.Master.Password,
-		PoolSize:         redisCfg.PoolSize,
-		MinIdleConns:     redisCfg.IdlePoolSize,
-		TLSConfig:        RedisTLSOptions(&redisCfg.TLS),
+		DB:               redisCfg.GetDatabaseNumber(),
+		SentinelUsername: redisCfg.GetSentinel().GetUsername(),
+		SentinelPassword: redisCfg.GetSentinel().GetPassword(),
+		Username:         redisCfg.GetStandaloneMaster().GetUsername(),
+		Password:         redisCfg.GetStandaloneMaster().GetPassword(),
+		PoolSize:         redisCfg.GetPoolSize(),
+		MinIdleConns:     redisCfg.GetIdlePoolSize(),
+		TLSConfig:        RedisTLSOptions(redisCfg.GetTLS()),
 	})
 
 	return
@@ -94,12 +94,12 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:         address,
-		Username:     redisCfg.Master.Username,
-		Password:     redisCfg.Master.Password,
-		DB:           redisCfg.DatabaseNmuber,
-		PoolSize:     redisCfg.PoolSize,
-		MinIdleConns: redisCfg.IdlePoolSize,
-		TLSConfig:    RedisTLSOptions(&redisCfg.TLS),
+		Username:     redisCfg.GetStandaloneMaster().GetUsername(),
+		Password:     redisCfg.GetStandaloneMaster().GetPassword(),
+		DB:           redisCfg.GetDatabaseNumber(),
+		PoolSize:     redisCfg.GetPoolSize(),
+		MinIdleConns: redisCfg.GetIdlePoolSize(),
+		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
 	})
 }
 
@@ -109,11 +109,11 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
 func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 	return redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:        redisCfg.Cluster.Addresses,
-		Username:     redisCfg.Cluster.Username,
-		Password:     redisCfg.Cluster.Password,
-		PoolSize:     redisCfg.PoolSize,
-		MinIdleConns: redisCfg.IdlePoolSize,
-		TLSConfig:    RedisTLSOptions(&redisCfg.TLS),
+		Addrs:        redisCfg.GetCluster().GetAddresses(),
+		Username:     redisCfg.GetCluster().GetUsername(),
+		Password:     redisCfg.GetCluster().GetPassword(),
+		PoolSize:     redisCfg.GetPoolSize(),
+		MinIdleConns: redisCfg.GetIdlePoolSize(),
+		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
 	})
 }

@@ -116,7 +116,7 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 
 		atomic.AddInt32(&lc.CurrentConnections, 1)
 
-		stats.CurrentRequests.Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
+		stats.GetMetrics().GetCurrentRequests().Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
 
 		defer atomic.AddInt32(&lc.CurrentConnections, -1)
 
@@ -173,11 +173,11 @@ func RequestHandler(ctx *gin.Context) {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
 			disabledEndpointMap := map[string]bool{
-				definitions.ServHeader:    config.GetFile().GetServer().DisabledEndpoints.AuthHeader,
-				definitions.ServJSON:      config.GetFile().GetServer().DisabledEndpoints.AuthJSON,
-				definitions.ServBasic:     config.GetFile().GetServer().DisabledEndpoints.AuthBasic,
-				definitions.ServNginx:     config.GetFile().GetServer().DisabledEndpoints.AuthNginx,
-				definitions.ServSaslauthd: config.GetFile().GetServer().DisabledEndpoints.AuthSASLAuthd,
+				definitions.ServHeader:    config.GetFile().GetServer().GetEndpoint().IsAuthHeaderEnabled(),
+				definitions.ServJSON:      config.GetFile().GetServer().GetEndpoint().IsAuthJSONEnabled(),
+				definitions.ServBasic:     config.GetFile().GetServer().GetEndpoint().IsAuthBasicEnabled(),
+				definitions.ServNginx:     config.GetFile().GetServer().GetEndpoint().IsAuthNginxEnabled(),
+				definitions.ServSaslauthd: config.GetFile().GetServer().GetEndpoint().IsAuthSASLAuthdEnabled(),
 			}
 
 			if disabledEndpointMap[ctx.Param("service")] {
@@ -222,7 +222,7 @@ func RequestHandler(ctx *gin.Context) {
 
 // CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
 func CustomRequestHandler(ctx *gin.Context) {
-	if config.GetFile().GetServer().DisabledEndpoints.CustomHooks {
+	if config.GetFile().GetServer().GetEndpoint().IsCustomHooksEnabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -379,8 +379,8 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 		if httpBasicAuthOk {
 			usernameHash := sha256.Sum256([]byte(username))
 			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().BasicAuth.Username))
-			expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().BasicAuth.Password))
+			expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
+			expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
 
 			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
 			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
@@ -604,15 +604,15 @@ func PrometheusMiddleware() gin.HandlerFunc {
 		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
-		if config.GetFile().GetServer().PrometheusTimer.Enabled {
-			timer = prometheus.NewTimer(stats.HttpResponseTimeSecondsHist.WithLabelValues(path))
+		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
+			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))
 		}
 
 		ctx.Next()
 
-		stats.HttpRequestsTotalCounter.WithLabelValues(path).Inc()
+		stats.GetMetrics().GetHttpRequestsTotal().WithLabelValues(path).Inc()
 
-		if config.GetFile().GetServer().PrometheusTimer.Enabled {
+		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
 			timer.ObserveDuration()
 		}
 
@@ -742,7 +742,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 func setupBackChannelEndpoints(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
-	if config.GetFile().GetServer().BasicAuth.Enabled {
+	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
 		group.Use(BasicAuthMiddleware())
 	}
 
@@ -817,8 +817,8 @@ func prepareHAproxyV2() *proxyproto.Listener {
 		err           error
 	)
 
-	if config.GetFile().GetServer().HAproxyV2 {
-		listener, err = net.Listen("tcp", config.GetFile().GetServer().Address)
+	if config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
+		listener, err = net.Listen("tcp", config.GetFile().GetServer().GetListenAddress())
 		if err != nil {
 			panic(err)
 		}
@@ -860,7 +860,7 @@ func prepareHAproxyV2() *proxyproto.Listener {
 // and the error is not http.ErrServerClosed, the function logs the error and exits the program
 // with a status code of 1 using the logAndExit function.
 func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
-	if config.GetFile().GetServer().TLS.Enabled {
+	if config.GetFile().GetServer().GetTLS().IsEnabled() {
 		if proxyListener == nil {
 			if err := httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
 				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
@@ -889,7 +889,7 @@ func serveHTTP(httpServer *http.Server, certFile, keyFile string, proxyListener 
 // If both conditions are true, it logs a warning message using the Warn level of the logger provided in the log package.
 // The warning message indicates that PROXY protocol is not available for HTTP/3.
 func logProxyHTTP3() {
-	if config.GetFile().GetServer().HTTP3 && config.GetFile().GetServer().HAproxyV2 {
+	if config.GetFile().GetServer().IsHTTP3Enabled() && config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
 	}
 }
@@ -908,7 +908,7 @@ func logProxyHTTP3() {
 // If the HTTP/3 server failed to start, the error will be returned.
 // Otherwise, nil is returned.
 func serveHTTPAndHTTP3(ctx context.Context, httpServer *http.Server, certFile, keyFile string, proxyListener *proxyproto.Listener) {
-	if config.GetFile().GetServer().HTTP3 {
+	if config.GetFile().GetServer().IsHTTP3Enabled() {
 		go serveHTTP(httpServer, certFile, keyFile, proxyListener)
 
 		http3Server := &http3.Server{
@@ -1028,11 +1028,11 @@ func HTTPApp(ctx context.Context) {
 
 	router := gin.New()
 
-	if config.GetFile().GetServerInsightsEnablePprof() {
+	if config.GetFile().GetServer().GetInsights().IsPprofEnabled() {
 		pprof.Register(router)
 	}
 
-	limitCounter := NewLimitCounter(config.GetFile().GetServer().MaxConcurrentRequests)
+	limitCounter := NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
 
 	router.Use(limitCounter.Middleware())
 
@@ -1047,11 +1047,11 @@ func HTTPApp(ctx context.Context) {
 
 	proxyListener := prepareHAproxyV2()
 
-	if config.GetFile().GetServer().TLS.Enabled {
+	if config.GetFile().GetServer().GetTLS().IsEnabled() {
 		httpServer.TLSConfig = configureTLS()
 
-		serveHTTPAndHTTP3(ctx, httpServer, config.GetFile().GetServer().TLS.Cert, config.GetFile().GetServer().TLS.Key, proxyListener)
+		serveHTTPAndHTTP3(ctx, httpServer, config.GetFile().GetServer().GetTLS().GetCert(), config.GetFile().GetServer().GetTLS().GetKey(), proxyListener)
 	} else {
-		serveHTTP(httpServer, config.GetFile().GetServer().TLS.Cert, config.GetFile().GetServer().TLS.Key, proxyListener)
+		serveHTTP(httpServer, config.GetFile().GetServer().GetTLS().GetCert(), config.GetFile().GetServer().GetTLS().GetKey(), proxyListener)
 	}
 }

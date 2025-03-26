@@ -32,30 +32,77 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var (
-	// LastReloadTime records the timestamp of the last successful configuration reload.
-	LastReloadTime time.Time
+var reloader Reloader
 
-	// ReloadMutex is used to coordinate access to shared resources during configuration reload operations.
-	ReloadMutex sync.RWMutex
-)
+// Reloader defines an interface for components that support reinitialization or refreshing their state or configuration.
+type Reloader interface {
+	// Reload triggers the reinitialization or refresh of the implementing component, reloading its state or configuration.
+	Reload()
+
+	// GetLastReload retrieves the timestamp of the most recent reload operation as a time.Time value.
+	GetLastReload() time.Time
+
+	// GetLastReloadFloat64 returns the last reload timestamp as a float64 representing milliseconds since the Unix epoch.
+	GetLastReloadFloat64() float64
+}
+
+// ReloaderImp is a thread-safe implementation of the Reloader interface, managing state reinitialization timestamps.
+type ReloaderImp struct {
+	lastReloadTime time.Time
+	mu             sync.RWMutex
+}
+
+// Reload updates the lastReloadTime with the current timestamp while ensuring thread-safe access via a mutex lock.
+func (r *ReloaderImp) Reload() {
+	r.mu.Lock()
+
+	defer r.mu.Unlock()
+
+	r.lastReloadTime = time.Now()
+}
+
+// GetLastReload returns the timestamp of the last reload action performed by the ReloaderImp instance.
+func (r *ReloaderImp) GetLastReload() time.Time {
+	r.mu.RLock()
+
+	defer r.mu.RUnlock()
+
+	return r.lastReloadTime
+}
+
+// GetLastReloadFloat64 returns the last reload timestamp as a float64 representing milliseconds since the Unix epoch.
+func (r *ReloaderImp) GetLastReloadFloat64() float64 {
+	return float64(r.GetLastReload().UnixMilli())
+}
+
+var _ Reloader = &ReloaderImp{}
+
+// NewReloader creates and returns a new instance of a struct implementing the Reloader interface.
+func NewReloader() Reloader {
+	return &ReloaderImp{}
+}
+
+// GetReloader returns a singleton instance of Reloader, initializing it if not already created.
+func GetReloader() Reloader {
+	if reloader == nil {
+		reloader = NewReloader()
+	}
+
+	return reloader
+}
 
 // init initializes metrics for last reload timestamp, application start timestamp, and current server connections.
 func init() {
-	LastReloadTime = time.Now()
+	reloader = GetReloader()
+
+	reloader.Reload()
 
 	promauto.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Name: "last_reload_timestamp",
 			Help: "Unix timestamp of the last reload",
 		},
-		func() float64 {
-			ReloadMutex.RLock()
-
-			defer ReloadMutex.RUnlock()
-
-			return float64(LastReloadTime.UnixMilli())
-		},
+		reloader.GetLastReloadFloat64,
 	)
 
 	startTime := time.Now()
@@ -71,116 +118,468 @@ func init() {
 	)
 }
 
+var metrics Metrics
+
+// Metrics ist ein Interface, das alle Getter-Methoden für Metriken definiert.
+type Metrics interface {
+	// GetInstanceInfo provides metrics about the version information using a GaugeVec with a "version" label.
+	GetInstanceInfo() *prometheus.GaugeVec
+
+	// GetCurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
+	GetCurrentRequests() prometheus.Gauge
+
+	// GetHttpRequestsTotal returns a Prometheus CounterVec that tracks the total HTTP requests processed, with a "path" label.
+	GetHttpRequestsTotal() *prometheus.CounterVec
+
+	// GetHttpResponseTimeSeconds provides a Prometheus HistogramVec that tracks HTTP response times, with a "path" label.
+	GetHttpResponseTimeSeconds() *prometheus.HistogramVec
+
+	// GetLoginsCounter tracks the total number of login attempts (failed and successful) as a Prometheus CounterVec.
+	GetLoginsCounter() *prometheus.CounterVec
+
+	// GetRedisReadCounter counts the total number of Redis read operations.
+	GetRedisReadCounter() prometheus.Counter
+
+	// GetRedisWriteCounter counts the total number of Redis write operations.
+	GetRedisWriteCounter() prometheus.Counter
+
+	// GetFunctionDuration tracks the time spent in functions as a Prometheus HistogramVec, with "service" and "task" labels.
+	GetFunctionDuration() *prometheus.HistogramVec
+
+	// GetRblDuration tracks the duration of DNS RBL lookups as a Prometheus HistogramVec.
+	GetRblDuration() *prometheus.HistogramVec
+
+	// GetCacheHits counts the total number of cache hits as a Prometheus Counter.
+	GetCacheHits() prometheus.Counter
+
+	// GetCacheMisses counts the total number of cache misses as a Prometheus Counter.
+	GetCacheMisses() prometheus.Counter
+
+	// GetRedisHits tracks the total number of times a free connection was found in the Redis pool as a Prometheus CounterVec.
+	GetRedisHits() *prometheus.CounterVec
+
+	// GetRedisMisses tracks the total number of times a free connection was NOT found in the Redis pool as a Prometheus CounterVec.
+	GetRedisMisses() *prometheus.CounterVec
+
+	// GetRedisTimeouts tracks the total number of wait timeouts for Redis connections as a Prometheus CounterVec.
+	GetRedisTimeouts() *prometheus.CounterVec
+
+	// GetRedisTotalConns tracks the total number of Redis connections in the pool as a Prometheus GaugeVec.
+	GetRedisTotalConns() *prometheus.GaugeVec
+
+	// GetRedisIdleConns tracks the total number of idle Redis connections in the pool as a Prometheus GaugeVec.
+	GetRedisIdleConns() *prometheus.GaugeVec
+
+	// GetRedisStaleConns tracks the total number of stale connections removed from the Redis pool as a Prometheus GaugeVec.
+	GetRedisStaleConns() *prometheus.GaugeVec
+
+	// GetBruteForceRejected tracks the total number of brute force attempts rejected, categorized by bucket, as a Prometheus CounterVec.
+	GetBruteForceRejected() *prometheus.CounterVec
+
+	// GetBruteForceHits counts the total number of brute force hits before being rejected as a Prometheus CounterVec.
+	GetBruteForceHits() *prometheus.CounterVec
+
+	// GetRejectedProtocols tracks the total number of protocol rejection attempts as a Prometheus CounterVec, categorized by protocol.
+	GetRejectedProtocols() *prometheus.CounterVec
+
+	// GetAcceptedProtocols counts the total number of protocol acceptance attempts as a Prometheus CounterVec, categorized by protocol.
+	GetAcceptedProtocols() *prometheus.CounterVec
+
+	// GetBackendServerStatus tracks the status of monitored backend servers as a Prometheus GaugeVec, categorized by server status.
+	GetBackendServerStatus() *prometheus.GaugeVec
+
+	// GetLdapPoolStatus provides metrics about actively used connections in the LDAP connection pool as a Prometheus GaugeVec.
+	GetLdapPoolStatus() *prometheus.GaugeVec
+
+	// GetLdapOpenConnections tracks the number of currently open LDAP connections as a Prometheus GaugeVec.
+	GetLdapOpenConnections() *prometheus.GaugeVec
+
+	// GetLdapStaleConnections tracks the number of stale LDAP connections requiring closure as a Prometheus GaugeVec.
+	GetLdapStaleConnections() *prometheus.GaugeVec
+
+	// GetLdapPoolSize provides the size of the LDAP connection pool as a Prometheus GaugeVec.
+	GetLdapPoolSize() *prometheus.GaugeVec
+
+	// GetLdapIdlePoolSize tracks the number of idle LDAP pool connections as a Prometheus GaugeVec.
+	GetLdapIdlePoolSize() *prometheus.GaugeVec
+
+	// GetRblRejected tracks the total number of DNS RBL request rejections as a Prometheus CounterVec, categorized by RBL.
+	GetRblRejected() *prometheus.CounterVec
+
+	// GetGenericConnections tracks the current number of established generic connections as a Prometheus GaugeVec, categorized by description, target, and direction.
+	GetGenericConnections() *prometheus.GaugeVec
+}
+
+type metricsImpl struct {
+	instanceInfo            *prometheus.GaugeVec
+	currentRequests         prometheus.Gauge
+	httpRequestsTotal       *prometheus.CounterVec
+	httpResponseTimeSeconds *prometheus.HistogramVec
+	loginsCounter           *prometheus.CounterVec
+	redisReadCounter        prometheus.Counter
+	redisWriteCounter       prometheus.Counter
+	functionDuration        *prometheus.HistogramVec
+	rblDuration             *prometheus.HistogramVec
+	cacheHits               prometheus.Counter
+	cacheMisses             prometheus.Counter
+	redisHits               *prometheus.CounterVec
+	redisMisses             *prometheus.CounterVec
+	redisTimeouts           *prometheus.CounterVec
+	redisTotalConns         *prometheus.GaugeVec
+	redisIdleConns          *prometheus.GaugeVec
+	redisStaleConns         *prometheus.GaugeVec
+	bruteForceRejected      *prometheus.CounterVec
+	bruteForceHits          *prometheus.CounterVec
+	rejectedProtocols       *prometheus.CounterVec
+	acceptedProtocols       *prometheus.CounterVec
+	backendServerStatus     *prometheus.GaugeVec
+	ldapPoolStatus          *prometheus.GaugeVec
+	ldapOpenConnections     *prometheus.GaugeVec
+	ldapStaleConnections    *prometheus.GaugeVec
+	ldapPoolSize            *prometheus.GaugeVec
+	ldapIdlePoolSize        *prometheus.GaugeVec
+	rblRejected             *prometheus.CounterVec
+	genericConnections      *prometheus.GaugeVec
+}
+
+// GetInstanceInfo returns the instanceInfo field.
+func (m *metricsImpl) GetInstanceInfo() *prometheus.GaugeVec {
+	return m.instanceInfo
+}
+
+// GetCurrentRequests returns the currentRequests field.
+func (m *metricsImpl) GetCurrentRequests() prometheus.Gauge {
+	return m.currentRequests
+}
+
+// GetHttpRequestsTotal returns the httpRequestsTotal field.
+func (m *metricsImpl) GetHttpRequestsTotal() *prometheus.CounterVec {
+	return m.httpRequestsTotal
+}
+
+// GetHttpResponseTimeSeconds returns the httpResponseTimeSeconds field.
+func (m *metricsImpl) GetHttpResponseTimeSeconds() *prometheus.HistogramVec {
+	return m.httpResponseTimeSeconds
+}
+
+// GetLoginsCounter returns the loginsCounter field.
+func (m *metricsImpl) GetLoginsCounter() *prometheus.CounterVec {
+	return m.loginsCounter
+}
+
+// GetRedisReadCounter returns the redisReadCounter field.
+func (m *metricsImpl) GetRedisReadCounter() prometheus.Counter {
+	return m.redisReadCounter
+}
+
+// GetRedisWriteCounter returns the redisWriteCounter field.
+func (m *metricsImpl) GetRedisWriteCounter() prometheus.Counter {
+	return m.redisWriteCounter
+}
+
+// GetFunctionDuration returns the functionDuration field.
+func (m *metricsImpl) GetFunctionDuration() *prometheus.HistogramVec {
+	return m.functionDuration
+}
+
+// GetRblDuration returns the rblDuration field.
+func (m *metricsImpl) GetRblDuration() *prometheus.HistogramVec {
+	return m.rblDuration
+}
+
+// GetCacheHits returns the cacheHits field.
+func (m *metricsImpl) GetCacheHits() prometheus.Counter {
+	return m.cacheHits
+}
+
+// GetCacheMisses returns the cacheMisses field.
+func (m *metricsImpl) GetCacheMisses() prometheus.Counter {
+	return m.cacheMisses
+}
+
+// GetRedisHits returns the redisHits field.
+func (m *metricsImpl) GetRedisHits() *prometheus.CounterVec {
+	return m.redisHits
+}
+
+// GetRedisMisses returns the redisMisses field.
+func (m *metricsImpl) GetRedisMisses() *prometheus.CounterVec {
+	return m.redisMisses
+}
+
+// GetRedisTimeouts returns the redisTimeouts field.
+func (m *metricsImpl) GetRedisTimeouts() *prometheus.CounterVec {
+	return m.redisTimeouts
+}
+
+// GetRedisTotalConns returns the redisTotalConns field.
+func (m *metricsImpl) GetRedisTotalConns() *prometheus.GaugeVec {
+	return m.redisTotalConns
+}
+
+// GetRedisIdleConns returns the redisIdleConns field.
+func (m *metricsImpl) GetRedisIdleConns() *prometheus.GaugeVec {
+	return m.redisIdleConns
+}
+
+// GetRedisStaleConns returns the redisStaleConns field.
+func (m *metricsImpl) GetRedisStaleConns() *prometheus.GaugeVec {
+	return m.redisStaleConns
+}
+
+// GetBruteForceRejected returns the bruteForceRejected field.
+func (m *metricsImpl) GetBruteForceRejected() *prometheus.CounterVec {
+	return m.bruteForceRejected
+}
+
+// GetBruteForceHits returns the bruteForceHits field.
+func (m *metricsImpl) GetBruteForceHits() *prometheus.CounterVec {
+	return m.bruteForceHits
+}
+
+// GetRejectedProtocols returns the rejectedProtocols field.
+func (m *metricsImpl) GetRejectedProtocols() *prometheus.CounterVec {
+	return m.rejectedProtocols
+}
+
+// GetAcceptedProtocols returns the acceptedProtocols field.
+func (m *metricsImpl) GetAcceptedProtocols() *prometheus.CounterVec {
+	return m.acceptedProtocols
+}
+
+// GetBackendServerStatus returns the backendServerStatus field.
+func (m *metricsImpl) GetBackendServerStatus() *prometheus.GaugeVec {
+	return m.backendServerStatus
+}
+
+// GetLdapPoolStatus returns the ldapPoolStatus field.
+func (m *metricsImpl) GetLdapPoolStatus() *prometheus.GaugeVec {
+	return m.ldapPoolStatus
+}
+
+// GetLdapOpenConnections returns the ldapOpenConnections field.
+func (m *metricsImpl) GetLdapOpenConnections() *prometheus.GaugeVec {
+	return m.ldapOpenConnections
+}
+
+// GetLdapStaleConnections returns the ldapStaleConnections field.
+func (m *metricsImpl) GetLdapStaleConnections() *prometheus.GaugeVec {
+	return m.ldapStaleConnections
+}
+
+// GetLdapPoolSize returns the ldapPoolSize field.
+func (m *metricsImpl) GetLdapPoolSize() *prometheus.GaugeVec {
+	return m.ldapPoolSize
+}
+
+// GetLdapIdlePoolSize returns the ldapIdlePoolSize field.
+func (m *metricsImpl) GetLdapIdlePoolSize() *prometheus.GaugeVec {
+	return m.ldapIdlePoolSize
+}
+
+// GetRblRejected returns the rblRejected field.
+func (m *metricsImpl) GetRblRejected() *prometheus.CounterVec {
+	return m.rblRejected
+}
+
+// GetGenericConnections returns the genericConnections field.
+func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
+	return m.genericConnections
+}
+
+func NewMetrics() Metrics {
+	return &metricsImpl{
+		instanceInfo: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "nauthilus_version_info",
+				Help: "Information about the version.",
+			}, []string{"instance_name", "version"},
+		),
+		currentRequests: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "server_concurrent_requests",
+				Help: "Number of current requests.",
+			},
+		),
+		httpRequestsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "http_requests_total",
+				Help: "Number of HTTP requests.",
+			}, []string{"path"},
+		),
+		httpResponseTimeSeconds: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name: "http_response_time_seconds",
+				Help: "Duration of HTTP requests.",
+			}, []string{"path"},
+		),
+		loginsCounter: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "logins_total",
+				Help: "Number of failed and successful login attempts.",
+			}, []string{"logins"},
+		),
+		redisReadCounter: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "redis_read_total",
+				Help: "Total number of Redis read operations",
+			},
+		),
+		redisWriteCounter: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "redis_write_total",
+				Help: "Total number of Redis write operations",
+			},
+		),
+		functionDuration: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "function_duration_seconds",
+				Help:    "Time spent in function",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+			}, []string{"service", "task"},
+		),
+		rblDuration: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "rbl_duration_seconds",
+				Help:    "Time spent for RBL lookups",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+			}, []string{"rbl"},
+		),
+		cacheHits: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "cache_hits_total",
+				Help: "The total number of cache hits",
+			},
+		),
+		cacheMisses: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "cache_misses_total",
+				Help: "The total number of cache misses",
+			},
+		),
+		redisHits: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "redis_connection_hits_total",
+				Help: "The total number of times a free connection was found in the pool",
+			}, []string{"pool_name"},
+		),
+		redisMisses: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "redis_connection_misses_total",
+				Help: "The total number of times a free connection was NOT found in the pool",
+			}, []string{"pool_name"},
+		),
+		redisTimeouts: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "redis_connection_timeouts_total",
+				Help: "The total number of times a wait timeout occurred",
+			}, []string{"pool_name"},
+		),
+		redisTotalConns: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "redis_pool_total_connections",
+				Help: "The total number of connections in the pool",
+			}, []string{"pool_name"},
+		),
+		redisIdleConns: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "redis_pool_idle_connections",
+				Help: "The total number of idle connections in the pool",
+			}, []string{"pool_name"},
+		),
+		redisStaleConns: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "redis_pool_stale_connections",
+				Help: "The total number of stale connections removed from the pool",
+			}, []string{"pool_name"},
+		),
+		bruteForceRejected: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "bruteforce_rejected_total",
+				Help: "The total number of brute force rejected attempts",
+			}, []string{"bucket"},
+		),
+		bruteForceHits: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "brutefore_hits_total",
+				Help: "The total number of brute force hits before rejection",
+			}, []string{"bucket"},
+		),
+		rejectedProtocols: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rejected_protocols_total",
+				Help: "The total number of rejects per protocol",
+			}, []string{"protocol"},
+		),
+		acceptedProtocols: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "accepted_protocols_total",
+				Help: "The total number of acceptances per protocol",
+			}, []string{"protocol"},
+		),
+		backendServerStatus: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "backend_servers_status",
+				Help: "Status of monitored backend servers",
+			}, []string{"server_status"},
+		),
+		ldapPoolStatus: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_pool_connections_total",
+				Help: "Number of actively used connections in the LDAP pool",
+			}, []string{"pool"},
+		),
+		ldapOpenConnections: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_pool_open_connections_total",
+				Help: "Number of currently opened connections",
+			}, []string{"pool"},
+		),
+		ldapStaleConnections: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_pool_stale_connections_total",
+				Help: "Number of currently staled connections",
+			}, []string{"pool"},
+		),
+		ldapPoolSize: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_pool_size",
+				Help: "Size of LDAP pool",
+			}, []string{"pool"},
+		),
+		ldapIdlePoolSize: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_idle_pool_size",
+				Help: "Size of idle LDAP pool",
+			}, []string{"pool"},
+		),
+		rblRejected: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rbl_rejected_total",
+				Help: "The total number of rejected RBL requests",
+			}, []string{"rbl"},
+		),
+		genericConnections: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "generic_connections",
+				Help: "Current number of established connections to a target",
+			}, []string{"description", "target", "direction"},
+		),
+	}
+}
+
+// GetMetrics initializes and returns a singleton instance of the Metrics interface.
+func GetMetrics() Metrics {
+	if metrics == nil {
+		metrics = NewMetrics()
+	}
+
+	return metrics
+}
+
+var oldCpu cpu.Stats
+
 var (
-	// InstanceInfo provides metrics about the version information using a GaugeVec with a "version" label.
-	InstanceInfo = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "nauthilus_version_info",
-			Help: "Information about the version.",
-		}, []string{"instance_name", "version"})
-
-	// CurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
-	CurrentRequests = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "server_concurrent_requests",
-			Help: "Number of current requests.",
-		})
-
-	// HttpRequestsTotalCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "path" label.
-	HttpRequestsTotalCounter = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "http_requests_total",
-			Help: "Number of HTTP requests.",
-		}, []string{"path"})
-
-	// HttpResponseTimeSecondsHist variable declaration that creates a new Prometheus HistogramVec with the specified name and help message, and with a "path" label.
-	HttpResponseTimeSecondsHist = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name: "http_response_time_seconds",
-			Help: "Duration of HTTP requests.",
-		}, []string{"path"})
-
-	// LoginsCounter variable declaration that creates a new Prometheus CounterVec with the specified name and help message, and with a "logins" label.
-	LoginsCounter = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "logins_total",
-			Help: "Number of failed and successful login attempts.",
-		}, []string{"logins"})
-
-	// RedisReadCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis read operations.
-	RedisReadCounter = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "redis_read_total",
-		Help: "Total number of Redis read operations",
-	})
-
-	// RedisWriteCounter variable declaration that creates a new Prometheus Counter with the specified name and help message, used to count the total number of Redis write operations.
-	RedisWriteCounter = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "redis_write_total",
-		Help: "Total number of Redis write operations",
-	})
-
-	// FunctionDuration variable declaration that creates a new Prometheus SummaryVec with the specified name and help message, and with "service" and "method" labels.
-	FunctionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "function_duration_seconds",
-		Help:    "Time spent in function",
-		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-	}, []string{"service", "task"})
-
-	// RBLDuration tracks the duration of DNS RBL (Real-time Blackhole List) lookups.
-	RBLDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "rbl_duration_seconds",
-		Help:    "Time spent for RBL lookups",
-		Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
-	}, []string{"rbl"})
-
-	// CacheHits variable declaration that creates a new Prometheus Counter with the specified name and help message, which counts the total number of cache hits.
-	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "cache_hits_total",
-		Help: "The total number of cache hits",
-	})
-
-	// CacheMisses variable declaration that creates a new Prometheus Counter with the specified name and help message, representing the total number of cache misses.
-	CacheMisses = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "cache_misses_total",
-		Help: "The total number of cache misses",
-	})
-
-	// RedisHits gauges the total number of times a free connection was found in the pool, categorized by type.
-	RedisHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_connection_hits_total",
-		Help: "The total number of times a free connection was found in the pool",
-	}, []string{definitions.ReisPromPoolName})
-
-	// RedisMisses is a gauge vector that counts the total number of times a free connection was NOT found in the pool.
-	RedisMisses = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_connection_misses_total",
-		Help: "The total number of times a free connection was NOT found in the pool",
-	}, []string{definitions.ReisPromPoolName})
-
-	// RedisTimeouts tracks the total number of times a wait timeout occurred in Redis connections.
-	RedisTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_connection_timeouts_total",
-		Help: "The total number of times a wait timeout occurred",
-	}, []string{definitions.ReisPromPoolName})
-
-	// RedisTotalConns tracks the total number of connections in the Redis pool, labeled by connection type.
-	RedisTotalConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_pool_total_connections",
-		Help: "The total number of connections in the pool",
-	}, []string{definitions.ReisPromPoolName})
-
-	// RedisIdleConns is a Prometheus gauge that tracks the total number of idle connections in the Redis pool, labeled by "type".
-	RedisIdleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_pool_idle_connections",
-		Help: "The total number of idle connections in the pool",
-	}, []string{definitions.ReisPromPoolName})
-
-	// RedisStaleConns is a Prometheus metric that tracks the total number of stale connections removed from the Redis pool.
-	RedisStaleConns = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_pool_stale_connections",
-		Help: "The total number of stale connections removed from the pool",
-	}, []string{definitions.ReisPromPoolName})
-
 	// cpuUserUsage variable declaration that creates a new Prometheus Gauge with the specified name and help message, to measure CPU user usage in percent.
 	cpuUserUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cpu_user_usage_percent",
@@ -198,84 +597,7 @@ var (
 		Name: "cpu_idle_usage_percent",
 		Help: "CPU idle usage in percent",
 	})
-
-	// BruteForceRejected tracks the total number of brute force rejected attempts, labeled by the respective bucket.
-	BruteForceRejected = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "bruteforce_rejected_total",
-		Help: "The total number of brute force rejected attempts",
-	}, []string{"bucket"})
-
-	// BruteForceHits is a prometheus counter that tracks the total number of brute force hits before rejection, categorized by bucket.
-	BruteForceHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "brutefore_hits_total",
-		Help: "The total number of brute force hits before rejection",
-	}, []string{"bucket"})
-
-	// RejectedProtocols tracks the total number of rejects per protocol.
-	RejectedProtocols = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "rejected_protocols_total",
-		Help: "The total number of rejects per protocol",
-	}, []string{"protocol"})
-
-	// AcceptedProtocols counts the total number of acceptances per protocol.
-	AcceptedProtocols = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "accepted_protocols_total",
-		Help: "The total number of acceptances per protocol",
-	}, []string{"protocol"})
-
-	// BackendServerStatus provides a gauge metric representing the status of monitored backend servers categorized by server_status.
-	BackendServerStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "backend_servers_status",
-		Help: "Status of monitored backend servers",
-	}, []string{"server_status"})
-
-	// LDAPPoolStatus provides a gauge metric representing the number of actively used connections in the LDAP pool.
-	LDAPPoolStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ldap_pool_connections_total",
-		Help: "Number of actively used connections in the LDAP pool",
-	}, []string{"pool"})
-
-	// LDAPOpenConnections counts the number of currently opened connections in the LDAP pool.
-	LDAPOpenConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ldap_pool_open_connections_total",
-		Help: "Number of currently opened connections",
-	}, []string{"pool"})
-
-	// LDAPStaleConnections counts the number of currently staled connections in the LDAP pool which need closing.
-	LDAPStaleConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ldap_pool_stale_connections_total",
-		Help: "Number of currently staled connections",
-	}, []string{"pool"})
-
-	// LDAPPoolSize is a gauge metric that represents the size of the LDAP connection pool.
-	LDAPPoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ldap_pool_size",
-		Help: "Size of LDAP pool",
-	}, []string{"pool"})
-
-	// LDAPIdlePoolSize provides the number of idle connections in the LDAP pool, monitored as a Prometheus gauge metric.
-	LDAPIdlePoolSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ldap_idle_pool_size",
-		Help: "Size of idle LDAP pool",
-	}, []string{"pool"})
-
-	// RBLRejected counts the total number of rejected RBL requests, categorized by the RBL that caused the rejection.
-	RBLRejected = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "rbl_rejected_total",
-		Help: "The total number of rejected RBL requests",
-	}, []string{"rbl"})
-
-	// GenericConnections tracks the current number of established connections to a target.
-	GenericConnections = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "generic_connections",
-			Help: "Current number of established connections to a target",
-		},
-		[]string{"description", "target", "direction"},
-	)
 )
-
-var oldCpu cpu.Stats
 
 // MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
 //
@@ -376,11 +698,11 @@ func PrintStats() {
 
 // HavePrometheusLabelEnabled returns true if the specified Prometheus label is enabled in the server configuration, otherwise false.
 func HavePrometheusLabelEnabled(prometheusLabel string) bool {
-	if !config.GetFile().GetServer().PrometheusTimer.Enabled {
+	if !config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
 		return false
 	}
 
-	for _, label := range config.GetFile().GetServer().PrometheusTimer.Labels {
+	for _, label := range config.GetFile().GetServer().GetPrometheusTimer().GetLabels() {
 		if label != prometheusLabel {
 			continue
 		}
@@ -401,7 +723,7 @@ func HavePrometheusLabelEnabled(prometheusLabel string) bool {
 // This function is used to measure the time duration using Prometheus, a powerful time-series monitoring service.
 func PrometheusTimer(serviceName string, taskName string) func() {
 	if HavePrometheusLabelEnabled(serviceName) {
-		timer := prometheus.NewTimer(FunctionDuration.WithLabelValues(serviceName, taskName))
+		timer := prometheus.NewTimer(GetMetrics().GetFunctionDuration().WithLabelValues(serviceName, taskName))
 
 		return func() {
 			timer.ObserveDuration()
@@ -419,6 +741,6 @@ func UpdateGenericConnections() {
 			break
 		}
 
-		GenericConnections.WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+		GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
 	}
 }

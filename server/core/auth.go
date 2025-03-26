@@ -977,8 +977,8 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 
 	// Only authentication attempts
 	if !(a.NoAuth || a.ListAccounts) {
-		stats.AcceptedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
-		stats.LoginsCounter.WithLabelValues(definitions.LabelSuccess).Inc()
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 	}
 }
 
@@ -1213,8 +1213,8 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	level.Info(log.Logger).Log(a.LogLineTemplate("fail", ctx.Request.URL.Path)...)
 
-	stats.RejectedProtocols.WithLabelValues(a.Protocol.Get()).Inc()
-	stats.LoginsCounter.WithLabelValues(definitions.LabelFailure).Inc()
+	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()
 }
 
 // AuthFail handles the failure of authentication.
@@ -1286,9 +1286,9 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 // IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
 // It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
 func (a *AuthState) IsMasterUser() bool {
-	if config.GetFile().GetServer().MasterUser.Enabled {
-		if strings.Count(a.Username, config.GetFile().GetServer().MasterUser.Delimiter) == 1 {
-			parts := strings.Split(a.Username, config.GetFile().GetServer().MasterUser.Delimiter)
+	if config.GetFile().GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(a.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(a.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter())
 			if len(parts[0]) > 0 && len(parts[1]) > 0 {
 				return true
 			}
@@ -1722,7 +1722,7 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[definitions.Backend]int)
 
-	for index, backendType := range config.GetFile().GetServer().Backends {
+	for index, backendType := range config.GetFile().GetServer().GetBackends() {
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
@@ -1868,7 +1868,7 @@ func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
 func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
 	if accountName != "" {
-		redisUserKey := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+		redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 		if ppc.Password != "" {
 			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
@@ -2107,7 +2107,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			if !config.GetFile().LDAPHavePoolOnly() {
@@ -2173,7 +2173,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 		values   []any
 	)
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
 	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName != "" {
@@ -2193,7 +2193,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		accountName = strings.Join(accounts, ":")
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		err = rediscli.GetClient().GetWriteHandle().HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
 	}
@@ -2565,7 +2565,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		if config.GetFile().GetServer().HAproxyV2 {
+		if config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
 			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
@@ -2575,7 +2575,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		}
 	}
 
-	if config.GetFile().GetServer().DNS.ResolveClientIP {
+	if config.GetFile().GetServer().GetDNS().GetResolveClientIP() {
 		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
 
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
@@ -2612,22 +2612,22 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.XSSL = ctx.GetHeader(config.GetFile().GetSSL())
-	a.XSSLSessionID = ctx.GetHeader(config.GetFile().GetSSLSessionID())
-	a.XSSLClientVerify = ctx.GetHeader(config.GetFile().GetSSLVerify())
-	a.XSSLClientDN = ctx.GetHeader(config.GetFile().GetSSLSubject())
-	a.XSSLClientCN = ctx.GetHeader(config.GetFile().GetSSLClientCN())
-	a.XSSLIssuer = ctx.GetHeader(config.GetFile().GetSSLIssuer())
-	a.XSSLClientNotBefore = ctx.GetHeader(config.GetFile().GetSSLClientNotBefore())
-	a.XSSLClientNotAfter = ctx.GetHeader(config.GetFile().GetSSLClientNotAfter())
-	a.XSSLSubjectDN = ctx.GetHeader(config.GetFile().GetSSLSubjectDN())
-	a.XSSLIssuerDN = ctx.GetHeader(config.GetFile().GetSSLIssuerDN())
-	a.XSSLClientSubjectDN = ctx.GetHeader(config.GetFile().GetSSLClientSubjectDN())
-	a.XSSLClientIssuerDN = ctx.GetHeader(config.GetFile().GetSSLClientIssuerDN())
-	a.XSSLCipher = ctx.GetHeader(config.GetFile().GetSSLCipher())
-	a.XSSLProtocol = ctx.GetHeader(config.GetFile().GetSSLProtocol())
-	a.SSLSerial = ctx.GetHeader(config.GetFile().GetSSLSerial())
-	a.SSLFingerprint = ctx.GetHeader(config.GetFile().GetSSLFingerprint())
+	a.XSSL = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSL())
+	a.XSSLSessionID = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSessionID())
+	a.XSSLClientVerify = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLVerify())
+	a.XSSLClientDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSubject())
+	a.XSSLClientCN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientCN())
+	a.XSSLIssuer = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuer())
+	a.XSSLClientNotBefore = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotBefore())
+	a.XSSLClientNotAfter = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotAfter())
+	a.XSSLSubjectDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSubjectDN())
+	a.XSSLIssuerDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuerDN())
+	a.XSSLClientSubjectDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientSubjectDN())
+	a.XSSLClientIssuerDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientIssuerDN())
+	a.XSSLCipher = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLCipher())
+	a.XSSLProtocol = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLProtocol())
+	a.SSLSerial = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSerial())
+	a.SSLFingerprint = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLFingerprint())
 
 	return a
 }
@@ -3061,7 +3061,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.GetFromLocalCache(ctx); !found {
-		stats.CacheMisses.Inc()
+		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce() {
 			a.UpdateBruteForceBucketsCounter()
@@ -3071,7 +3071,7 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 			return true
 		}
 	} else {
-		stats.CacheHits.Inc()
+		stats.GetMetrics().GetCacheHits().Inc()
 	}
 
 	return false

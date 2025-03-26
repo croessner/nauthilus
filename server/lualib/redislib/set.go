@@ -56,7 +56,7 @@ func RedisSAdd(ctx context.Context) lua.LGFunction {
 			values[i-3] = value
 		}
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.SAdd(ctx, key, values...)
 		if cmd.Err() != nil {
@@ -114,7 +114,7 @@ func RedisSIsMember(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.SIsMember(ctx, key, value)
 		if cmd.Err() != nil {
@@ -154,13 +154,13 @@ func RedisSIsMember(ctx context.Context) lua.LGFunction {
 // end
 //
 // This function utilizes the SMembers command from the Redis client to fetch the set members,
-// and it increments the RedisReadCounter to track the read operation.
+// and it increments the GetRedisReadCounter() to track the read operation.
 func RedisSMembers(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.SMembers(ctx, key)
 		if cmd.Err() != nil {
@@ -213,7 +213,7 @@ func RedisSRem(ctx context.Context) lua.LGFunction {
 			values[i-3] = value
 		}
 
-		defer stats.RedisWriteCounter.Inc()
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		cmd := client.SRem(ctx, key, values...)
 		if cmd.Err() != nil {
@@ -245,7 +245,7 @@ func RedisSCard(ctx context.Context) lua.LGFunction {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
 		key := L.CheckString(2)
 
-		defer stats.RedisReadCounter.Inc()
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		cmd := client.SCard(ctx, key)
 		if cmd.Err() != nil {

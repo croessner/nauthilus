@@ -751,7 +751,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		if backendType.Get() == definitions.BackendCache {
 			useCache = true
 
@@ -774,20 +774,20 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 			cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 			}
 		}
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
 			if _, err = rediscli.GetClient().GetWriteHandle().Del(ctx, userKey).Result(); err != nil {
-				stats.RedisWriteCounter.Inc()
+				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 
 				break
 			} else {
-				stats.RedisWriteCounter.Inc()
+				stats.GetMetrics().GetRedisWriteCounter().Inc()
 			}
 		}
 	}
