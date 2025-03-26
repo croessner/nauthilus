@@ -257,11 +257,11 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 	// Wait for HTTP server termination
 	<-core.HTTPEndChan
 
-	if config.GetFile().GetServer().HTTP3 {
+	if config.GetFile().GetServer().IsHTTP3Enabled() {
 		<-core.HTTP3EndChan
 	}
 
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		handleBackend(backendType)
 	}
 
@@ -421,7 +421,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 
 	<-core.HTTPEndChan
 
-	if config.GetFile().GetServer().HTTP3 {
+	if config.GetFile().GetServer().IsHTTP3Enabled() {
 		<-core.HTTP3EndChan
 	}
 
@@ -434,7 +434,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		definitions.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
 
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
@@ -473,7 +473,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	enableBlockProfile()
 
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
@@ -520,7 +520,7 @@ func initializeActionWorkers() []*action.Worker {
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
 	startActionWorker(actionWorkers, store.action)
 
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			setupLDAPWorker(store, ctx)
@@ -626,7 +626,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 		core.HTTPEndChan = make(chan core.Done)
 	}
 
-	if config.GetFile().GetServer().HTTP3 {
+	if config.GetFile().GetServer().IsHTTP3Enabled() {
 		if core.HTTP3EndChan == nil {
 			core.HTTP3EndChan = make(chan core.Done)
 		}
@@ -812,7 +812,7 @@ func restartNgxMonitoring(ctx context.Context, store *contextStore, monitoringTi
 
 // enableBlockProfile activates the block profiling feature if the verbosity level is set to debug.
 func enableBlockProfile() {
-	if config.GetFile().GetServerInsightsEnableBlockProfile() {
+	if config.GetFile().GetServer().GetInsights().IsBlockProfileEnabled() {
 		runtime.SetBlockProfileRate(1)
 	} else {
 		runtime.SetBlockProfileRate(-1)

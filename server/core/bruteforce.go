@@ -228,9 +228,9 @@ func (a *AuthState) getPasswordHistoryRedisHashKey(withUsername bool) (key strin
 			accountName = a.Username
 		}
 
-		key = config.GetFile().GetServer().Redis.Prefix + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, a.ClientIP)
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, a.ClientIP)
 	} else {
-		key = config.GetFile().GetServer().Redis.Prefix + definitions.RedisPwHashKey + ":" + a.ClientIP
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + a.ClientIP
 	}
 
 	util.DebugModule(
@@ -306,7 +306,7 @@ func (a *AuthState) getBruteForceBucketRedisKey(rule *config.BruteForceRule) (ke
 		ipProto = "6"
 	}
 
-	key = config.GetFile().GetServer().Redis.Prefix + "bf:" + fmt.Sprintf(
+	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
 		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
 	logBruteForceRuleRedisKeyDebug(a, rule, network, key)
@@ -327,7 +327,7 @@ func (a *AuthState) checkTooManyPasswordHashes(key string) bool {
 
 		return true
 	} else {
-		if length > int64(config.GetFile().GetServer().MaxPasswordHistoryEntries) {
+		if length > int64(config.GetFile().GetServer().GetMaxPasswordHistoryEntries()) {
 			return true
 		}
 	}
@@ -580,7 +580,7 @@ func (a *AuthState) saveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 // setPreResultBruteForceRedis sets the BruteForceRule name in the Redis hash map based on the network IP address obtained from the given BruteForceRule parameter.
 // If there is an error during the operation, it logs the error using the Logger.
 func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisBruteForceHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 	network, err := a.getNetwork(rule)
 	if err != nil {
@@ -601,7 +601,7 @@ func (a *AuthState) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
 func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ruleName string, err error) {
 	var network *net.IPNet
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisBruteForceHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 	network, err = a.getNetwork(rule)
 	if err != nil {
@@ -630,7 +630,7 @@ func (a *AuthState) getPreResultBruteForceRedis(rule *config.BruteForceRule) (ru
 func (a *AuthState) deleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (string, error) {
 	var removedKey string
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisBruteForceHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 	result, err := a.getPreResultBruteForceRedis(rule)
 	if result == "" {
@@ -716,7 +716,7 @@ func (a *AuthState) updateAffectedAccount() {
 		return
 	}
 
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisAffectedAccountsKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -739,7 +739,7 @@ func (a *AuthState) updateAffectedAccount() {
 
 // getPWHistIPsRedisKey generates the Redis key for storing password history associated with IPs for a specific account.
 func getPWHistIPsRedisKey(accountName string) string {
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisPWHistIPsKey + ":" + accountName
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + accountName
 
 	return key
 }
@@ -885,7 +885,7 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 
 		logBucketRuleDebug(a, network, rule)
 
-		for _, backendType := range config.GetFile().GetServer().Backends {
+		for _, backendType := range config.GetFile().GetServer().GetBackends() {
 			if backendType.Get() == definitions.BackendCache {
 				useCache = true
 
@@ -1029,7 +1029,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	}
 
 	bruteForceProtocolEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().BruteForceProtocols {
+	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
@@ -1107,7 +1107,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().BruteForceProtocols {
+	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}

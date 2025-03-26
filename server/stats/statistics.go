@@ -376,11 +376,11 @@ func PrintStats() {
 
 // HavePrometheusLabelEnabled returns true if the specified Prometheus label is enabled in the server configuration, otherwise false.
 func HavePrometheusLabelEnabled(prometheusLabel string) bool {
-	if !config.GetFile().GetServer().PrometheusTimer.Enabled {
+	if !config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
 		return false
 	}
 
-	for _, label := range config.GetFile().GetServer().PrometheusTimer.Labels {
+	for _, label := range config.GetFile().GetServer().GetPrometheusTimer().GetLabels() {
 		if label != prometheusLabel {
 			continue
 		}

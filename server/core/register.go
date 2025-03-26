@@ -751,7 +751,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	*/
 
 	useCache := false
-	for _, backendType := range config.GetFile().GetServer().Backends {
+	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		if backendType.Get() == definitions.BackendCache {
 			useCache = true
 
@@ -774,7 +774,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 			cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
 
 			for _, cacheName := range cacheNames.GetStringSlice() {
-				userKeys.Set(config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 			}
 		}
 

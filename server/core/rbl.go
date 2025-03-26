@@ -86,7 +86,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.RBL)
 
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().DNS.Timeout*time.Second))
+	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
 
 	defer cancel()
 

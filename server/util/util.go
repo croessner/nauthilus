@@ -195,7 +195,7 @@ func GetHash(value string) string {
 
 // ResolveIPAddress returns the hostname for a given IP address.
 func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
-	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().DNS.Timeout*time.Second))
+	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
 
 	defer cancel()
 
@@ -519,7 +519,7 @@ func ValidateUsername(username string) bool {
 
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
-	if config.GetFile().GetServer().DNS.Resolver == "" {
+	if config.GetFile().GetServer().GetDNS().GetResolver() == "" {
 		resolver = &net.Resolver{PreferGo: false}
 	} else {
 		resolver = &net.Resolver{
@@ -528,7 +528,7 @@ func NewDNSResolver() (resolver *net.Resolver) {
 					Timeout: time.Duration(10) * time.Second,
 				}
 
-				return dialer.DialContext(ctx, network, config.GetFile().GetServer().DNS.Resolver)
+				return dialer.DialContext(ctx, network, config.GetFile().GetServer().GetDNS().GetResolver())
 			},
 		}
 	}
@@ -540,8 +540,8 @@ func NewDNSResolver() (resolver *net.Resolver) {
 func NewHTTPClient() *http.Client {
 	var proxyFunc func(*http.Request) (*url.URL, error)
 
-	if config.GetFile().GetServer().HTTPClient.Proxy != "" {
-		proxyURL, err := url.Parse(config.GetFile().GetServer().HTTPClient.Proxy)
+	if config.GetFile().GetServer().GetHTTPClient().GetProxy() != "" {
+		proxyURL, err := url.Parse(config.GetFile().GetServer().GetHTTPClient().GetProxy())
 		if err != nil {
 			proxyFunc = http.ProxyFromEnvironment
 		} else {
@@ -555,12 +555,12 @@ func NewHTTPClient() *http.Client {
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			Proxy:               proxyFunc,
-			MaxConnsPerHost:     config.GetFile().GetServer().HTTPClient.MaxConnsPerHost,
-			MaxIdleConns:        config.GetFile().GetServer().HTTPClient.MaxIdleConns,
-			MaxIdleConnsPerHost: config.GetFile().GetServer().HTTPClient.MaxIdleConnsPerHost,
-			IdleConnTimeout:     config.GetFile().GetServer().HTTPClient.IdleConnTimeout,
+			MaxConnsPerHost:     config.GetFile().GetServer().GetHTTPClient().GetMaxConnsPerHost(),
+			MaxIdleConns:        config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConns(),
+			MaxIdleConnsPerHost: config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
+			IdleConnTimeout:     config.GetFile().GetServer().GetHTTPClient().GetIdleConnTimeout(),
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: config.GetFile().GetServer().TLS.HTTPClientSkipVerify,
+				InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetHTTPClientSkipVerify(),
 			},
 		},
 	}

@@ -51,7 +51,7 @@ type PositivePasswordCache struct {
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
-	key := config.GetFile().GetServer().Redis.Prefix + definitions.RedisUserHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -197,7 +197,7 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
 	var redisValue []byte
 
-	key := "as_webauthn:user:" + uniqueUserId
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
 
 	defer stats.RedisReadCounter.Inc()
 
@@ -233,7 +233,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 		return err
 	}
 
-	key := "as_webauthn:user:" + user.Id
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
 
 	defer stats.RedisWriteCounter.Inc()
 
