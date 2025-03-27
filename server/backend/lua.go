@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -110,7 +111,7 @@ func LuaMainWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			GetChannel().GetLuaChannel().GetLookupEndChan() <- Done{}
+			GetChannel().GetLuaChannel().GetLookupEndChan() <- bktype.Done{}
 
 			return
 

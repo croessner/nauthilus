@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -26,10 +27,10 @@ type LDAPPool interface {
 	SetIdleConnections(bind bool) error
 
 	// HandleLookupRequest handles an LDAP lookup request and utilizes a WaitGroup for managing concurrency.
-	HandleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup)
+	HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup)
 
 	// HandleAuthRequest processes an LDAP authentication request and manages concurrency using a WaitGroup.
-	HandleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup)
+	HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup)
 
 	// Close releases all resources used by the LDAPPool and terminates any background processes or connections.
 	Close()
@@ -95,7 +96,7 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 }
 
 // HandleLookupRequest processes an LDAP lookup request using a connection pool and manages asynchronous execution.
-func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
+func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
 	connNumber := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
@@ -105,7 +106,7 @@ func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *LDAPRequest, ldapWaitGro
 }
 
 // HandleAuthRequest processes an LDAP authentication request using the connection pool and updates process metrics.
-func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
+func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
 	connNumber := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
 
 	ldapWaitGroup.Add(1)
@@ -563,7 +564,7 @@ func (l *ldapPoolImpl) checkConnection(guid *string, index int) (err error) {
 }
 
 // sendLDAPReplyAndUnlockState sends the LDAPReply to the request's channel, sets the connection state to free, and unlocks it.
-func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *ldapPoolImpl, index int, request T, ldapReply *LDAPReply) {
+func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl, index int, request T, ldapReply *bktype.LDAPReply) {
 	request.GetLDAPReplyChan() <- ldapReply
 
 	ldapPool.conn[index].GetMutex().Lock()
@@ -575,10 +576,10 @@ func sendLDAPReplyAndUnlockState[T PoolRequest[T]](ldapPool *ldapPoolImpl, index
 
 // processLookupSearchRequest processes an LDAP search request on a specific connection index in the LDAP pool.
 // It sends the search result or any errors encountered to an LDAP reply structure.
-func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *LDAPRequest, ldapReply *LDAPReply) {
+func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
 	var (
 		err       error
-		result    DatabaseResult
+		result    bktype.AttributeMapping
 		rawResult []*ldap.Entry
 	)
 
@@ -619,14 +620,14 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *LDAPRe
 
 // processLookupModifyAddRequest handles the ModifyAdd LDAP operation for the specified connection index.
 // It executes the ModifyAdd command and updates the LDAPReply's error field if an error occurs.
-func (l *ldapPoolImpl) processLookupModifyAddRequest(index int, ldapRequest *LDAPRequest, ldapReply *LDAPReply) {
+func (l *ldapPoolImpl) processLookupModifyAddRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
 	if err := l.conn[index].ModifyAdd(ldapRequest); err != nil {
 		ldapReply.Err = err
 	}
 }
 
 // proccessLookupRequest processes an LDAP lookup request based on its command type and manages connection states.
-func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
+func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
 	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
@@ -638,7 +639,7 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *LDAPRequest
 		ldapWaitGroup.Done()
 	}()
 
-	ldapReply := &LDAPReply{}
+	ldapReply := &bktype.LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapRequest.GUID, index); ldapReply.Err != nil {
 		ldapRequest.LDAPReplyChan <- ldapReply
@@ -659,7 +660,7 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *LDAPRequest
 // processAuthBindRequest handles the authentication bind request to an LDAP server for a specific connection index.
 // It attempts to bind to the LDAP server using the credentials provided in the LDAPAuthRequest.
 // If the bind operation or the HTTP client context encounters an error, it populates the LDAPReply with the error.
-func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapReply *LDAPReply) {
+func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
 	// Try to authenticate a user.
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
 		ldapReply.Err = err
@@ -676,7 +677,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *LDAPAu
 }
 
 // processAuthRequest processes an LDAP authentication request by using a connection pool and handles related metrics.
-func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
+func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
 	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
@@ -688,7 +689,7 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *LDAPAuthRe
 		ldapWaitGroup.Done()
 	}()
 
-	ldapReply := &LDAPReply{}
+	ldapReply := &bktype.LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapAuthRequest.GUID, index); ldapReply.Err != nil {
 		ldapAuthRequest.LDAPReplyChan <- ldapReply

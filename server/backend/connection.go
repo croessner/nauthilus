@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -48,10 +49,10 @@ type LDAPConnection interface {
 	IsClosing() bool
 
 	// Search executes an LDAP search request based on the specified LDAPRequest and returns the results, raw entries, or an error.
-	Search(ldapRequest *LDAPRequest) (DatabaseResult, []*ldap.Entry, error)
+	Search(ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 
 	// ModifyAdd processes an LDAP ModifyAdd request by adding attributes to an entry based on the provided LDAPRequest.
-	ModifyAdd(ldapRequest *LDAPRequest) error
+	ModifyAdd(ldapRequest *bktype.LDAPRequest) error
 }
 
 // LDAPConnectionImpl represents the connection with an LDAP server.
@@ -108,8 +109,8 @@ func (l *LDAPConnectionImpl) Connect(guid *string, ldapConf *config.LDAPConf) er
 
 	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
 
-	ldapConnectTimeout := make(chan Done)
-	tickerEndChan := make(chan Done)
+	ldapConnectTimeout := make(chan bktype.Done)
+	tickerEndChan := make(chan bktype.Done)
 
 	go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
 
@@ -166,7 +167,7 @@ EndlessLoop:
 
 	connectTicker.Stop()
 
-	tickerEndChan <- Done{}
+	tickerEndChan <- bktype.Done{}
 
 	return err
 }
@@ -193,7 +194,7 @@ func (l *LDAPConnectionImpl) IsClosing() bool {
 }
 
 // Search performs an LDAP search based on the provided LDAPRequest and returns the corresponding results or an error.
-func (l *LDAPConnectionImpl) Search(ldapRequest *LDAPRequest) (result DatabaseResult, rawResult []*ldap.Entry, err error) {
+func (l *LDAPConnectionImpl) Search(ldapRequest *bktype.LDAPRequest) (result bktype.AttributeMapping, rawResult []*ldap.Entry, err error) {
 	var searchResult *ldap.SearchResult
 
 	if ldapRequest.MacroSource != nil {
@@ -222,7 +223,7 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *LDAPRequest) (result DatabaseRe
 		return nil, nil, err
 	}
 
-	result = make(DatabaseResult)
+	result = make(bktype.AttributeMapping)
 
 	for entryIndex := range searchResult.Entries {
 		for attrIndex := range ldapRequest.SearchAttributes {
@@ -258,11 +259,11 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *LDAPRequest) (result DatabaseRe
 
 // ModifyAdd performs an LDAP modify-add operation using the provided LDAPRequest to add attributes to an entry.
 // Returns an error if the operation fails or if the provided search filter yields no results.
-func (l *LDAPConnectionImpl) ModifyAdd(ldapRequest *LDAPRequest) (err error) {
+func (l *LDAPConnectionImpl) ModifyAdd(ldapRequest *bktype.LDAPRequest) (err error) {
 	var (
 		assertOk           bool
 		distinguishedNames any
-		result             DatabaseResult
+		result             bktype.AttributeMapping
 	)
 
 	if result, _, err = l.Search(ldapRequest); err != nil {
@@ -370,11 +371,11 @@ func (l *LDAPConnectionImpl) logURIInfo(guid *string, ldapConf *config.LDAPConf,
 }
 
 // handleLDAPConnectTimeout monitors the LDAP connection timeout using a ticker and signals completion through channels.
-func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan Done, done chan Done) {
+func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan bktype.Done, done chan bktype.Done) {
 	for {
 		select {
 		case <-connectTicker.C:
-			timeout <- Done{}
+			timeout <- bktype.Done{}
 		case <-done:
 			return
 		}

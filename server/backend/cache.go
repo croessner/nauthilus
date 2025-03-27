@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -40,13 +41,13 @@ type PasswordHistory map[string]uint
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
-	Backend           definitions.Backend `json:"passdb_backend"`
-	Password          string              `json:"password,omitempty"`
-	AccountField      *string             `json:"account_field"`
-	TOTPSecretField   *string             `json:"totp_secret_field"`
-	UniqueUserIDField *string             `json:"webauth_userid_field"`
-	DisplayNameField  *string             `json:"display_name_field"`
-	Attributes        DatabaseResult      `json:"attributes"`
+	Backend           definitions.Backend     `json:"passdb_backend"`
+	Password          string                  `json:"password,omitempty"`
+	AccountField      *string                 `json:"account_field"`
+	TOTPSecretField   *string                 `json:"totp_secret_field"`
+	UniqueUserIDField *string                 `json:"webauth_userid_field"`
+	DisplayNameField  *string                 `json:"display_name_field"`
+	Attributes        bktype.AttributeMapping `json:"attributes"`
 }
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.

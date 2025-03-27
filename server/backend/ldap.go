@@ -21,107 +21,13 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/util"
-	"github.com/go-ldap/ldap/v3"
 	"github.com/segmentio/ksuid"
 	"github.com/yuin/gopher-lua"
 )
-
-// PoolRequest represents a generic interface for handling LDAP requests and responses.
-// It provides a method to retrieve a channel for receiving LDAP replies.
-type PoolRequest[T any] interface {
-	GetLDAPReplyChan() chan *LDAPReply
-}
-
-// LDAPModifyAttributes represents a map of attribute names to their corresponding values for LDAP modify operations.
-type LDAPModifyAttributes map[string][]string
-
-// LDAPRequest represents an LDAP request.
-type LDAPRequest struct {
-	// GUID is the globally unique identifier for this LDAP request, optional.
-	GUID *string
-
-	// RequestID represents the globally unique identifier for an LDAP request. It is a pointer to a string.
-	RequestID *string
-
-	// Filter is the criteria that the LDAP request uses to filter during the search.
-	Filter string
-
-	// BaseDN is the base distinguished name used as the search base.
-	BaseDN string
-
-	// SearchAttributes are the attributes for which values are to be returned in the search results.
-	SearchAttributes []string
-
-	// MacroSource is the source of macros to be used, optional.
-	MacroSource *util.MacroSource
-
-	// Scope defines the scope for LDAP search (base, one, or sub).
-	Scope config.LDAPScope
-
-	// Command represents the LDAP command to be executed (add, modify, delete, or search).
-	Command definitions.LDAPCommand
-
-	// ModifyAttributes contains attributes information used in modify command.
-	ModifyAttributes LDAPModifyAttributes
-
-	// LDAPReplyChan is the channel where reply from LDAP server is sent.
-	LDAPReplyChan chan *LDAPReply
-
-	// HTTPClientContext is the context for managing HTTP requests and responses.
-	HTTPClientContext context.Context
-}
-
-// GetLDAPReplyChan returns the channel where replies from the LDAP server are sent.
-// It retrieves and returns the value of the `LDAPReplyChan` field of the `LDAPRequest` struct.
-func (l *LDAPRequest) GetLDAPReplyChan() chan *LDAPReply {
-	return l.LDAPReplyChan
-}
-
-var _ PoolRequest[LDAPRequest] = (*LDAPRequest)(nil)
-
-// LDAPAuthRequest represents a request to authenticate with an LDAP server.
-type LDAPAuthRequest struct {
-	// GUID is the unique identifier for the LDAP auth request.
-	// It can be nil.
-	GUID *string
-
-	// BindDN is the Distinguished Name for binding to the LDAP server.
-	BindDN string
-
-	// BindPW is the password for binding to the LDAP server.
-	BindPW string
-
-	// LDAPReplyChan is a channel where the LDAP responses will be sent.
-	LDAPReplyChan chan *LDAPReply
-
-	// HTTPClientContext is the context for the HTTP client
-	// carrying the LDAP auth request.
-	HTTPClientContext context.Context
-}
-
-// GetLDAPReplyChan returns the channel where LDAP responses are sent.
-func (l *LDAPAuthRequest) GetLDAPReplyChan() chan *LDAPReply {
-	return l.LDAPReplyChan
-}
-
-var _ PoolRequest[LDAPAuthRequest] = (*LDAPAuthRequest)(nil)
-
-// LDAPReply represents the structure for handling responses from an LDAP operation.
-// It contains the result of the operation, raw entries, and any possible error encountered.
-type LDAPReply struct {
-	// Result holds the outcome of a database query or LDAP operation, mapping field names or attributes to their values.
-	Result DatabaseResult
-
-	// RawResult contains a slice of raw LDAP entries retrieved from an LDAP operation. It is used for processing raw data.
-	RawResult []*ldap.Entry
-
-	// Err captures any error encountered during the LDAP operation or response parsing.
-	Err error
-}
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 func LDAPMainWorker(ctx context.Context) {
@@ -142,14 +48,14 @@ func LDAPMainWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetLookupEndChan() <- Done{}
+			GetChannel().GetLdapChannel().GetLookupEndChan() <- bktype.Done{}
 
 			return
 
 		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan():
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(true); err != nil {
-				ldapRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 			}
 
 			ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup)
@@ -177,13 +83,13 @@ func LDAPAuthWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetAuthEndChan() <- Done{}
+			GetChannel().GetLdapChannel().GetAuthEndChan() <- bktype.Done{}
 
 			return
 		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan():
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(false); err != nil {
-				ldapAuthRequest.LDAPReplyChan <- &LDAPReply{Err: err}
+				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 			}
 
 			ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup)
@@ -284,7 +190,7 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 }
 
 // createLDAPRequest initializes an LDAPRequest with provided field values, scope, and context for an LDAP search operation.
-func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context) *LDAPRequest {
+func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context) *bktype.LDAPRequest {
 	guid := fieldValues["session"].String()
 	basedn := fieldValues["basedn"].String()
 	filter := fieldValues["filter"].String()
@@ -295,9 +201,9 @@ func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScop
 		guid = ksuid.New().String()
 	}
 
-	ldapReplyChan := make(chan *LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	ldapRequest := &LDAPRequest{
+	ldapRequest := &bktype.LDAPRequest{
 		GUID:              &guid,
 		Filter:            filter,
 		BaseDN:            basedn,
@@ -322,7 +228,7 @@ func extractAttributes(attrTable *lua.LTable) []string {
 }
 
 // processReply processes an LDAP reply received from a channel and converts it into a Lua-compatible value or error.
-func processReply(L *lua.LState, ldapReplyChan chan *LDAPReply) int {
+func processReply(L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
 	ldapReply := <-ldapReplyChan
 
 	// Check if there is an error. If so, return it.
@@ -333,7 +239,7 @@ func processReply(L *lua.LState, ldapReplyChan chan *LDAPReply) int {
 		return 2
 	}
 
-	// Converting DatabaseResult (map[string][]any) to map[any]any
+	// Converting AttributeMapping (map[string][]any) to map[any]any
 	// which can be used in util.MapToLuaTable function
 	convertedMap := make(map[any]any)
 	for key, values := range ldapReply.Result {
