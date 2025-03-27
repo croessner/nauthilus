@@ -3,6 +3,7 @@ package ldappool
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 type mockLDAPConnection struct {
-	state     definitions.LDAPState
+	state     int32
 	mutex     sync.Mutex
 	connError error
 	bindError error
@@ -39,11 +40,13 @@ func (m *mockLDAPConnection) ModifyAdd(_ *bktype.LDAPRequest) error {
 }
 
 func (m *mockLDAPConnection) GetState() definitions.LDAPState {
-	return m.state
+	// false positive Data Race - this is thread-safe, verified by inspection
+	return definitions.LDAPState(atomic.LoadInt32(&m.state))
 }
 
 func (m *mockLDAPConnection) SetState(state definitions.LDAPState) {
-	m.state = state
+	// false positive Data Race - this is thread-safe, verified by inspection
+	atomic.StoreInt32(&m.state, int32(state))
 }
 
 func (m *mockLDAPConnection) GetMutex() *sync.Mutex {
@@ -122,7 +125,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			mockConns := make([]LDAPConnection, len(tc.initialConnStates))
 			for i, state := range tc.initialConnStates {
 				mockConns[i] = &mockLDAPConnection{
-					state:     state,
+					state:     int32(state),
 					connError: tc.mockConnError,
 					bindError: tc.mockBindError,
 				}
