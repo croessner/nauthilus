@@ -125,6 +125,9 @@ type File interface {
 	// GetLDAPConfigAuthPoolSize returns the pool size for LDAP authentication.
 	GetLDAPConfigAuthPoolSize() int
 
+	// GetLDAPConfigConnectAbortTimeout retrieves the timeout duration for aborting LDAP connect attempts.
+	GetLDAPConfigConnectAbortTimeout() time.Duration
+
 	// GetLDAPConfigLookupIdlePoolSize retrieves the idle pool size for LDAP lookups.
 	GetLDAPConfigLookupIdlePoolSize() int
 
@@ -530,6 +533,24 @@ func (f *FileSettings) GetLDAPConfigAuthPoolSize() int {
 	}
 
 	return definitions.LDAPIdlePoolSize
+}
+
+// GetLDAPConfigConnectAbortTimeout retrieves the abort timeout duration from the LDAP configuration, or returns 0 if not applicable.
+func (f *FileSettings) GetLDAPConfigConnectAbortTimeout() time.Duration {
+	if f == nil {
+		return 0
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLDAP)
+	if getConfig == nil {
+		return 0
+	}
+
+	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
+		return ldapConf.ConnectAbortTimeout
+	}
+
+	return 0
 }
 
 // GetLDAPConfigBindDN returns the BindDN value from the LDAP configuration if available, otherwise it returns an empty string.

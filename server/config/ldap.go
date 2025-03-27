@@ -18,6 +18,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/croessner/nauthilus/server/errors"
 )
@@ -70,7 +71,8 @@ type LDAPConf struct {
 	TLSClientCert string `mapstructure:"tls_client_cert" validate:"omitempty,file"`
 	TLSClientKey  string `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
-	ServerURIs []string `mapstructure:"server_uri" validate:"required,dive,uri"`
+	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
+	ServerURIs          []string      `mapstructure:"server_uri" validate:"required,dive,uri"`
 }
 
 func (l *LDAPConf) String() string {

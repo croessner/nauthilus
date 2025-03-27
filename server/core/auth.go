@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -280,7 +281,7 @@ type State interface {
 	GetUsedPassDBBackend() definitions.Backend
 
 	// GetAttributes retrieves a map of database attributes where keys are field names and values are the corresponding data.
-	GetAttributes() backend.DatabaseResult
+	GetAttributes() bktype.AttributeMapping
 
 	// GetAdditionalLogs retrieves a slice of additional log entries, useful for appending context-specific logging details.
 	GetAdditionalLogs() []any
@@ -485,7 +486,7 @@ type AuthState struct {
 
 	// Attributes is a result container for SQL and LDAP queries. Databases store their result by using a field or
 	// attribute name as a key and the corresponding result as a value.
-	Attributes backend.DatabaseResult
+	Attributes bktype.AttributeMapping
 
 	// Protocol is set by the HTTP request header "Auth-Protocol" (Nginx protocol).
 	Protocol *config.Protocol
@@ -499,7 +500,7 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
-	*backend.PasswordHistory
+	*bktype.PasswordHistory
 	*lualib.Context
 }
 
@@ -532,7 +533,7 @@ type PassDBResult struct {
 	Backend definitions.Backend
 
 	// Attributes is the result catalog returned by the underlying password Database.
-	Attributes backend.DatabaseResult
+	Attributes bktype.AttributeMapping
 }
 
 type (
@@ -813,8 +814,8 @@ func (a *AuthState) GetUsedPassDBBackend() definitions.Backend {
 	return a.UsedPassDBBackend
 }
 
-// GetAttributes retrieves the stored database attributes from the AuthState and returns them as a DatabaseResult.
-func (a *AuthState) GetAttributes() backend.DatabaseResult {
+// GetAttributes retrieves the stored database attributes from the AuthState and returns them as a AttributeMapping.
+func (a *AuthState) GetAttributes() bktype.AttributeMapping {
 	return a.Attributes
 }
 
@@ -1116,7 +1117,7 @@ func formatValues(values []any) []string {
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	ctx.JSON(auth.StatusCodeOK, &backend.PositivePasswordCache{
+	ctx.JSON(auth.StatusCodeOK, &bktype.PositivePasswordCache{
 		AccountField:    auth.AccountField,
 		TOTPSecretField: auth.TOTPSecretField,
 		Backend:         auth.SourcePassDBBackend,
@@ -1514,7 +1515,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 
 	if a.AccountField == nil && a.Attributes == nil {
 		accountField := definitions.MetaUserAccount
-		attributes := make(backend.DatabaseResult)
+		attributes := make(bktype.AttributeMapping)
 
 		a.AccountField = &accountField
 		attributes[definitions.MetaUserAccount] = []any{accountName}
@@ -1845,8 +1846,8 @@ func (a *AuthState) getCacheName(usedBackend definitions.CacheNameBackend) (cach
 }
 
 // createPositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
-func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache {
-	return &backend.PositivePasswordCache{
+func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache {
+	return &bktype.PositivePasswordCache{
 		AccountField:      a.AccountField,
 		TOTPSecretField:   a.TOTPSecretField,
 		UniqueUserIDField: a.UniqueUserIDField,
@@ -1866,7 +1867,7 @@ func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache
 }
 
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
-func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
+func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
 	if accountName != "" {
 		redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -77,7 +78,7 @@ func handleMasterUserMode(auth *AuthState) string {
 //
 // Returns:
 // - totpSecretPre: a slice of interface{} containing the TOTP secret if present, nil otherwise.
-func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *backend.LDAPReply, totpSecretField string) (totpSecretPre []any) {
+func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *bktype.LDAPReply, totpSecretField string) (totpSecretPre []any) {
 	if masterUserMode {
 		// Check if the master user does have a TOTP secret.
 		if value, okay := ldapReply.Result[totpSecretField]; okay {
@@ -122,13 +123,13 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		distinguishedNames any
 		attributes         []string
 		scope              *config.LDAPScope
-		ldapReply          *backend.LDAPReply
+		ldapReply          *bktype.LDAPReply
 		protocol           *config.LDAPSearchProtocol
 	)
 
 	passDBResult = &PassDBResult{}
 
-	ldapReplyChan := make(chan *backend.LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
@@ -156,7 +157,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 
 	username := handleMasterUserMode(auth)
 
-	ldapRequest := &backend.LDAPRequest{
+	ldapRequest := &bktype.LDAPRequest{
 		GUID:    auth.GUID,
 		Command: definitions.LDAPSearch,
 		MacroSource: &util.MacroSource{
@@ -226,9 +227,9 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
 
 	if !auth.NoAuth {
-		ldapReplyChan = make(chan *backend.LDAPReply)
+		ldapReplyChan = make(chan *bktype.LDAPReply)
 
-		ldapUserBindRequest := &backend.LDAPAuthRequest{
+		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.GUID,
 			BindDN:            dn,
 			BindPW:            auth.Password,
@@ -277,7 +278,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		filter       string
 		baseDN       string
 		attributes   []string
-		ldapReply    *backend.LDAPReply
+		ldapReply    *bktype.LDAPReply
 		scope        *config.LDAPScope
 		protocol     *config.LDAPSearchProtocol
 	)
@@ -288,7 +289,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *backend.LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
@@ -314,7 +315,7 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		return
 	}
 
-	ldapRequest := &backend.LDAPRequest{
+	ldapRequest := &bktype.LDAPRequest{
 		GUID:    auth.GUID,
 		Command: definitions.LDAPSearch,
 		MacroSource: &util.MacroSource{
@@ -366,7 +367,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		filter      string
 		baseDN      string
 		configField string
-		ldapReply   *backend.LDAPReply
+		ldapReply   *bktype.LDAPReply
 		scope       *config.LDAPScope
 		protocol    *config.LDAPSearchProtocol
 		ldapError   *ldap.Error
@@ -378,7 +379,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *backend.LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
 		return
@@ -404,7 +405,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		return
 	}
 
-	ldapRequest := &backend.LDAPRequest{
+	ldapRequest := &bktype.LDAPRequest{
 		GUID:    auth.GUID,
 		Command: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
@@ -423,7 +424,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 	}
 
-	ldapRequest.ModifyAttributes = make(backend.LDAPModifyAttributes, 2)
+	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
 	backend.GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
