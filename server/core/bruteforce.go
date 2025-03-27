@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -365,8 +366,8 @@ func (a *AuthState) loadPasswordHistoryFromRedis(key string) {
 		var counterInt int
 
 		if a.PasswordHistory == nil {
-			a.PasswordHistory = new(backend.PasswordHistory)
-			*a.PasswordHistory = make(backend.PasswordHistory)
+			a.PasswordHistory = new(bktype.PasswordHistory)
+			*a.PasswordHistory = make(bktype.PasswordHistory)
 		}
 
 		for passwordHash, counter := range passwordHistory {

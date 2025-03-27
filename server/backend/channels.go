@@ -146,12 +146,12 @@ type LuaChannel interface {
 	GetLookupEndChan() chan bktype.Done
 
 	// GetLookupRequestChan retrieves the LuaRequest channel used for managing Lua-related request operations.
-	GetLookupRequestChan() chan *LuaRequest
+	GetLookupRequestChan() chan *bktype.LuaRequest
 }
 
 type LuaChannelImpl struct {
 	lookupEndChan chan bktype.Done
-	lookupReqChan chan *LuaRequest
+	lookupReqChan chan *bktype.LuaRequest
 }
 
 // GetLookupEndChan returns a channel of type Done that signals the end of a lookup operation.
@@ -160,7 +160,7 @@ func (c *LuaChannelImpl) GetLookupEndChan() chan bktype.Done {
 }
 
 // GetLookupRequestChan returns the pointer to a LuaRequest used for handling Lua requests in the channel.
-func (c *LuaChannelImpl) GetLookupRequestChan() chan *LuaRequest {
+func (c *LuaChannelImpl) GetLookupRequestChan() chan *bktype.LuaRequest {
 	return c.lookupReqChan
 }
 
@@ -170,6 +170,6 @@ var _ LuaChannel = &LuaChannelImpl{}
 func NewLuaChannel() LuaChannel {
 	return &LuaChannelImpl{
 		lookupEndChan: make(chan bktype.Done),
-		lookupReqChan: make(chan *LuaRequest, definitions.MaxChannelSize),
+		lookupReqChan: make(chan *bktype.LuaRequest, definitions.MaxChannelSize),
 	}
 }

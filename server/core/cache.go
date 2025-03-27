@@ -17,6 +17,7 @@ package core
 
 import (
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/stats"
@@ -27,7 +28,7 @@ import (
 func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		accountName string
-		ppc         *backend.PositivePasswordCache
+		ppc         *bktype.PositivePasswordCache
 	)
 
 	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "cache_backend_request_total")
@@ -49,7 +50,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			redisPosUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
-			ppc = &backend.PositivePasswordCache{}
+			ppc = &bktype.PositivePasswordCache{}
 
 			isRedisErr := false
 			if isRedisErr, err = backend.LoadCacheFromRedis(auth.HTTPClientContext, redisPosUserKey, ppc); err != nil {

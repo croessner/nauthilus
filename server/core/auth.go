@@ -500,7 +500,7 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
-	*backend.PasswordHistory
+	*bktype.PasswordHistory
 	*lualib.Context
 }
 
@@ -1117,7 +1117,7 @@ func formatValues(values []any) []string {
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	ctx.JSON(auth.StatusCodeOK, &backend.PositivePasswordCache{
+	ctx.JSON(auth.StatusCodeOK, &bktype.PositivePasswordCache{
 		AccountField:    auth.AccountField,
 		TOTPSecretField: auth.TOTPSecretField,
 		Backend:         auth.SourcePassDBBackend,
@@ -1846,8 +1846,8 @@ func (a *AuthState) getCacheName(usedBackend definitions.CacheNameBackend) (cach
 }
 
 // createPositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
-func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache {
-	return &backend.PositivePasswordCache{
+func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache {
+	return &bktype.PositivePasswordCache{
 		AccountField:      a.AccountField,
 		TOTPSecretField:   a.TOTPSecretField,
 		UniqueUserIDField: a.UniqueUserIDField,
@@ -1867,7 +1867,7 @@ func (a *AuthState) createPositivePasswordCache() *backend.PositivePasswordCache
 }
 
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
-func (a *AuthState) saveUserPositiveCache(ppc *backend.PositivePasswordCache, cacheName, accountName string) {
+func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
 	if accountName != "" {
 		redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 

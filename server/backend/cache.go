@@ -33,23 +33,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// PasswordHistory is a map of hashed passwords with their failure counter.
-type PasswordHistory map[string]uint
-
-// PositivePasswordCache is a container that stores all kinds of user information upon a successful authentication. It
-// is used for Redis as a short cache object and as a proxy structure between Nauthilus instances. The cache object is not
-// refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
-// of the user data from underlying databases.
-type PositivePasswordCache struct {
-	Backend           definitions.Backend     `json:"passdb_backend"`
-	Password          string                  `json:"password,omitempty"`
-	AccountField      *string                 `json:"account_field"`
-	TOTPSecretField   *string                 `json:"totp_secret_field"`
-	UniqueUserIDField *string                 `json:"webauth_userid_field"`
-	DisplayNameField  *string                 `json:"display_name_field"`
-	Attributes        bktype.AttributeMapping `json:"attributes"`
-}
-
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
@@ -68,12 +51,10 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 	return
 }
 
-// LoadCacheFromRedis loads the cache value from Redis and unmarshals it into the provided cache pointer.
-// If the key does not exist in Redis, it returns isRedisErr=true and err=nil.
-// If there is an error retrieving the value from Redis, it returns isRedisErr=true and err.
-// Otherwise, it unmarshals the value into the cache pointer and returns isRedisErr=false and err=nil.
-// It also logs any error messages using the Logger.
-func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCache) (isRedisErr bool, err error) {
+// LoadCacheFromRedis retrieves cache data from Redis based on a provided key and unmarshals it into the given structure.
+// It increments Redis read metrics and logs errors or debug information appropriately during the operation.
+// Returns whether the error originated from Redis and any encountered error during retrieval or unmarshaling.
+func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
 	var redisValue []byte
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -103,7 +84,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *PositivePasswordCa
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
 // union.
-func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.Duration, cache *PositivePasswordCache) {
+func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.Duration, cache *bktype.PositivePasswordCache) {
 	var result string
 
 	util.DebugModule(
@@ -140,25 +121,8 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	return
 }
 
-// GetCacheNames returns the set of cache names for the requested protocol and cache backends.
-// It searches for cache names based on the requested protocol and cache backends provided.
-// If backends is CacheAll or CacheLDAP:
-//   - It retrieves the LDAP search protocol configuration for the requested protocol.
-//   - If a cache name is found in the LDAP search protocol configuration, it adds it to the cacheNames set.
-//
-// If backends is CacheAll or CacheLua:
-//   - It retrieves the Lua search protocol configuration for the requested protocol.
-//   - If a cache name is found in the Lua search protocol configuration, it adds it to the cacheNames set.
-//
-// If no cache names are found in the above steps, it sets the default cache name "__default__".
-//
-// Parameters:
-// - requestedProtocol: The protocol to search for cache names.
-// - backends: The cache backends to include in the search. This can be CacheAll, CacheLDAP, CacheSQL, or CacheLua.
-//
-// Returns:
-// - cacheNames: The set of cache names found for the requested protocol and cache backends.
-// It can be obtained as a string slice using the GetStringSlice() method.
+// GetCacheNames retrieves cache names for the specified protocol from either LDAP, Lua, or both backends as per the input.
+// If no cache names are found, a default cache name "__default__" is returned.
 func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
 	var (
 		cacheName    string
@@ -191,10 +155,8 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 	return
 }
 
-// GetWebAuthnFromRedis returns the user object from Redis based on the unique user ID.
-// It retrieves the Redis value based on the provided key and unmarshals it into a User object.
-// If there is an error during the process, it logs the error and returns nil with the error.
-// Otherwise, it returns the user object.
+// GetWebAuthnFromRedis retrieves a User object from Redis using the provided unique user ID and unmarshals it from JSON.
+// Returns the User object or an error if retrieval or unmarshaling fails.
 func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
 	var redisValue []byte
 
@@ -219,11 +181,8 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	return
 }
 
-// SaveWebAuthnToRedis saves the user's WebAuthn data to Redis with the specified time-to-live (TTL) duration.
-// It serializes the user object using JSON and stores it in Redis under the key "as_webauthn:user:<user id>".
-// If serialization fails, it logs the error and returns it.
-// If saving to "Redis" fails, it logs the error.
-// Note: User is a struct representing a user in the system.
+// SaveWebAuthnToRedis saves a user's WebAuthn credentials to Redis with a specified TTL.
+// Returns an error if serialization or Redis storage operation fails.
 func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) error {
 	var result string
 

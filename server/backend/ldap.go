@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/backend/ldappool"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -33,7 +34,7 @@ import (
 func LDAPMainWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := NewPool(ctx, definitions.LDAPPoolLookup)
+	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup)
 	if ldapPool == nil {
 		return
 	}
@@ -68,7 +69,7 @@ func LDAPMainWorker(ctx context.Context) {
 func LDAPAuthWorker(ctx context.Context) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := NewPool(ctx, definitions.LDAPPoolAuth)
+	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth)
 	if ldapPool == nil {
 		return
 	}

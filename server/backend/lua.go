@@ -29,7 +29,6 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
@@ -43,46 +42,7 @@ func InitHTTPClient() {
 	httpClient = util.NewHTTPClient()
 }
 
-// LuaRequest is a subset from the Authentication struct.
-// LuaRequest is a struct that includes various information for a request to Lua.
-type LuaRequest struct {
-	// Function is the Lua command that will be executed.
-	Function definitions.LuaCommand
-
-	// TOTPSecret is the secret value used in time-based one-time password (TOTP) authentication.
-	TOTPSecret string
-
-	// Service is the specific service requested by the client.
-	Service string
-
-	// Protocol points to the protocol that was used by a client to make the request.
-	Protocol *config.Protocol
-
-	// Logs points to custom log key-value pairs to help track the request.
-	Logs *lualib.CustomLogKeyValue
-
-	// Context provides context for the Lua command request.
-	*lualib.Context
-
-	*lualib.CommonRequest
-
-	// HTTPClientContext is the client request context from a remote party.
-	HTTPClientContext *gin.Context
-
-	// LuaReplyChan is a channel to receive the response from the Lua backend.
-	LuaReplyChan chan *lualib.LuaBackendResult
-}
-
-// LoaderModLDAP is a function that returns a LGFunction.
-// The returned LGFunction sets up a table with the function name definitions.LuaFnLDAPSearch
-// and its corresponding LuaLDAPSearch function.
-// It then pushes the table onto the Lua stack and returns 1.
-// The function is intended to be used as a loader for the LDAP module in Lua scripts.
-//
-// Parameters:
-// - ctx: The context.Context object.
-//
-// Returns: The LGFunction that sets up the LDAP module table.
+// LoaderModLDAP initializes and loads the LDAP module into the Lua state with predefined functions for LDAP operations.
 func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
@@ -95,11 +55,9 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// LuaMainWorker is responsible for executing Lua scripts using the provided context.
-// It compiles a Lua script from the specified path and waits for incoming requests.
-// When a request is received, it spawns a goroutine to handle the request asynchronously,
-// passing the compiled script, the request, and the context.
-// If the context is canceled, LuaMainWorker will send a Done signal to notify the caller.
+// LuaMainWorker processes Lua script requests in a loop until the context is canceled.
+// It compiles the Lua script and handles requests using a dedicated goroutine for each.
+// It ensures graceful termination by signaling completion through the Done channel.
 func LuaMainWorker(ctx context.Context) {
 	scriptPath := config.GetFile().GetLuaScriptPath()
 
@@ -121,18 +79,8 @@ func LuaMainWorker(ctx context.Context) {
 	}
 }
 
-// registerDynamicLoader registers a dynamic loader function in the Lua state.
-// The dynamic loader function is responsible for registering common Lua libraries
-// and modules based on the modName value. It also sets a global variable "dynamic_loader"
-// with the dynamic loader function.
-//
-// Parameters:
-// - L: The *lua.LState representing the Lua state.
-// - ctx: The context.Context object.
-// - luaRequest: The *LuaRequest object containing the request parameters.
-//
-// Returns: None.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRequest) {
+// registerDynamicLoader registers a dynamic_loader function in the Lua state to dynamically load modules at runtime.
+func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRequest) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -150,22 +98,10 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *LuaRe
 	L.SetGlobal("dynamic_loader", dynamicLoader)
 }
 
-// registerModule registers a module in the Lua state based on the given modName.
-// It uses the Lua state L, the context.Context ctx, the *LuaRequest luaRequest, and the map[string]bool registry.
-// If modName is definitions.LuaModHTTPRequest, it preloads the Lua module with the given modName and the lualib.LoaderModHTTPRequest function.
-// If modName is definitions.LuaModLDAP and the LDAP backend is activated, it preloads the Lua module with the given modName and the LoaderModLDAP function.
-// If modName is not definitions.LuaModHTTPRequest or global.LuaModLDAP, it does nothing and returns.
-// It marks the modName key in the registry as true.
-//
-// Parameters:
-// - L: The *lua.LState representing the Lua state.
-// - ctx: The context.Context object.
-// - luaRequest: The *LuaRequest object containing the request parameters.
-// - modName: The name of the module to register.
-// - registry: A map containing the registered modules.
-//
-// Returns: None.
-func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, modName string, registry map[string]bool) {
+// registerModule loads a specified Lua module into the Lua state and registers it as available in the provided registry.
+// It supports modules for context, HTTP requests, and LDAP based on the given module name and configurations.
+// If the LDAP backend is not activated, an error is raised for the LDAP module.
+func registerModule(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRequest, modName string, registry map[string]bool) {
 	switch modName {
 	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(luaRequest.Context))
@@ -184,18 +120,13 @@ func registerModule(L *lua.LState, ctx context.Context, luaRequest *LuaRequest, 
 	registry[modName] = true
 }
 
-// handleLuaRequest is a function that handles a Lua request. It takes a context, a LuaRequest object, and a compiled Lua script as parameters.
-// It sets up the Lua state, registers libraries, and preloads modules. It sets up global variables and creates a Lua table for the request.
-// It sets the Lua request parameters based on the LuaRequest object and the Lua table. Then it executes the Lua script and handles any errors.
-// Finally, it handles the specific return types based on the result of the Lua script execution.
-//
+// handleLuaRequest processes a Lua script execution request in the given context using the specified compiled script.
+// It initializes a Lua state, sets up the environment, runs the script, and handles return values or errors.
 // Parameters:
-// - ctx: The context.Context object.
-// - luaRequest: The LuaRequest object containing the request parameters.
-// - compiledScript: The compiled Lua script.
-//
-// Returns: None.
-func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScript *lua.FunctionProto) {
+// - ctx: The context for the Lua execution, including cancellation and timeout.
+// - luaRequest: The LuaRequest object containing details about the script execution request.
+// - compiledScript: The precompiled Lua script to be executed.
+func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto) {
 	var (
 		nret       int
 		luaCommand string
@@ -240,17 +171,8 @@ func handleLuaRequest(ctx context.Context, luaRequest *LuaRequest, compiledScrip
 	}
 }
 
-// setupGlobals sets up global variables for the Lua state. It creates a new Lua table to hold the global variables,
-// and assigns values to the predefined global variables. It also registers Lua functions for custom log addition and
-// setting the status message. Finally, it sets the global table in the Lua state.
-//
-// Parameters:
-// - luaRequest: The LuaRequest object containing the request parameters.
-// - L: The Lua state.
-// - logs: The custom log key-value pairs.
-//
-// Returns: None.
-func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
+// setupGlobals initializes and registers a set of global Lua variables and functions in the provided Lua state.
+func setupGlobals(luaRequest *bktype.LuaRequest, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	globals.RawSet(lua.LString(definitions.LuaBackendResultOk), lua.LNumber(0))
@@ -262,17 +184,8 @@ func setupGlobals(luaRequest *LuaRequest, L *lua.LState, logs *lualib.CustomLogK
 	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
-// setLuaRequestParameters sets the Lua request parameters based on the given LuaRequest object and Lua table.
-// It also returns the Lua command string and the number of return values.
-//
-// Parameters:
-// - luaRequest: The LuaRequest object.
-// - request: The Lua table to set the parameters on.
-//
-// Returns:
-// - luaCommand: The Lua command string.
-// - nret: The number of return values.
-func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
+// setLuaRequestParameters determines the Lua command and number of return values for a LuaRequest and modifies the request.
+func setLuaRequestParameters(luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
 	switch luaRequest.Function {
 	case definitions.LuaCommandPassDB:
 		luaCommand = definitions.LuaFnBackendVerifyPassword
@@ -297,21 +210,8 @@ func setLuaRequestParameters(luaRequest *LuaRequest, request *lua.LTable) (luaCo
 	return luaCommand, nret
 }
 
-// executeAndHandleError executes the compiled Lua script and handles any errors that occur during execution.
-// If an error occurs during the execution of the compiled script or when calling a Lua command, it will be processed using the processError function.
-// The compiledScript parameter is a pointer to the compiled Lua script.
-// The luaCommand parameter is the name of the Lua command to call.
-// The luaRequest parameter represents the LuaRequest object containing the request data.
-// The L parameter is the Lua state.
-// The request parameter is a Lua table representing the request data.
-// The nret parameter specifies the number of return values expected from the Lua command.
-// The logs parameter is a pointer to a CustomLogKeyValue object for logging purposes.
-// The function returns an error object in case of any errors that occurred during execution.
-//
-// Example usage:
-//
-//	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
-func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+// executeAndHandleError executes a Lua script, handles errors, and logs details. It runs initialization, execution, and cleanup steps.
+func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err, luaRequest, logs)
 	}
@@ -331,10 +231,11 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 	return err
 }
 
-// handleReturnTypes processes the return values of a Lua script and sends the appropriate response via LuaReplyChan.
-// It handles specific Lua commands such as LuaCommandPassDB and LuaCommandListAccounts, ensuring proper data conversion.
-// If an error occurs or unexpected data is returned, detailed error information is encapsulated and sent.
-func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
+// handleReturnTypes processes the return values of a Lua script and sends results to the LuaReplyChan of LuaRequest.
+// L represents the Lua state machine, nret specifies the number of return values, luaRequest holds request context.
+// logs specifies the custom log key-value pairs. Validates the script output and dispatches appropriate Lua results.
+// An error is sent if the Lua script fails or returns invalid data for specified commands.
+func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
 	ret := L.ToInt(-nret)
 	if ret != 0 {
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{
@@ -397,12 +298,8 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *LuaRequest, logs *lu
 	}
 }
 
-// processError logs the error and sends a LuaBackendResult with the error and the logs to the LuaRequest's LuaReplyChan.
-// It takes an error, a LuaRequest, and a logs slice of CustomLogKeyValue as parameters.
-// The error is logged at the Error level using the Logger.
-// The logs contain the session GUID and the path to the Lua script.
-// Lastly, the LuaBackendResult is sent to the LuaRequest's LuaReplyChan.
-func processError(err error, luaRequest *LuaRequest, logs *lualib.CustomLogKeyValue) {
+// processError handles Lua backend errors by logging the error details and communicating the error and logs via a channel.
+func processError(err error, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyGUID, luaRequest.Session,
 		"script", config.GetFile().GetLuaScriptPath(),
