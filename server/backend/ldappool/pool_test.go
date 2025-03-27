@@ -39,10 +39,18 @@ func (m *mockLDAPConnection) ModifyAdd(_ *bktype.LDAPRequest) error {
 }
 
 func (m *mockLDAPConnection) GetState() definitions.LDAPState {
+	m.mutex.Lock()
+
+	defer m.mutex.Unlock()
+
 	return m.state
 }
 
 func (m *mockLDAPConnection) SetState(state definitions.LDAPState) {
+	m.mutex.Lock()
+
+	defer m.mutex.Unlock()
+
 	m.state = state
 }
 
