@@ -20,7 +20,6 @@ type mockLDAPConnection struct {
 	mutex     sync.Mutex
 	connError error
 	bindError error
-	testing   bool // Make "go race" happy
 }
 
 func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {
@@ -40,28 +39,10 @@ func (m *mockLDAPConnection) ModifyAdd(_ *bktype.LDAPRequest) error {
 }
 
 func (m *mockLDAPConnection) GetState() definitions.LDAPState {
-	if !m.testing {
-		return m.state
-	}
-
-	m.mutex.Lock()
-
-	defer m.mutex.Unlock()
-
 	return m.state
 }
 
 func (m *mockLDAPConnection) SetState(state definitions.LDAPState) {
-	if !m.testing {
-		m.state = state
-
-		return
-	}
-
-	m.mutex.Lock()
-
-	defer m.mutex.Unlock()
-
 	m.state = state
 }
 
