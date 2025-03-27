@@ -42,10 +42,10 @@ type LDAPPool interface {
 	SetIdleConnections(bind bool) error
 
 	// HandleLookupRequest handles an LDAP lookup request and utilizes a WaitGroup for managing concurrency.
-	HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup)
+	HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) error
 
 	// HandleAuthRequest processes an LDAP authentication request and manages concurrency using a WaitGroup.
-	HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup)
+	HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) error
 
 	// Close releases all resources used by the LDAPPool and terminates any background processes or connections.
 	Close()
@@ -111,23 +111,35 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 }
 
 // HandleLookupRequest processes an LDAP lookup request using a connection pool and manages asynchronous execution.
-func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) {
-	connNumber := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
-
+func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) error {
 	ldapWaitGroup.Add(1)
+
+	connNumber, err := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
+	if err != nil {
+		return err
+	}
+
 	stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Inc()
 
 	go l.proccessLookupRequest(connNumber, ldapRequest, ldapWaitGroup)
+
+	return nil
 }
 
 // HandleAuthRequest processes an LDAP authentication request using the connection pool and updates process metrics.
-func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) {
-	connNumber := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
-
+func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) error {
 	ldapWaitGroup.Add(1)
+
+	connNumber, err := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
+	if err != nil {
+		return err
+	}
+
 	stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(l.name).Inc()
 
 	l.processAuthRequest(connNumber, ldapAuthRequest, ldapWaitGroup)
+
+	return nil
 }
 
 // Close terminates all active connections in the LDAP pool and logs information about the closure process.
@@ -423,25 +435,49 @@ func (l *ldapPoolImpl) logConnectionError(guid *string, err error) {
 }
 
 // waitForFreeConnection waits for a free connection if the LDAP connection pool is exhausted and logs related events.
-func (l *ldapPoolImpl) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWaitGroup *sync.WaitGroup) {
+func (l *ldapPoolImpl) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWaitGroup *sync.WaitGroup) error {
+	connectAbortTimeout := config.GetFile().GetLDAPConfigConnectAbortTimeout()
+	if connectAbortTimeout == 0 {
+		connectAbortTimeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
+
+	defer cancel()
+
 	if ldapConnIndex == definitions.LDAPPoolExhausted {
 		level.Warn(log.Logger).Log(
 			definitions.LogKeyLDAPPoolName, l.name,
 			definitions.LogKeyGUID, *guid,
 			definitions.LogKeyMsg, "Pool exhausted. Waiting for a free connection")
 
-		// XXX: Very hard decision, but an exhausted pool needs a human interaction!
-		ldapWaitGroup.Wait()
+		done := make(chan struct{})
 
-		level.Warn(log.Logger).Log(
-			definitions.LogKeyLDAPPoolName, l.name,
-			definitions.LogKeyGUID, *guid,
-			definitions.LogKeyMsg, "Pool got free connections")
+		go func() {
+			ldapWaitGroup.Wait()
+
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context timeout while waiting for LDAP availability")
+
+		case <-done:
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyLDAPPoolName, l.name,
+				definitions.LogKeyGUID, *guid,
+				definitions.LogKeyMsg, "Pool got free connections")
+
+			return nil
+		}
 	}
+
+	return nil
 }
 
 // getConnection retrieves an available LDAP connection number from the pool and waits if the pool is exhausted.
-func (l *ldapPoolImpl) getConnection(guid *string, ldapWaitGroup *sync.WaitGroup) (connNumber int) {
+func (l *ldapPoolImpl) getConnection(guid *string, ldapWaitGroup *sync.WaitGroup) (connNumber int, err error) {
 EndlessLoop:
 	for {
 		for index := 0; index < len(l.conn); index++ {
@@ -451,10 +487,12 @@ EndlessLoop:
 			}
 		}
 
-		l.waitForFreeConnection(guid, connNumber, ldapWaitGroup)
+		if err = l.waitForFreeConnection(guid, connNumber, ldapWaitGroup); err != nil {
+			return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
+		}
 	}
 
-	return connNumber
+	return connNumber, nil
 }
 
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.

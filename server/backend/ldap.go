@@ -59,7 +59,11 @@ func LDAPMainWorker(ctx context.Context) {
 				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 			}
 
-			ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup)
+			if err := ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup); err != nil {
+				ldapWaitGroup.Done()
+
+				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+			}
 		}
 	}
 }
@@ -93,7 +97,11 @@ func LDAPAuthWorker(ctx context.Context) {
 				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 			}
 
-			ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup)
+			if err := ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup); err != nil {
+				ldapWaitGroup.Done()
+
+				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+			}
 		}
 	}
 }
