@@ -49,11 +49,11 @@ func LDAPMainWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetLookupEndChan() <- bktype.Done{}
+			GetChannel().GetLdapChannel().GetLookupEndChan(DefaultBackendName) <- bktype.Done{}
 
 			return
 
-		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan():
+		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(DefaultBackendName):
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(true); err != nil {
 				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
@@ -88,10 +88,10 @@ func LDAPAuthWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetAuthEndChan() <- bktype.Done{}
+			GetChannel().GetLdapChannel().GetAuthEndChan(DefaultBackendName) <- bktype.Done{}
 
 			return
-		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan():
+		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(DefaultBackendName):
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(false); err != nil {
 				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
@@ -142,7 +142,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(fieldValues, scope, ctx)
 
-		GetChannel().GetLdapChannel().GetLookupRequestChan() <- ldapRequest
+		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
 
 		return processReply(L, ldapRequest.GetLDAPReplyChan())
 	}
@@ -153,6 +153,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
 		"session":    definitions.LuaLiteralString,
+		"pool_name":  definitions.LuaLiteralString,
 		"basedn":     definitions.LuaLiteralString,
 		"filter":     definitions.LuaLiteralString,
 		"scope":      definitions.LuaLiteralString,
@@ -162,6 +163,12 @@ func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.L
 	fieldValues := make(map[string]lua.LValue)
 	for field, typeExpected := range expectedFields {
 		if !validateField(L, table, field, typeExpected) {
+			if field == "pool_name" {
+				fieldValues[field] = lua.LString(DefaultBackendName)
+
+				continue
+			}
+
 			return nil
 		}
 
@@ -177,9 +184,11 @@ func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.L
 func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType string) bool {
 	lv := L.GetField(table, fieldName)
 	if lua.LVIsFalse(lv) {
-		L.RaiseError("%s is required", fieldName)
+		if fieldName == "pool_name" {
+			return false
+		}
 
-		return false
+		L.RaiseError("%s is required", fieldName)
 	}
 
 	switch fieldType {
@@ -192,7 +201,7 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 			L.RaiseError("%s should be a table", fieldName)
 		}
 	default:
-		return false
+		L.RaiseError("unknown field type %s", fieldType)
 	}
 
 	return true
