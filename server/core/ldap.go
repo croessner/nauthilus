@@ -177,8 +177,9 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 	}
 
+	// TODO: User matching pool name
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(backend.DefaultBackendName) <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -237,7 +238,8 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			HTTPClientContext: auth.HTTPClientContext,
 		}
 
-		backend.GetChannel().GetLdapChannel().GetAuthRequestChan(backend.DefaultBackendName) <- ldapUserBindRequest
+		// TODO: User matching pool name
+		backend.GetChannel().GetLdapChannel().GetAuthRequestChan(definitions.DefaultBackendName) <- ldapUserBindRequest
 
 		ldapReply = <-ldapReplyChan
 
@@ -335,8 +337,9 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 	}
 
+	// TODO: User matching pool name
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(backend.DefaultBackendName) <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -427,7 +430,8 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(backend.DefaultBackendName) <- ldapRequest
+	// TODO: User matching pool name
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 

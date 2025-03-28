@@ -31,14 +31,15 @@ import (
 )
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
-func LDAPMainWorker(ctx context.Context) {
+func LDAPMainWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup)
+	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
 	if ldapPool == nil {
 		return
 	}
 
+	// TODO: Idle pool size for optional pools
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 
@@ -49,11 +50,11 @@ func LDAPMainWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetLookupEndChan(DefaultBackendName) <- bktype.Done{}
+			GetChannel().GetLdapChannel().GetLookupEndChan(poolName) <- bktype.Done{}
 
 			return
 
-		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(DefaultBackendName):
+		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(poolName):
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(true); err != nil {
 				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
@@ -70,14 +71,15 @@ func LDAPMainWorker(ctx context.Context) {
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
-func LDAPAuthWorker(ctx context.Context) {
+func LDAPAuthWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth)
+	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth, poolName)
 	if ldapPool == nil {
 		return
 	}
 
+	// TODO: Idle pool size for optional pools
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 
@@ -88,10 +90,10 @@ func LDAPAuthWorker(ctx context.Context) {
 		case <-ctx.Done():
 			ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetAuthEndChan(DefaultBackendName) <- bktype.Done{}
+			GetChannel().GetLdapChannel().GetAuthEndChan(poolName) <- bktype.Done{}
 
 			return
-		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(DefaultBackendName):
+		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(poolName):
 			// Check that we have enough idle connections.
 			if err := ldapPool.SetIdleConnections(false); err != nil {
 				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
@@ -164,7 +166,7 @@ func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.L
 	for field, typeExpected := range expectedFields {
 		if !validateField(L, table, field, typeExpected) {
 			if field == "pool_name" {
-				fieldValues[field] = lua.LString(DefaultBackendName)
+				fieldValues[field] = lua.LString(definitions.DefaultBackendName)
 
 				continue
 			}

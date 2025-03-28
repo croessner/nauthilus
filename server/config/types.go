@@ -17,6 +17,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -212,6 +213,7 @@ func NewProtocol(protocol string) *Protocol {
 // Backend is a password Database container.
 type Backend struct {
 	backend definitions.Backend
+	name    string
 }
 
 func (b *Backend) String() string {
@@ -233,6 +235,13 @@ func (b *Backend) Set(value string) error {
 	}
 
 	value = strings.TrimSpace(value)
+
+	regex := regexp.MustCompile(`^(ldap|lua)\((.*?)\)$`)
+
+	if matches := regex.FindStringSubmatch(value); matches != nil {
+		b.name = strings.TrimSpace(matches[2])
+		value = matches[1]
+	}
 
 	switch value {
 	case definitions.BackendCacheName:
@@ -264,6 +273,15 @@ func (b *Backend) Get() definitions.Backend {
 	}
 
 	return b.backend
+}
+
+// GetName returns the name of the Backend instance or an empty string if the instance is nil.
+func (b *Backend) GetName() string {
+	if b == nil {
+		return ""
+	}
+
+	return b.name
 }
 
 // Feature is a container for Nauthilus features.

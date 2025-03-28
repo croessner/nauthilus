@@ -29,9 +29,6 @@ var (
 	initChannel sync.Once
 )
 
-// DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
-const DefaultBackendName = "default"
-
 // Channel is an interface comprising methods to retrieve LDAPChannel and LuaChannel instances.
 type Channel interface {
 	// GetLdapChannel retrieves and returns the LDAPChannel instance associated with the implementation of the Channel interface.
@@ -52,7 +49,7 @@ type channelImpl struct {
 func (c *channelImpl) GetLdapChannel() LDAPChannel {
 	c.ldapOnce.Do(func() {
 		if c.ldapChannel == nil {
-			c.ldapChannel = NewLDAPChannel(DefaultBackendName)
+			c.ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
 		}
 	})
 
@@ -63,7 +60,7 @@ func (c *channelImpl) GetLdapChannel() LDAPChannel {
 func (c *channelImpl) GetLuaChannel() LuaChannel {
 	c.luaOnce.Do(func() {
 		if c.luaChannel == nil {
-			c.luaChannel = NewLuaChannel(DefaultBackendName)
+			c.luaChannel = NewLuaChannel(definitions.DefaultBackendName)
 		}
 	})
 
@@ -86,8 +83,8 @@ func GetChannel() Channel {
 // NewChannel initializes and returns a new instance of the Channel interface implementation.
 func NewChannel() Channel {
 	return &channelImpl{
-		ldapChannel: NewLDAPChannel(DefaultBackendName),
-		luaChannel:  NewLuaChannel(DefaultBackendName),
+		ldapChannel: NewLDAPChannel(definitions.DefaultBackendName),
+		luaChannel:  NewLuaChannel(definitions.DefaultBackendName),
 	}
 }
 
@@ -107,6 +104,9 @@ type LDAPChannel interface {
 
 	// GetPoolNames retrieves and returns a list of names for all configured LDAP connection pools.
 	GetPoolNames() []string
+
+	// AddChannel creates and initializes all necessary channels for the specified LDAP connection pool by poolName.
+	AddChannel(poolName string) error
 }
 
 type ldapChannelImpl struct {
@@ -163,6 +163,21 @@ func (c *ldapChannelImpl) GetPoolNames() []string {
 	return poolNames
 }
 
+// AddChannel creates and initializes the necessary channels for a specific pool name in the `ldapChannelImpl` instance.
+// Returns an error if the provided pool name matches the reserved `DefaultBackendName`.
+func (c *ldapChannelImpl) AddChannel(poolName string) error {
+	if poolName == definitions.DefaultBackendName {
+		return fmt.Errorf("pool name cannot be %s", definitions.DefaultBackendName)
+	}
+
+	c.lookupEndChan[poolName] = make(chan bktype.Done, 1)
+	c.authEndChan[poolName] = make(chan bktype.Done, 1)
+	c.lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, config.GetFile().GetLDAP().Config.LookupPoolSize)
+	c.authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, config.GetFile().GetLDAP().Config.AuthPoolSize)
+
+	return nil
+}
+
 var _ LDAPChannel = &ldapChannelImpl{}
 
 func NewLDAPChannel(poolName string) LDAPChannel {
@@ -194,6 +209,10 @@ type LuaChannel interface {
 
 	// GetBackendNames returns a list of all available backend names configured in the LuaChannel implementation.
 	GetBackendNames() []string
+
+	// AddChannel adds a new channel for the specified backend identified by the backendName.
+	// Returns an error if the backendName is invalid or the channel could not be created.
+	AddChannel(backendName string) error
 }
 
 type LuaChannelImpl struct {
@@ -228,6 +247,18 @@ func (c *LuaChannelImpl) GetBackendNames() []string {
 	}
 
 	return backendNames
+}
+
+// AddChannel initializes channels for request and completion handling for a specified backend name. Returns an error if the backend name is invalid.
+func (c *LuaChannelImpl) AddChannel(backendName string) error {
+	if backendName == definitions.DefaultBackendName {
+		return fmt.Errorf("backend name cannot be %s", definitions.DefaultBackendName)
+	}
+
+	c.lookupEndChan[backendName] = make(chan bktype.Done, 1)
+	c.lookupReqChan[backendName] = make(chan *bktype.LuaRequest, definitions.MaxChannelSize)
+
+	return nil
 }
 
 var _ LuaChannel = &LuaChannelImpl{}

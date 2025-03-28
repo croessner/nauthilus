@@ -58,7 +58,7 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It ensures graceful termination by signaling completion through the Done channel.
-func LuaMainWorker(ctx context.Context) {
+func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	scriptPath := config.GetFile().GetLuaScriptPath()
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
@@ -69,11 +69,11 @@ func LuaMainWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			GetChannel().GetLuaChannel().GetLookupEndChan(DefaultBackendName) <- bktype.Done{}
+			GetChannel().GetLuaChannel().GetLookupEndChan(backendName) <- bktype.Done{}
 
 			return
 
-		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(DefaultBackendName):
+		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(backendName):
 			go handleLuaRequest(ctx, luaRequest, compiledScript)
 		}
 	}
@@ -216,6 +216,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 		processError(err, luaRequest, logs)
 	}
 
+	// TODO: HAndle optional Lua backend scripts
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
 		processError(err, luaRequest, logs)
 	}

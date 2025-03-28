@@ -303,7 +303,6 @@ const (
 	LogLevelDebug
 )
 
-// Supported backends.
 const (
 	// BackendUnknown represents an unknown backend
 	BackendUnknown Backend = iota
@@ -1622,3 +1621,6 @@ const (
 	// NoTLS represents a constant string indicating that the client does not have transport security.
 	NoTLS = "Client has no transport security"
 )
+
+// DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
+const DefaultBackendName = "__meta_default__"

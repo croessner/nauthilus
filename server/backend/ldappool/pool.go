@@ -169,29 +169,71 @@ func (l *ldapPoolImpl) Close() {
 var _ LDAPPool = (*ldapPoolImpl)(nil)
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
-func NewPool(ctx context.Context, poolType int) LDAPPool {
+func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	var (
-		poolSize int
-		name     string
-		conn     []LDAPConnection
-		conf     []*config.LDAPConf
+		poolSize      int
+		name          string
+		conn          []LDAPConnection
+		conf          []*config.LDAPConf
+		serverURIs    []string
+		bindDN        string
+		bindPW        string
+		startTLS      bool
+		tlsSkipVerify bool
+		tlsCAFile     string
+		tlsClientCert string
+		tlsClientKey  string
+		saslExternal  bool
 	)
 
 	if config.GetFile().GetLDAP() == nil {
 		return nil
 	}
 
+	poolMap := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+
+	if poolName == definitions.DefaultBackendName {
+		serverURIs = config.GetFile().GetLDAPConfigServerURIs()
+		bindDN = config.GetFile().GetLDAPConfigBindDN()
+		bindPW = config.GetFile().GetLDAPConfigBindPW()
+		startTLS = config.GetFile().GetLDAPConfigStartTLS()
+		tlsSkipVerify = config.GetFile().GetLDAPConfigTLSSkipVerify()
+		tlsCAFile = config.GetFile().GetLDAPConfigTLSCAFile()
+		tlsClientCert = config.GetFile().GetLDAPConfigTLSClientCert()
+		tlsClientKey = config.GetFile().GetLDAPConfigTLSClientKey()
+		saslExternal = config.GetFile().GetLDAPConfigSASLExternal()
+	} else {
+		serverURIs = poolMap[poolName].ServerURIs
+		bindDN = poolMap[poolName].BindDN
+		bindPW = poolMap[poolName].BindPW
+		startTLS = poolMap[poolName].StartTLS
+		tlsSkipVerify = poolMap[poolName].TLSSkipVerify
+		tlsCAFile = poolMap[poolName].TLSCAFile
+		tlsClientCert = poolMap[poolName].TLSClientCert
+		tlsClientKey = poolMap[poolName].TLSClientKey
+		saslExternal = poolMap[poolName].SASLExternal
+	}
+
 	switch poolType {
 	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
 		name = "lookup"
-		poolSize = config.GetFile().GetLDAPConfigLookupPoolSize()
+
+		if poolName == definitions.DefaultBackendName {
+			poolSize = config.GetFile().GetLDAPConfigLookupPoolSize()
+		} else {
+			poolSize = poolMap[poolName].LookupPoolSize
+		}
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]LDAPConnection, poolSize)
 
 	case definitions.LDAPPoolAuth:
 		name = "auth"
-		poolSize = config.GetFile().GetLDAPConfigAuthPoolSize()
+		if poolName == definitions.DefaultBackendName {
+			poolSize = config.GetFile().GetLDAPConfigAuthPoolSize()
+		} else {
+			poolSize = poolMap[poolName].AuthPoolSize
+		}
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]LDAPConnection, poolSize)
@@ -203,15 +245,15 @@ func NewPool(ctx context.Context, poolType int) LDAPPool {
 		conf[index] = &config.LDAPConf{}
 		conn[index] = &LDAPConnectionImpl{}
 
-		conf[index].ServerURIs = config.GetFile().GetLDAPConfigServerURIs()
-		conf[index].BindDN = config.GetFile().GetLDAPConfigBindDN()
-		conf[index].BindPW = config.GetFile().GetLDAPConfigBindPW()
-		conf[index].StartTLS = config.GetFile().GetLDAPConfigStartTLS()
-		conf[index].TLSSkipVerify = config.GetFile().GetLDAPConfigTLSSkipVerify()
-		conf[index].TLSCAFile = config.GetFile().GetLDAPConfigTLSCAFile()
-		conf[index].TLSClientCert = config.GetFile().GetLDAPConfigTLSClientCert()
-		conf[index].TLSClientKey = config.GetFile().GetLDAPConfigTLSClientKey()
-		conf[index].SASLExternal = config.GetFile().GetLDAPConfigSASLExternal()
+		conf[index].ServerURIs = serverURIs
+		conf[index].BindDN = bindDN
+		conf[index].BindPW = bindPW
+		conf[index].StartTLS = startTLS
+		conf[index].TLSSkipVerify = tlsSkipVerify
+		conf[index].TLSCAFile = tlsCAFile
+		conf[index].TLSClientCert = tlsClientCert
+		conf[index].TLSClientKey = tlsClientKey
+		conf[index].SASLExternal = saslExternal
 
 		conn[index].SetState(definitions.LDAPStateClosed)
 	}

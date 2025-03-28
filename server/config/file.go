@@ -109,6 +109,9 @@ type File interface {
 	// GetLuaSearchProtocol retrieves the Lua search protocol for a given protocol name.
 	GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
 
+	// GetLuaOptionalBackends retrieves a map of Lua configurations for optional backends, indexed by their names.
+	GetLuaOptionalBackends() map[string]*LuaConf
+
 	/*
 		LDAP-related methods
 	*/
@@ -163,6 +166,9 @@ type File interface {
 
 	// GetLDAPSearchProtocol retrieves the LDAP search protocol for a given protocol name.
 	GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error)
+
+	// GetLDAPOptionalPools returns a map of optional LDAP pool configurations, indexed by their respective keys.
+	GetLDAPOptionalPools() map[string]*LDAPConf
 
 	/*
 		Backend server-related methods
@@ -280,8 +286,8 @@ type FileSettings struct {
 	BackendServerMonitoring *BackendServerMonitoring `mapstructure:"backend_server_monitoring" valdiate:"omitempty"`
 	BruteForce              *BruteForceSection       `mapstructure:"brute_force" valdiate:"omitempty"`
 	Lua                     *LuaSection              `mapstructure:"lua" valdiate:"omitempty"`
-	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" valdiate:"omitempty"`
 	LDAP                    *LDAPSection             `mapstructure:"ldap" valdiate:"omitempty"`
+	Oauth2                  *Oauth2Section           `mapstructure:"oauth2" valdiate:"omitempty"`
 	Other                   map[string]any           `mapstructure:",remain"`
 	Mu                      sync.Mutex
 }
@@ -690,6 +696,25 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtoc
 	return f.GetLDAPSearchProtocol(definitions.ProtoDefault)
 }
 
+// GetLDAPOptionalPools retrieves a map of optional LDAP pool configurations from the file settings.
+// Returns nil if the file settings or LDAP section is not properly configured.
+func (f *FileSettings) GetLDAPOptionalPools() map[string]*LDAPConf {
+	if f == nil {
+		return nil
+	}
+
+	if f.GetLDAP() == nil {
+		return nil
+	}
+
+	pools := f.GetLDAP().GetOptionalLDAPPools()
+	if pools == nil {
+		return nil
+	}
+
+	return pools
+}
+
 /*
  * Lua config
  */
@@ -776,6 +801,24 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol
 	}
 
 	return f.GetLuaSearchProtocol(definitions.ProtoDefault)
+}
+
+// GetLuaOptionalBackends retrieves the optional Lua backends configuration from FileSettings. Returns nil if unavailable.
+func (f *FileSettings) GetLuaOptionalBackends() map[string]*LuaConf {
+	if f == nil {
+		return nil
+	}
+
+	if f.GetLua() == nil {
+		return nil
+	}
+
+	backends := f.GetLua().GetOptionalLuaBackends()
+	if backends == nil {
+		return nil
+	}
+
+	return backends
 }
 
 // HaveLuaFilters is a method on the FileSettings struct.
@@ -1916,6 +1959,7 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
+	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
 
 	if err = validate.Struct(f); err != nil {
 		if stderrors.As(err, &validationErrors) {
