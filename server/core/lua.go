@@ -91,7 +91,7 @@ func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan() <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -179,7 +179,7 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan() <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -232,7 +232,7 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan() <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 

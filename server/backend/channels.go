@@ -16,6 +16,7 @@
 package backend
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -27,6 +28,9 @@ var (
 	channel     Channel
 	initChannel sync.Once
 )
+
+// DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
+const DefaultBackendName = "default"
 
 // Channel is an interface comprising methods to retrieve LDAPChannel and LuaChannel instances.
 type Channel interface {
@@ -48,7 +52,7 @@ type channelImpl struct {
 func (c *channelImpl) GetLdapChannel() LDAPChannel {
 	c.ldapOnce.Do(func() {
 		if c.ldapChannel == nil {
-			c.ldapChannel = NewLDAPChannel()
+			c.ldapChannel = NewLDAPChannel(DefaultBackendName)
 		}
 	})
 
@@ -59,7 +63,7 @@ func (c *channelImpl) GetLdapChannel() LDAPChannel {
 func (c *channelImpl) GetLuaChannel() LuaChannel {
 	c.luaOnce.Do(func() {
 		if c.luaChannel == nil {
-			c.luaChannel = NewLuaChannel()
+			c.luaChannel = NewLuaChannel(DefaultBackendName)
 		}
 	})
 
@@ -82,94 +86,162 @@ func GetChannel() Channel {
 // NewChannel initializes and returns a new instance of the Channel interface implementation.
 func NewChannel() Channel {
 	return &channelImpl{
-		ldapChannel: NewLDAPChannel(),
-		luaChannel:  NewLuaChannel(),
+		ldapChannel: NewLDAPChannel(DefaultBackendName),
+		luaChannel:  NewLuaChannel(DefaultBackendName),
 	}
 }
 
 // LDAPChannel defines an interface for managing LDAP-related channels for communication and operation handling.
 type LDAPChannel interface {
 	// GetLookupEndChan returns a channel that signals the completion of lookup operations.
-	GetLookupEndChan() chan bktype.Done
+	GetLookupEndChan(poolName string) chan bktype.Done
 
 	// GetAuthEndChan returns the channel used to signal the completion of authentication operations.
-	GetAuthEndChan() chan bktype.Done
+	GetAuthEndChan(poolName string) chan bktype.Done
 
 	// GetLookupRequestChan retrieves the LDAPRequest channel associated with lookup operations.
-	GetLookupRequestChan() chan *bktype.LDAPRequest
+	GetLookupRequestChan(poolName string) chan *bktype.LDAPRequest
 
 	// GetAuthRequestChan retrieves the LDAPAuthRequest channel for handling authentication requests.
-	GetAuthRequestChan() chan *bktype.LDAPAuthRequest
+	GetAuthRequestChan(poolName string) chan *bktype.LDAPAuthRequest
+
+	// GetPoolNames retrieves and returns a list of names for all configured LDAP connection pools.
+	GetPoolNames() []string
 }
 
 type ldapChannelImpl struct {
-	lookupEndChan chan bktype.Done
-	authEndChan   chan bktype.Done
-	lookupReqChan chan *bktype.LDAPRequest
-	authReqChan   chan *bktype.LDAPAuthRequest
+	lookupEndChan map[string]chan bktype.Done
+	authEndChan   map[string]chan bktype.Done
+	lookupReqChan map[string]chan *bktype.LDAPRequest
+	authReqChan   map[string]chan *bktype.LDAPAuthRequest
 }
 
 // GetLookupEndChan returns the channel used to signal the completion of lookup operations.
-func (c *ldapChannelImpl) GetLookupEndChan() chan bktype.Done {
-	return c.lookupEndChan
+func (c *ldapChannelImpl) GetLookupEndChan(poolName string) chan bktype.Done {
+	if _, okay := c.lookupEndChan[poolName]; !okay {
+		panic(fmt.Sprintf("pool name not found: %s", poolName))
+	}
+
+	return c.lookupEndChan[poolName]
 }
 
 // GetAuthEndChan returns the channel used to signal the completion of authentication operations.
-func (c *ldapChannelImpl) GetAuthEndChan() chan bktype.Done {
-	return c.authEndChan
+func (c *ldapChannelImpl) GetAuthEndChan(poolName string) chan bktype.Done {
+	if _, okay := c.authEndChan[poolName]; !okay {
+		panic(fmt.Sprintf("pool name not found: %s", poolName))
+	}
+
+	return c.authEndChan[poolName]
 }
 
 // GetLookupRequestChan returns the LDAP request channel associated with lookup operations.
-func (c *ldapChannelImpl) GetLookupRequestChan() chan *bktype.LDAPRequest {
-	return c.lookupReqChan
+func (c *ldapChannelImpl) GetLookupRequestChan(poolName string) chan *bktype.LDAPRequest {
+	if _, okay := c.lookupReqChan[poolName]; !okay {
+		panic(fmt.Sprintf("pool name not found: %s", poolName))
+	}
+
+	return c.lookupReqChan[poolName]
 }
 
 // GetAuthRequestChan retrieves the LDAP authentication request channel stored in the struct.
-func (c *ldapChannelImpl) GetAuthRequestChan() chan *bktype.LDAPAuthRequest {
-	return c.authReqChan
+func (c *ldapChannelImpl) GetAuthRequestChan(poolName string) chan *bktype.LDAPAuthRequest {
+	if _, okay := c.authReqChan[poolName]; !okay {
+		panic(fmt.Sprintf("pool name not found: %s", poolName))
+	}
+
+	return c.authReqChan[poolName]
+}
+
+// GetPoolNames retrieves all pool names as a slice of strings from the `lookupEndChan` map in the `ldapChannelImpl` struct.
+func (c *ldapChannelImpl) GetPoolNames() []string {
+	poolNames := make([]string, 0, len(c.lookupEndChan))
+
+	for poolName := range c.lookupEndChan {
+		poolNames = append(poolNames, poolName)
+	}
+
+	return poolNames
 }
 
 var _ LDAPChannel = &ldapChannelImpl{}
 
-func NewLDAPChannel() LDAPChannel {
+func NewLDAPChannel(poolName string) LDAPChannel {
+	lookupEndChan := make(map[string]chan bktype.Done)
+	authEndChan := make(map[string]chan bktype.Done)
+	lookupReqChan := make(map[string]chan *bktype.LDAPRequest)
+	authReqChan := make(map[string]chan *bktype.LDAPAuthRequest)
+
+	lookupEndChan[poolName] = make(chan bktype.Done, 1)
+	authEndChan[poolName] = make(chan bktype.Done, 1)
+	lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, config.GetFile().GetLDAP().Config.LookupPoolSize)
+	authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, config.GetFile().GetLDAP().Config.AuthPoolSize)
+
 	return &ldapChannelImpl{
-		lookupEndChan: make(chan bktype.Done),
-		authEndChan:   make(chan bktype.Done),
-		lookupReqChan: make(chan *bktype.LDAPRequest, config.GetFile().GetLDAP().Config.LookupPoolSize),
-		authReqChan:   make(chan *bktype.LDAPAuthRequest, config.GetFile().GetLDAP().Config.AuthPoolSize),
+		lookupEndChan: lookupEndChan,
+		authEndChan:   authEndChan,
+		lookupReqChan: lookupReqChan,
+		authReqChan:   authReqChan,
 	}
 }
 
 // LuaChannel defines an interface for managing Lua-related channels used for communication and request handling.
 type LuaChannel interface {
 	// GetLookupEndChan returns a channel used to signal the completion of lookup operations.
-	GetLookupEndChan() chan bktype.Done
+	GetLookupEndChan(backendName string) chan bktype.Done
 
 	// GetLookupRequestChan retrieves the LuaRequest channel used for managing Lua-related request operations.
-	GetLookupRequestChan() chan *bktype.LuaRequest
+	GetLookupRequestChan(backendName string) chan *bktype.LuaRequest
+
+	// GetBackendNames returns a list of all available backend names configured in the LuaChannel implementation.
+	GetBackendNames() []string
 }
 
 type LuaChannelImpl struct {
-	lookupEndChan chan bktype.Done
-	lookupReqChan chan *bktype.LuaRequest
+	lookupEndChan map[string]chan bktype.Done
+	lookupReqChan map[string]chan *bktype.LuaRequest
 }
 
 // GetLookupEndChan returns a channel of type Done that signals the end of a lookup operation.
-func (c *LuaChannelImpl) GetLookupEndChan() chan bktype.Done {
-	return c.lookupEndChan
+func (c *LuaChannelImpl) GetLookupEndChan(backendName string) chan bktype.Done {
+	if _, okay := c.lookupEndChan[backendName]; !okay {
+		panic(fmt.Sprintf("backend name not found: %s", backendName))
+	}
+
+	return c.lookupEndChan[backendName]
 }
 
 // GetLookupRequestChan returns the pointer to a LuaRequest used for handling Lua requests in the channel.
-func (c *LuaChannelImpl) GetLookupRequestChan() chan *bktype.LuaRequest {
-	return c.lookupReqChan
+func (c *LuaChannelImpl) GetLookupRequestChan(backendName string) chan *bktype.LuaRequest {
+	if _, okay := c.lookupReqChan[backendName]; !okay {
+		panic(fmt.Sprintf("backend name not found: %s", backendName))
+	}
+
+	return c.lookupReqChan[backendName]
+}
+
+// GetBackendNames retrieves a list of backend names from the LuaChannelImpl's lookupEndChan map.
+func (c *LuaChannelImpl) GetBackendNames() []string {
+	backendNames := make([]string, 0, len(c.lookupEndChan))
+
+	for backendName := range c.lookupEndChan {
+		backendNames = append(backendNames, backendName)
+	}
+
+	return backendNames
 }
 
 var _ LuaChannel = &LuaChannelImpl{}
 
 // NewLuaChannel creates and returns a new instance of LuaChannel, initialized as a LuaChannelImpl.
-func NewLuaChannel() LuaChannel {
+func NewLuaChannel(backendName string) LuaChannel {
+	lookupEndChan := make(map[string]chan bktype.Done)
+	lookupReqChan := make(map[string]chan *bktype.LuaRequest)
+
+	lookupEndChan[backendName] = make(chan bktype.Done, 1)
+	lookupReqChan[backendName] = make(chan *bktype.LuaRequest, definitions.MaxChannelSize)
+
 	return &LuaChannelImpl{
-		lookupEndChan: make(chan bktype.Done),
-		lookupReqChan: make(chan *bktype.LuaRequest, definitions.MaxChannelSize),
+		lookupEndChan: lookupEndChan,
+		lookupReqChan: lookupReqChan,
 	}
 }

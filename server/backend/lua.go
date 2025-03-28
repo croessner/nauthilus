@@ -69,11 +69,11 @@ func LuaMainWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			GetChannel().GetLuaChannel().GetLookupEndChan() <- bktype.Done{}
+			GetChannel().GetLuaChannel().GetLookupEndChan(DefaultBackendName) <- bktype.Done{}
 
 			return
 
-		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan():
+		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(DefaultBackendName):
 			go handleLuaRequest(ctx, luaRequest, compiledScript)
 		}
 	}

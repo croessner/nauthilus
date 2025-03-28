@@ -315,13 +315,21 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 func handleBackend(passDB *config.Backend) {
 	switch passDB.Get() {
 	case definitions.BackendLDAP:
-		<-backend.GetChannel().GetLdapChannel().GetLookupEndChan()
+		poolNames := backend.GetChannel().GetLdapChannel().GetPoolNames()
+
+		for _, poolName := range poolNames {
+			<-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName)
+		}
 
 		if !config.GetFile().LDAPHavePoolOnly() {
-			<-backend.GetChannel().GetLdapChannel().GetAuthEndChan()
+			for _, poolName := range poolNames {
+				<-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName)
+			}
 		}
 	case definitions.BackendLua:
-		<-backend.GetChannel().GetLuaChannel().GetLookupEndChan()
+		for _, backendName := range backend.GetChannel().GetLuaChannel().GetBackendNames() {
+			<-backend.GetChannel().GetLuaChannel().GetLookupEndChan(backendName)
+		}
 	case definitions.BackendCache:
 	default:
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
@@ -332,12 +340,18 @@ func handleBackend(passDB *config.Backend) {
 func handleLDAPBackend(lookup, auth *contextTuple) {
 	stopContext(lookup)
 
-	<-backend.GetChannel().GetLdapChannel().GetLookupEndChan()
+	poolNames := backend.GetChannel().GetLdapChannel().GetPoolNames()
+
+	for _, poolName := range poolNames {
+		<-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName)
+	}
 
 	if !config.GetFile().LDAPHavePoolOnly() {
 		stopContext(auth)
 
-		<-backend.GetChannel().GetLdapChannel().GetAuthEndChan()
+		for _, poolName := range poolNames {
+			<-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName)
+		}
 	}
 }
 
@@ -345,7 +359,9 @@ func handleLDAPBackend(lookup, auth *contextTuple) {
 func handleLuaBackend(lua *contextTuple) {
 	stopContext(lua)
 
-	<-backend.GetChannel().GetLuaChannel().GetLookupEndChan()
+	for _, backendName := range backend.GetChannel().GetLuaChannel().GetBackendNames() {
+		<-backend.GetChannel().GetLuaChannel().GetLookupEndChan(backendName)
+	}
 }
 
 // stopAndRestartActionWorker stops the current action context, waits for workers to complete, and restarts them with a new context.
