@@ -1,7 +1,6 @@
 module github.com/croessner/nauthilus
 
 go 1.24.0
-
 require (
 	github.com/biter777/countries v1.7.5
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
@@ -42,7 +41,7 @@ require (
 	github.com/vadv/gopher-lua-libs v0.5.0
 	github.com/yuin/gopher-lua v1.1.1
 	go.uber.org/zap v1.27.0
-	golang.org/x/net v0.37.0
+	golang.org/x/net v0.38.0
 	golang.org/x/oauth2 v0.28.0
 	golang.org/x/text v0.23.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
