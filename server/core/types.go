@@ -17,3 +17,15 @@ package core
 
 // Done is the value for channels to finish workers
 type Done struct{}
+
+// BackendManager defines an interface for managing authentication backends with methods for user authentication and account handling.
+type BackendManager interface {
+	// PassDB authenticates a user through a password database using the provided AuthState and returns the authentication result.
+	PassDB(auth *AuthState) (passDBResult *PassDBResult, err error)
+
+	// AccountDB retrieves a list of user accounts from the backend using the provided authentication state.
+	AccountDB(auth *AuthState) (accounts AccountList, err error)
+
+	// AddTOTPSecret adds the specified TOTP secret to the user's authentication state in the backend.
+	AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error)
+}

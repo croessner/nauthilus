@@ -24,14 +24,31 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 )
 
-// LuaPassDB implements the Lua password database backend.
-func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
-	var luaBackendResult *lualib.LuaBackendResult
+// luaManagerImpl provides an implementation for managing Lua connections and operations using a specific connection backend.
+type luaManagerImpl struct {
+	// backendName specifies the identifier for the Lua connection backend to be utilized by the manager implementation.
+	backendName string
+}
+
+// PassDB implements the Lua password database backend.
+func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+	var (
+		luaBackendResult *lualib.LuaBackendResult
+		protocol         *config.LuaSearchProtocol
+	)
 
 	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "lua_backend_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
+	}
+
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	} else {
+		if protocol.GetBackendName() != lm.backendName {
+			return
+		}
 	}
 
 	passDBResult = &PassDBResult{}
@@ -91,7 +108,7 @@ func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -151,14 +168,25 @@ func LuaPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	return
 }
 
-// luaAccountDB implements the list-account mode and returns all known users from a Lua backend logic.
-func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
-	var luaBackendResult *lualib.LuaBackendResult
+// AccountDB implements the list-account mode and returns all known users from a Lua backend logic.
+func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err error) {
+	var (
+		luaBackendResult *lualib.LuaBackendResult
+		protocol         *config.LuaSearchProtocol
+	)
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "lua_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
+	}
+
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	} else {
+		if protocol.GetBackendName() != lm.backendName {
+			return
+		}
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
@@ -179,7 +207,7 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -202,14 +230,25 @@ func luaAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	return accountSet.GetStringSlice(), nil
 }
 
-// luaAddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
-func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
-	var luaBackendResult *lualib.LuaBackendResult
+// AddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
+func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
+	var (
+		luaBackendResult *lualib.LuaBackendResult
+		protocol         *config.LuaSearchProtocol
+	)
 
 	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "lua_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
+	}
+
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	} else {
+		if protocol.GetBackendName() != lm.backendName {
+			return
+		}
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
@@ -232,7 +271,7 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(backend.DefaultBackendName) <- luaRequest
+	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
 
 	luaBackendResult = <-luaReplyChan
 
@@ -243,4 +282,13 @@ func luaAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	}
 
 	return
+}
+
+var _ BackendManager = &luaManagerImpl{}
+
+// NewLuaManager initializes and returns a new LuaManager instance with the specified backend name.
+func NewLuaManager(backendName string) BackendManager {
+	return &luaManagerImpl{
+		backendName: backendName,
+	}
 }

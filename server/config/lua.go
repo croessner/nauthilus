@@ -18,16 +18,38 @@ package config
 import (
 	"fmt"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/go-playground/validator/v10"
 )
 
 type LuaSection struct {
-	Actions  []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
-	Features []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
-	Filters  []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
-	Hooks    []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
-	Config   *LuaConf            `mapstructure:"config" validate:"omitempty"`
-	Search   []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	Actions             []LuaAction         `mapstructure:"actions" validate:"omitempty,dive"`
+	Features            []LuaFeature        `mapstructure:"features" validate:"omitempty,dive"`
+	Filters             []LuaFilter         `mapstructure:"filters" validate:"omitempty,dive"`
+	Hooks               []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
+	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
+	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive,validateOptionalLuaBackend"`
+	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive,validatNoDefInOptoLua"`
+}
+
+// validatNoDefInOptoLua ensures that when a BackendName is provided, the "default" protocol is not included in Protocols.
+// Returns true if the condition is satisfied, otherwise false.
+func validatNoDefInOptoLua(fl validator.FieldLevel) bool {
+	searchProtocol, ok := fl.Field().Interface().(LuaSearchProtocol)
+	if !ok {
+		return false
+	}
+
+	if searchProtocol.BackendName != "" {
+		for _, protocol := range searchProtocol.Protocols {
+			if protocol == "default" {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (l *LuaSection) String() string {
@@ -38,6 +60,7 @@ func (l *LuaSection) String() string {
 	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
+// GetConfig retrieves the `Config` field from the LuaSection. Returns nil if the LuaSection is nil.
 func (l *LuaSection) GetConfig() any {
 	if l == nil {
 		return nil
@@ -46,6 +69,7 @@ func (l *LuaSection) GetConfig() any {
 	return l.Config
 }
 
+// GetProtocols retrieves the search protocols from the LuaSection. Returns nil if the LuaSection is nil.
 func (l *LuaSection) GetProtocols() any {
 	if l == nil {
 		return nil
@@ -55,6 +79,30 @@ func (l *LuaSection) GetProtocols() any {
 }
 
 var _ GetterHandler = (*LuaSection)(nil)
+
+// GetOptionalLuaBackends retrieves the `OptionalLuaBackends` field from the LuaSection. Returns nil if the LuaSection is nil.
+func (l *LuaSection) GetOptionalLuaBackends() map[string]*LuaConf {
+	if l == nil {
+		return nil
+	}
+
+	return l.OptionalLuaBackends
+}
+
+// validateOptionalLuaBackend checks if a map of LuaConf structs has empty PackagePath and InitScriptPath for all entries.
+// Returns false if any entry has a non-empty PackagePath or InitScriptPath, otherwise returns true.
+func validateOptionalLuaBackend(fl validator.FieldLevel) bool {
+	optBbackend, ok := fl.Field().Interface().(LuaConf)
+	if !ok {
+		return false
+	}
+
+	if optBbackend.PackagePath != "" || optBbackend.InitScriptPath != "" {
+		return false
+	}
+
+	return true
+}
 
 type LuaAction struct {
 	ActionType string `mapstructure:"type" validate:"required,oneof=brute_force rbl tls_encryption relay_domains lua post"`
@@ -125,8 +173,9 @@ func (l *LuaConf) String() string {
 }
 
 type LuaSearchProtocol struct {
-	Protocols []string `mapstructure:"protocol"`
-	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
+	Protocols   []string `mapstructure:"protocol"`
+	CacheName   string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
+	BackendName string   `mapstructure:"backend_name" validate:"omitempty,printascii,excludesall= "`
 }
 
 // GetCacheName returns the Redis cache domain. It returns a DetailedError, if no value has
@@ -137,6 +186,15 @@ func (l *LuaSearchProtocol) GetCacheName() (string, error) {
 	}
 
 	return l.CacheName, nil
+}
+
+// GetBackendName returns the backend name configured in LuaSearchProtocol or a default value if not specified.
+func (l *LuaSearchProtocol) GetBackendName() string {
+	if l.BackendName == "" {
+		return definitions.DefaultBackendName
+	}
+
+	return l.BackendName
 }
 
 type LuaHooks struct {

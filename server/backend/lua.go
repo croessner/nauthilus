@@ -58,8 +58,33 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It ensures graceful termination by signaling completion through the Done channel.
-func LuaMainWorker(ctx context.Context) {
-	scriptPath := config.GetFile().GetLuaScriptPath()
+func LuaMainWorker(ctx context.Context, backendName string) (err error) {
+	var scriptPath string
+
+	errMsg := fmt.Sprintf("Lua backend script path not set for backend %s", backendName)
+
+	if backendName == definitions.DefaultBackendName {
+		scriptPath = config.GetFile().GetLuaScriptPath()
+		if scriptPath == "" {
+			panic(errMsg)
+		}
+	} else {
+		optionalBackends := config.GetFile().GetLua().GetOptionalLuaBackends()
+
+		if optionalBackends == nil {
+			panic(errMsg)
+		}
+
+		if backendConf, found := optionalBackends[backendName]; found {
+			if backendConf.BackendScriptPath != "" {
+				scriptPath = backendConf.BackendScriptPath
+			} else {
+				panic(errMsg)
+			}
+		} else {
+			panic(errMsg)
+		}
+	}
 
 	compiledScript, err := lualib.CompileLua(scriptPath)
 	if err != nil {
@@ -69,11 +94,11 @@ func LuaMainWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			GetChannel().GetLuaChannel().GetLookupEndChan(DefaultBackendName) <- bktype.Done{}
+			GetChannel().GetLuaChannel().GetLookupEndChan(backendName) <- bktype.Done{}
 
 			return
 
-		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(DefaultBackendName):
+		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(backendName):
 			go handleLuaRequest(ctx, luaRequest, compiledScript)
 		}
 	}

@@ -326,17 +326,28 @@ type ldapConnectionState struct {
 
 // setTLSConfig loads the CA chain and creates a TLS configuration for the LDAP connection. It takes the URL of the LDAP server, an array of certificates, and the LDAPConf configuration
 func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, certificates []tls.Certificate, ldapConf *config.LDAPConf) (*tls.Config, error) {
-	// Load CA chain
-	caCert, err := os.ReadFile(ldapConf.TLSCAFile)
-	if err != nil {
-		return nil, err
+	var (
+		caCertPool *x509.CertPool
+		err        error
+	)
+
+	// Load CA chain if specified
+	if ldapConf.TLSCAFile != "" {
+		caCert, err := os.ReadFile(ldapConf.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		caCertPool = x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to append CA certificate")
+		}
+	} else {
+		caCertPool = nil // It's okay to use nil for RootCAs in tls.Config
 	}
 
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-
+	// Determine host for ServerName
 	host := u.Host
-
 	if strings.Contains(u.Host, ":") {
 		host, _, err = net.SplitHostPort(u.Host)
 		if err != nil {

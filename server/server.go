@@ -405,16 +405,37 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 // startLDAPWorkers initializes and starts LDAP worker routines for lookup and authentication based on the configuration.
 // It launches the `LDAPMainWorker` for processing LDAP requests and, if applicable, `LDAPAuthWorker` for authentication.
 func startLDAPWorkers(store *contextStore) {
-	go backend.LDAPMainWorker(store.ldapLookup.ctx)
+	go backend.LDAPMainWorker(store.ldapLookup.ctx, definitions.DefaultBackendName)
 
 	if !config.GetFile().LDAPHavePoolOnly() {
-		go backend.LDAPAuthWorker(store.ldapAuth.ctx)
+		go backend.LDAPAuthWorker(store.ldapAuth.ctx, definitions.DefaultBackendName)
+	}
+
+	for _, ldapBackend := range config.GetFile().GetServer().GetBackends() {
+		if ldapBackend.GetName() != "" && ldapBackend.Get() == definitions.BackendLDAP {
+			backend.GetChannel().GetLdapChannel().AddChannel(ldapBackend.GetName())
+
+			go backend.LDAPMainWorker(store.ldapLookup.ctx, ldapBackend.GetName())
+
+			if !config.GetFile().LDAPHavePoolOnly() {
+				go backend.LDAPAuthWorker(store.ldapAuth.ctx, ldapBackend.GetName())
+			}
+		}
+
 	}
 }
 
 // startLuaWorker starts a goroutine that runs the backend.LuaMainWorker function
 func startLuaWorker(store *contextStore) {
-	go backend.LuaMainWorker(store.lua.ctx)
+	go backend.LuaMainWorker(store.lua.ctx, definitions.DefaultBackendName)
+
+	for _, luaBackend := range config.GetFile().GetServer().GetBackends() {
+		if luaBackend.GetName() != "" && luaBackend.Get() == definitions.BackendLua {
+			backend.GetChannel().GetLuaChannel().AddChannel(luaBackend.GetName())
+
+			go backend.LuaMainWorker(store.lua.ctx, luaBackend.GetName())
+		}
+	}
 }
 
 // handleServerRestart handles the server restart process. It stops the server, waits for the HTTP server to stop,

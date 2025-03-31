@@ -20,12 +20,34 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/go-playground/validator/v10"
 )
 
 type LDAPSection struct {
-	Config *LDAPConf            `mapstructure:"config" validate:"required"`
-	Search []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
+	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive"`
+	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive,validatNoDefInOptoLdap"`
+}
+
+// validatNoDefInOptoLdap validates that no "default" protocol exists when a PoolName is provided.
+// Returns true if the condition is satisfied, otherwise false.
+func validatNoDefInOptoLdap(fl validator.FieldLevel) bool {
+	searchProtocol, ok := fl.Field().Interface().(LDAPSearchProtocol)
+	if !ok {
+		return false
+	}
+
+	if searchProtocol.PoolName != "" {
+		for _, protocol := range searchProtocol.Protocols {
+			if protocol == "default" {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (l *LDAPSection) String() string {
@@ -36,6 +58,7 @@ func (l *LDAPSection) String() string {
 	return fmt.Sprintf("LDAPSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
+// GetConfig retrieves the LDAP configuration from the receiver. Returns nil if the receiver is nil.
 func (l *LDAPSection) GetConfig() any {
 	if l == nil {
 		return nil
@@ -44,6 +67,7 @@ func (l *LDAPSection) GetConfig() any {
 	return l.Config
 }
 
+// GetProtocols returns the search protocols of the LDAP configuration, or nil if the receiver is nil.
 func (l *LDAPSection) GetProtocols() any {
 	if l == nil {
 		return nil
@@ -53,6 +77,15 @@ func (l *LDAPSection) GetProtocols() any {
 }
 
 var _ GetterHandler = (*LDAPSection)(nil)
+
+// GetOptionalLDAPPools returns a map of LDAP pool configurations if available, or nil if the receiver is nil.
+func (l *LDAPSection) GetOptionalLDAPPools() map[string]*LDAPConf {
+	if l == nil {
+		return nil
+	}
+
+	return l.OptionalLDAPPools
+}
 
 type LDAPConf struct {
 	PoolOnly      bool `mapstructure:"pool_only"`
@@ -125,6 +158,7 @@ type LDAPAttributeMapping struct {
 type LDAPSearchProtocol struct {
 	Protocols []string `mapstructure:"protocol" validate:"required"`
 	CacheName string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
+	PoolName  string   `mapstructure:"pool_name" validate:"omitempty,printascii,excludesall= "`
 	BaseDN    string   `mapstructure:"base_dn" validate:"required,printascii"`
 	Scope     string   `mapstructure:"scope" validate:"omitempty,oneof=base one sub"`
 
@@ -177,6 +211,15 @@ func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 	}
 
 	return p.ListAccounts, nil
+}
+
+// GetPoolName returns the configured pool name. If no pool name is configured, it defaults to DefaultBackendName.
+func (p *LDAPSearchProtocol) GetPoolName() string {
+	if p.PoolName == "" {
+		return definitions.DefaultBackendName
+	}
+
+	return p.PoolName
 }
 
 // GetBaseDN returns the base DN that is used for each specific protocol.  It returns a DetailedError, if no value has
