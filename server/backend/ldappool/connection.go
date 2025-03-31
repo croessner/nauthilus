@@ -113,13 +113,12 @@ func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 // Returns an error if the connection could not be established or times out.
 func (l *LDAPConnectionImpl) Connect(guid *string, ldapConf *config.LDAPConf) error {
 	var (
-		connected    bool
-		timeout      bool
-		retryLimit   int
-		ldapCounter  int
-		err          error
-		certificates []tls.Certificate
-		tlsConfig    *tls.Config
+		connected   bool
+		timeout     bool
+		retryLimit  int
+		ldapCounter int
+		err         error
+		tlsConfig   *tls.Config
 	)
 
 	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
@@ -149,7 +148,7 @@ EndlessLoop:
 
 			u, _ := url.Parse(ldapConf.ServerURIs[ldapCounter])
 			if u.Scheme == "ldaps" || ldapConf.StartTLS {
-				tlsConfig, err = l.setTLSConfig(u, certificates, ldapConf)
+				tlsConfig, err = l.setTLSConfig(u, ldapConf)
 				if err != nil {
 					break EndlessLoop
 				}
@@ -325,17 +324,20 @@ type ldapConnectionState struct {
 }
 
 // setTLSConfig loads the CA chain and creates a TLS configuration for the LDAP connection. It takes the URL of the LDAP server, an array of certificates, and the LDAPConf configuration
-func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, certificates []tls.Certificate, ldapConf *config.LDAPConf) (*tls.Config, error) {
+func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf) (*tls.Config, error) {
 	var (
-		caCertPool *x509.CertPool
-		err        error
+		caCert       []byte
+		caCertPool   *x509.CertPool
+		certificates []tls.Certificate
+		cert         tls.Certificate
+		err          error
 	)
 
 	// Load CA chain if specified
 	if ldapConf.TLSCAFile != "" {
-		caCert, err := os.ReadFile(ldapConf.TLSCAFile)
+		caCert, err = os.ReadFile(ldapConf.TLSCAFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to load CA certificate: %w", err)
 		}
 
 		caCertPool = x509.NewCertPool()
@@ -344,6 +346,15 @@ func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, certificates []tls.Certifi
 		}
 	} else {
 		caCertPool = nil // It's okay to use nil for RootCAs in tls.Config
+	}
+
+	if ldapConf.TLSClientCert != "" && ldapConf.TLSClientKey != "" {
+		cert, err = tls.LoadX509KeyPair(ldapConf.TLSClientCert, ldapConf.TLSClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
+		}
+
+		certificates = append(certificates, cert)
 	}
 
 	// Determine host for ServerName
@@ -360,6 +371,24 @@ func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, certificates []tls.Certifi
 		RootCAs:            caCertPool,
 		InsecureSkipVerify: ldapConf.TLSSkipVerify,
 		ServerName:         host,
+		VerifyPeerCertificate: func(certificates [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, certBytes := range certificates {
+				certificate, err := x509.ParseCertificate(certBytes)
+				if err != nil {
+					return fmt.Errorf("failed to parse certificate: %w", err)
+				}
+
+				if time.Now().After(certificate.NotAfter) {
+					return fmt.Errorf("certificate expired on %v", certificate.NotAfter)
+				}
+
+				if time.Now().Before(certificate.NotBefore) {
+					return fmt.Errorf("certificate not valid before %v", certificate.NotBefore)
+				}
+			}
+
+			return nil
+		},
 	}, nil
 }
 
