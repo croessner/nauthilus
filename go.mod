@@ -1,7 +1,6 @@
 module github.com/croessner/nauthilus
 
 go 1.24.0
-
 require (
 	github.com/biter777/countries v1.7.5
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
@@ -36,7 +35,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.25.2
 	github.com/simia-tech/crypt v0.5.1
 	github.com/spf13/pflag v1.0.6
-	github.com/spf13/viper v1.20.0
+	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/tengattack/gluacrypto v0.0.0-20240324200146-54b58c95c255
 	github.com/vadv/gopher-lua-libs v0.5.0
