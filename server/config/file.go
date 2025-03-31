@@ -107,7 +107,7 @@ type File interface {
 	GetLuaScriptPath() string
 
 	// GetLuaSearchProtocol retrieves the Lua search protocol for a given protocol name.
-	GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error)
+	GetLuaSearchProtocol(protocol string, backendName string) (*LuaSearchProtocol, error)
 
 	// GetLuaOptionalBackends retrieves a map of Lua configurations for optional backends, indexed by their names.
 	GetLuaOptionalBackends() map[string]*LuaConf
@@ -165,7 +165,7 @@ type File interface {
 	GetLDAPConfigSASLExternal() bool
 
 	// GetLDAPSearchProtocol retrieves the LDAP search protocol for a given protocol name.
-	GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error)
+	GetLDAPSearchProtocol(protocol string, poolName string) (*LDAPSearchProtocol, error)
 
 	// GetLDAPOptionalPools returns a map of optional LDAP pool configurations, indexed by their respective keys.
 	GetLDAPOptionalPools() map[string]*LDAPConf
@@ -671,29 +671,29 @@ func (f *FileSettings) GetLDAPConfigServerURIs() []string {
 // GetLDAPSearchProtocol retrieves the LDAPSearchProtocol configuration based on the specified protocol.
 // If the protocol is not found, it falls back to the default protocol.
 // Returns an error if the configuration or default protocol is missing.
-func (f *FileSettings) GetLDAPSearchProtocol(protocol string) (*LDAPSearchProtocol, error) {
+func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (*LDAPSearchProtocol, error) {
 	if f == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	getSearch := f.GetProtocols(definitions.BackendLDAP)
-	if getSearch == nil {
+	protocols := f.GetProtocols(definitions.BackendLDAP)
+	if protocols == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	for index := range getSearch.([]LDAPSearchProtocol) {
-		for protoIndex := range getSearch.([]LDAPSearchProtocol)[index].Protocols {
-			if getSearch.([]LDAPSearchProtocol)[index].Protocols[protoIndex] == protocol {
-				return &getSearch.([]LDAPSearchProtocol)[index], nil
+	for index := range protocols.([]LDAPSearchProtocol) {
+		if protocols.([]LDAPSearchProtocol)[index].GetPoolName() != poolName {
+			continue
+		}
+
+		for protoIndex := range protocols.([]LDAPSearchProtocol)[index].Protocols {
+			if protocols.([]LDAPSearchProtocol)[index].Protocols[protoIndex] == protocol {
+				return &protocols.([]LDAPSearchProtocol)[index], nil
 			}
 		}
 	}
 
-	if protocol == definitions.ProtoDefault {
-		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
-	}
-
-	return f.GetLDAPSearchProtocol(definitions.ProtoDefault)
+	return nil, nil
 }
 
 // GetLDAPOptionalPools retrieves a map of optional LDAP pool configurations from the file settings.
@@ -778,7 +778,7 @@ func (f *FileSettings) GetLuaPackagePath() string {
 // Returns a default LuaSearchProtocol if the protocol cannot be found and protocol is set to ProtoDefault.
 // Returns a DetailedError if the protocol cannot be found and no default is configured.
 // Accepts a string representing the protocol to search for.
-func (f *FileSettings) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol, error) {
+func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string) (*LuaSearchProtocol, error) {
 	if f == nil {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
@@ -789,6 +789,10 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol
 	}
 
 	for index := range getSearch.([]LuaSearchProtocol) {
+		if getSearch.([]LuaSearchProtocol)[index].GetBackendName() != backendName {
+			continue
+		}
+
 		for protoIndex := range getSearch.([]LuaSearchProtocol)[index].Protocols {
 			if getSearch.([]LuaSearchProtocol)[index].Protocols[protoIndex] == protocol {
 				return &getSearch.([]LuaSearchProtocol)[index], nil
@@ -796,11 +800,7 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string) (*LuaSearchProtocol
 		}
 	}
 
-	if protocol == definitions.ProtoDefault {
-		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
-	}
-
-	return f.GetLuaSearchProtocol(definitions.ProtoDefault)
+	return nil, nil
 }
 
 // GetLuaOptionalBackends retrieves the optional Lua backends configuration from FileSettings. Returns nil if unavailable.
@@ -1960,8 +1960,6 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
-	validate.RegisterValidation("validatNoDefInOptoLdap", validatNoDefInOptoLdap)
-	validate.RegisterValidation("validatNoDefInOptoLua", validatNoDefInOptoLua)
 
 	if err = validate.Struct(f); err != nil {
 		if stderrors.As(err, &validationErrors) {

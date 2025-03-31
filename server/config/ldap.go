@@ -22,32 +22,12 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/go-playground/validator/v10"
 )
 
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
 	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive"`
-	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive,validatNoDefInOptoLdap"`
-}
-
-// validatNoDefInOptoLdap validates that no "default" protocol exists when a PoolName is provided.
-// Returns true if the condition is satisfied, otherwise false.
-func validatNoDefInOptoLdap(fl validator.FieldLevel) bool {
-	searchProtocol, ok := fl.Field().Interface().(LDAPSearchProtocol)
-	if !ok {
-		return false
-	}
-
-	if searchProtocol.PoolName != "" {
-		for _, protocol := range searchProtocol.Protocols {
-			if protocol == "default" {
-				return false
-			}
-		}
-	}
-
-	return true
+	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LDAPSection) String() string {

@@ -300,15 +300,15 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, l
 		}
 
 	case definitions.LuaCommandListAccounts:
-		var attributes map[any]any
-
 		// Check if L.ToTable(-1) returns a valid table
+		attributes := make(map[any]any)
+
 		table := L.ToTable(-1)
 		if table != nil {
-			attributes = convert.LuaValueToGo(table).(map[any]any)
-		} else {
-			// Set attributes to an empty map if no table is found
-			attributes = make(map[any]any)
+			result := convert.LuaValueToGo(table).([]any)
+			for k, v := range result {
+				attributes[k+1] = v
+			}
 		}
 
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{

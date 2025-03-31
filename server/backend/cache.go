@@ -133,17 +133,21 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 	cacheNames = config.NewStringSet()
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
-		if protocolLDAP, _ = config.GetFile().GetLDAPSearchProtocol(requestedProtocol); protocolLDAP != nil {
-			if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
-				cacheNames.Set(cacheName)
+		for _, poolName := range GetChannel().GetLdapChannel().GetPoolNames() {
+			if protocolLDAP, _ = config.GetFile().GetLDAPSearchProtocol(requestedProtocol, poolName); protocolLDAP != nil {
+				if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
+					cacheNames.Set(cacheName)
+				}
 			}
 		}
 	}
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLua {
-		if protocolLua, _ = config.GetFile().GetLuaSearchProtocol(requestedProtocol); protocolLua != nil {
-			if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
-				cacheNames.Set(cacheName)
+		for _, backendName := range GetChannel().GetLuaChannel().GetBackendNames() {
+			if protocolLua, _ = config.GetFile().GetLuaSearchProtocol(requestedProtocol, backendName); protocolLua != nil {
+				if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
+					cacheNames.Set(cacheName)
+				}
 			}
 		}
 	}
