@@ -730,9 +730,11 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 	switch sourceBackend.(uint8) {
 	case uint8(definitions.BackendLDAP):
-		addTOTPSecret = ldapAddTOTPSecret
+		// We have no mapping to an optional LDAP pool!
+		addTOTPSecret = NewLDAPManager(definitions.DefaultBackendName).AddTOTPSecret
 	case uint8(definitions.BackendLua):
-		addTOTPSecret = luaAddTOTPSecret
+		// We have no mapping to an optional Lua backend!
+		addTOTPSecret = NewLuaManager(definitions.DefaultBackendName).AddTOTPSecret
 	default:
 		HandleErr(ctx, errors.NewDetailedError("unsupported_backend").WithDetail(
 			"Database backend not supported"))

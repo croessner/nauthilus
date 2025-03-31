@@ -20,13 +20,34 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/go-playground/validator/v10"
 )
 
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
 	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive"`
-	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive,validatNoDefInOptoLdap"`
+}
+
+// validatNoDefInOptoLdap validates that no "default" protocol exists when a PoolName is provided.
+// Returns true if the condition is satisfied, otherwise false.
+func validatNoDefInOptoLdap(fl validator.FieldLevel) bool {
+	searchProtocol, ok := fl.Field().Interface().(LDAPSearchProtocol)
+	if !ok {
+		return false
+	}
+
+	if searchProtocol.PoolName != "" {
+		for _, protocol := range searchProtocol.Protocols {
+			if protocol == "default" {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func (l *LDAPSection) String() string {
@@ -190,6 +211,15 @@ func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 	}
 
 	return p.ListAccounts, nil
+}
+
+// GetPoolName returns the configured pool name. If no pool name is configured, it defaults to DefaultBackendName.
+func (p *LDAPSearchProtocol) GetPoolName() string {
+	if p.PoolName == "" {
+		return definitions.DefaultBackendName
+	}
+
+	return p.PoolName
 }
 
 // GetBaseDN returns the base DN that is used for each specific protocol.  It returns a DetailedError, if no value has

@@ -56,6 +56,12 @@ type ldapPoolImpl struct {
 	// poolType denotes the type of the pool.
 	poolType int
 
+	// poolSize defines the number of resources maintained in the pool for concurrent operations.
+	poolSize int
+
+	// idlePoolSize defines the maximum number of idle connections in the connection pool.
+	idlePoolSize int
+
 	// name specifies the name of the LDAP connection pool.
 	name string
 
@@ -73,13 +79,9 @@ type ldapPoolImpl struct {
 // It updates metrics and closes stale or excessive connections periodically while ensuring thread safety.
 // The method operates in a loop, triggered by a 30-second ticker or context cancellation for graceful shutdown.
 func (l *ldapPoolImpl) StartHouseKeeper() {
-	idlePoolSize := l.getIdlePoolSize()
 	timer := time.NewTicker(30 * time.Second)
 
 	l.updateStatsPoolSize()
-
-	// The list of connections is shared and must remain thread-safe. Length won't change inside this function.
-	poolSize := len(l.conn)
 
 	for {
 		select {
@@ -89,10 +91,10 @@ func (l *ldapPoolImpl) StartHouseKeeper() {
 
 			return
 		case <-timer.C:
-			openConnections := l.updateConnectionsStatus(poolSize)
+			openConnections := l.updateConnectionsStatus()
 			stats.GetMetrics().GetLdapOpenConnections().WithLabelValues(l.name).Set(float64(openConnections))
 
-			l.closeIdleConnections(openConnections, idlePoolSize, poolSize)
+			l.closeIdleConnections(openConnections)
 			l.updateStatsPoolSize()
 		}
 	}
@@ -100,11 +102,10 @@ func (l *ldapPoolImpl) StartHouseKeeper() {
 
 // SetIdleConnections adjusts the number of idle connections in the LDAP connection pool based on its current state.
 func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
-	poolSize := len(l.conn)
-	idlePoolSize, openConnections := determineIdlePoolSize(l, poolSize)
+	openConnections := l.determineOpenConnections()
 
-	if openConnections < idlePoolSize {
-		err = l.initializeConnections(bind, idlePoolSize, poolSize)
+	if openConnections < l.idlePoolSize {
+		err = l.initializeConnections(bind)
 	}
 
 	return
@@ -172,6 +173,7 @@ var _ LDAPPool = (*ldapPoolImpl)(nil)
 func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	var (
 		poolSize      int
+		idlePoolSize  int
 		name          string
 		conn          []LDAPConnection
 		conf          []*config.LDAPConf
@@ -187,7 +189,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	)
 
 	if config.GetFile().GetLDAP() == nil {
-		return nil
+		panic("LDAP configuration is not set")
 	}
 
 	poolMap := config.GetFile().GetLDAP().GetOptionalLDAPPools()
@@ -203,6 +205,10 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		tlsClientKey = config.GetFile().GetLDAPConfigTLSClientKey()
 		saslExternal = config.GetFile().GetLDAPConfigSASLExternal()
 	} else {
+		if poolMap == nil || poolMap[poolName] == nil {
+			panic(fmt.Sprintf("LDAP pool %s is not defined", poolName))
+		}
+
 		serverURIs = poolMap[poolName].ServerURIs
 		bindDN = poolMap[poolName].BindDN
 		bindPW = poolMap[poolName].BindPW
@@ -220,8 +226,11 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 
 		if poolName == definitions.DefaultBackendName {
 			poolSize = config.GetFile().GetLDAPConfigLookupPoolSize()
+			idlePoolSize = config.GetFile().GetLDAPConfigLookupIdlePoolSize()
 		} else {
+			name = poolName + "-lookup"
 			poolSize = poolMap[poolName].LookupPoolSize
+			idlePoolSize = poolMap[poolName].LookupIdlePoolSize
 		}
 
 		conf = make([]*config.LDAPConf, poolSize)
@@ -231,14 +240,17 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		name = "auth"
 		if poolName == definitions.DefaultBackendName {
 			poolSize = config.GetFile().GetLDAPConfigAuthPoolSize()
+			idlePoolSize = config.GetFile().GetLDAPConfigAuthIdlePoolSize()
 		} else {
+			name = poolName + "-auth"
 			poolSize = poolMap[poolName].AuthPoolSize
+			idlePoolSize = poolMap[poolName].AuthIdlePoolSize
 		}
 
 		conf = make([]*config.LDAPConf, poolSize)
 		conn = make([]LDAPConnection, poolSize)
 	default:
-		return nil
+		panic(fmt.Sprintf("LDAP pool type %d is not supported", poolType))
 	}
 
 	for index := 0; index < poolSize; index++ {
@@ -259,23 +271,13 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	}
 
 	return &ldapPoolImpl{
-		poolType: poolType,
-		ctx:      ctx,
-		name:     name,
-		conn:     conn,
-		conf:     conf,
-	}
-}
-
-// getIdlePoolSize retrieves the idle pool size for the LDAP connection pool based on its type.
-func (l *ldapPoolImpl) getIdlePoolSize() int {
-	switch l.poolType {
-	case definitions.LDAPPoolLookup, definitions.LDAPPoolUnknown:
-		return config.GetFile().GetLDAPConfigLookupIdlePoolSize()
-	case definitions.LDAPPoolAuth:
-		return config.GetFile().GetLDAPConfigAuthIdlePoolSize()
-	default:
-		return 0
+		poolType:     poolType,
+		poolSize:     poolSize,
+		idlePoolSize: idlePoolSize,
+		ctx:          ctx,
+		name:         name,
+		conn:         conn,
+		conf:         conf,
 	}
 }
 
@@ -286,8 +288,8 @@ func (l *ldapPoolImpl) logCompletion() {
 
 // updateConnectionsStatus iterates through the connection pool and updates the status of each connection.
 // It returns the total number of open connections after the update.
-func (l *ldapPoolImpl) updateConnectionsStatus(poolSize int) (openConnections int) {
-	for index := 0; index < poolSize; index++ {
+func (l *ldapPoolImpl) updateConnectionsStatus() (openConnections int) {
+	for index := 0; index < l.poolSize; index++ {
 		openConnections += l.updateSingleConnectionStatus(index)
 	}
 
@@ -341,17 +343,17 @@ func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
 }
 
 // closeIdleConnections closes excess idle connections from the pool based on open connections, idle pool size, and total pool size.
-func (l *ldapPoolImpl) closeIdleConnections(openConnections, idlePoolSize, poolSize int) {
-	needClosing := max(openConnections-idlePoolSize, 0)
+func (l *ldapPoolImpl) closeIdleConnections(openConnections int) {
+	needClosing := max(openConnections-l.idlePoolSize, 0)
 
 	stats.GetMetrics().GetLdapStaleConnections().WithLabelValues(l.name).Set(float64(needClosing))
 	util.DebugModule(
 		definitions.DbgLDAPPool,
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", idlePoolSize)
+		definitions.LogKeyMsg, "State open connections", "needClosing", needClosing, "openConnections", openConnections, "idlePoolSize", l.idlePoolSize)
 
 	//goland:noinspection GoDfaConstantCondition
-	for index := 0; index < poolSize && needClosing > 0; index++ {
+	for index := 0; index < l.poolSize && needClosing > 0; index++ {
 		if l.closeSingleIdleConnection(index) {
 			needClosing--
 		}
@@ -391,24 +393,23 @@ func (l *ldapPoolImpl) updateStatsPoolSize() {
 	}
 }
 
-// determineIdlePoolSize calculates the number of idle connections in the pool and the total number of open connections.
-func determineIdlePoolSize(l *ldapPoolImpl, poolSize int) (idlePoolSize int, openConnections int) {
-	idlePoolSize = l.getIdlePoolSize()
-
-	for index := 0; index < poolSize; index++ {
+// determineOpenConnections calculates total number of open connections.
+func (l *ldapPoolImpl) determineOpenConnections() (openConnections int) {
+	for index := 0; index < l.poolSize; index++ {
 		if l.conn[index].GetState() != definitions.LDAPStateClosed {
 			openConnections++
 		}
 	}
 
-	return idlePoolSize, openConnections
+	return openConnections
 }
 
-// initializeConnections initializes a specified number of LDAP connections in the pool based on the provided parameters.
-// It logs connection info and attempts to set up connections. If successful, it decrements the idle pool size.
-// Returns an error if the required idle connections cannot be established within the pool size limit.
-func (l *ldapPoolImpl) initializeConnections(bind bool, idlePoolSize int, poolSize int) (err error) {
-	for index := 0; index < poolSize; index++ {
+// initializeConnections establishes and initializes LDAP connections for the pool, binding them if required.
+// Returns an error if unable to connect to the LDAP servers.
+func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
+	idlePoolSize := l.idlePoolSize
+
+	for index := 0; index < l.poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
 		l.logConnectionInfo(&guidStr, index)

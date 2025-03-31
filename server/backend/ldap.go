@@ -35,11 +35,7 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
-	if ldapPool == nil {
-		return
-	}
 
-	// TODO: Idle pool size for optional pools
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 
@@ -75,11 +71,7 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth, poolName)
-	if ldapPool == nil {
-		return
-	}
 
-	// TODO: Idle pool size for optional pools
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
 

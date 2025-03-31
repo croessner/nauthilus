@@ -235,6 +235,7 @@ func (b *Backend) Set(value string) error {
 	}
 
 	value = strings.TrimSpace(value)
+	b.name = definitions.DefaultBackendName
 
 	regex := regexp.MustCompile(`^(ldap|lua)\((.*?)\)$`)
 

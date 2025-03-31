@@ -33,6 +33,12 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
+// ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
+type ldapManagerImpl struct {
+	// poolName specifies the identifier for the LDAP connection pool to be utilized by the manager implementation.
+	poolName string
+}
+
 // handleMasterUserMode handles the master user mode functionality for authentication.
 // If master user mode is enabled and the username contains only one occurrence of the delimiter,
 // it splits the username based on the delimiter and returns the appropriate part of the username
@@ -111,10 +117,8 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 	}
 }
 
-// LDAPPassDB implements the LDAP password database backend.
-//
-//nolint:gocognit // Backends are complex
-func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+// PassDB implements the LDAP password database backend.
+func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	var (
 		assertOk           bool
 		accountField       string
@@ -132,6 +136,10 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	}
+
+	if protocol.GetPoolName() != lm.poolName {
 		return
 	}
 
@@ -177,9 +185,8 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 	}
 
-	// TODO: User matching pool name
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -238,8 +245,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			HTTPClientContext: auth.HTTPClientContext,
 		}
 
-		// TODO: User matching pool name
-		backend.GetChannel().GetLdapChannel().GetAuthRequestChan(definitions.DefaultBackendName) <- ldapUserBindRequest
+		backend.GetChannel().GetLdapChannel().GetAuthRequestChan(lm.poolName) <- ldapUserBindRequest
 
 		ldapReply = <-ldapReplyChan
 
@@ -265,7 +271,7 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	if auth.MasterUserMode {
 		auth.NoAuth = true
 
-		passDBResult, err = LDAPPassDB(auth)
+		passDBResult, err = lm.PassDB(auth)
 
 		restoreMasterUserTOTPSecret(passDBResult, totpSecretPre, protocol.TOTPSecretField)
 	}
@@ -273,8 +279,8 @@ func LDAPPassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	return
 }
 
-// ldapAccountDB implements the list-account mode and returns all known users from an LDAP server.
-func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
+// AccountDB implements the list-account mode and returns all known users from an LDAP server.
+func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err error) {
 	var (
 		accountField string
 		filter       string
@@ -294,6 +300,10 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	}
+
+	if protocol.GetPoolName() != lm.poolName {
 		return
 	}
 
@@ -337,9 +347,8 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 		HTTPClientContext: auth.HTTPClientContext,
 	}
 
-	// TODO: User matching pool name
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -364,8 +373,8 @@ func ldapAccountDB(auth *AuthState) (accounts AccountList, err error) {
 	return
 }
 
-// ldapAddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
-func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
+// AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
+func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	var (
 		filter      string
 		baseDN      string
@@ -385,6 +394,10 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
+		return
+	}
+
+	if protocol.GetPoolName() != lm.poolName {
 		return
 	}
 
@@ -430,8 +443,7 @@ func ldapAddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
-	// TODO: User matching pool name
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(definitions.DefaultBackendName) <- ldapRequest
+	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
 
 	ldapReply = <-ldapReplyChan
 
@@ -448,4 +460,13 @@ func ldapGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, err
 	// TODO: Use WebAuthn constructor!
 
 	return []webauthn.Credential{}, nil
+}
+
+var _ BackendManager = (*ldapManagerImpl)(nil)
+
+// NewLDAPManager creates and returns a BackendManager for managing LDAP authentication backends using the specified pool name.
+func NewLDAPManager(poolName string) BackendManager {
+	return &ldapManagerImpl{
+		poolName: poolName,
+	}
 }

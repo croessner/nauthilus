@@ -1960,6 +1960,8 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
+	validate.RegisterValidation("validatNoDefInOptoLdap", validatNoDefInOptoLdap)
+	validate.RegisterValidation("validatNoDefInOptoLua", validatNoDefInOptoLua)
 
 	if err = validate.Struct(f); err != nil {
 		if stderrors.As(err, &validationErrors) {
