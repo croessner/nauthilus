@@ -2110,6 +2110,8 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
 
+	a.Protocol.Set("account-provider")
+
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
