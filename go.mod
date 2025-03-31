@@ -1,7 +1,6 @@
 module github.com/croessner/nauthilus
 
 go 1.24.0
-
 require (
 	github.com/biter777/countries v1.7.5
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
@@ -16,7 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-kit/log v0.2.1
 	github.com/go-ldap/ldap/v3 v3.4.10
-	github.com/go-playground/validator/v10 v10.25.0
+	github.com/go-playground/validator/v10 v10.26.0
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/go-viper/mapstructure/v2 v2.2.1
 	github.com/go-webauthn/webauthn v0.12.2
