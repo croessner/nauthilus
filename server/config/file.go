@@ -120,7 +120,7 @@ type File interface {
 	HaveLDAPBackend() bool
 
 	// LDAPHavePoolOnly checks whether LDAP connections are only handled via a pool.
-	LDAPHavePoolOnly() bool
+	LDAPHavePoolOnly(backendName string) bool
 
 	// GetLDAPConfigLookupPoolSize returns the pool size for LDAP lookups.
 	GetLDAPConfigLookupPoolSize() int
@@ -1399,12 +1399,34 @@ func (f *FileSettings) validateBruteForce() error {
 }
 
 // LDAPHavePoolOnly checks if the LDAP configuration is set to use the `PoolOnly` mode. Returns false if any element is nil.
-func (f *FileSettings) LDAPHavePoolOnly() bool {
-	if f == nil || f.LDAP == nil || f.LDAP.Config == nil {
+func (f *FileSettings) LDAPHavePoolOnly(backendName string) bool {
+	if f == nil || f.LDAP == nil {
 		return false
 	}
 
-	return f.LDAP.Config.PoolOnly
+	if backendName == definitions.DefaultBackendName {
+		if f.LDAP.Config == nil {
+			return false
+		}
+
+		return f.LDAP.Config.PoolOnly
+	}
+
+	if f.LDAP.OptionalLDAPPools == nil {
+		return false
+	}
+
+	for poolKey, poolSettings := range f.LDAP.OptionalLDAPPools {
+		if poolKey == backendName {
+			if poolSettings == nil {
+				return false
+			}
+
+			return poolSettings.PoolOnly
+		}
+	}
+
+	return false
 }
 
 // validatePassDBBackends validates the configuration of password database backends defined in the server's configuration.
@@ -1960,7 +1982,6 @@ func (f *FileSettings) HandleFile() (err error) {
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
-	validate.RegisterValidation("validatePoolOnly", validatePoolOnly)
 
 	if err = validate.Struct(f); err != nil {
 		if stderrors.As(err, &validationErrors) {

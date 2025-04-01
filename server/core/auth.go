@@ -1750,8 +1750,8 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 				useCache = true
 			}
 		case definitions.BackendLDAP:
-			if !config.GetFile().LDAPHavePoolOnly() {
-				mgr := NewLDAPManager(backendType.GetName(), config.GetFile().LDAPHavePoolOnly())
+			if !config.GetFile().LDAPHavePoolOnly(backendType.GetName()) {
+				mgr := NewLDAPManager(backendType.GetName())
 				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, mgr.PassDB)
 			}
 		case definitions.BackendLua:
@@ -2133,8 +2133,8 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			if !config.GetFile().LDAPHavePoolOnly() {
-				mgr := NewLDAPManager(backendType.GetName(), config.GetFile().LDAPHavePoolOnly())
+			if !config.GetFile().LDAPHavePoolOnly(backendType.GetName()) {
+				mgr := NewLDAPManager(backendType.GetName())
 				accounts = append(accounts, &AccountListMap{
 					definitions.BackendLDAP,
 					mgr.AccountDB,
