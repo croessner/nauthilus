@@ -166,12 +166,19 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 // AccountDB implements the list-account mode and returns all known users from a Lua backend logic.
 func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err error) {
-	var luaBackendResult *lualib.LuaBackendResult
+	var (
+		luaBackendResult *lualib.LuaBackendResult
+		protocol         *config.LuaSearchProtocol
+	)
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "lua_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
+	}
+
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+		return
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
