@@ -135,6 +135,10 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	passDBResult.UserFound = luaBackendResult.UserFound
 	passDBResult.AccountField = &accountField
 
+	if luaBackendResult.UserFound {
+		passDBResult.BackendName = lm.backendName
+	}
+
 	if totpSecretField != "" {
 		passDBResult.TOTPSecretField = &totpSecretField
 	}

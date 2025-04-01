@@ -204,6 +204,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	// If a DN was returned and an account field is present, the user was found in the backend.
 	passDBResult.UserFound = true
 	passDBResult.Backend = definitions.BackendLDAP
+	passDBResult.BackendName = lm.poolName
 
 	if _, okay := ldapReply.Result[accountField]; okay {
 		passDBResult.AccountField = &accountField

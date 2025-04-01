@@ -448,6 +448,8 @@ type AuthState struct {
 	// FeatureName is the name of a feature that has triggered a reject.
 	FeatureName string
 
+	BackendName string
+
 	// TOTPSecret is used to store a TOTP secret in an SQL Database.
 	TOTPSecret *string
 
@@ -513,6 +515,9 @@ type PassDBResult struct {
 
 	// UserFound is a flag that is set if the user was found in a password Database.
 	UserFound bool
+
+	// BackendName specifies the name of the backend that authenticated or found the user in the password database.
+	BackendName string
 
 	// AccountField is the SQL field or LDAP attribute that was used for the user account.
 	AccountField *string
@@ -836,9 +841,15 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		mode = "no-auth"
 	}
 
+	backendName := definitions.NotAvailable
+	if a.BackendName != "" {
+		backendName = a.BackendName
+	}
+
 	keyvals = []any{
 		definitions.LogKeyGUID, util.WithNotAvailable(*a.GUID),
 		definitions.LogKeyMode, mode,
+		definitions.LogKeyBackendName, backendName,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
 		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
 		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
@@ -1456,6 +1467,7 @@ func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *P
 		auth.UserFound = true
 
 		auth.SourcePassDBBackend = passDBResult.Backend
+		auth.BackendName = passDBResult.BackendName
 		auth.UsedPassDBBackend = passDB.backend
 	}
 
