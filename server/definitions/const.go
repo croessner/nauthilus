@@ -99,6 +99,9 @@ const (
 	// LogKeyMode represents the mode of the operation.
 	LogKeyMode = "mode"
 
+	// LogKeyBackendName is the log entry key for specifying the name of the backend in use.
+	LogKeyBackendName = "backend_name"
+
 	// LogKeySkip indicates whether an operation was skipped.
 	LogKeySkip = "skip"
 

@@ -113,8 +113,6 @@ type FilterCmd struct {
 
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
-	var mode string
-
 	if a.Service == definitions.ServBasic {
 		var httpBasicAuthOk bool
 
@@ -149,7 +147,7 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 			ctx.AbortWithStatus(http.StatusUnsupportedMediaType)
 		}
 
-		level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMode, mode)
+		level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
 		if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
 			//nolint:exhaustive // Ignore some results

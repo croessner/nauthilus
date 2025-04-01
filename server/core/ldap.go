@@ -135,11 +135,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
-		return
-	}
-
-	if protocol.GetPoolName() != lm.poolName {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 
@@ -208,6 +204,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	// If a DN was returned and an account field is present, the user was found in the backend.
 	passDBResult.UserFound = true
 	passDBResult.Backend = definitions.BackendLDAP
+	passDBResult.BackendName = lm.poolName
 
 	if _, okay := ldapReply.Result[accountField]; okay {
 		passDBResult.AccountField = &accountField
@@ -299,11 +296,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
-		return
-	}
-
-	if protocol.GetPoolName() != lm.poolName {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 
@@ -393,11 +386,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get()); err != nil {
-		return
-	}
-
-	if protocol.GetPoolName() != lm.poolName {
+	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 

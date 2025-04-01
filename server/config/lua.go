@@ -30,26 +30,7 @@ type LuaSection struct {
 	Hooks               []LuaHooks          `mapstructure:"custom_hooks" validate:"omitempty,dive"`
 	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
 	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive,validateOptionalLuaBackend"`
-	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive,validatNoDefInOptoLua"`
-}
-
-// validatNoDefInOptoLua ensures that when a BackendName is provided, the "default" protocol is not included in Protocols.
-// Returns true if the condition is satisfied, otherwise false.
-func validatNoDefInOptoLua(fl validator.FieldLevel) bool {
-	searchProtocol, ok := fl.Field().Interface().(LuaSearchProtocol)
-	if !ok {
-		return false
-	}
-
-	if searchProtocol.BackendName != "" {
-		for _, protocol := range searchProtocol.Protocols {
-			if protocol == "default" {
-				return false
-			}
-		}
-	}
-
-	return true
+	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LuaSection) String() string {

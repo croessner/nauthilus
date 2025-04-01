@@ -152,8 +152,10 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 	triggered, abortFeatures, err = featureRequest.CallFeatureLua(ctx)
 
-	for index := range *featureRequest.Logs {
-		a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
+	if featureRequest.Logs != nil {
+		for index := range *featureRequest.Logs {
+			a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
+		}
 	}
 
 	if statusMessage := featureRequest.StatusMessage; *statusMessage != a.StatusMessage {

@@ -43,12 +43,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		return
-	} else {
-		if protocol.GetBackendName() != lm.backendName {
-			return
-		}
 	}
 
 	passDBResult = &PassDBResult{}
@@ -139,6 +135,10 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	passDBResult.UserFound = luaBackendResult.UserFound
 	passDBResult.AccountField = &accountField
 
+	if luaBackendResult.UserFound {
+		passDBResult.BackendName = lm.backendName
+	}
+
 	if totpSecretField != "" {
 		passDBResult.TOTPSecretField = &totpSecretField
 	}
@@ -181,12 +181,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		return
-	} else {
-		if protocol.GetBackendName() != lm.backendName {
-			return
-		}
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
@@ -243,12 +239,8 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get()); err != nil {
+	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		return
-	} else {
-		if protocol.GetBackendName() != lm.backendName {
-			return
-		}
 	}
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
