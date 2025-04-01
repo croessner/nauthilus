@@ -831,8 +831,14 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		a.StatusMessage = "OK"
 	}
 
+	mode := "auth"
+	if a.NoAuth {
+		mode = "no-auth"
+	}
+
 	keyvals = []any{
 		definitions.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		definitions.LogKeyMode, mode,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
 		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
 		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
