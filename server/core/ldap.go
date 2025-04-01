@@ -35,6 +35,9 @@ import (
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
 type ldapManagerImpl struct {
+	// poolOnly indicates if only the LDAP connection pool should be utilized without any direct operations.
+	poolOnly bool
+
 	// poolName specifies the identifier for the LDAP connection pool to be utilized by the manager implementation.
 	poolName string
 }
@@ -132,6 +135,10 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	)
 
 	passDBResult = &PassDBResult{}
+
+	if lm.poolOnly {
+		return
+	}
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
@@ -454,8 +461,9 @@ func ldapGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, err
 var _ BackendManager = (*ldapManagerImpl)(nil)
 
 // NewLDAPManager creates and returns a BackendManager for managing LDAP authentication backends using the specified pool name.
-func NewLDAPManager(poolName string) BackendManager {
+func NewLDAPManager(poolName string, poolOnly bool) BackendManager {
 	return &ldapManagerImpl{
 		poolName: poolName,
+		poolOnly: poolOnly,
 	}
 }
