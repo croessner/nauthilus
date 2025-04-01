@@ -22,12 +22,27 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/go-playground/validator/v10"
 )
 
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
-	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive"`
+	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive,validatePoolOnly"`
 	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+}
+
+// validatePoolOnly checks if the LDAPConf instance has PoolOnly set to true and returns false if it does, otherwise true.
+func validatePoolOnly(fl validator.FieldLevel) bool {
+	ldapConf, ok := fl.Field().Interface().(LDAPConf)
+	if !ok {
+		return false
+	}
+
+	if ldapConf.PoolOnly {
+		return false
+	}
+
+	return true
 }
 
 func (l *LDAPSection) String() string {
