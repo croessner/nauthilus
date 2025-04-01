@@ -321,8 +321,8 @@ func handleBackend(passDB *config.Backend) {
 			<-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName)
 		}
 
-		if !config.GetFile().LDAPHavePoolOnly() {
-			for _, poolName := range poolNames {
+		for _, poolName := range poolNames {
+			if !config.GetFile().LDAPHavePoolOnly(poolName) {
 				<-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName)
 			}
 		}
@@ -346,10 +346,10 @@ func handleLDAPBackend(lookup, auth *contextTuple) {
 		<-backend.GetChannel().GetLdapChannel().GetLookupEndChan(poolName)
 	}
 
-	if !config.GetFile().LDAPHavePoolOnly() {
-		stopContext(auth)
+	stopContext(auth)
 
-		for _, poolName := range poolNames {
+	for _, poolName := range poolNames {
+		if !config.GetFile().LDAPHavePoolOnly(poolName) {
 			<-backend.GetChannel().GetLdapChannel().GetAuthEndChan(poolName)
 		}
 	}
@@ -407,7 +407,7 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 func startLDAPWorkers(store *contextStore) {
 	go backend.LDAPMainWorker(store.ldapLookup.ctx, definitions.DefaultBackendName)
 
-	if !config.GetFile().LDAPHavePoolOnly() {
+	if !config.GetFile().LDAPHavePoolOnly(definitions.DefaultBackendName) {
 		go backend.LDAPAuthWorker(store.ldapAuth.ctx, definitions.DefaultBackendName)
 	}
 
@@ -417,7 +417,7 @@ func startLDAPWorkers(store *contextStore) {
 
 			go backend.LDAPMainWorker(store.ldapLookup.ctx, ldapBackend.GetName())
 
-			if !config.GetFile().LDAPHavePoolOnly() {
+			if !config.GetFile().LDAPHavePoolOnly(ldapBackend.GetName()) {
 				go backend.LDAPAuthWorker(store.ldapAuth.ctx, ldapBackend.GetName())
 			}
 		}
@@ -505,9 +505,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			store.ldapLookup = newContextTuple(ctx)
-			if !config.GetFile().LDAPHavePoolOnly() {
-				store.ldapAuth = newContextTuple(ctx)
-			}
+			store.ldapAuth = newContextTuple(ctx)
 
 			startLDAPWorkers(store)
 		case definitions.BackendLua:
@@ -560,10 +558,7 @@ func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*act
 // setupLDAPWorker initializes the LDAP worker contexts and starts LDAP worker routines for processing requests and authentication.
 func setupLDAPWorker(store *contextStore, ctx context.Context) {
 	store.ldapLookup = newContextTuple(ctx)
-
-	if !config.GetFile().LDAPHavePoolOnly() {
-		store.ldapAuth = newContextTuple(ctx)
-	}
+	store.ldapAuth = newContextTuple(ctx)
 
 	startLDAPWorkers(store)
 }

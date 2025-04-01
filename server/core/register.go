@@ -731,7 +731,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	switch sourceBackend.(uint8) {
 	case uint8(definitions.BackendLDAP):
 		// We have no mapping to an optional LDAP pool!
-		addTOTPSecret = NewLDAPManager(definitions.DefaultBackendName, false).AddTOTPSecret
+		addTOTPSecret = NewLDAPManager(definitions.DefaultBackendName).AddTOTPSecret
 	case uint8(definitions.BackendLua):
 		// We have no mapping to an optional Lua backend!
 		addTOTPSecret = NewLuaManager(definitions.DefaultBackendName).AddTOTPSecret
