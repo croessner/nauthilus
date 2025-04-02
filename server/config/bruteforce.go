@@ -21,12 +21,13 @@ import (
 )
 
 type BruteForceSection struct {
-	SoftWhitelist   `mapstructure:"soft_whitelist"`
-	IPWhitelist     []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
-	Buckets         []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning        []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
-	ToleratePercent uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
-	TolerateTTL     time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
+	SoftWhitelist     `mapstructure:"soft_whitelist"`
+	IPWhitelist       []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	Buckets           []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
+	Learning          []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	ToleratePercent   uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
+	CustomTolerations []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
+	TolerateTTL       time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -70,12 +71,29 @@ func (b *BruteForceSection) GetToleratePercent() uint8 {
 	return b.ToleratePercent
 }
 
+// GetTolerateTTL retrieves the TolerateTTL value from the BruteForceSection instance. Returns 0 if the receiver is nil.
 func (b *BruteForceSection) GetTolerateTTL() time.Duration {
 	if b == nil {
 		return 0
 	}
 
 	return b.TolerateTTL
+}
+
+// GetCustomTolerations returns the CustomTolerations slice from the BruteForceSection. Returns nil if the receiver is nil.
+func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
+	if b == nil {
+		return nil
+	}
+
+	return b.CustomTolerations
+}
+
+// Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
+type Tolerate struct {
+	IPAddress       string        `mapstructure:"ip_address" validate:"required,ip_addr"`
+	ToleratePercent uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
+	TolerateTTL     time.Duration `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
 }
 
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown

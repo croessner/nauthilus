@@ -27,6 +27,9 @@ type Tolerate interface {
 	// SetContext updates the context for the Tolerate instance.
 	SetContext(ctx context.Context)
 
+	// SetCustomTolerations sets the custom toleration configurations for IP-based authentication tolerances.
+	SetCustomTolerations(tolerations []config.Tolerate)
+
 	// SetIPAddress tracks and updates authentication behavior for a given IP address.
 	SetIPAddress(ipAddress string, username string, authenticated bool)
 
@@ -35,9 +38,10 @@ type Tolerate interface {
 }
 
 type tolerateImpl struct {
-	ctx          context.Context
-	pctTolerated uint8
-	mu           sync.Mutex
+	ctx             context.Context
+	pctTolerated    uint8
+	customTolerates []config.Tolerate
+	mu              sync.Mutex
 }
 
 // SetContext updates the context for the tolerateImpl instance in a thread-safe manner.
@@ -49,10 +53,34 @@ func (t *tolerateImpl) SetContext(ctx context.Context) {
 	t.ctx = ctx
 }
 
+// SetCustomTolerations sets the custom toleration configurations in a thread-safe manner. It replaces existing values.
+func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
+	if tolerations == nil {
+		return
+	}
+
+	t.mu.Lock()
+
+	defer t.mu.Unlock()
+
+	t.customTolerates = tolerations
+}
+
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
 // It sets a TTL for the hash key to manage the expiration of the tolerance data.
 func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authenticated bool) {
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+
+	for _, customTolerate := range t.customTolerates {
+		if customTolerate.IPAddress != ipAddress {
+			continue
+		}
+
+		tolerateTTL = customTolerate.TolerateTTL
+
+		break
+	}
+
 	if tolerateTTL == 0 {
 		return
 	}
@@ -175,7 +203,16 @@ func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 		negative = 0
 	}
 
-	maxNegative := (uint(t.pctTolerated) * positive) / 100
+	pctTolerated := t.pctTolerated
+	for _, customToleration := range t.customTolerates {
+		if customToleration.IPAddress != ipAddress {
+			continue
+		}
+
+		pctTolerated = customToleration.ToleratePercent
+	}
+
+	maxNegative := (uint(pctTolerated) * positive) / 100
 
 	t.logDbgTolerate(
 		ipAddress,
@@ -265,7 +302,11 @@ func GetTolerate() Tolerate {
 
 // NewTolerate creates a new Tolerate implementation with a specified percentage tolerance for negative actions.
 func NewTolerate(pctTolerated uint8) Tolerate {
-	tolerate = &tolerateImpl{ctx: context.TODO(), pctTolerated: pctTolerated, mu: sync.Mutex{}}
+	tolerate = &tolerateImpl{
+		ctx:             context.TODO(),
+		pctTolerated:    pctTolerated,
+		customTolerates: config.GetFile().GetBruteForce().GetCustomTolerations(),
+		mu:              sync.Mutex{}}
 
 	return tolerate
 }
