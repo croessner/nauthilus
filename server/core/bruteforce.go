@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
@@ -904,6 +905,12 @@ func (a *AuthState) processBruteForce(ruleTriggered, alreadyTriggered bool, rule
 
 				return false
 			}
+		}
+
+		if tolerate.GetTolerate().IsTolerated(a.ClientIP) {
+			level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "IP address is tolerated")
+
+			return false
 		}
 
 		a.BruteForceName = rule.Name
