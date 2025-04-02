@@ -57,6 +57,7 @@ func main() {
 
 	actionWorkers := initializeActionWorkers()
 
+	inititalizeBruteForceTolerate(ctx)
 	initializeHTTPClients()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)

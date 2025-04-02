@@ -807,6 +807,9 @@ const (
 
 	// DbgFilter is used for debugging issues related to filter operations.
 	DbgFilter
+
+	// DbgTolerate represents the debug module for operations related to tolerance or error allowances.
+	DbgTolerate
 )
 
 const (
@@ -857,6 +860,9 @@ const (
 
 	// DbgFilterName is the debug identifier for filter
 	DbgFilterName = "filter"
+
+	// DbgTolerateName represents the debug mode for tolerating certain conditions or operations during execution.
+	DbgTolerateName = "tolerate"
 )
 
 const (

@@ -298,7 +298,7 @@ var _ File = (*FileSettings)(nil)
 // Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetRBLs() *RBLSection {
 	if f == nil {
-		return nil
+		return &RBLSection{}
 	}
 
 	return f.RBLs
@@ -308,7 +308,7 @@ func (f *FileSettings) GetRBLs() *RBLSection {
 // Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetClearTextList() []string {
 	if f == nil {
-		return nil
+		return []string{}
 	}
 
 	return f.ClearTextList
@@ -317,7 +317,7 @@ func (f *FileSettings) GetClearTextList() []string {
 // GetRelayDomains retrieves the RelayDomainsSection from the FileSettings. Returns nil if the FileSettings is nil.
 func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 	if f == nil {
-		return nil
+		return &RelayDomainsSection{}
 	}
 
 	return f.RelayDomains
@@ -326,7 +326,7 @@ func (f *FileSettings) GetRelayDomains() *RelayDomainsSection {
 // GetBruteForce returns the BruteForceSection associated with the FileSettings instance. Returns nil if the instance is nil.
 func (f *FileSettings) GetBruteForce() *BruteForceSection {
 	if f == nil {
-		return nil
+		return &BruteForceSection{}
 	}
 
 	return f.BruteForce
@@ -336,7 +336,7 @@ func (f *FileSettings) GetBruteForce() *BruteForceSection {
 // Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetLua() *LuaSection {
 	if f == nil {
-		return nil
+		return &LuaSection{}
 	}
 
 	return f.Lua
@@ -345,7 +345,7 @@ func (f *FileSettings) GetLua() *LuaSection {
 // GetOauth2 returns the Oauth2Section of the FileSettings instance. Returns nil if the FileSettings instance is nil.
 func (f *FileSettings) GetOauth2() *Oauth2Section {
 	if f == nil {
-		return nil
+		return &Oauth2Section{}
 	}
 
 	return f.Oauth2
@@ -354,7 +354,7 @@ func (f *FileSettings) GetOauth2() *Oauth2Section {
 // GetLDAP retrieves the LDAPSection from the FileSettings instance. Returns nil if the FileSettings is nil.
 func (f *FileSettings) GetLDAP() *LDAPSection {
 	if f == nil {
-		return nil
+		return &LDAPSection{}
 	}
 
 	return f.LDAP

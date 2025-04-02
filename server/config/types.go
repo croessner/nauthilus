@@ -397,6 +397,8 @@ func (d *DbgModule) Set(value string) error {
 		d.module = definitions.DbgLua
 	case definitions.DbgFilterName:
 		d.module = definitions.DbgFilter
+	case definitions.DbgTolerateName:
+		d.module = definitions.DbgTolerate
 	default:
 		return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 	}

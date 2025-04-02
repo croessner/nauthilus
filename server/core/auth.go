@@ -286,6 +286,9 @@ type State interface {
 	// GetAdditionalLogs retrieves a slice of additional log entries, useful for appending context-specific logging details.
 	GetAdditionalLogs() []any
 
+	// GetClientIP retrieves the client's IP address associated with the current authentication or request context.
+	GetClientIP() string
+
 	// GetOauth2SubjectAndClaims retrieves the OAuth2 subject and claims for a given OAuth2 client.
 	// Returns the subject as a string and the claims as a map.
 	GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any)
@@ -824,8 +827,14 @@ func (a *AuthState) GetAttributes() bktype.AttributeMapping {
 	return a.Attributes
 }
 
+// GetAdditionalLogs returns a slice of additional logs associated with the AuthState instance.
 func (a *AuthState) GetAdditionalLogs() []any {
 	return a.AdditionalLogs
+}
+
+// GetClientIP returns the client's IP address stored in the AuthState instance.
+func (a *AuthState) GetClientIP() string {
+	return a.ClientIP
 }
 
 // LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.

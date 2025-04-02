@@ -275,6 +275,8 @@ func DebugModule(module definitions.DbgModule, keyvals ...any) {
 		moduleName = definitions.DbgLuaName
 	case definitions.DbgFilter:
 		moduleName = definitions.DbgFilterName
+	case definitions.DbgTolerate:
+		moduleName = definitions.DbgTolerateName
 	default:
 		return
 	}

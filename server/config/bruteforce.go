@@ -21,10 +21,12 @@ import (
 )
 
 type BruteForceSection struct {
-	SoftWhitelist `mapstructure:"soft_whitelist"`
-	IPWhitelist   []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
-	Buckets       []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning      []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	SoftWhitelist   `mapstructure:"soft_whitelist"`
+	IPWhitelist     []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	Buckets         []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
+	Learning        []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	ToleratePercent uint8            `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
+	TolerateTTL     time.Duration    `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -57,6 +59,23 @@ func (b *BruteForceSection) LearnFromFeature(input string) bool {
 	}
 
 	return false
+}
+
+// GetToleratePercent retrieves the ToleratePercent value from the BruteForceSection instance. Returns 0 if the receiver is nil.
+func (b *BruteForceSection) GetToleratePercent() uint8 {
+	if b == nil {
+		return 0
+	}
+
+	return b.ToleratePercent
+}
+
+func (b *BruteForceSection) GetTolerateTTL() time.Duration {
+	if b == nil {
+		return 0
+	}
+
+	return b.TolerateTTL
 }
 
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown
