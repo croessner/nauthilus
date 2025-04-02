@@ -91,7 +91,7 @@ func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
 
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
 type Tolerate struct {
-	IPAddress       string        `mapstructure:"ip_address" validate:"required,ip_addr"`
+	IPAddress       string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
 	ToleratePercent uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
 	TolerateTTL     time.Duration `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
 }

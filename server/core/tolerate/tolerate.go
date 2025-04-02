@@ -2,6 +2,7 @@ package tolerate
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,7 +73,7 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
 
 	for _, customTolerate := range t.customTolerates {
-		if customTolerate.IPAddress != ipAddress {
+		if !t.findIP(customTolerate.IPAddress, ipAddress) {
 			continue
 		}
 
@@ -205,11 +206,13 @@ func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 
 	pctTolerated := t.pctTolerated
 	for _, customToleration := range t.customTolerates {
-		if customToleration.IPAddress != ipAddress {
+		if !t.findIP(customToleration.IPAddress, ipAddress) {
 			continue
 		}
 
 		pctTolerated = customToleration.ToleratePercent
+
+		break
 	}
 
 	maxNegative := (uint(pctTolerated) * positive) / 100
@@ -289,6 +292,34 @@ func (t *tolerateImpl) logRedisError(ipAddress string, err error) {
 		definitions.LogKeyClientIP, ipAddress,
 		definitions.LogKeyMsg, err,
 	)
+}
+
+// findIP checks if the provided IP address or network contains or matches the specified IP address.
+func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
+	cmpAddress := net.ParseIP(ipAddress)
+	if cmpAddress == nil {
+		return false
+	}
+
+	address := net.ParseIP(ipOrNet)
+	if address != nil {
+		if address.Equal(cmpAddress) {
+			return true
+		}
+
+		return false
+	}
+
+	_, network, err := net.ParseCIDR(ipOrNet)
+	if err != nil {
+		return false
+	}
+
+	if network.Contains(cmpAddress) {
+		return true
+	}
+
+	return false
 }
 
 // GetTolerate initializes and returns a singleton instance of Tolerate with the configured tolerance percentage.
