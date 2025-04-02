@@ -3,13 +3,18 @@ package tolerate
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/go-kit/log/level"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -23,7 +28,7 @@ type Tolerate interface {
 	SetContext(ctx context.Context)
 
 	// SetIPAddress tracks and updates authentication behavior for a given IP address.
-	SetIPAddress(ipAddress string, authenticated bool)
+	SetIPAddress(ipAddress string, username string, authenticated bool)
 
 	// IsTolerated checks if an IP address is within the allowed tolerance based on past interactions.
 	IsTolerated(ipAddress string) bool
@@ -46,26 +51,102 @@ func (t *tolerateImpl) SetContext(ctx context.Context) {
 
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
 // It sets a TTL for the hash key to manage the expiration of the tolerance data.
-func (t *tolerateImpl) SetIPAddress(ipAddress string, authenticated bool) {
-	var (
-		keyName string
-	)
-
+func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authenticated bool) {
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
 	if tolerateTTL == 0 {
 		return
 	}
 
-	if authenticated {
-		keyName = "positive"
-	} else {
-		keyName = "negative"
+	redisKey := t.getRedisKey(ipAddress)
+	now := time.Now().Unix()
+
+	flag := ":P"
+	if !authenticated {
+		flag = ":N"
 	}
 
-	rediscli.GetClient().GetWriteHandle().HIncrBy(t.ctx, t.getRedisKey(ipAddress), keyName, 1)
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	rediscli.GetClient().GetWriteHandle().Expire(t.ctx, t.getRedisKey(ipAddress), tolerateTTL)
+	_, err := rediscli.GetClient().GetWriteHandle().ZAdd(
+		t.ctx,
+		redisKey+flag,
+		redis.Z{
+			Score: float64(now), Member: strings.ToLower(username),
+		}).Result()
+	if err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	removed := int64(0)
+
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	removed, err = rediscli.GetClient().GetWriteHandle().ZRemRangeByScore(
+		t.ctx,
+		redisKey+flag,
+		"-inf",
+		strconv.FormatInt(now-int64(tolerateTTL), 10),
+	).Result()
+	if err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	if removed > 0 {
+		t.logDbgRemovedRecords(removed)
+	}
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+	positive, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":P", "-inf", "+inf").Uint64()
+	if err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":P", tolerateTTL).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+	negative, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":N", "-inf", "+inf").Uint64()
+	if err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":N", tolerateTTL).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "positive", strconv.FormatUint(positive, 10)).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "negative", strconv.FormatUint(negative, 10)).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, t.getRedisKey(ipAddress), tolerateTTL).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
+
+		return
+	}
 }
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
@@ -154,6 +235,22 @@ func (t *tolerateImpl) logDbgTolerate(address string, positive uint, negative ui
 		"negatives", negative,
 		"max_negatives", maxNegatives,
 		"tolerated", tolerated,
+	)
+}
+
+// logDbgRemovedRecords logs the count of removed records for debugging purposes in the tolerate module.
+func (t *tolerateImpl) logDbgRemovedRecords(removed int64) {
+	util.DebugModule(
+		definitions.DbgTolerate,
+		"removed", removed,
+	)
+}
+
+// logRedisError logs a Redis error and the associated client IP address as a warning-level log entry.
+func (t *tolerateImpl) logRedisError(ipAddress string, err error) {
+	level.Warn(log.Logger).Log(
+		definitions.LogKeyClientIP, ipAddress,
+		definitions.LogKeyMsg, err,
 	)
 }
 

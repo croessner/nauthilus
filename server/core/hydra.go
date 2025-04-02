@@ -1751,7 +1751,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 	for {
 		switch authResult {
 		case definitions.AuthResultOK:
-			tolerate.GetTolerate().SetIPAddress(auth.GetClientIP(), true)
+			tolerate.GetTolerate().SetIPAddress(auth.GetClientIP(), auth.GetUsername(), true)
 
 			authResult, err = apiConfig.processAuthOkLogin(ctx, auth, oldAuthResult, rememberPost2FA, recentSubject, post2FA, needLuaFilterAndPost)
 			if err != nil {
@@ -1770,7 +1770,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 		case definitions.AuthResultFail, definitions.AuthResultEmptyUsername, definitions.AuthResultEmptyPassword:
 			var have2FA bool
 
-			tolerate.GetTolerate().SetIPAddress(auth.GetClientIP(), false)
+			tolerate.GetTolerate().SetIPAddress(auth.GetClientIP(), auth.GetUsername(), false)
 
 			have2FA, err = apiConfig.processAuthFailLogin(auth, oldAuthResult, post2FA)
 			if err != nil {
