@@ -25,8 +25,8 @@ type BruteForceSection struct {
 	IPWhitelist     []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
 	Buckets         []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
 	Learning        []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
-	ToleratePercent uint8            `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
-	TolerateTTL     time.Duration    `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
+	ToleratePercent uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
+	TolerateTTL     time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 }
 
 func (b *BruteForceSection) String() string {
