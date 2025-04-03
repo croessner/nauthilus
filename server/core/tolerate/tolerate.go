@@ -30,9 +30,10 @@ var (
 
 // houseKeeper manages a collection of IP addresses and ensures thread-safe operations.
 type houseKeeper struct {
-	ctx   context.Context
-	ipMap map[string]struct{}
-	mu    sync.Mutex
+	ctx        context.Context
+	ipMap      map[string]struct{}
+	mu         sync.Mutex
+	ipAddressC chan string
 }
 
 // getIPsToClean retrieves a list of all IP addresses currently stored in the houseKeeper's ipMap in a thread-safe manner.
@@ -52,11 +53,7 @@ func (c *houseKeeper) getIPsToClean() []string {
 
 // setIPAddress adds the specified IP address to the ipMap in a thread-safe manner.
 func (c *houseKeeper) setIPAddress(ipAddress string) {
-	c.mu.Lock()
-
-	defer c.mu.Unlock()
-
-	c.ipMap[ipAddress] = struct{}{}
+	c.ipAddressC <- ipAddress
 }
 
 // removeIPAddress removes the specified IP address from the ipMap in a thread-safe manner.
@@ -79,9 +76,25 @@ func getHouseKeeper(ctx context.Context) *houseKeeper {
 
 // newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
 func newHouseKeeper(ctx context.Context) *houseKeeper {
-	return &houseKeeper{
-		ctx:   ctx,
-		ipMap: make(map[string]struct{}),
+	keeper := &houseKeeper{
+		ctx:        ctx,
+		ipMap:      make(map[string]struct{}),
+		ipAddressC: make(chan string, config.GetFile().GetServer().GetMaxConcurrentRequests()),
+	}
+
+	go keeper.runIPWorker()
+
+	return keeper
+}
+
+// runIPWorker processes IP addresses from the channel and adds them to the ipMap in a thread-safe manner.
+func (c *houseKeeper) runIPWorker() {
+	for ip := range c.ipAddressC {
+		c.mu.Lock()
+
+		c.ipMap[ip] = struct{}{}
+
+		c.mu.Unlock()
 	}
 }
 
