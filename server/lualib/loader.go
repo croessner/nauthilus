@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/metrics"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
+	"github.com/croessner/nauthilus/server/lualib/tolerate"
 	"github.com/tengattack/gluacrypto"
 	"github.com/vadv/gopher-lua-libs/argparse"
 	"github.com/vadv/gopher-lua-libs/aws/cloudwatch"
@@ -167,6 +168,8 @@ func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName stri
 		L.PreloadModule(modName, connmgr.LoaderModPsnet(ctx))
 	case definitions.LuaModSoftWhitelist:
 		L.PreloadModule(modName, LoaderModSoftWhitelist)
+	case definitions.LuaModBruteForce:
+		L.PreloadModule(modName, tolerate.LoaderModBruteForce)
 	default:
 		return
 	}
