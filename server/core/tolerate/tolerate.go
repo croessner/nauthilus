@@ -318,7 +318,7 @@ func (t *tolerateImpl) StartHouseKeeping() {
 				if err != nil {
 					t.logRedisError(ipAddress, err)
 
-					return
+					break
 				}
 
 				if removed > 0 {
