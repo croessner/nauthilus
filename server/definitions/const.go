@@ -993,6 +993,9 @@ const (
 	// LuaModSoftWhitelist is a constant that represents the module name for soft whitelist functionality in the application.
 	LuaModSoftWhitelist = "nauthilus_soft_whitelist"
 
+	// LuaModBruteForce is a constant representing the module name for handling brute force prevention functionalities.
+	LuaModBruteForce = "nauthilus_brute_force"
+
 	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
 	LuaModGLuaCrypto = "nauthilus_gluacrypto"
 
@@ -1314,6 +1317,18 @@ const (
 
 	// LuaFnSoftWhitelistDelete is a constant representing the operation to delete an entry from the soft whitelist.
 	LuaFnSoftWhitelistDelete = "soft_whitelist_delete"
+
+	// LuaFnBfSetCustomTolerations represents the function name for setting custom tolerations.
+	LuaFnBfSetCustomTolerations = "set_custom_tolerations"
+
+	// LuaFnBfSetCustomToleration represents a Lua function for setting a toleration.
+	LuaFnBfSetCustomToleration = "set_custom_toleration"
+
+	// LuaFnBfGetCusotmTolerations defines the Lua function name used to retrieve tolerations.
+	LuaFnBfGetCusotmTolerations = "get_custom_tolerations"
+
+	// LuaFnBfDeleteCustomToleration represents the function name for deleting a specific toleration.
+	LuaFnBfDeleteCustomToleration = "delete_custom_toleration"
 )
 
 const (

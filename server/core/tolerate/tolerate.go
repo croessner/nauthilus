@@ -30,9 +30,10 @@ var (
 
 // houseKeeper manages a collection of IP addresses and ensures thread-safe operations.
 type houseKeeper struct {
-	ctx   context.Context
-	ipMap map[string]struct{}
-	mu    sync.Mutex
+	ctx        context.Context
+	ipMap      map[string]struct{}
+	mu         sync.Mutex
+	ipAddressC chan string
 }
 
 // getIPsToClean retrieves a list of all IP addresses currently stored in the houseKeeper's ipMap in a thread-safe manner.
@@ -52,11 +53,7 @@ func (c *houseKeeper) getIPsToClean() []string {
 
 // setIPAddress adds the specified IP address to the ipMap in a thread-safe manner.
 func (c *houseKeeper) setIPAddress(ipAddress string) {
-	c.mu.Lock()
-
-	defer c.mu.Unlock()
-
-	c.ipMap[ipAddress] = struct{}{}
+	c.ipAddressC <- ipAddress
 }
 
 // removeIPAddress removes the specified IP address from the ipMap in a thread-safe manner.
@@ -79,9 +76,30 @@ func getHouseKeeper(ctx context.Context) *houseKeeper {
 
 // newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
 func newHouseKeeper(ctx context.Context) *houseKeeper {
-	return &houseKeeper{
-		ctx:   ctx,
-		ipMap: make(map[string]struct{}),
+	maxConcurrentRequests := config.GetFile().GetServer().GetMaxConcurrentRequests()
+	if maxConcurrentRequests == 0 {
+		maxConcurrentRequests = 1000
+	}
+
+	keeper := &houseKeeper{
+		ctx:        ctx,
+		ipMap:      make(map[string]struct{}),
+		ipAddressC: make(chan string, maxConcurrentRequests),
+	}
+
+	go keeper.runIPWorker()
+
+	return keeper
+}
+
+// runIPWorker processes IP addresses from the channel and adds them to the ipMap in a thread-safe manner.
+func (c *houseKeeper) runIPWorker() {
+	for ip := range c.ipAddressC {
+		c.mu.Lock()
+
+		c.ipMap[ip] = struct{}{}
+
+		c.mu.Unlock()
 	}
 }
 
@@ -92,6 +110,15 @@ type Tolerate interface {
 
 	// SetCustomTolerations sets the custom toleration configurations for IP-based authentication tolerances.
 	SetCustomTolerations(tolerations []config.Tolerate)
+
+	// SetCustomToleration configures toleration settings for the specified IP address with a percentage and Time-to-Live duration.
+	SetCustomToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration)
+
+	// DeleteCustomToleration removes the toleration configuration for the specified IP address from the system.
+	DeleteCustomToleration(ipAddress string)
+
+	// GetCustomTolerations retrieves the list of configured IP-based toleration settings, including percentage and TTL.
+	GetCustomTolerations() []config.Tolerate
 
 	// StartHouseKeeping initiates a periodic housekeeping routine to clean up expired IP tolerance data in Redis storage.
 	StartHouseKeeping()
@@ -130,6 +157,72 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 	defer t.mu.Unlock()
 
 	t.customTolerates = tolerations
+}
+
+// SetCustomToleration updates toleration settings for a specific IP address with provided percentage and TTL in a thread-safe manner.
+func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration) {
+	if strings.TrimSpace(ipAddress) == "" {
+		return
+	}
+
+	t.mu.Lock()
+
+	toleration := config.Tolerate{
+		IPAddress:       ipAddress,
+		ToleratePercent: pctTolerated,
+		TolerateTTL:     tolerateTTL,
+	}
+
+	newTolerations := make([]config.Tolerate, 0)
+
+	for index, currentToleration := range t.customTolerates {
+		if currentToleration.IPAddress != toleration.IPAddress {
+			newTolerations = append(newTolerations, currentToleration)
+
+			continue
+		}
+
+		newTolerations = append(newTolerations, toleration)
+		newTolerations = append(newTolerations, t.customTolerates[index+1:]...)
+
+		break
+	}
+
+	t.mu.Unlock()
+
+	t.SetCustomTolerations(newTolerations)
+}
+
+// DeleteCustomToleration removes a toleration entry for a given IP address from the custom tolerations in a thread-safe manner.
+func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
+	if strings.TrimSpace(ipAddress) == "" {
+		return
+	}
+
+	t.mu.Lock()
+
+	newTolerations := make([]config.Tolerate, 0)
+
+	for _, currentToleration := range t.customTolerates {
+		if currentToleration.IPAddress != ipAddress {
+			newTolerations = append(newTolerations, currentToleration)
+
+			continue
+		}
+	}
+
+	t.mu.Unlock()
+
+	t.SetCustomTolerations(newTolerations)
+}
+
+// GetCustomTolerations retrieves the current list of custom toleration configurations in a thread-safe manner.
+func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
+	t.mu.Lock()
+
+	defer t.mu.Unlock()
+
+	return t.customTolerates
 }
 
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
@@ -305,7 +398,7 @@ func (t *tolerateImpl) StartHouseKeeping() {
 				if err != nil {
 					t.logRedisError(ipAddress, err)
 
-					return
+					break
 				}
 
 				if removed > 0 {
