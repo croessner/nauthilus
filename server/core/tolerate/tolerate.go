@@ -23,6 +23,68 @@ var (
 	initTolerate sync.Once
 )
 
+var (
+	cleaner     *houseKeeper
+	initCleaner sync.Once
+)
+
+// houseKeeper manages a collection of IP addresses and ensures thread-safe operations.
+type houseKeeper struct {
+	ctx   context.Context
+	ipMap map[string]struct{}
+	mu    sync.Mutex
+}
+
+// getIPsToClean retrieves a list of all IP addresses currently stored in the houseKeeper's ipMap in a thread-safe manner.
+func (c *houseKeeper) getIPsToClean() []string {
+	c.mu.Lock()
+
+	defer c.mu.Unlock()
+
+	var ips []string
+
+	for ip := range c.ipMap {
+		ips = append(ips, ip)
+	}
+
+	return ips
+}
+
+// setIPAddress adds the specified IP address to the ipMap in a thread-safe manner.
+func (c *houseKeeper) setIPAddress(ipAddress string) {
+	c.mu.Lock()
+
+	defer c.mu.Unlock()
+
+	c.ipMap[ipAddress] = struct{}{}
+}
+
+// removeIPAddress removes the specified IP address from the ipMap in a thread-safe manner.
+func (c *houseKeeper) removeIPAddress(ipAddress string) {
+	c.mu.Lock()
+
+	defer c.mu.Unlock()
+
+	delete(c.ipMap, ipAddress)
+}
+
+// getHouseKeeper initializes and returns a singleton instance of houseKeeper in a thread-safe manner.
+func getHouseKeeper(ctx context.Context) *houseKeeper {
+	initCleaner.Do(func() {
+		cleaner = newHouseKeeper(ctx)
+	})
+
+	return cleaner
+}
+
+// newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
+func newHouseKeeper(ctx context.Context) *houseKeeper {
+	return &houseKeeper{
+		ctx:   ctx,
+		ipMap: make(map[string]struct{}),
+	}
+}
+
 // Tolerate represents an interface for managing IP-based tolerance mechanisms for authentication attempts.
 type Tolerate interface {
 	// SetContext updates the context for the Tolerate instance.
@@ -30,6 +92,9 @@ type Tolerate interface {
 
 	// SetCustomTolerations sets the custom toleration configurations for IP-based authentication tolerances.
 	SetCustomTolerations(tolerations []config.Tolerate)
+
+	// StartHouseKeeping initiates a periodic housekeeping routine to clean up expired IP tolerance data in Redis storage.
+	StartHouseKeeping()
 
 	// SetIPAddress tracks and updates authentication behavior for a given IP address.
 	SetIPAddress(ipAddress string, username string, authenticated bool)
@@ -70,6 +135,12 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
 // It sets a TTL for the hash key to manage the expiration of the tolerance data.
 func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authenticated bool) {
+	if strings.TrimSpace(ipAddress) == "" {
+		return
+	}
+
+	getHouseKeeper(t.ctx).setIPAddress(ipAddress)
+
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
 
 	for _, customTolerate := range t.customTolerates {
@@ -90,8 +161,11 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 	now := time.Now().Unix()
 
 	flag := ":P"
+	label := "positive"
+
 	if !authenticated {
 		flag = ":N"
+		label = "negative"
 	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -107,27 +181,8 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 		return
 	}
 
-	removed := int64(0)
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	removed, err = rediscli.GetClient().GetWriteHandle().ZRemRangeByScore(
-		t.ctx,
-		redisKey+flag,
-		"-inf",
-		strconv.FormatInt(now-int64(tolerateTTL), 10),
-	).Result()
-	if err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	if removed > 0 {
-		t.logDbgRemovedRecords(removed)
-	}
-
 	stats.GetMetrics().GetRedisReadCounter().Inc()
-	positive, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":P", "-inf", "+inf").Uint64()
+	positive, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+flag, "-inf", "+inf").Uint64()
 	if err != nil {
 		t.logRedisError(ipAddress, err)
 
@@ -135,36 +190,14 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":P", tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-	negative, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":N", "-inf", "+inf").Uint64()
-	if err != nil {
+	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+flag, tolerateTTL).Err(); err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
 	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":N", tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "positive", strconv.FormatUint(positive, 10)).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "negative", strconv.FormatUint(negative, 10)).Err(); err != nil {
+	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), label, strconv.FormatUint(positive, 10)).Err(); err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
@@ -182,8 +215,8 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 	var (
 		okay     bool
-		positive uint
-		negative uint
+		positive int64
+		negative int64
 	)
 
 	if config.GetFile().GetBruteForce().GetTolerateTTL() == 0 {
@@ -215,7 +248,7 @@ func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 		break
 	}
 
-	maxNegative := (uint(pctTolerated) * positive) / 100
+	maxNegative := (int64(pctTolerated) * positive) / 100
 
 	t.logDbgTolerate(
 		ipAddress,
@@ -228,6 +261,61 @@ func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 	return negative <= maxNegative
 }
 
+// StartHouseKeeping initiates a periodic cleanup process to remove expired tolerance data for IP addresses from Redis.
+func (t *tolerateImpl) StartHouseKeeping() {
+	var err error
+
+	ticker := time.NewTicker(time.Second * 60)
+
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now().Unix()
+		removed := int64(0)
+
+		for _, ipAddress := range getHouseKeeper(t.ctx).getIPsToClean() {
+			redisKey := t.getRedisKey(ipAddress)
+			tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+
+			for _, customTolerate := range t.customTolerates {
+				if !t.findIP(customTolerate.IPAddress, ipAddress) {
+					continue
+				}
+
+				tolerateTTL = customTolerate.TolerateTTL
+
+				break
+			}
+
+			for _, flag := range []string{":P", ":N"} {
+				keysExists := rediscli.GetClient().GetReadHandle().Exists(t.ctx, redisKey+flag).Val()
+				if keysExists == 0 {
+					getHouseKeeper(t.ctx).removeIPAddress(ipAddress)
+
+					continue
+				}
+
+				stats.GetMetrics().GetRedisWriteCounter().Inc()
+				removed, err = rediscli.GetClient().GetWriteHandle().ZRemRangeByScore(
+					t.ctx,
+					redisKey+flag,
+					"-inf",
+					strconv.FormatInt(now-int64(tolerateTTL), 10),
+				).Result()
+				if err != nil {
+					t.logRedisError(ipAddress, err)
+
+					return
+				}
+
+				if removed > 0 {
+					t.logDbgRemovedRecords(removed)
+				}
+			}
+		}
+	}
+}
+
 var _ Tolerate = (*tolerateImpl)(nil)
 
 // getRedisKey constructs a Redis key using the configured prefix and the given IP address.
@@ -237,16 +325,16 @@ func (t *tolerateImpl) getRedisKey(ipAddress string) string {
 
 // getMap retrieves a map of string keys to unsigned integer values from Redis using the specified IP address as a key.
 // It fetches all entries from a Redis hash, converts the values to unsigned integers, and handles retrieval/parsing errors.
-func (t *tolerateImpl) getMap(ipAddress string) map[string]uint {
+func (t *tolerateImpl) getMap(ipAddress string) map[string]int64 {
 	var (
-		counter uint64
+		counter int64
 		err     error
 		result  map[string]string
 	)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	ipMap := make(map[string]uint)
+	ipMap := make(map[string]int64)
 
 	result, err = rediscli.GetClient().GetReadHandle().HGetAll(t.ctx, t.getRedisKey(ipAddress)).Result()
 
@@ -255,19 +343,19 @@ func (t *tolerateImpl) getMap(ipAddress string) map[string]uint {
 	}
 
 	for k, v := range result {
-		counter, err = strconv.ParseUint(v, 10, 32)
+		counter, err = strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			continue
 		}
 
-		ipMap[k] = uint(counter)
+		ipMap[k] = counter
 	}
 
 	return ipMap
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
-func (t *tolerateImpl) logDbgTolerate(address string, positive uint, negative uint, maxNegatives uint, tolerated uint8) {
+func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative int64, maxNegatives int64, tolerated uint8) {
 	util.DebugModule(
 		definitions.DbgTolerate,
 		definitions.LogKeyClientIP, address,
