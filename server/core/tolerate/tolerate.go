@@ -117,6 +117,15 @@ type Tolerate interface {
 	// SetIPAddress tracks and updates authentication behavior for a given IP address.
 	SetIPAddress(ipAddress string, username string, authenticated bool)
 
+	// SetToleration configures toleration settings for the specified IP address with a percentage and Time-to-Live duration.
+	SetToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration)
+
+	// DeleteToleration removes the toleration configuration for the specified IP address from the system.
+	DeleteToleration(ipAddress string)
+
+	// GetTolerations retrieves the list of configured IP-based toleration settings, including percentage and TTL.
+	GetTolerations() []config.Tolerate
+
 	// IsTolerated checks if an IP address is within the allowed tolerance based on past interactions.
 	IsTolerated(ipAddress string) bool
 }
@@ -148,6 +157,72 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 	defer t.mu.Unlock()
 
 	t.customTolerates = tolerations
+}
+
+// SetToleration updates toleration settings for a specific IP address with provided percentage and TTL in a thread-safe manner.
+func (t *tolerateImpl) SetToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration) {
+	if strings.TrimSpace(ipAddress) == "" {
+		return
+	}
+
+	t.mu.Lock()
+
+	toleration := config.Tolerate{
+		IPAddress:       ipAddress,
+		ToleratePercent: pctTolerated,
+		TolerateTTL:     tolerateTTL,
+	}
+
+	newTolerations := make([]config.Tolerate, 0)
+
+	for index, currentToleration := range t.customTolerates {
+		if currentToleration.IPAddress != toleration.IPAddress {
+			newTolerations = append(newTolerations, currentToleration)
+
+			continue
+		}
+
+		newTolerations = append(newTolerations, toleration)
+		newTolerations = append(newTolerations, t.customTolerates[index+1:]...)
+
+		break
+	}
+
+	t.mu.Unlock()
+
+	t.SetCustomTolerations(newTolerations)
+}
+
+// DeleteToleration removes a toleration entry for a given IP address from the custom tolerations in a thread-safe manner.
+func (t *tolerateImpl) DeleteToleration(ipAddress string) {
+	if strings.TrimSpace(ipAddress) == "" {
+		return
+	}
+
+	t.mu.Lock()
+
+	newTolerations := make([]config.Tolerate, 0)
+
+	for _, currentToleration := range t.customTolerates {
+		if currentToleration.IPAddress != ipAddress {
+			newTolerations = append(newTolerations, currentToleration)
+
+			continue
+		}
+	}
+
+	t.mu.Unlock()
+
+	t.SetCustomTolerations(newTolerations)
+}
+
+// GetTolerations retrieves the current list of custom toleration configurations in a thread-safe manner.
+func (t *tolerateImpl) GetTolerations() []config.Tolerate {
+	t.mu.Lock()
+
+	defer t.mu.Unlock()
+
+	return t.customTolerates
 }
 
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
