@@ -161,8 +161,11 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 	now := time.Now().Unix()
 
 	flag := ":P"
+	label := "positive"
+
 	if !authenticated {
 		flag = ":N"
+		label = "negative"
 	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -179,51 +182,25 @@ func (t *tolerateImpl) SetIPAddress(ipAddress string, username string, authentic
 	}
 
 	stats.GetMetrics().GetRedisReadCounter().Inc()
-	positive, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":P", "-inf", "+inf").Uint64()
+	positive, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+flag, "-inf", "+inf").Uint64()
 	if err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
 	}
 
-	if authenticated {
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-		if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":P", tolerateTTL).Err(); err != nil {
-			t.logRedisError(ipAddress, err)
-
-			return
-		}
-
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-		if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "positive", strconv.FormatUint(positive, 10)).Err(); err != nil {
-			t.logRedisError(ipAddress, err)
-
-			return
-		}
-	}
-
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-	negative, err := rediscli.GetClient().GetReadHandle().ZCount(t.ctx, redisKey+":N", "-inf", "+inf").Uint64()
-	if err != nil {
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+flag, tolerateTTL).Err(); err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
 	}
 
-	if !authenticated {
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-		if err = rediscli.GetClient().GetWriteHandle().Expire(t.ctx, redisKey+":N", tolerateTTL).Err(); err != nil {
-			t.logRedisError(ipAddress, err)
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), label, strconv.FormatUint(positive, 10)).Err(); err != nil {
+		t.logRedisError(ipAddress, err)
 
-			return
-		}
-
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-		if err = rediscli.GetClient().GetWriteHandle().HSet(t.ctx, t.getRedisKey(ipAddress), "negative", strconv.FormatUint(negative, 10)).Err(); err != nil {
-			t.logRedisError(ipAddress, err)
-
-			return
-		}
+		return
 	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
