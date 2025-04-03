@@ -76,10 +76,15 @@ func getHouseKeeper(ctx context.Context) *houseKeeper {
 
 // newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
 func newHouseKeeper(ctx context.Context) *houseKeeper {
+	maxConcurrentRequests := config.GetFile().GetServer().GetMaxConcurrentRequests()
+	if maxConcurrentRequests == 0 {
+		maxConcurrentRequests = 1000
+	}
+
 	keeper := &houseKeeper{
 		ctx:        ctx,
 		ipMap:      make(map[string]struct{}),
-		ipAddressC: make(chan string, config.GetFile().GetServer().GetMaxConcurrentRequests()),
+		ipAddressC: make(chan string, maxConcurrentRequests),
 	}
 
 	go keeper.runIPWorker()
