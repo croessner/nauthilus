@@ -30,6 +30,7 @@ func (c *CustomLogKeyValue) Set(key string, value any) {
 	*c = append(*c, value)
 }
 
+// AddCustomLog creates a Lua function that appends a key-value pair to a CustomLogKeyValue slice for logging purposes.
 func AddCustomLog(keyval *CustomLogKeyValue) lua.LGFunction {
 	return func(L *lua.LState) int {
 		key := L.CheckString(1)

@@ -22,9 +22,8 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// PackagePath sets the Lua package path to include the directory where the Lua modules reside.
-// It appends the Lua package path with the value returned by `config.GetFile().GetLuaPackagePath()`.
-// This function takes a Lua state (`*lua.LState`) as an argument and returns an error.
+// PackagePath sets the Lua `package.path` by appending default and additional configured paths to the existing value.
+// It modifies the Lua state `L` to include paths necessary for locating Lua modules. Returns an error if the operation fails.
 func PackagePath(L *lua.LState) error {
 	defaultPath := "/usr/local/share/nauthilus/lua/?.lua;/usr/share/nauthilus/lua/?.lua;/usr/app/lua-plugins.d/share/?.lua"
 

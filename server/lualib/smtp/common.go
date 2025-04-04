@@ -17,11 +17,8 @@ package smtp
 
 import "io"
 
-// sendEmailContent is a function that sends an email content using a generic SMTP or LMTP client.
-// It takes a GenericClient interface, the sender's email address, a slice of recipients' email addresses,
-// and the email content as a byte array. It performs the necessary operations to establish a connection,
-// set the sender and recipients, write the email content, and close the connection.
-// It returns an error if any occurs during the email sending process, or nil if the email is sent successfully.
+// sendEmailContent sends an email using the provided GenericClient, sender address, recipient list, and message content.
+// It handles connection setup, message transmission, and cleanup, returning an error if any step fails.
 func sendEmailContent(genericClient GenericClient, from string, to []string, msg []byte) error {
 	var (
 		wc  io.WriteCloser

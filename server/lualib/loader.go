@@ -64,17 +64,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// RegisterCommonLuaLibraries registers common Lua libraries based on the modName value.
-// The function takes an *lua.Lstate, modName string, and registry map[string]bool as input parameters.
-// It uses a switch statement to compare modName with pre-defined constants to determine which library to register.
-// For each matched modName, it calls the corresponding Preload function to register the library.
-// After registering the library, it adds the modName to the registry map to keep track of registered libraries.
-// If modName does not match any pre-defined constants, the function returns without registering any library.
-//
-// Note: The implementation of Preload functions for each library is not shown in this documentation.
-// Please refer to the individual module documentations for more details on each Preload function.
-// Please also note that the declaration codes for the constants used in the switch cases are not shown here.
-// Refer to the module documentations for the declaration codes of the constants.
+// RegisterCommonLuaLibraries preloads Lua libraries based on the given module name and updates the registry map.
 func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, httpClient *stdhttp.Client) {
 	switch modName {
 	case definitions.LuaModGLLPlugin:

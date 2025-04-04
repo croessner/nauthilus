@@ -102,6 +102,22 @@ func GetCustomTolerations(L *lua.LState) int {
 	return 1
 }
 
+// GetTolerateMap retrieves a Lua table containing authentication data for the provided IP address from the toleration system.
+func GetTolerateMap(L *lua.LState) int {
+	ipAddress := L.CheckString(1)
+
+	mapping := tolerate.GetTolerate().GetTolerateMap(ipAddress)
+	resultTable := L.NewTable()
+
+	for label, value := range mapping {
+		resultTable.RawSetString(label, lua.LNumber(value))
+	}
+
+	L.Push(resultTable)
+
+	return 1
+}
+
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
 func LoaderModBruteForce(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
@@ -109,6 +125,7 @@ func LoaderModBruteForce(L *lua.LState) int {
 		definitions.LuaFnBfSetCustomToleration:    SetCustomToleration,
 		definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
 		definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
+		definitions.LuaFnBfGetTolerateMap:         GetTolerateMap,
 	})
 
 	L.Push(mod)

@@ -19,12 +19,10 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
-// LoaderModRedis initializes a new module for Redis in Lua by setting the functions from the "exportsModRedis" map into
-// a new lua.LTable. The module table is then pushed onto the top of the stack. Finally, it returns 1 to indicate that
-// one value has been returned to Lua.
+// LoaderModRedis initializes and returns a Lua table with Redis-related functions registered within the provided context.
 func LoaderModRedis(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{

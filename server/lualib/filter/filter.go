@@ -32,7 +32,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
@@ -43,17 +43,7 @@ func InitHTTPClient() {
 	httpClient = util.NewHTTPClient()
 }
 
-// registerDynamicLoader registers a dynamic loader function in the Lua state.
-// The dynamic loader function allows loading Lua modules on-demand based on their names.
-// It takes an *lua.LState, *gin.Context, *Request, **lualib.LuaBackendResult, and *[]string as input parameters.
-// Inside the function, it creates a new Lua function using Lua's NewFunction function, which takes a function as a parameter.
-// The created function takes a string parameter representing the module name.
-// First, it checks if the module name is already registered in the registry map.
-// If it is, the function returns without registering the module.
-// If the module name is not registered, it calls lualib.RegisterCommonLuaLibraries to register common Lua libraries.
-// Then, it calls registerModule to register module-specific libraries based on the module name.
-// After registering the libraries, it sets the global variable "dynamic_loader" in the Lua state to the created function.
-// The function does not return any value.
+// registerDynamicLoader sets up a global function "dynamic_loader" in the Lua state to dynamically load Lua modules.
 func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
@@ -72,18 +62,9 @@ func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendR
 	L.SetGlobal("dynamic_loader", dynamicLoader)
 }
 
-// registerModule registers a Lua module based on the given modName. It loads and preloads the respective Lua functions
-// based on the modName using the provided Lua state (L). The modName and its respective Lua functions are taken from
-// the lualib package and registered using the L.PreloadModule function. The registry map is used to keep track of
-// the registered modules. If the modName is not recognized, the function returns without registering any module.
-// The modName parameter specifies the name of the module.
-// The L parameter is a pointer to the Lua state.
-// The ctx parameter is a pointer to the gin.Context object.
-// The r parameter is a pointer to the Request struct.
-// The registry parameter is a map[string]bool that keeps track of all registered modules.
-// The backendResult parameter is a pointer to a pointer of the LuaBackendResult struct.
-// The removeAttributes parameter is a pointer to a slice of strings.
-// The function does not return any value.
+// registerModule registers a Lua module in the given Lua state if it matches predefined module names.
+// It also ensures the module is added to the registry map to prevent duplicate registrations.
+// Modules include context, HTTP request, LDAP, and backend, with validation for dependencies.
 func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string, registry map[string]bool, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
 	switch modName {
 	case definitions.LuaModContext:
@@ -109,17 +90,7 @@ func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string,
 // It allows faster access and execution of frequently used scripts.
 var LuaFilters *PreCompiledLuaFilters
 
-// LoaderModBackend is a higher-order function that takes a pointer to a Request struct as a parameter.
-// It returns a Lua LGFunction.
-// The returned LGFunction creates a new Lua table and populates it with Lua functions.
-// Each Lua function corresponds to a specific functionality related to the backend servers.
-// The LGFunction sets up the necessary global variables and request context, and then pushes the created Lua table onto the Lua stack.
-//
-// Params:
-//   - request *Request : A pointer to a Request struct.
-//
-// Returns:
-//   - lua.LGFunction : A Lua LGFunction that creates a Lua table and populates it with functions related to backend servers.
+// LoaderModBackend initializes and returns a Lua module containing backend-related functionalities for LuaState.
 func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
@@ -136,17 +107,9 @@ func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult,
 	}
 }
 
-// PreCompileLuaFilters is a function that pre-compiles Lua filters.
-// It iterates over the filters available in the configuration. For each filter,
-// it creates a new LuaFilter instance passing the filter name and script path, and then adds it to the LuaFilters.
-// Note: If LuaFilters is nil, a new instance of PreCompiledLuaFilters is created.
-// If LuaFilters already exists, it's reset before the new filters are added.
-// If an error occurs when creating a new LuaFilter, it returns immediately with that error.
-// It returns nil if no error occurs.
-//
-// Returns:
-//
-//	error if any error occurs while initializing the Lua filters
+// PreCompileLuaFilters prepares and pre-compiles Lua filters based on the configuration, ensuring optimized filter execution.
+// Returns an error if pre-compilation fails or configuration is missing.
+// Initializes or resets the global LuaFilters container, adding compiled Lua filters sequentially.
 func PreCompileLuaFilters() (err error) {
 	if config.GetFile().HaveLuaFilters() {
 		if LuaFilters == nil {
@@ -182,20 +145,7 @@ type PreCompiledLuaFilters struct {
 	Mu sync.RWMutex
 }
 
-// Add appends a LuaFilter to the LuaScripts in the
-// PreCompiledLuaFilters. It ensures thread-safety by
-// obtaining a lock before performing the operation,
-// and then unlocking once the operation is complete.
-//
-// Parameters:
-//
-//	luaFilter: The LuaFilter instance that should be added.
-//
-// Usage:
-//
-//	luaFilters := &PreCompiledLuaFilters{}
-//	filter := &LuaFilter{}
-//	luaFilters.Add(filter)
+// Add appends a LuaFilter to the LuaScripts slice while ensuring thread-safe access using a mutex.
 func (a *PreCompiledLuaFilters) Add(luaFilter *LuaFilter) {
 	a.Mu.Lock()
 
@@ -225,14 +175,8 @@ type LuaFilter struct {
 	CompiledScript *lua.FunctionProto
 }
 
-// NewLuaFilter creates a new instance of LuaFilter. It requires two parameters: name and scriptPath.
-// The name parameter is a string representing the name of the LuaFilter. If it is empty, an error is returned.
-// The scriptPath parameter is a string representing the path to a Lua script file.
-// If the scriptPath is empty, an error is returned.
-// If the scriptPath is valid, the Lua script at the given path is compiled.
-// If script compilation fails, it returns the related error.
-// If both parameters are valid and the script compilation is successful, a pointer to the LuaFilter instance is returned.
-// The returned LuaFilter instance includes the provided name and the compiled script.
+// NewLuaFilter creates a new LuaFilter with the provided name and scriptPath by compiling the Lua script.
+// Returns an error if the name or scriptPath is empty, or if there is a failure during script compilation.
 func NewLuaFilter(name string, scriptPath string) (*LuaFilter, error) {
 	if name == "" {
 		return nil, errors.ErrFilterLuaNameMissing
@@ -404,13 +348,7 @@ func removeFromBackendResult(attributes *[]string) lua.LGFunction {
 	}
 }
 
-// setGlobals sets up the necessary global variables in the Lua state.
-// It initializes the global table 'globals' and adds key-value pairs to it.
-// It adds keys representing filter accept, filter reject, filter result ok,
-// and filter result fail, with their respective values.
-// It adds Lua functions 'custom_log_add' and 'status_message_set' to the global table,
-// along with their corresponding implementations.
-// Finally, it sets the global variable 'nauthilus_builtin' to the 'globals' table.
+// setGlobals initializes Lua global variables and functions for the given request and state.
 func setGlobals(r *Request, L *lua.LState) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 
@@ -437,11 +375,10 @@ func setRequest(r *Request, L *lua.LState) *lua.LTable {
 	return request
 }
 
-// executeScriptWithinContext executes a Lua script within a provided context.
-// It takes in a Lua LTable, a LuaFilter, a Request, a gin context and a Lua LState as parameters.
-// The function sets a timeout for the execution of the Lua script, runs the script, and handles any errors that occur during the execution.
-// It also calls the Lua function with the given parameters and logs the result.
-// The function will return a boolean indicating whether the Lua function was called successfully, and an error if any occurred.
+// executeScriptWithinContext runs a Lua script within a provided execution context and Lua state.
+// It uses a timeout configuration to limit script execution time.
+// The function sets up the Lua state, executes the script, and processes the result.
+// Returns a boolean indicating success and an error in case of failure.
 func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
 	var err error
 
@@ -487,8 +424,7 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 	return false, err
 }
 
-// logResult logs the output of a LuaFilter execution for a given request.
-// The outcome (ok or fail) and whether an action was taken is logged along with the session ID and script name.
+// logResult logs the completion of a Lua filter execution including action taken, result, and optional custom logs.
 func logResult(r *Request, script *LuaFilter, action bool, ret int) {
 	resultMap := map[int]string{definitions.ResultOk: "ok", definitions.ResultFail: "fail"}
 
@@ -542,17 +478,9 @@ func mapsEqual(m1, m2 map[any]any) bool {
 	return true
 }
 
-// CallFilterLua attempts to execute Lua scripts defined in LuaFilters. It returns true if at least
-// one of the scripts executed successfully, otherwise it returns false.
-// The error return value is used to indicate any issues with the Lua filters.
-//
-// It initially checks if any LuaFilters are defined. If none are found, it returns
-// false with an ErrNoFiltersDefined error.
-// It then creates a new Lua state and sets up the necessary global variables and request context.
-// Scripts from the LuaFilters are executed in sequence within the provided context until a script
-// executes successfully or all scripts have been attempted.
-// If the context has been cancelled, the function returns without executing any more scripts.
-// If a script returns an error, it is skipped and the next script is tried.
+// CallFilterLua executes predefined Lua filter scripts in a secured Lua state using the provided Gin context and request.
+// It evaluates each script sequentially, merging backend results and attributes for successful executions.
+// Returns a boolean indicating action, the merged backend result, a list of remove attributes, and an error if any occur.
 func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
 	if LuaFilters == nil || len(LuaFilters.LuaScripts) == 0 {
 		return false, nil, nil, errors.ErrNoFiltersDefined

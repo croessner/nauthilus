@@ -16,11 +16,6 @@
 package lualib
 
 import (
-	"bytes"
-	"io"
-	"net/http"
-	"strings"
-
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
@@ -155,28 +150,6 @@ type CommonRequest struct {
 	SSLFingerprint string
 }
 
-// LoaderModHTTPRequest is a function that returns a LGFunction which sets up a Lua module for handling HTTP requests.
-// The module creates Lua functions that can be used to retrieve HTTP request headers and body.
-//
-// Parameters:
-// - httpRequest: A pointer to the http.Request object.
-//
-// Returns:
-// - A LGFunction that creates the Lua module and sets up the Lua functions.
-func LoaderModHTTPRequest(httpRequest *http.Request) lua.LGFunction {
-	return func(L *lua.LState) int {
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeaders(httpRequest),
-			definitions.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeader(httpRequest),
-			definitions.LuaFnGetHTTPRequestBody:       GetHTTPRequestBody(httpRequest),
-		})
-
-		L.Push(mod)
-
-		return 1
-	}
-}
-
 // SetupRequest sets up the request object with the common request properties
 func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	logFormat := definitions.LogFormatDefault
@@ -237,6 +210,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	return request
 }
 
+// SetStatusMessage sets a new status message by updating the provided string pointer based on the input from the Lua state.
 func SetStatusMessage(status **string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		newStatus := L.CheckString(1)
@@ -244,97 +218,5 @@ func SetStatusMessage(status **string) lua.LGFunction {
 		*status = &newStatus
 
 		return 0
-	}
-}
-
-// GetAllHTTPRequestHeaders returns a LGFunction that creates a Lua table containing all headers from the http.Request object
-// The table is indexed by the lowercase header name and each header's value is a list of strings
-// The function expects a *http.Request object as its parameter
-//
-// Example usage:
-//
-//	headers := getAllHeaders(request)
-//	L.SetGlobal("getAllHeaders", L.NewClosure(headers))
-//	result := L.DoString(`
-//	  local headers = getAllHeaders()
-//	  print(headers["content-type"][1]) -- print the first value of the "content-type" header
-//	`)
-//	if result != nil {
-//	  fmt.Println("Error:", result)
-//	}
-func GetAllHTTPRequestHeaders(httpRequest *http.Request) lua.LGFunction {
-	return func(L *lua.LState) int {
-		headerTable := L.NewTable()
-
-		for headerName, headerValues := range httpRequest.Header {
-			headerName = strings.ToLower(headerName)
-
-			headerList := L.NewTable()
-
-			for _, headerValue := range headerValues {
-				headerList.Append(lua.LString(headerValue))
-			}
-
-			headerTable.RawSetString(headerName, headerList)
-		}
-
-		L.Push(headerTable)
-
-		return 1
-	}
-}
-
-// GetHTTPRequestHeader returns a LGFunction that retrieves a specific header from the http.Request object
-// The function expects a *http.Request object as its parameter and the name of the requested header as a string
-// If the requested header exists, it creates a Lua table containing the header's value as a list of strings
-// The table is indexed by the lowercase header name
-// createHeaderTable is a helper function that creates a Lua table for a header value
-// It takes an LState, an LTable, the header name, and a list of header values as parameters
-func GetHTTPRequestHeader(httpRequest *http.Request) lua.LGFunction {
-	return func(L *lua.LState) int {
-		reqzestedHeader := strings.ToLower(L.CheckString(1))
-		headerValueTable := L.NewTable()
-
-		for headerName, headerValues := range httpRequest.Header {
-			headerName = strings.ToLower(headerName)
-
-			if headerName != reqzestedHeader {
-				continue
-			}
-
-			for _, headerValue := range headerValues {
-				headerValueTable.Append(lua.LString(headerValue))
-			}
-
-			break
-		}
-
-		L.Push(headerValueTable)
-
-		return 1
-	}
-}
-
-// GetHTTPRequestBody reads the HTTP request body and returns it as a Lua string.
-// The function expects one parameter: the HTTP request object.
-// It returns the request body as a Lua string.
-// If an error occurs, it raises a Lua error with the error message and returns 0.
-// The read request body is then assigned back to the request's body for the next handler.
-func GetHTTPRequestBody(httpRequest *http.Request) lua.LGFunction {
-	return func(L *lua.LState) int {
-		// Read the HTTP body
-		bodyBytes, err := io.ReadAll(httpRequest.Body)
-		if err != nil {
-			L.RaiseError("failed to read request body: %v", err)
-
-			return 0
-		}
-
-		// Make sure the body is readable for the next handler...
-		httpRequest.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-		L.Push(lua.LString(bodyBytes))
-
-		return 1
 	}
 }

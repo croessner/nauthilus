@@ -31,7 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 var (
@@ -102,10 +102,7 @@ type Worker struct {
 	DoneChan chan Done
 }
 
-// NewWorker creates a new instance of the Worker struct.
-// It initializes a resultMap map with two key-value pairs.
-// It initializes a RequestChan channel with a maximum size of MaxChannelSize.
-// It returns a pointer to the newly created Worker.
+// NewWorker initializes and returns a new instance of Worker with preconfigured result mappings and request channel.
 func NewWorker() *Worker {
 	resultMap := make(map[int]string, 2)
 
@@ -118,10 +115,7 @@ func NewWorker() *Worker {
 	}
 }
 
-// Work executes the worker logic in a continuous loop.
-// It loads action scripts from the configuration and then waits for requests or context cancellation.
-// If a request is received, it handles the request by running the corresponding script.
-// If the context is cancelled, it sends a WorkerEndChan signal to indicate that the worker has ended.
+// Work is a method of Worker that starts processing tasks in a loop until the context is canceled.
 func (aw *Worker) Work(ctx context.Context) {
 	aw.ctx = ctx
 
@@ -147,41 +141,14 @@ func (aw *Worker) Work(ctx context.Context) {
 	}
 }
 
-// loadActionScriptsFromConfiguration loads action scripts from the configuration.
-// For each action in the configuration, it calls loadScriptAction to load the action script.
-// The action is passed by reference to loadScriptAction.
-//
-// It iterates over the actions in the configuration and loads the corresponding script.
-// The loaded action script is added to Worker's actionScripts slice.
-//
-// Example:
-//
-//	 loadActionScriptsFromConfiguration()
-//
-//	 Actions in the configuration:
-//		- action1: script1.lua
-//		- action2: script2.lua
-//		- action3: script3.lua
-//
-//	 After calling loadActionScriptsFromConfiguration(), the actionScripts slice will contain:
-//		- script1.lua
-//		- script2.lua
-//		- script3.lua
+// loadActionScriptsFromConfiguration loads Lua action scripts from the current configuration into the worker instance.
 func (aw *Worker) loadActionScriptsFromConfiguration() {
 	for index := range config.GetFile().GetLua().Actions {
 		aw.loadScriptAction(&config.GetFile().GetLua().Actions[index])
 	}
 }
 
-// loadScriptAction loads an action script from the configuration and compiles it.
-// It takes the actionConfig parameter, which specifies the action type and script path.
-// It creates a LuaScriptAction struct and sets its properties based on the action type and script path.
-// If the action type is not LuaActionNone, it calls the loadScript method with the LuaScriptAction and script path.
-//
-// Example:
-//
-//	actionConfig := &config.GetFile().Lua.Actions[index]
-//	aw.loadScriptAction(actionConfig)
+// loadScriptAction loads a Lua action script and its metadata into the worker instance based on the action configuration.
 func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 	luaAction := &LuaScriptAction{}
 	actionType, scriptName, scriptPath := actionConfig.GetAction()
@@ -193,13 +160,7 @@ func (aw *Worker) loadScriptAction(actionConfig *config.LuaAction) {
 	}
 }
 
-// loadScript loads a Lua script into a LuaScriptAction object.
-// It compiles the script using lualib.CompileLua and stores the compiled script in LuaScriptAction.ScriptCompiled.
-// If the compilation fails, it logs the error using log.Logger.
-//
-// Parameters:
-// - luaAction: a pointer to a LuaScriptAction object.
-// - scriptPath: the path to the Lua script file.
+// loadScript loads a Lua script into the worker by compiling it and updating the LuaScriptAction with its metadata.
 func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scriptPath string) {
 	var (
 		err            error
@@ -218,16 +179,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	aw.actionScripts = append(aw.actionScripts, luaAction)
 }
 
-// registerDynamicLoader registers a dynamic loader function in the Lua state. The dynamic loader function
-// is called when a Lua module is required or imported, and it loads the module into the Lua GetEnvironment().
-// The function takes the Lua state and an HTTP request as input parameters. It creates a new Lua function
-// that acts as the dynamic loader. The dynamic loader function checks if the module name is already present
-// in the registry. If it is, the function returns. Otherwise, it registers common Lua libraries, such as
-// lualib.RegisterCommonLuaLibraries, in the Lua state and calls the worker's registerModule method to register
-// the module in the Lua GetEnvironment(). Finally, it sets the global variable "dynamic_loader" to the created
-// dynamic loader function.
-//
-// Note that this documentation assumes familiarity with the Lua programming language and its module system.
+// registerDynamicLoader registers a dynamic module loader for Lua state and configures it with HTTP request context.
 func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
@@ -246,24 +198,10 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 	L.SetGlobal("dynamic_loader", dynamicLoader)
 }
 
-// registerModule registers a Lua module in the given Lua state.
-// The modules are preloaded based on the module name and the provided registry.
-// The available module names are `modName`.
-// Once the module is registered, it will be added to the registry to track its availability.
-//
-// Only specific modules are supported, depending on the `modName` value,
-// the appropriate preload module function is called to load the module.
-// If the module name is not recognized, the function returns without any action.
-//
-// For module "ModContext", the `lualib.LoaderModContext` function is used to preload the module.
-// For module "ModHTTPRequest", the `lualib.LoaderModHTTPRequest` function is used to preload the module.
-// For module "ModLDAP", if the LDAP backend is activated, the `backend.LoaderModLDAP` function is used to preload the module.
-// Otherwise, an error is raised indicating that the LDAP backend is not activated.
-//
-// The `registry` parameter is a map of module names to booleans.
-// Once a module is registered, its name is added to the registry with a true value to indicate its availability.
-//
-// This function does not return any value.
+// registerModule initializes and preloads a specific Lua module into the given Lua state based on the provided module name.
+// It verifies if the module is valid and satisfies specific conditions (e.g., LDAP backend availability for LuaModLDAP).
+// The method updates the registry map to track that the module has been successfully registered.
+// An error is raised in the Lua state if an invalid or unsupported module is requested.
 func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
 	switch modName {
 	case definitions.LuaModContext:
@@ -283,30 +221,7 @@ func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modNa
 	registry[modName] = true
 }
 
-// logActionsSummary logs a summary of the Lua actions that have been finished.
-// It creates a log entry with the session identifier and a message indicating that Lua actions have finished.
-// The log entry also includes any additional key-value pairs provided in the logs parameter.
-// The log entry is logged at the Info level using the global Logger.
-//
-// Parameters:
-//   - logs: A pointer to a CustomLogKeyValue instance representing additional key-value pairs to include in the log entry.
-//     Each key-value pair is specified by calling the Set method on the CustomLogKeyValue instance.
-//     The key-value pairs will be appended to the log entry in the order they were set.
-//     If logs is nil or empty, no additional key-value pairs will be included in the log entry.
-//
-// Example:
-//
-//	aw := &Worker{}
-//	logs := lualib.CustomLogKeyValue{}
-//	logs.Set("key1", "value1")
-//	logs.Set("key2", "value2")
-//	aw.logActionsSummary(&logs)
-//	// The log entry will include the session identifier, message, as well as the additional key-value pairs "key1: value1" and "key2: value2"
-//
-// Note:
-//
-//	The logActionsSummary method is typically called after executing a sequence of Lua actions to provide a summary of the actions that were performed.
-//	The method is called internally within the handleRequest method, which handles a Lua action request.
+// logActionsSummary logs a summary of Lua actions including session details and additional provided key-value data.
 func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 	level.Info(log.Logger).Log(
 		append([]any{
@@ -316,13 +231,7 @@ func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 	)
 }
 
-// handleRequest handles a Lua action request by running the corresponding script.
-// It creates a new Lua state and loads necessary Lua libraries.
-// Then, it sets up global variables and creates a Lua table for the request.
-// It iterates through the action scripts, and if the LuaAction matches the request and the context is not canceled,
-// it executes the script.
-// If an error occurs while executing the script, it logs the failure.
-// After executing the script, it logs the result and cancels the Lua context.
+// handleRequest processes an HTTP request using Lua scripts and logs execution results for each script.
 func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	if len(aw.actionScripts) == 0 {
 		aw.luaActionRequest.FinishedChan <- Done{}
@@ -358,13 +267,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	aw.luaActionRequest.FinishedChan <- Done{}
 }
 
-// setupGlobals initializes the global variables in the Lua state.
-// It creates a new Lua table and sets the necessary variables and functions.
-// If the DevMode configuration is enabled, it logs the Lua action request.
-// The Lua table includes two variables, LuaActionResultOk and LuaActionResultFail,
-// which are set to 0 and 1 respectively.
-// It also includes a function LuaFnAddCustomLog, which is set to the AddCustomLog function
-// from the lualib package. Finally, it sets the LuaDefaultTable global variable to the created table.
+// setupGlobals initializes and registers global Lua variables and functions into the provided Lua state.
 func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
@@ -380,9 +283,8 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
-// setupRequest creates a Lua table representing the request data.
-// The table contains various fields from aw.luaActionRequest.
-// Returns the created request table.
+// setupRequest prepares and returns a new Lua table for the request setup.
+// It applies the common request configurations to the table.
 func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
@@ -391,24 +293,21 @@ func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	return request
 }
 
+// getTaskName returns a formatted string combining the Lua action name and the script name of the given action.
 func getTaskName(action *LuaScriptAction) string {
 	actionName := getLuaActionName(action)
 
 	return fmt.Sprintf("%s:%s", actionName, action.ScriptName)
 }
 
-// runScript executes the Lua script at the specified index.
-// It sets the context and timeout for the script execution.
-// If an error occurs during script execution, it logs the failure and cancels the Lua context.
-// It retrieves the return value of the script, logs the script execution details, and cancels the Lua context.
-//
+// runScript executes a specified Lua script by index in the Worker instance.
+// It sets up a Lua runtime environment, passes the context and request to the script, and handles timeouts.
 // Parameters:
-// - index: the index of the Lua script to execute
-// - L: the Lua State
-// - request: the Lua table containing the request data
-// - logs: the custom log key-value data
-//
-// Returns: none
+// - index: The index of the action script to execute.
+// - L: The Lua state to execute the script on.
+// - request: A Lua table containing the request information to pass to the script.
+// - logs: A custom log structure to add contextual logging information.
+// Returns the result of the Lua script execution as an integer.
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) (result int) {
 	var err error
 
@@ -445,9 +344,9 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	return ret
 }
 
-// executeScript executes a Lua script by loading and calling a compiled Lua function.
-// It takes in an LState, an index representing the script to execute, and a request table.
-// It returns an error if there was a problem executing the script.
+// executeScript runs a precompiled Lua script in the provided Lua state and invokes a specific function with a request table.
+// It uses the given index to identify the script from a collection of action scripts.
+// Errors encountered while setting up the Lua environment or executing the script are returned.
 func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) error {
 	if err := lualib.PackagePath(L); err != nil {
 		return err
@@ -468,9 +367,7 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 	return nil
 }
 
-// logScriptFailure logs the failure of a script execution.
-// It takes the index of the action script, the error that occurred, and the custom log key-value pair as parameters.
-// It logs the error, script path, session ID, and custom log key-value pair using the error logger.
+// logScriptFailure logs details about a script failure, including session ID, script path, error, and custom log data.
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
 	level.Error(log.Logger).Log(
 		append([]any{
@@ -490,19 +387,8 @@ func (aw *Worker) createResultLogMessage(resultCode int) string {
 	return "unknown result"
 }
 
-// toLoggable is a function that takes a reference to log entries (type CustomLogKeyValue from lualib)
-// and constructs a new slice (of type 'any') from these entries.
-// The function iterates over each log entry and appends it to the new slice `l`.
-// The function checks first if the length of the logs is greater than 0 and if it's even,
-// in case the conditions are not met, nil will be returned.
-// The resulting slice (`l`) is then returned.
-//
-// Parameters:
-//   - logs: A pointer to a CustomLogKeyValue instance, representing logs to transform.
-//
-// Returns:
-//   - If the length of 'logs' is more than 0 and is even-numbered, a slice of 'any' type including all elements in 'logs' is returned.
-//   - Otherwise, nil is returned.
+// toLoggable converts a CustomLogKeyValue slice into a flat slice of any type, ensuring the input has an even length.
+// Returns nil if the input slice is empty or has an odd length.
 func toLoggable(logs *lualib.CustomLogKeyValue) []any {
 	if len(*logs) > 0 && len(*logs)%2 == 0 {
 		var l []any
@@ -517,9 +403,8 @@ func toLoggable(logs *lualib.CustomLogKeyValue) []any {
 	return nil
 }
 
-// getLuaActionType maps a given actionName string to its corresponding definitions.LuaAction constant.
-// If actionName matches any of the predefined names, the corresponding constant is returned.
-// Otherwise, definitions.LuaActionNone is returned.
+// getLuaActionType maps a given action name string to its corresponding LuaAction identifier.
+// Returns LuaActionNone if the action name is not recognized.
 func getLuaActionType(actionName string) definitions.LuaAction {
 	switch actionName {
 	case definitions.LuaActionBruteForceName:
@@ -539,15 +424,7 @@ func getLuaActionType(actionName string) definitions.LuaAction {
 	}
 }
 
-// getLuaActionName returns the name of the Lua action based on the given LuaScriptAction.
-// It takes an action of type LuaScriptAction as input and returns a string representing the name of the action.
-// If the LuaAction is LuaActionBruteForce, it returns "brute_force".
-// If the LuaAction is LuaActionRBL, it returns "rbl".
-// If the LuaAction is LuaActionTLS, it returns "tls_encryption".
-// If the LuaAction is LuaActionRelayDomains, it returns "relay_domains".
-// If the LuaAction is LuaActionLua, it returns "lua".
-// If the LuaAction is LuaActionPost, it returns "post".
-// If the LuaAction is any other value, it returns an empty string.
+// getLuaActionName returns the name of a Lua action based on the action type defined in the given LuaScriptAction.
 func getLuaActionName(action *LuaScriptAction) string {
 	switch action.LuaAction {
 	case definitions.LuaActionBruteForce:

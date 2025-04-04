@@ -21,14 +21,11 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
-// LuaValue converts a Lua value to its corresponding Go type.
-// It takes a lua.LValue as input and returns the converted value and an error.
-// The function supports converting Lua strings to Go strings, Lua numbers to Go float64,
-// Lua booleans to Go bool, and Lua nil to Go nil.
-// If the Lua value is of any other type, it returns an error.
+// LuaValue converts a Lua LValue to its corresponding Go native type (string, float64, bool, or nil).
+// Returns an error if the LValue type is unsupported.
 func LuaValue(lValue lua.LValue) (any, error) {
 	switch lValue.Type() {
 	case lua.LTString:
@@ -46,27 +43,8 @@ func LuaValue(lValue lua.LValue) (any, error) {
 	}
 }
 
-// StringCmd attempts to convert a given *redis.StringCmd value into the specified type.
-//
-// Parameters:
-// value: The redis.StringCmd value to be converted.
-// valType: The type that the redis.StringCmd should be converted to. Acceptable values include:
-//   - "string": converts the redis.StringCmd to a Lua string.
-//   - "number": converts the redis.StringCmd to a Lua number. If the conversion fails, it returns an error.
-//   - "boolean": converts the redis.StringCmd to a Lua boolean. If the conversion fails, it returns an error.
-//
-// L: The Lua state against which these conversions are made.
-// This method pushes the converted value onto the L lua.LState if the conversion is successful.
-//
-// It returns nil if the conversion is successful.
-// It returns an error if the conversion fails or if the conversion is attempted on an unsupported type.
-//
-// Example usage:
-//
-//	err := convertStringCmd(myStringCmd, "number", myLuaState)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
+// StringCmd processes a Redis StringCmd response, converts it to the specified Lua value type, and pushes it to Lua state.
+// Supported types are "string", "number", "bool", and "nil". Returns an error if conversion or processing fails.
 func StringCmd(value *redis.StringCmd, valType string, L *lua.LState) error {
 	if err := value.Err(); err != nil {
 		return err

@@ -9,7 +9,7 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/redis/go-redis/v9"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // Uploads is a concurrency-safe type for managing script uploads, utilizing a map to store key-value pairs securely.
