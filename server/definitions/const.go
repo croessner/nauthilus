@@ -1339,8 +1339,8 @@ const (
 	// LuaFnBfDeleteCustomToleration represents the function name for deleting a specific toleration.
 	LuaFnBfDeleteCustomToleration = "delete_custom_toleration"
 
-	// LuaFnBfGetMap represents the Lua function name for retrieving a tolerate-map.
-	LuaFnBfGetMap = "get_map"
+	// LuaFnBfGetTolerateMap represents the Lua function name for retrieving a tolerate-map.
+	LuaFnBfGetTolerateMap = "get_tolerate_map"
 )
 
 const (

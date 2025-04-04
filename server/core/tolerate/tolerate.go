@@ -129,8 +129,8 @@ type Tolerate interface {
 	// IsTolerated checks if an IP address is within the allowed tolerance based on past interactions.
 	IsTolerated(ipAddress string) bool
 
-	// GetMap retrieves a map containing authentication-related data for a specified IP address.
-	GetMap(ipAddress string) map[string]int64
+	// GetTolerateMap retrieves a map containing toleration data as key-value pairs for a specific IP address.
+	GetTolerateMap(ipAddress string) map[string]int64
 }
 
 type tolerateImpl struct {
@@ -319,7 +319,7 @@ func (t *tolerateImpl) IsTolerated(ipAddress string) bool {
 		return false
 	}
 
-	ipMap := t.GetMap(ipAddress)
+	ipMap := t.GetTolerateMap(ipAddress)
 
 	if positive, okay = ipMap[ipAddress]; !okay {
 		positive = 0
@@ -412,9 +412,8 @@ func (t *tolerateImpl) StartHouseKeeping() {
 	}
 }
 
-// GetMap retrieves a map of string keys to unsigned integer values from Redis using the specified IP address as a key.
-// It fetches all entries from a Redis hash, converts the values to unsigned integers, and handles retrieval/parsing errors.
-func (t *tolerateImpl) GetMap(ipAddress string) map[string]int64 {
+// GetTolerateMap retrieves a map of toleration data from Redis for the specified IP address.
+func (t *tolerateImpl) GetTolerateMap(ipAddress string) map[string]int64 {
 	var (
 		counter int64
 		err     error
