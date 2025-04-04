@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // GetAllHTTPRequestHeaders returns a Lua function that retrieves all headers from an HTTP request.

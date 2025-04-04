@@ -3,7 +3,7 @@ package metrics
 import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 var (
@@ -107,10 +107,7 @@ func createHistogramVec(L *lua.LState) int {
 	return 0
 }
 
-// createGaugeVec creates and registers a new GaugeVec with the specified name, help message, and optional label names.
-// The function expects a Lua state, with the first two arguments being the name and help string.
-// If a third argument is provided, it should be a table of label names.
-// If a GaugeVec with the given name already exists, the function does nothing.
+// createGaugeVec registers a new Prometheus GaugeVec metric with the provided name, help description, and label names.
 func createGaugeVec(L *lua.LState) int {
 	name := L.CheckString(1)
 	help := L.CheckString(2)
@@ -225,11 +222,7 @@ func incrementCounter(L *lua.LState) int {
 	return 0
 }
 
-// addGauge adds a value to a labeled gauge identified by its name.
-// It takes a Lua state (L) as input, with the following arguments expected:
-// - name: a string representing the name of the GaugeVec.
-// - labels: a Lua table containing label key-value pairs.
-// - value: a number representing the amount to add to the gauge.
+// addGauge adds a value to a Prometheus gauge identified by name and labels, creating label mappings from Lua table.
 func addGauge(L *lua.LState) int {
 	name := L.CheckString(1)
 	value := L.CheckNumber(2)
@@ -358,9 +351,7 @@ var exportsModPrometheus = map[string]lua.LGFunction{
 	definitions.LuaFnDecrementGauge:      decrementGauge,
 }
 
-// LoaderModPrometheus loads the Prometheus module into the given Lua state.
-// It sets up the module's functions and pushes the module onto the stack.
-// Returns 1 to indicate the number of return values for the Lua stack.
+// LoaderModPrometheus loads and initializes the Prometheus module with metric-related functions for use in Lua scripts.
 func LoaderModPrometheus(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), exportsModPrometheus)
 

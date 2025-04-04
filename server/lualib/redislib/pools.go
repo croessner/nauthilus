@@ -7,7 +7,7 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // failoverPool represents a Redis connection pool configuration for a failover setup, with an optional read-only flag.

@@ -3,9 +3,11 @@ package lualib
 import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
+// softWhitelistSet manages soft whitelist entries by adding a network for a username based on a specified feature category.
+// It initializes the soft whitelist if it does not exist for the given feature and returns nil upon success.
 func softWhitelistSet(L *lua.LState) int {
 	var provider config.SoftWhitelistProvider
 
@@ -45,8 +47,9 @@ func softWhitelistSet(L *lua.LState) int {
 	return 1
 }
 
-// getNetworks retrieves a list of networks associated with a username for a specified feature if a soft whitelist exists.
-// The feature can be one of "brute_force", "relay_domains", or "rbl". Returns nil if the feature is not recognized or no whitelist exists.
+// getNetworks retrieves a list of networks associated with a username for a specific feature using a soft whitelist provider.
+// It supports features like brute force protection, relay domains, and RBL.
+// The function returns nil if no networks are found or if the feature is undefined.
 func getNetworks(username, feature string) []string {
 	var provider config.SoftWhitelistProvider
 

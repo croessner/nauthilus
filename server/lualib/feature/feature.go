@@ -37,23 +37,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// LuaFeatures is a pointer to a PreCompiledLuaFeatures object. It represents a collection of pre-compiled Lua scripts that can be executed.
-//
-// The PreCompiledLuaFeatures struct has the following properties:
-// - `LuaScripts`: a slice of LuaFeature objects representing the individual pre-compiled Lua scripts.
-// - `mu`: a mutex used to synchronize access to the LuaScripts slice.
-//
-// The PreCompiledLuaFeatures has two methods:
-// - `Add(luaFeature *LuaFeature)`: adds a LuaFeature object to the LuaScripts slice.
-// - `Reset()`: clears the LuaScripts slice.
-//
-// Usage example:
-// The PreCompileLuaFeatures function initializes the LuaFeatures variable by pre-compiling the Lua scripts specified in the configuration.
-//
-// The CallFeatureLua method of the Request struct executes the pre-compiled Lua scripts stored in LuaFeatures on the provided gin.Context.
-// It retrieves a read lock on the LuaFeatures object and creates a new Lua state. It then sets up the necessary Lua libraries and global variables.
-// The executeScripts method is called to execute each pre-compiled Lua script in order, passing in the request and the Lua state.
-// If a script triggers or aborts the execution of features, the execution is halted and the method returns the appropriate values.
+// LuaFeatures is a global variable that holds a collection of pre-compiled Lua features for the application.
 var LuaFeatures *PreCompiledLuaFeatures
 
 // httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
@@ -64,15 +48,8 @@ func InitHTTPClient() {
 	httpClient = util.NewHTTPClient()
 }
 
-// PreCompileLuaFeatures pre-compiles Lua features.
-// It checks if the configuration for Lua features is loaded and if the LuaFeatures variable is already set.
-// If the LuaFeatures variable is not set, it creates a new instance of PreCompiledLuaFeatures.
-// If the LuaFeatures variable is already set, it resets it using the Reset method.
-// Then it loops through the features in the configuration and creates a new LuaFeature instance for each feature.
-// The LuaFeature instance is created using the NewLuaFeature function, passing the name and script path from the configuration.
-// If there is an error creating the LuaFeature instance, the error is returned.
-// The compiled Lua feature is added to the LuaFeatures variable using the Add method.
-// Finally, it returns nil if there are no errors.
+// PreCompileLuaFeatures pre-compiles Lua features listed in the configuration and initializes the global `LuaFeatures` variable.
+// Returns an error if the pre-compilation process or Lua feature initialization fails, otherwise returns nil.
 func PreCompileLuaFeatures() (err error) {
 	if config.GetFile().HaveLuaFeatures() {
 		if LuaFeatures == nil {
@@ -113,9 +90,7 @@ func (a *PreCompiledLuaFeatures) Add(luaFeature *LuaFeature) {
 	a.LuaScripts = append(a.LuaScripts, luaFeature)
 }
 
-// Reset resets the slice of LuaScripts in PreCompiledLuaFeatures by creating a new empty slice.
-// The method also acquires a lock on the PreCompiledLuaFeatures mutex before resetting the slice
-// and defers the unlocking of the mutex until the method returns.
+// Reset clears the LuaScripts slice and resets it to an empty state while ensuring thread-safe access via locking.
 func (a *PreCompiledLuaFeatures) Reset() {
 	a.Mu.Lock()
 
@@ -131,11 +106,8 @@ type LuaFeature struct {
 	CompiledScript *lua.FunctionProto
 }
 
-// NewLuaFeature creates a new instance of LuaFeature with the given name and script path.
-// If the name or script path is empty, it returns an error.
-// The function compiles the Lua script using lualib.CompileLua and assigns the compiled script to the CompiledScript field of the LuaFeature.
-// The function returns the created LuaFeature instance and nil error if successful.
-// Otherwise, it returns nil and the appropriate error.
+// NewLuaFeature creates a new LuaFeature instance by compiling the Lua script found at the given path and assigning its name.
+// Returns the LuaFeature instance or an error if either the name or scriptPath is empty, or if script compilation fails.
 func NewLuaFeature(name string, scriptPath string) (*LuaFeature, error) {
 	if name == "" {
 		return nil, errors.ErrFeatureLuaNameMissing
@@ -167,14 +139,7 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
-// registerDynamicLoader creates a new Lua function `dynamic_loader` and registers it as a global variable in the Lua state.
-// The `dynamic_loader` function is used to load and register modules in the Lua state based on the provided module name.
-//
-// Parameters:
-// - L *lua.LState: the Lua state in which the module is to be registered
-// - ctx *gin.Context: the gin Context containing the request data
-//
-// Returns: none
+// registerDynamicLoader registers a Lua function "dynamic_loader" to dynamically load Lua modules in the given context.
 func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
@@ -193,16 +158,8 @@ func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
 	L.SetGlobal("dynamic_loader", dynamicLoader)
 }
 
-// registerModule registers a module in the LuaState based on the provided module name.
-// The module is loaded using a corresponding loader function and added to the registry.
-//
-// Parameters:
-// - L *lua.LState: the Lua state in which the module is to be registered
-// - ctx *gin.Context: the gin Context containing the request data
-// - modName string: the name of the module to be registered
-// - registry map[string]bool: a map containing the registered modules
-//
-// Returns: none
+// registerModule preloads a Lua module by its name into the Lua state if not already registered in the registry.
+// It supports specific modules like context, HTTP requests, and LDAP, raising errors for unsupported configurations.
 func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
 	switch modName {
 	case definitions.LuaModContext:
@@ -222,13 +179,9 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 	registry[modName] = true
 }
 
-// CallFeatureLua executes Lua scripts for a given request context.
-// It acquires a read lock on the LuaFeatures mutex.
-// It creates a new Lua state and preloads necessary libraries.
-// It sets global variables in the Lua state.
-// It sets fields for the request in the Lua state.
-// It executes the Lua scripts for the request.
-// It returns the triggered flag, abortFeatures flag, and related error if any.
+// CallFeatureLua executes Lua scripts associated with features within the context of a request.
+// It triggers actions or aborts features based on script results.
+// Returns whether a feature was triggered, if features should be aborted, and any execution error.
 func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
 		return
@@ -253,9 +206,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	return
 }
 
-// setGlobals sets the global variables in the Lua state for the request. It initializes a new table,
-// sets the predefined Lua global variables, and adds custom functions to the table. Finally,
-// it sets the table as the global variable in the Lua state.
+// setGlobals initializes global Lua variables and functions for the given Lua state, setting up essential Lua constants and utilities.
 func (r *Request) setGlobals(L *lua.LState) {
 	r.Logs = new(lualib.CustomLogKeyValue)
 	globals := L.NewTable()
@@ -283,20 +234,8 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 	return request
 }
 
-// executeScripts is a method for the Request struct. It iterates over a set of compiled Lua scripts
-// and executes them within a context that respects a timeout value. If an error is encountered while
-// executing a script, it will be handled and the method will continue onto the next script.
-// The method stops executing scripts if one of them triggers an action or requires the features to be aborted.
-//
-// Parameters:
-// ctx *gin.Context: the gin Context from which this method is invoked.
-// L *lua.LState: the Lua state in which the scripts are to be executed.
-// request *lua.LTable: the Lua table representing the request to be processed.
-//
-// Returns:
-// triggered bool: a boolean indicating if any of the scripts has triggered an action.
-// abortFeatures bool: a boolean indicating if any of the scripts has required to abort the features.
-// err error: an error that might have occurred during the execution of the scripts.
+// executeScripts executes a series of Lua scripts associated with the request context and Lua state, handling defined features.
+// It manages Lua script execution within a timeout, processes errors, and updates execution flags: triggered and abortFeatures.
 func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.LTable) (triggered bool, abortFeatures bool, err error) {
 	for index := range LuaFeatures.LuaScripts {
 		if L.GetTop() != 0 {
@@ -378,33 +317,7 @@ func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptNam
 	luaCancel()
 }
 
-// generateLog generates a log entry for a Lua feature that has finished execution.
-// It logs the following information:
-// - GUID: the session ID of the request
-// - name: the name of the script that was executed
-// - msg: "Lua feature finished"
-// - triggered: whether the feature was triggered (true/false)
-// - abort_features: whether the feature should abort other features (true/false)
-// - result: the result of the feature, formatted as a string
-//
-// Example usage:
-// r.generateLog(triggered, abortFeatures, ret, scriptName)
-//
-// NOTE: This method uses the log.Logger logger.
-//
-// Dependencies:
-// - log.Logger: the default error logger for logging the log entry
-// - definitions.LogKeyGUID: the constant representing the log key for the session ID
-// - definitions.LogKeyMsg: the constant representing the log key for the log message
-// - r.formatResult: a helper method to format the feature result as a string
-//
-// Parameters:
-// - triggered: a boolean indicating whether the feature was triggered by the script
-// - abortFeatures: a boolean indicating whether the feature should abort other features
-// - ret: the result of the feature execution (0 for success, 1 for failure)
-// - scriptName: the name of the executed script
-//
-// Returns: none
+// generateLog creates a log entry with details about a Lua feature execution, including triggered state, abort flag, and result.
 func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName string) {
 	logs := []any{
 		definitions.LogKeyGUID, r.Session,
@@ -426,10 +339,8 @@ func (r *Request) generateLog(triggered, abortFeatures bool, ret int, scriptName
 	util.DebugModule(definitions.DbgFeature, logs...)
 }
 
-// formatResult returns the formatted result based on the given ret value.
-// It uses the resultMap to map the ret value to the corresponding string value.
-// If ret is 0 or 1, it returns the corresponding string value from resultMap.
-// Otherwise, it returns a string formatted as "unknown(ret)".
+// formatResult returns a string representation of the given integer result.
+// It maps 0 to "success", 1 to "fail", and any other value to the string "unknown(<value>)".
 func (r *Request) formatResult(ret int) string {
 	resultMap := map[int]string{
 		0: definitions.LuaSuccess,

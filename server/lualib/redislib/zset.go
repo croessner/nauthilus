@@ -38,11 +38,7 @@ func RedisZAdd(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// parseLuaTableToRedisZSet converts a Lua table of string-number pairs to a slice of redis.Z objects for use with Redis.
-// L is the Lua state used to interact with Lua values and propagate errors.
-// values is the Lua table containing string-number pairs to be converted.
-// errorMsg is the error message to be thrown if a key in the Lua table is not a valid string.
-// Returns a slice of redis.Z containing the converted key-value pairs.
+// parseLuaTableToRedisZSet converts a Lua table of key-value pairs into a slice of Redis ZSet members with scores.
 func parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string) []redis.Z {
 	redisZSet := make([]redis.Z, 0)
 
@@ -82,8 +78,7 @@ func parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string
 	return redisZSet
 }
 
-// RedisZRange retrieves a range of elements from a Redis sorted set (ZSET) by index (start and stop) via ZRANGE.
-// It pushes the resulting table or an error to the Lua state stack.
+// RedisZRange retrieves a range of members from a sorted set in Redis based on their rank, defined by start and stop indexes.
 func RedisZRange(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
@@ -143,9 +138,7 @@ func RedisZRevRange(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisZRangeByScore retrieves elements from a sorted set in Redis within the specified score range (inclusive).
-// It accepts an optional table with "offset" and "count" for result pagination.
-// Returns a Lua table with the matching elements or an error message if the operation fails.
+// RedisZRangeByScore retrieves elements from a sorted set in Redis based on a given score range and optional limits.
 func RedisZRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
@@ -231,9 +224,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisZRemRangeByScore removes members in a sorted set within a given score range from Redis.
-// It requires the Redis connection, set key, minimum score, and maximum score as arguments.
-// Returns the count of removed elements or an error if the operation fails.
+// RedisZRemRangeByScore removes all elements in a Redis sorted set with scores within the specified range.
 func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
@@ -258,9 +249,7 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisZRank executes a Redis ZRANK command to retrieve the rank of a specified member in a sorted set.
-// Returns the rank as Lua.LNumber or nil and error string on failure.
-// Requires the context, key, and member as inputs.
+// RedisZRank retrieves the rank of a member within a sorted set in Redis, returning the rank or an error if applicable.
 func RedisZRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())

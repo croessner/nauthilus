@@ -21,22 +21,7 @@ import (
 	"net/smtp"
 )
 
-// runSendSMTPMail sends an email using the SMTP protocol. It establishes a connection with the SMTP server,
-// authenticates if provided, and sends the email content. It supports both plain and secure connections,
-// with optional TLS encryption and StartTLS support.
-//
-// Parameters:
-// - smtpServer: The SMTP server address and port in the format "host:port".
-// - heloName: The domain name used in the SMTP HELO/EHLO command.
-// - auth: The authentication credentials for the SMTP server. Use `nil` for no authentication.
-// - from: The email address of the sender.
-// - to: A slice of email addresses of the recipients.
-// - msg: The byte array of the email content.
-// - useTLS: A boolean indicating whether to use a secure TLS connection.
-// - useStartTLS: A boolean indicating whether to use the STARTTLS extension for upgrading the connection to TLS.
-//
-// Returns:
-// - An error if any occurs during the email sending process, or `nil` if the email is sent successfully.
+// runSendSMTPMail establishes an SMTP connection and sends an email using provided parameters with optional TLS/StartTLS.
 func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool, useStartTLS bool) error {
 	var (
 		genericClient GenericClient

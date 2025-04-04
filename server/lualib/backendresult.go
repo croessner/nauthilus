@@ -18,7 +18,7 @@ package lualib
 import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // LuaBackendResult holds the response returned by the Lua backend. Information about user authentication, user account,
@@ -55,8 +55,7 @@ type LuaBackendResult struct {
 	Logs *CustomLogKeyValue
 }
 
-// RegisterBackendResultType registers the Lua type "nauthilus_backend_result" in the given Lua state.
-// It sets the type metatable with the given name and creates the necessary static attributes and methods.
+// RegisterBackendResultType registers a new Lua type `nauthilus_backend_result` and attaches provided methods to its metatable.
 func RegisterBackendResultType(L *lua.LState, methods ...string) {
 	mt := L.NewTypeMetatable(definitions.LuaBackendResultTypeName)
 
@@ -75,12 +74,7 @@ func RegisterBackendResultType(L *lua.LState, methods ...string) {
 	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), usedBackendResultMethods))
 }
 
-// newBackendResult is a function for creating a new instance of LuaBackendResult
-// and returning it as a userdata type in Lua. This function is designed to be
-// callable from a Lua context, hence the L *lua.LState input parameter, which
-// provides the necessary Lua environment for the function execution.
-// The int return value is standard for functions to be called from Lua,
-// indicating the number of results that the function is returning to the Lua stack.
+// newBackendResult creates a new instance of LuaBackendResult, wraps it in a user data object, and sets its metatable.
 func newBackendResult(L *lua.LState) int {
 	backendResult := &LuaBackendResult{}
 	userData := L.NewUserData()
@@ -93,8 +87,8 @@ func newBackendResult(L *lua.LState) int {
 	return 1
 }
 
-// checkBackendResult checks if the argument at index 1 in the Lua state is of a type *LuaBackendResult,
-// if it is, returns its value; otherwise, it raises an error indicating that "backend_result" was expected, and returns nil.
+// checkBackendResult retrieves and validates a LuaBackendResult instance from the Lua state at the given stack index.
+// Returns the LuaBackendResult instance or raises a Lua argument error if the type is invalid.
 func checkBackendResult(L *lua.LState) *LuaBackendResult {
 	userData := L.CheckUserData(1)
 
@@ -119,9 +113,9 @@ var backendResultMethods = map[string]lua.LGFunction{
 	definitions.LuaBackendResultAttributes:        backendResultGetSetAttributes,
 }
 
-// backendResultGetSetAuthenticated sets or returns the value of the Authenticated field in the backendResult
-// struct. If called with a boolean argument, it sets the Authenticated field to the provided value.
-// If called without any argument, it returns the current value of the Authenticated field.
+// backendResultGetSetAuthenticated sets or retrieves the Authenticated field in the LuaBackendResult struct.
+// When called with a boolean argument, it sets the Authenticated field to the provided value.
+// When called without an argument, it returns the current value of the Authenticated field.
 func backendResultGetSetAuthenticated(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 
@@ -238,13 +232,9 @@ func backendResultGetSetDisplayNameField(L *lua.LState) int {
 	return 1
 }
 
-// backendResultGetSetAttributes retrieves or sets the value of the 'Attributes' field in the 'backendResult'
-// struct. If called with a lua.LTable argument, it sets the 'Attributes' field to the mapped table representation
-// of the provided lua.LTable Input.
-//
-// If called without any argument, it returns the current value of the 'Attributes' field.
-//
-// Note: The 'Attributes' field holds any other attributes related to the user's account.
+// backendResultGetSetAttributes sets or retrieves the Attributes field of the LuaBackendResult struct as a Lua table.
+// If called with a table argument, it updates the Attributes field with the provided key-value pairs.
+// If called without arguments, it returns the current Attributes field as a Lua table.
 func backendResultGetSetAttributes(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 

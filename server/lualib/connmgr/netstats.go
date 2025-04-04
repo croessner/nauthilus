@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-kit/log/level"
 	psnet "github.com/shirou/gopsutil/v4/net"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.

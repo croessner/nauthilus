@@ -210,6 +210,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	return request
 }
 
+// SetStatusMessage sets a new status message by updating the provided string pointer based on the input from the Lua state.
 func SetStatusMessage(status **string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		newStatus := L.CheckString(1)

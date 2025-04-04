@@ -23,13 +23,10 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
-// RedisGet retrieves the value associated with the given key from the Redis server.
-// It returns the value as a Lua string. If an error occurs, it returns nil and the error message as a Lua string.
-// The function expects one argument: the key to retrieve.
-// Example usage: val = redis_get_str("mykey")
+// RedisGet retrieves a value from Redis using the given key and pushes it to the Lua state based on a specified type.
 func RedisGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
@@ -54,10 +51,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisSet sets the value of the given key to the provided value in the Redis server.
-// It returns "OK" as a Lua string if the operation is successful.
-// If an error occurs, it returns nil and the error message as a Lua string.
-// The function expects two arguments: the key and the value to set.
+// RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
 func RedisSet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		expiration := time.Duration(0)
@@ -92,11 +86,7 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisIncr increments the value associated with the given key in the Redis server.
-// It returns the incremented value as a Lua number. If an error occurs, it returns nil
-// and the error message as a Lua string.
-// The function expects one argument: the key to increment.
-// Example usage: val = redis_incr("counter")
+// RedisIncr increments the integer value of a Redis key by 1 and returns the new value or an error if it fails.
 func RedisIncr(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
@@ -118,10 +108,7 @@ func RedisIncr(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisDel deletes the value associated with the given key from the Redis server.
-// It returns "OK" as a Lua string if the delete operation is successful.
-// If an error occurs, it returns nil and the error message as a Lua string.
-// The function expects one argument: the key to delete.
+// RedisDel deletes a given Redis key and reports the number of keys removed or an error if the operation fails.
 func RedisDel(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
@@ -143,11 +130,7 @@ func RedisDel(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisExpire sets a timeout on the specified key in the Redis server.
-// It expects two arguments: the key and the expiration time in seconds.
-// If the operation succeeds, it returns "OK" as a Lua string.
-// If an error occurs, it returns nil and the error message as a Lua string.
-// Example usage: result = redis_expire("mykey", 60)
+// RedisExpire sets an expiration time on a Redis key and returns true if successful, or nil and an error if it fails.
 func RedisExpire(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
@@ -170,10 +153,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// RedisRename renames a key in the Redis server.
-// It takes two arguments: the old key and the new key.
-// If the rename operation is successful, it returns "OK" as a Lua string.
-// If an error occurs, it returns nil and the error message as a Lua string.
+// RedisRename renames a Redis key to a new key; returns an error if the operation fails.
 func RedisRename(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())

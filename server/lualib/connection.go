@@ -21,14 +21,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// getNumberFromTable retrieves an integer value from a Lua table for the given key. If the key is missing or nil, returns 0.
-//
-// Parameters:
-// - table: The Lua table to search in.
-// - key: The key to look for in the table.
-//
-// Returns:
-// - The integer value associated with the key, or 0 if the key is not present or value is nil.
+// getNumberFromTable retrieves an integer value from a Lua table by its key. Defaults to 0 if the key is non-existent or invalid.
 func getNumberFromTable(table *lua.LTable, key string) int {
 	value := table.RawGet(lua.LString(key))
 
@@ -39,12 +32,7 @@ func getNumberFromTable(table *lua.LTable, key string) int {
 	return int(value.(lua.LNumber))
 }
 
-// CheckBackendConnection attempts to verify the connection to a backend server using the provided monitor.
-// It extracts necessary configuration details such as protocol, IP address, port, and credentials from the given Lua table.
-// The function then calls the monitor's CheckBackendConnection method to perform the actual connectivity check.
-// If the connection check encounters an error, this error is pushed onto the Lua stack.
-// If the connection check is successful, a nil value is pushed onto the Lua stack.
-// It returns an integer indicating the number of results pushed onto the Lua stack.
+// CheckBackendConnection verifies the connection to a backend server using the provided configurations in the Lua table.
 func CheckBackendConnection(monitor monitoring.Monitor) lua.LGFunction {
 	return func(L *lua.LState) int {
 		table := L.CheckTable(1)

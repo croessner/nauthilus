@@ -19,7 +19,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/smtp"
 
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // MailModule provides functionalities for sending emails using an SMTP client.
@@ -33,9 +33,8 @@ func NewMailModule(smtpClient smtp.Client) *MailModule {
 	return &MailModule{smtpClient: smtpClient}
 }
 
-// Loader registers the mail module and its functions in Lua state L.
-// The module provides Lua bindings for sending emails using SMTP via the SendMail function.
-// Returns the number of results pushed onto the Lua stack, which is always 1 in this method.
+// Loader initializes the MailModule's Lua library by registering its functions and returning the module table.
+// This method pushes the initialized module onto the Lua stack and returns 1 to indicate one value is returned.
 func (m *MailModule) Loader(L *lua.LState) int {
 	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 		definitions.LuaFnSendMail: SendMail(m.smtpClient),
@@ -46,20 +45,7 @@ func (m *MailModule) Loader(L *lua.LState) int {
 	return 1
 }
 
-// getStringFromTable retrieves a string value from a Lua table by its key.
-// If the value is not present or is nil, an empty string is returned.
-//
-// Parameters:
-// - table: The Lua table to retrieve the value from.
-// - key: The key of the value to retrieve.
-//
-// Returns:
-// - The string value corresponding to the provided key. If the value is not present or is nil, an empty string is returned.
-//
-// Example usage:
-// ```
-// value := getStringFromTable(tbl, "key")
-// ```
+// getStringFromTable retrieves a string value from a Lua table by its key. Returns an empty string if the key is not found.
 func getStringFromTable(table *lua.LTable, key string) string {
 	value := table.RawGetString(key)
 	if value == lua.LNil {
@@ -69,15 +55,7 @@ func getStringFromTable(table *lua.LTable, key string) string {
 	return value.String()
 }
 
-// getBoolFromTable retrieves a boolean value from a Lua table by its key.
-// If the value is not present or is not of type boolean, false is returned.
-//
-// Parameters:
-// - table: The Lua table to retrieve the value from.
-// - key: The key of the value to retrieve.
-//
-// Returns:
-// - The boolean value corresponding to the provided key. If the value is not present or is not of type boolean, false is returned.
+// getBoolFromTable retrieves a boolean value from a Lua table by its key. Returns false if the key does not exist or is invalid.
 func getBoolFromTable(table *lua.LTable, key string) bool {
 	value := table.RawGetString(key)
 	if value == lua.LNil {
@@ -91,36 +69,8 @@ func getBoolFromTable(table *lua.LTable, key string) bool {
 	return false
 }
 
-// SendMail sends an email using the provided Client implementation.
-//
-// Parameters:
-// - smtpClient: An implementation of the Client interface for sending emails.
-//
-// Returns:
-// - Returns a Lua LGFunction that accepts a Lua state and sends the email using the provided parameters.
-// - If an error occurs during sending the email, a LuaString with the error message is pushed onto the Lua stack.
-// - If the email is sent successfully, a LuaNil is pushed onto the Lua stack.
-//
-// Example usage:
-// ```
-// // Create a real SMTP client instance
-// smtpClient := &lualib.EmailClient{}
-//
-// // Create a Lua state
-// L := lua.NewState()
-//
-// // Register the SendMail function with the Lua state
-// L.SetGlobal("SendMail", lualib.SendMail(smtpClient))
-// ```
-//
-// Note: The Client interface is defined as follows:
-// ```
-//
-//	type Client interface {
-//		SendMail(options *MailOptions) error
-//	}
-//
-// ```
+// SendMail sends an email using the provided smtp.Client and Lua table parameters for configuration and recipient data.
+// It extracts settings like server, port, credentials, and email content from the Lua table and invokes the SMTP client.
 func SendMail(smtpClient smtp.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
