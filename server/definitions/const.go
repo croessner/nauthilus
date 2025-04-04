@@ -1142,6 +1142,15 @@ const (
 	// LuaFnGetHTTPRequestBody represents the function name for "get_http_request_body" in Lua
 	LuaFnGetHTTPRequestBody = "get_http_request_body"
 
+	// LuaFnGetHTTPMethod represents a constant for retrieving the HTTP method of a request in a Lua script.
+	LuaFnGetHTTPMethod = "get_http_method"
+
+	// LuaFnGetHTTPQueryParam retrieves the value of a specific query parameter from the HTTP request.
+	LuaFnGetHTTPQueryParam = "get_http_query_param"
+
+	// LuaFnGetHTTPPath retrieves the HTTP path from the incoming request.
+	LuaFnGetHTTPPath = "get_http_path"
+
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"
 
@@ -1329,6 +1338,9 @@ const (
 
 	// LuaFnBfDeleteCustomToleration represents the function name for deleting a specific toleration.
 	LuaFnBfDeleteCustomToleration = "delete_custom_toleration"
+
+	// LuaFnBfGetMap represents the Lua function name for retrieving a tolerate-map.
+	LuaFnBfGetMap = "get_map"
 )
 
 const (

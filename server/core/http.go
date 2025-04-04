@@ -750,7 +750,7 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 	group.POST("/:category/:service", LuaContextMiddleware(), RequestHandler)
 	group.DELETE("/:category/:service", CacheHandler)
 
-	group.Any("/custom/:hook", LuaContextMiddleware(), CustomRequestHandler)
+	group.Any("/custom/*hook", LuaContextMiddleware(), CustomRequestHandler)
 }
 
 // setupWebAuthnEndpoints is a function that sets up the endpoints related to WebAuthn in the given Gin router.

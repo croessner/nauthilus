@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +33,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
-	"github.com/yuin/gopher-lua"
+	lua "github.com/yuin/gopher-lua"
 )
 
 var (
@@ -64,10 +65,7 @@ type PrecompiledLuaScript struct {
 	mu sync.RWMutex
 }
 
-// Replace is a method of the PrecompiledLuaScript struct that replaces the luaScript of p
-// with the luaScript of luaCallback. The method locks the read/write mutex of the PrecompiledLuaScript
-// using Lock() before assigning the new luaScript to the target PrecompiledLuaScript.
-// It then unlocks the mutex using Unlock() in a deferred statement.
+// Replace updates the luaScript field of the current PrecompiledLuaScript instance with the luaScript from the provided instance.
 func (p *PrecompiledLuaScript) Replace(luaScript *PrecompiledLuaScript) {
 	p.mu.Lock()
 
@@ -76,17 +74,7 @@ func (p *PrecompiledLuaScript) Replace(luaScript *PrecompiledLuaScript) {
 	p.luaScript = luaScript.luaScript
 }
 
-// GetPrecompiledScript is a method of the PrecompiledLuaScript struct. It returns the precompiled Lua script
-// as a pointer to the lua.FunctionProto. The method locks the read/write mutex of the PrecompiledLuaScript
-// using RLock() before returning the luaScript. It then unlocks the mutex using RUnlock() in a deferred statement.
-//
-// Returns:
-//   - luaScript *lua.FunctionProto: The precompiled Lua script as a pointer to the lua.FunctionProto.
-//
-// Example usage:
-//
-//	script := p.GetPrecompiledScript()
-//	// Use the script for further processing
+// GetPrecompiledScript retrieves the stored precompiled Lua script (*lua.FunctionProto) with read lock for thread safety.
 func (p *PrecompiledLuaScript) GetPrecompiledScript() *lua.FunctionProto {
 	p.mu.RLock()
 
@@ -95,10 +83,7 @@ func (p *PrecompiledLuaScript) GetPrecompiledScript() *lua.FunctionProto {
 	return p.luaScript
 }
 
-// NewLuaHook compiles a Lua script based on the provided file path and returns a new instance
-// of PrecompiledLuaScript with the compiled script. If there is an error during the compilation,
-// the function returns nil and the error. The returned PrecompiledLuaScript can be used to replace the
-// luaScript of the current luaScript.
+// NewLuaHook compiles a Lua script from the given file path and returns a PrecompiledLuaScript instance or an error.
 func NewLuaHook(filePath string) (*PrecompiledLuaScript, error) {
 	compiledScript, err := lualib.CompileLua(filePath)
 	if err != nil {
@@ -116,9 +101,8 @@ type HttpMethod string
 // CustomHook maps an HTTP method to its corresponding precompiled Lua script for handling specific requests.
 type CustomHook map[HttpMethod]*PrecompiledLuaScript
 
-// GetScript retrieves a precompiled Lua script associated with the provided HTTP method string.
-// method: The HTTP method as a string.
-// Returns the corresponding *PrecompiledLuaScript, or nil if not found.
+// GetScript retrieves the precompiled Lua script associated with the specified HTTP method from the CustomHook.
+// Returns the Lua script if found, otherwise returns nil.
 func (h CustomHook) GetScript(method string) *PrecompiledLuaScript {
 	if script, found := h[HttpMethod(method)]; found {
 		return script
@@ -127,9 +111,7 @@ func (h CustomHook) GetScript(method string) *PrecompiledLuaScript {
 	return nil
 }
 
-// SetScript assigns a precompiled Lua script to a specific HTTP method.
-// method: The HTTP method as a string.
-// script: A pointer to the precompiled Lua script to be associated with the method.
+// SetScript associates a precompiled Lua script with a specific HTTP method in the CustomHook.
 func (h CustomHook) SetScript(method string, script *PrecompiledLuaScript) {
 	h[HttpMethod(method)] = script
 }
@@ -149,24 +131,17 @@ type Location string
 // CustomLocation is a map where each key is a Location and each value is a CustomHook.
 type CustomLocation map[Location]CustomHook
 
-// GetCustomHook retrieves the CustomHook associated with the provided location string.
-// Returns the corresponding CustomHook if found, otherwise nil.
+// GetCustomHook retrieves a CustomHook associated with the given location string.
+// Returns the CustomHook if found, otherwise returns nil.
 func (l CustomLocation) GetCustomHook(location string) CustomHook {
-	if hook, found := l[Location(location)]; found {
+	if hook, found := l[Location(strings.TrimLeft(location, "/"))]; found {
 		return hook
 	}
 
 	return nil
 }
 
-// GetScript retrieves a precompiled Lua script for a specified location and method.
-// Parameters:
-//   - location: The location string to search for.
-//   - method: The HTTP method string to search for.
-//
-// Returns:
-//
-//	*PrecompiledLuaScript: The precompiled Lua script if found, otherwise nil.
+// GetScript retrieves a precompiled Lua script based on the provided location and HTTP method. Returns the script or nil.
 func (l CustomLocation) GetScript(location, method string) *PrecompiledLuaScript {
 	if hook := l.GetCustomHook(location); hook != nil {
 		if script := hook.GetScript(method); script != nil {
@@ -182,7 +157,7 @@ func (l CustomLocation) SetScript(location, method string, script *PrecompiledLu
 	if hook := l.GetCustomHook(location); hook != nil {
 		hook.SetScript(method, script)
 	} else {
-		l[Location(location)] = NewCustomHook(method, script)
+		l[Location(strings.TrimLeft(location, "/"))] = NewCustomHook(method, script)
 	}
 }
 
@@ -191,12 +166,9 @@ func NewCustomLocation() CustomLocation {
 	return make(CustomLocation)
 }
 
-// PreCompileLuaScript pre-compiles the Lua callback script and replaces the current luaScript with the new one.
-// If the GetFile() has a Lua callback and the current luaScript is nil, a new instance of PrecompiledLuaScript is created.
-// The function calls NewLuaHook to get the new pre-compiled Lua callback script.
-// If an error occurs during the pre-compilation, the function returns the error.
-// If no error occurs, the new Lua callback script replaces the current luaScript's luaScript.
-// The function returns nil if it executes successfully.
+// PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
+// Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
+// Returns an error if the compilation fails or if the script cannot be managed properly.
 func PreCompileLuaScript(filePath string) (err error) {
 	var luaScriptNew *PrecompiledLuaScript
 
@@ -226,9 +198,8 @@ func PreCompileLuaScript(filePath string) (err error) {
 	return nil
 }
 
-// PreCompileLuaHooks precompiles Lua scripts for pre-defined hooks in the configuration. If Lua hooks are enabled in the
-// configuration and no custom location exists, a new custom location is created. Iterates through the hooks list, precompiles
-// each Lua script, and associates it with the corresponding HTTP method and location.
+// PreCompileLuaHooks pre-compiles Lua hook scripts defined in the configuration and assigns them to specified locations and methods.
+// Returns an error if the compilation or setup fails.
 func PreCompileLuaHooks() error {
 	if config.GetFile().HaveLuaHooks() {
 		if customLocation == nil {
@@ -288,14 +259,7 @@ func registerDynamicLoader(L *lua.LState, ctx context.Context, useGin bool) {
 	L.SetGlobal("dynamic_loader", dynamicLoader)
 }
 
-// registerModule registers a Lua module in the provided Lua state (L).
-// The module name (modName) is used as a key in the registry map to indicate that it has been registered.
-// The function also takes a *gin.Context object (ctx) to be used by certain module loaders.
-// The registry map is updated to include the registered module.
-// If the module name is unknown, the function returns immediately.
-// If the module name is "nauthilus_http_request", it preloads the module using the lualib.LoaderModHTTPRequest function.
-// If the module name is "nauthilus_ldap" and the LDAP backend is activated, it preloads the module using the backend.LoaderModLDAP function.
-// If the LDAP backend is not activated, it raises an error.
+// registerModule registers a specific Lua module into the given Lua state based on the provided module name and context.
 func registerModule(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, useGin bool) {
 	switch modName {
 	case definitions.LuaModHTTPRequest:
@@ -317,13 +281,9 @@ func registerModule(L *lua.LState, ctx context.Context, modName string, registry
 	registry[modName] = true
 }
 
-// runLuaCommonWrapper executes a requested precompiled Lua script with the given hook name within a provided context.
-// It registers a dynamic loader within the Lua state, sets up logging, and handles script execution errors.
-// Parameters:
-// - ctx: The execution context for managing cancellation and timeouts.
-// - hook: The identifier for selecting the precompiled Lua script to run.
-// - registerDynamicLoader: The function to register dynamic modules in the Lua state.
-// Returns an error if the script is not found or fails to execute correctly.
+// runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
+// It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
+// Returns an error if the script is not found or if execution fails.
 func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader func(*lua.LState, context.Context)) error {
 	var (
 		found  bool
@@ -353,8 +313,8 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 	return err
 }
 
-// runLuaCustomWrapper runs a precompiled Lua script for a specified hook with a given dynamic loader registration function.
-// It retrieves the Lua script, sets up the Lua state, registers the dynamic loader, and logs the execution process.
+// runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
+// It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
 func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LState, context.Context)) (gin.H, error) {
 	var script *PrecompiledLuaScript
 
@@ -404,24 +364,16 @@ func RunLuaInit(ctx context.Context, hook string) error {
 	return runLuaCommonWrapper(ctx, hook, registerDynamicLoaderInit)
 }
 
-// executeAndHandleError executes the compiled Lua script and handles any errors that occur.
-// It first sets the Lua package path using lualib.PackagePath and includes the directory where the Lua modules reside.
-// Then it calls lualib.DoCompiledFile to run the script in the LState and checks for any errors.
-// Finally, it calls L.CallByParam to call the Lua function specified by definitions.LuaFnRunHook, and checks for any errors.
-// If any errors occur during these steps, the function calls processError to log the error message.
-// This function takes two arguments: the compiled Lua script pointer (*lua.FunctionProto) and the LState (*lua.LState).
-// It returns an error, which will be nil if no errors occurred during the execution of the Lua script.
+// executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.
 // Parameters:
-//   - compiledScript: The compiled Lua script to be executed.
-//   - logTable: The logTable provides the current log level and log format.
-//   - L: The Lua state in which the script will be executed.
+//   - compiledScript: Precompiled Lua script to execute.
+//   - logTable: Lua table for logging configuration.
+//   - L: Lua state.
+//   - hook: Identifier for the script's hook.
+//   - guid: Unique identifier for tracing execution.
 //
-// Example usage:
-//
-//	err := executeAndHandleError(compiledScript, logTable, L)
-//	if err != nil {
-//	    // handle error
-//	}
+// Returns a Gin-compatible result or an error encountered during executi
+// Returns a Gin-compatible result or an error encountered during execution.
 func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook, guid string) (result gin.H, err error) {
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err, hook)
@@ -461,13 +413,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 	return
 }
 
-// processError logs the given error message with the specified error level. It includes the script path and the error itself in the log entry.
-// Parameters:
-//   - err: The error to be logged.
-//
-// Usage Example:
-//
-//	executeAndHandleError(compiledScript, L)
+// processError logs an error with the associated script hook for debugging or monitoring purposes.
 func processError(err error, hook string) {
 	level.Error(log.Logger).Log(
 		"script", hook,
