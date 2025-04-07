@@ -1,6 +1,7 @@
 package tolerate
 
 import (
+	"context"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -103,32 +104,36 @@ func GetCustomTolerations(L *lua.LState) int {
 }
 
 // GetTolerateMap retrieves a Lua table containing authentication data for the provided IP address from the toleration system.
-func GetTolerateMap(L *lua.LState) int {
-	ipAddress := L.CheckString(1)
+func GetTolerateMap(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		ipAddress := L.CheckString(1)
 
-	mapping := tolerate.GetTolerate().GetTolerateMap(ipAddress)
-	resultTable := L.NewTable()
+		mapping := tolerate.GetTolerate().GetTolerateMap(ctx, ipAddress)
+		resultTable := L.NewTable()
 
-	for label, value := range mapping {
-		resultTable.RawSetString(label, lua.LNumber(value))
+		for label, value := range mapping {
+			resultTable.RawSetString(label, lua.LNumber(value))
+		}
+
+		L.Push(resultTable)
+
+		return 1
 	}
-
-	L.Push(resultTable)
-
-	return 1
 }
 
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
-func LoaderModBruteForce(L *lua.LState) int {
-	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		definitions.LuaFnBfSetCustomTolerations:   SetCustomTolerations,
-		definitions.LuaFnBfSetCustomToleration:    SetCustomToleration,
-		definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
-		definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
-		definitions.LuaFnBfGetTolerateMap:         GetTolerateMap,
-	})
+func LoaderModBruteForce(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnBfSetCustomTolerations:   SetCustomTolerations,
+			definitions.LuaFnBfSetCustomToleration:    SetCustomToleration,
+			definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
+			definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
+			definitions.LuaFnBfGetTolerateMap:         GetTolerateMap(ctx),
+		})
 
-	L.Push(mod)
+		L.Push(mod)
 
-	return 1
+		return 1
+	}
 }

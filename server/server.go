@@ -913,7 +913,5 @@ func runLuaaInitScript(ctx context.Context) {
 
 // inititalizeBruteForceTolerate initializes brute force tolerance by setting the provided context to the Tolerate instance.
 func inititalizeBruteForceTolerate(ctx context.Context) {
-	tolerate.GetTolerate().SetContext(ctx)
-
-	go tolerate.GetTolerate().StartHouseKeeping()
+	go tolerate.GetTolerate().StartHouseKeeping(ctx)
 }

@@ -316,7 +316,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			}
 		}
 
-		if tolerate.GetTolerate().IsTolerated(bm.clientIP) {
+		if tolerate.GetTolerate().IsTolerated(bm.ctx, bm.clientIP) {
 			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
 
 			return false
@@ -862,7 +862,7 @@ func logBucketRuleDebug(bm *bucketManagerImpl, network *net.IPNet, rule *config.
 	)
 }
 
-// logBucketMatchingRule logs information about a matched brute force rule for a given authentication state.
+// logBucketMatchingRule logs information about a triggered brute force rule, including rule details and client session data.
 func logBucketMatchingRule(bm *bucketManagerImpl, network *net.IPNet, rule *config.BruteForceRule, message string) {
 	level.Info(log.Logger).Log(
 		definitions.LogKeyGUID, bm.guid,
@@ -876,11 +876,11 @@ func logBucketMatchingRule(bm *bucketManagerImpl, network *net.IPNet, rule *conf
 
 // logBruteForceRuleRedisKeyDebug logs debugging information related to brute force rule configuration and Redis key generation.
 // It logs details such as rule properties, client IP, session ID, network info, and the generated Redis key.
-func logBruteForceRuleRedisKeyDebug(auth *bucketManagerImpl, rule *config.BruteForceRule, network *net.IPNet, key string) {
+func logBruteForceRuleRedisKeyDebug(bm *bucketManagerImpl, rule *config.BruteForceRule, network *net.IPNet, key string) {
 	util.DebugModule(
 		definitions.DbgBf,
-		definitions.LogKeyGUID, auth.guid,
-		definitions.LogKeyClientIP, auth.clientIP,
+		definitions.LogKeyGUID, bm.guid,
+		definitions.LogKeyClientIP, bm.clientIP,
 		"rule", rule.Name,
 		"period", rule.Period,
 		"cidr", rule.CIDR,

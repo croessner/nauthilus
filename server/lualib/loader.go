@@ -159,7 +159,7 @@ func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName stri
 	case definitions.LuaModSoftWhitelist:
 		L.PreloadModule(modName, LoaderModSoftWhitelist)
 	case definitions.LuaModBruteForce:
-		L.PreloadModule(modName, tolerate.LoaderModBruteForce)
+		L.PreloadModule(modName, tolerate.LoaderModBruteForce(ctx))
 	default:
 		return
 	}

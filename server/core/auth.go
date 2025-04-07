@@ -1822,7 +1822,7 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+			bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 
 			bm.WithUsername(a.Username)
 			bm.ProcessPWHist()
@@ -1937,7 +1937,7 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	)
 
 	// Increase counters
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
 
 	bm.SaveFailedPasswordCounterInRedis()
 }
@@ -1954,7 +1954,7 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			a.processCacheUserLoginFail(accountName)
 		}
 
-		bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+		bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
 
 		bm.LoadAllPasswordHistories()
 

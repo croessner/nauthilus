@@ -187,7 +187,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 
 	network := &net.IPNet{}
 
@@ -285,7 +285,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		break
 	}
 
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
