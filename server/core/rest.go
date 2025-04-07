@@ -24,8 +24,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/buckets"
-	"github.com/croessner/nauthilus/server/core/tolerate"
+	"github.com/croessner/nauthilus/server/core/bruteforce"
+	"github.com/croessner/nauthilus/server/core/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
@@ -503,7 +503,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Remove PW_HIST_SET from Redis
-	key := buckets.GetPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName)
 	if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
@@ -532,7 +532,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, error) {
 	var ips []string
 
-	key := buckets.GetPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName)
 
 	if result, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
@@ -738,7 +738,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			bm := buckets.NewBucketManager(ctx, guid, ipCmd.IPAddress)
+			bm := bruteforce.NewBucketManager(ctx, guid, ipCmd.IPAddress)
 
 			if removedKey, err := bm.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
 				ruleFlushError = true

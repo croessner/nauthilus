@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/buckets"
+	"github.com/croessner/nauthilus/server/core/bruteforce"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -187,7 +187,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	bm := buckets.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
 
 	network := &net.IPNet{}
 
@@ -285,7 +285,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		break
 	}
 
-	bm := buckets.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {

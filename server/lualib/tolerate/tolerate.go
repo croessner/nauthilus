@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/tolerate"
+	"github.com/croessner/nauthilus/server/core/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
 )

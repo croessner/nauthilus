@@ -33,7 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/buckets"
+	"github.com/croessner/nauthilus/server/core/bruteforce"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
@@ -1822,7 +1822,7 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm := buckets.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
+			bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP)
 
 			bm.WithUsername(a.Username)
 			bm.ProcessPWHist()
@@ -1937,7 +1937,7 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	)
 
 	// Increase counters
-	bm := buckets.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
 
 	bm.SaveFailedPasswordCounterInRedis()
 }
@@ -1954,7 +1954,7 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			a.processCacheUserLoginFail(accountName)
 		}
 
-		bm := buckets.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+		bm := bruteforce.NewBucketManager(a.HTTPClientContext.Copy(), *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
 
 		bm.LoadAllPasswordHistories()
 
