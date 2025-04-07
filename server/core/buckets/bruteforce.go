@@ -65,14 +65,14 @@ type BucketManager interface {
 	// GetBruteForceBucketRedisKey generates and returns the Redis key for tracking the brute force bucket associated with the given rule.
 	GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string)
 
-	// SetUsername sets the username for the bucket manager, typically for tracking or processing account-specific data.
-	SetUsername(username string)
+	// WithUsername sets the username for the bucket manager, typically for tracking or processing account-specific data.
+	WithUsername(username string) BucketManager
 
-	// SetPassword sets the password for the current bucket manager instance.
-	SetPassword(password string)
+	// WithPassword sets the password for the current bucket manager instance.
+	WithPassword(password string) BucketManager
 
-	// SetPasswordHistory sets the password history for an account using the provided PasswordHistory map.
-	SetPasswordHistory(passwordHistory *bktype.PasswordHistory)
+	// WithPasswordHistory sets the password history for an account using the provided PasswordHistory map.
+	WithPasswordHistory(passwordHistory *bktype.PasswordHistory) BucketManager
 
 	// LoadAllPasswordHistories retrieves all recorded password history entries for further processing or analysis.
 	LoadAllPasswordHistories()
@@ -179,19 +179,25 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	return
 }
 
-// SetUsername sets the username for the bucketManager instance.
-func (bm *bucketManagerImpl) SetUsername(username string) {
+// WithUsername sets the username for the bucketManager instance.
+func (bm *bucketManagerImpl) WithUsername(username string) BucketManager {
 	bm.username = username
+
+	return bm
 }
 
-// SetPassword sets the password for the bucketManager instance.
-func (bm *bucketManagerImpl) SetPassword(password string) {
+// WithPassword sets the password for the bucketManager instance.
+func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
 	bm.password = password
+
+	return bm
 }
 
-// SetPasswordHistory sets the password history for the bucket manager using the provided PasswordHistory instance.
-func (bm *bucketManagerImpl) SetPasswordHistory(passwordHistory *bktype.PasswordHistory) {
+// WithPasswordHistory sets the password history for the bucket manager using the provided PasswordHistory instance.
+func (bm *bucketManagerImpl) WithPasswordHistory(passwordHistory *bktype.PasswordHistory) BucketManager {
 	bm.passwordHistory = passwordHistory
+
+	return bm
 }
 
 // LoadAllPasswordHistories loads and processes password history data for the current user and overall accounts from Redis.

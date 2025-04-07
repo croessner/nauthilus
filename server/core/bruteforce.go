@@ -203,9 +203,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		}
 	}
 
-	bm.SetUsername(a.Username)
-	bm.SetPassword(a.Password)
-	bm.SetPasswordHistory(a.PasswordHistory)
+	bm.WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
 	if triggered {
