@@ -1,12 +1,14 @@
-package tolerate
+package bruteforce
 
 import (
 	"context"
 	"time"
 
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -121,6 +123,41 @@ func GetTolerateMap(ctx context.Context) lua.LGFunction {
 	}
 }
 
+// IsIPAddressBlocked checks if an IP address is blocked and returns a list of buckets causing the block or nil if not blocked.
+func IsIPAddressBlocked(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		var guid string
+
+		ipAddress := L.CheckString(1)
+
+		if ginCtx, ok := ctx.(*gin.Context); ok {
+			guid = ginCtx.GetString(definitions.CtxGUIDKey)
+		}
+
+		if guid == "" {
+			guid = definitions.NotAvailable
+		}
+
+		bm := bruteforce.NewBucketManager(ctx, guid, ipAddress)
+
+		bucketsNames, found := bm.IsIPAddressBlocked()
+		if !found {
+			L.Push(lua.LNil)
+
+			return 1
+		}
+
+		result := L.NewTable()
+		for _, bucketName := range bucketsNames {
+			result.Append(lua.LString(bucketName))
+		}
+
+		L.Push(result)
+
+		return 1
+	}
+}
+
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
 func LoaderModBruteForce(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -130,6 +167,7 @@ func LoaderModBruteForce(ctx context.Context) lua.LGFunction {
 			definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
 			definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
 			definitions.LuaFnBfGetTolerateMap:         GetTolerateMap(ctx),
+			definitions.LuaFnBfIsIPAddressBlocked:     IsIPAddressBlocked(ctx),
 		})
 
 		L.Push(mod)

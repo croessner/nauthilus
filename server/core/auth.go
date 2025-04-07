@@ -32,8 +32,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/bruteforce"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
@@ -505,7 +505,7 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
-	*bktype.PasswordHistory
+	*bruteforce.PasswordHistory
 	*lualib.Context
 }
 
@@ -1822,9 +1822,8 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+			bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).WithUsername(a.Username).WithAccountName(accountName)
 
-			bm.WithUsername(a.Username)
 			bm.ProcessPWHist()
 		}
 	}
@@ -1954,7 +1953,7 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			a.processCacheUserLoginFail(accountName)
 		}
 
-		bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+		bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory).WithAccountName(accountName)
 
 		bm.LoadAllPasswordHistories()
 

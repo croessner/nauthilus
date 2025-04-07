@@ -20,8 +20,9 @@ import (
 	"net"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/bruteforce"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -203,7 +204,9 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		}
 	}
 
-	bm.WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory)
+	accountName := backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+
+	bm.WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory).WithAccountName(accountName)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
 	if triggered {

@@ -24,10 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
@@ -41,6 +39,9 @@ import (
 
 // bruteForceBucketCounter represents a cache mechanism to handle brute force attack mitigation using brute force buckets.
 type bruteForceBucketCounter uint
+
+// PasswordHistory is a map of hashed passwords with their failure counter.
+type PasswordHistory map[string]uint
 
 // BucketManager defines an interface for managing brute force and password history buckets in a system.
 type BucketManager interface {
@@ -71,8 +72,11 @@ type BucketManager interface {
 	// WithPassword sets the password for the current bucket manager instance.
 	WithPassword(password string) BucketManager
 
+	// WithAccountName sets the account name for the BucketManager instance and returns the updated BucketManager.
+	WithAccountName(accountName string) BucketManager
+
 	// WithPasswordHistory sets the password history for an account using the provided PasswordHistory map.
-	WithPasswordHistory(passwordHistory *bktype.PasswordHistory) BucketManager
+	WithPasswordHistory(passwordHistory *PasswordHistory) BucketManager
 
 	// LoadAllPasswordHistories retrieves all recorded password history entries for further processing or analysis.
 	LoadAllPasswordHistories()
@@ -100,6 +104,9 @@ type BucketManager interface {
 
 	// DeleteIPBruteForceRedis removes the Redis key associated with a brute force rule for a specific IP address.
 	DeleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (removedKey string, err error)
+
+	// IsIPAddressBlocked checks if an IP address is blocked due to triggering brute force rules and returns related buckets.
+	IsIPAddressBlocked() (buckets []string, found bool)
 }
 
 type bucketManagerImpl struct {
@@ -110,12 +117,13 @@ type bucketManagerImpl struct {
 	passwordsTotalSeen   uint
 
 	bruteForceCounter map[string]uint
-	passwordHistory   *bktype.PasswordHistory
+	passwordHistory   *PasswordHistory
 
 	guid           string
 	username       string
 	password       string
 	clientIP       string
+	accountName    string
 	bruteForceName string
 	featureName    string
 }
@@ -194,8 +202,15 @@ func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
 }
 
 // WithPasswordHistory sets the password history for the bucket manager using the provided PasswordHistory instance.
-func (bm *bucketManagerImpl) WithPasswordHistory(passwordHistory *bktype.PasswordHistory) BucketManager {
+func (bm *bucketManagerImpl) WithPasswordHistory(passwordHistory *PasswordHistory) BucketManager {
 	bm.passwordHistory = passwordHistory
+
+	return bm
+}
+
+// WithAccountName sets the account name for the bucket manager and returns the modified BucketManager instance.
+func (bm *bucketManagerImpl) WithAccountName(accountName string) BucketManager {
+	bm.accountName = accountName
 
 	return bm
 }
@@ -353,12 +368,11 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 		return
 	}
 
-	accountName = backend.GetUserAccountFromCache(bm.ctx, bm.username, bm.guid)
-	if accountName == "" {
+	if bm.accountName == "" {
 		return
 	}
 
-	key := GetPWHistIPsRedisKey(accountName)
+	key := GetPWHistIPsRedisKey(bm.accountName)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -515,6 +529,29 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	return removedKey, nil
 }
 
+// IsIPAddressBlocked determines if the client's IP address is blocked based on brute force rules.
+// It returns a list of bucket names where the IP is detected and a boolean indicating if any blocks are found.
+func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool) {
+	if bm.clientIP == "" {
+		return nil, false
+	}
+
+	buckets = make([]string, 0)
+	rules := config.GetFile().GetBruteForce().Buckets
+
+	for _, rule := range rules {
+		if precheck, err := bm.getPreResultBruteForceRedis(&rule); err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		} else {
+			if precheck == rule.Name {
+				buckets = append(buckets, rule.Name)
+			}
+		}
+	}
+
+	return buckets, len(buckets) > 0
+}
+
 var _ BucketManager = (*bucketManagerImpl)(nil)
 
 // isRepeatingWrongPassword checks if the current password has been repeatedly entered incorrectly and may indicate brute force.
@@ -557,22 +594,10 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	return false, nil
 }
 
-// userExists checks if a user exists by querying the Redis database and returns true if the user is found, false otherwise.
-// Returns an error if a problem occurs during the Redis lookup operation.
-func (bm *bucketManagerImpl) userExists() (bool, error) {
-	accountName, err := backend.LookupUserAccountFromRedis(bm.ctx, bm.username)
-	if err != nil {
-		return false, err
-	}
-
-	return accountName != "", nil
-}
-
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.
 // It returns true if enforcement is needed, or false if not, along with any errors encountered during evaluation.
 func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 	var (
-		foundUser bool
 		repeating bool
 		err       error
 	)
@@ -589,9 +614,9 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		⇒ Consequences are non-increased buckets.
 	*/
 
-	if foundUser, err = bm.userExists(); err != nil {
+	if bm.accountName == "" {
 		return false, err
-	} else if foundUser {
+	} else {
 		if repeating, err = bm.isRepeatingWrongPassword(); err != nil {
 			return false, err
 		} else if repeating {
@@ -652,12 +677,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			panic("username is empty")
 		}
 
-		accountName := backend.GetUserAccountFromCache(bm.ctx, bm.username, bm.guid)
-		if accountName == "" {
-			accountName = bm.username
+		if bm.accountName == "" {
+			bm.accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, bm.clientIP)
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", bm.accountName, bm.clientIP)
 	} else {
 		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + bm.clientIP
 	}
@@ -714,8 +738,8 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 		var counterInt int
 
 		if bm.passwordHistory == nil {
-			bm.passwordHistory = new(bktype.PasswordHistory)
-			*bm.passwordHistory = make(bktype.PasswordHistory)
+			bm.passwordHistory = new(PasswordHistory)
+			*bm.passwordHistory = make(PasswordHistory)
 		}
 
 		for passwordHash, counter := range passwordHistory {
@@ -799,17 +823,10 @@ func (bm *bucketManagerImpl) getPreResultBruteForceRedis(rule *config.BruteForce
 	return
 }
 
-// refreshUserAccount retrieves the user account name from the Redis cache based on the current context and user details.
-// If the account name is not found or an error occurs, it returns an empty string and logs the error.
-func (bm *bucketManagerImpl) refreshUserAccount() (accountName string) {
-	return backend.GetUserAccountFromCache(bm.ctx, bm.username, bm.guid)
-}
-
 // updateAffectedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
 // It increments Redis read and write counters and logs errors encountered during the operations.
 func (bm *bucketManagerImpl) updateAffectedAccount() {
-	accountName := bm.refreshUserAccount()
-	if accountName == "" {
+	if bm.accountName == "" {
 		return
 	}
 
@@ -817,7 +834,7 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	if err := rediscli.GetClient().GetReadHandle().SIsMember(bm.ctx, key, accountName).Err(); err != nil {
+	if err := rediscli.GetClient().GetReadHandle().SIsMember(bm.ctx, key, bm.accountName).Err(); err != nil {
 		if !errors2.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
@@ -827,7 +844,7 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	if err := rediscli.GetClient().GetWriteHandle().SAdd(bm.ctx, key, accountName).Err(); err != nil {
+	if err := rediscli.GetClient().GetWriteHandle().SAdd(bm.ctx, key, bm.accountName).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 	}
 

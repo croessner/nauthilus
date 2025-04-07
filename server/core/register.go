@@ -20,8 +20,8 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
