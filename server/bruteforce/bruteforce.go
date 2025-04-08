@@ -66,6 +66,9 @@ type BucketManager interface {
 	// GetBruteForceBucketRedisKey generates and returns the Redis key for tracking the brute force bucket associated with the given rule.
 	GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string)
 
+	// GetPasswordHistory retrieves the password history as a mapping of hashed passwords with their associated failure counters.
+	GetPasswordHistory() *PasswordHistory
+
 	// WithUsername sets the username for the bucket manager, typically for tracking or processing account-specific data.
 	WithUsername(username string) BucketManager
 
@@ -74,9 +77,6 @@ type BucketManager interface {
 
 	// WithAccountName sets the account name for the BucketManager instance and returns the updated BucketManager.
 	WithAccountName(accountName string) BucketManager
-
-	// WithPasswordHistory sets the password history for an account using the provided PasswordHistory map.
-	WithPasswordHistory(passwordHistory *PasswordHistory) BucketManager
 
 	// LoadAllPasswordHistories retrieves all recorded password history entries for further processing or analysis.
 	LoadAllPasswordHistories()
@@ -91,7 +91,7 @@ type BucketManager interface {
 
 	// ProcessBruteForce processes and evaluates whether a brute force rule should trigger an action based on given parameters.
 	// It returns true if the brute force condition for the specified rule is met and properly handled, false otherwise.
-	ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string) bool
+	ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool
 
 	// ProcessPWHist processes the password history for a user and returns the associated account name.
 	ProcessPWHist() (accountName string)
@@ -158,6 +158,11 @@ func (bm *bucketManagerImpl) GetBruteForceCounter() map[string]uint {
 	return bm.bruteForceCounter
 }
 
+// GetPasswordHistory returns the PasswordHistory, which is a map of hashed passwords and their respective failure counters.
+func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
+	return bm.passwordHistory
+}
+
 // GetBruteForceBucketRedisKey generates a Redis key for brute force protection based on the given rule configuration.
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	var ipProto string
@@ -197,13 +202,6 @@ func (bm *bucketManagerImpl) WithUsername(username string) BucketManager {
 // WithPassword sets the password for the bucketManager instance.
 func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
 	bm.password = password
-
-	return bm
-}
-
-// WithPasswordHistory sets the password history for the bucket manager using the provided PasswordHistory instance.
-func (bm *bucketManagerImpl) WithPasswordHistory(passwordHistory *PasswordHistory) BucketManager {
-	bm.passwordHistory = passwordHistory
 
 	return bm
 }
@@ -265,6 +263,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		if ruleName, err = bm.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
 			alreadyTriggered = true
 			*message = "Brute force attack detected (cached result)"
+
 			stats.GetMetrics().GetBruteForceRejected().WithLabelValues(ruleName).Inc()
 
 			break
@@ -305,9 +304,11 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 }
 
 // ProcessBruteForce evaluates and handles brute force detection logic, deciding whether further actions are necessary.
-func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string) bool {
+func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
 	if alreadyTriggered || ruleTriggered {
 		var useCache bool
+
+		defer setter()
 
 		logBucketRuleDebug(bm, network, rule)
 
@@ -319,7 +320,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			}
 		}
 
-		if useCache {
+		if !alreadyTriggered && useCache {
 			if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
@@ -540,10 +541,10 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	rules := config.GetFile().GetBruteForce().Buckets
 
 	for _, rule := range rules {
-		if precheck, err := bm.getPreResultBruteForceRedis(&rule); err != nil {
+		if ruleName, err := bm.getPreResultBruteForceRedis(&rule); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 		} else {
-			if precheck == rule.Name {
+			if ruleName == rule.Name {
 				buckets = append(buckets, rule.Name)
 			}
 		}
@@ -560,6 +561,10 @@ var _ BucketManager = (*bucketManagerImpl)(nil)
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
 	if key := bm.getPasswordHistoryRedisHashKey(true); key != "" {
 		bm.loadPasswordHistoryFromRedis(key)
+	}
+
+	if bm.password == "" {
+		panic("password is empty")
 	}
 
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
@@ -615,7 +620,7 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 	*/
 
 	if bm.accountName == "" {
-		return false, err
+		return true, err
 	} else {
 		if repeating, err = bm.isRepeatingWrongPassword(); err != nil {
 			return false, err
@@ -677,11 +682,12 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			panic("username is empty")
 		}
 
-		if bm.accountName == "" {
-			bm.accountName = bm.username
+		accountName := bm.accountName
+		if accountName == "" {
+			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", bm.accountName, bm.clientIP)
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, bm.clientIP)
 	} else {
 		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + bm.clientIP
 	}
@@ -698,8 +704,6 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 
 // checkTooManyPasswordHashes checks if the number of password hashes for a given Redis key exceeds the configured limit.
 func (bm *bucketManagerImpl) checkTooManyPasswordHashes(key string) bool {
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	if length, err := rediscli.GetClient().GetReadHandle().HLen(bm.ctx, key).Result(); err != nil {
@@ -809,6 +813,10 @@ func (bm *bucketManagerImpl) getPreResultBruteForceRedis(rule *config.BruteForce
 
 		return
 	} else {
+		if network == nil {
+			return
+		}
+
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		if ruleName, err = rediscli.GetClient().GetReadHandle().HGet(bm.ctx, key, network.String()).Result(); err != nil {

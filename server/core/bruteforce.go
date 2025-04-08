@@ -206,15 +206,17 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 
 	accountName := backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 
-	bm.WithUsername(a.Username).WithPassword(a.Password).WithPasswordHistory(a.PasswordHistory).WithAccountName(accountName)
+	bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
-	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message)
-	if triggered {
+	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
 		a.BruteForceCounter = bm.GetBruteForceCounter()
 		a.LoginAttempts = bm.GetLoginAttempts()
+		a.PasswordHistory = bm.GetPasswordHistory()
+	})
 
+	if triggered {
 		a.handleBruteForceLuaAction(alreadyTriggered, &rules[ruleNumber], network)
 	}
 
