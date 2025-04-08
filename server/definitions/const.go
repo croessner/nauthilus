@@ -1341,6 +1341,9 @@ const (
 
 	// LuaFnBfGetTolerateMap represents the Lua function name for retrieving a tolerate-map.
 	LuaFnBfGetTolerateMap = "get_tolerate_map"
+
+	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
+	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
 )
 
 const (

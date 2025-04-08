@@ -20,8 +20,8 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
@@ -297,12 +297,12 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 		// User does not have a TOTP secret
 		if _, found := auth.GetTOTPSecretOk(); !found {
 			if authResult == definitions.AuthResultOK {
-				tolerate.GetTolerate().SetIPAddress(auth.ClientIP, auth.Username, true)
+				tolerate.GetTolerate().SetIPAddress(ctx, auth.ClientIP, auth.Username, true)
 				authCompleteWithOK = true
 			}
 
 			if authResult == definitions.AuthResultFail {
-				tolerate.GetTolerate().SetIPAddress(auth.ClientIP, auth.Username, false)
+				tolerate.GetTolerate().SetIPAddress(ctx, auth.ClientIP, auth.Username, false)
 				authCompleteWithFail = true
 			}
 		}

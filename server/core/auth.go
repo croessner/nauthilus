@@ -17,7 +17,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
@@ -33,6 +32,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -505,7 +505,7 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
-	*bktype.PasswordHistory
+	*bruteforce.PasswordHistory
 	*lualib.Context
 }
 
@@ -1515,27 +1515,22 @@ func (a *AuthState) SetStatusCodes(service string) {
 	}
 }
 
-// getUserAccountFromCache fetches the user account name from Redis cache using the provided username.
-// Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
-func getUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
-	var err error
-
-	accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
-	if err != nil || accountName == "" {
-		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-		}
-
-		return ""
+// userExists checks if a user exists by looking up their account in Redis using the provided username.
+// It returns true if the account name is found, otherwise false.
+// An error is returned if there are issues during the Redis lookup.
+func (a *AuthState) userExists() (bool, error) {
+	accountName, err := backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
+	if err != nil {
+		return false, err
 	}
 
-	return accountName
+	return accountName != "", nil
 }
 
 // refreshUserAccount updates the user account information from the cache.
 // It sets the account field and attributes if they are nil and the account name is found.
 func (a *AuthState) refreshUserAccount() (accountName string) {
-	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName == "" {
 		return
 	}
@@ -1827,7 +1822,12 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			a.processPWHist()
+			bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).
+				WithAccountName(accountName).
+				WithAccountName(accountName)
+
+			bm.ProcessPWHist()
 		}
 	}
 
@@ -1939,7 +1939,12 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	)
 
 	// Increase counters
-	a.saveFailedPasswordCounterInRedis()
+	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		WithUsername(a.Username).
+		WithPassword(a.Password).
+		WithAccountName(accountName)
+
+	bm.SaveFailedPasswordCounterInRedis()
 }
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
@@ -1954,7 +1959,16 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			a.processCacheUserLoginFail(accountName)
 		}
 
-		a.getAllPasswordHistories()
+		bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).
+			WithPassword(a.Password).
+			WithAccountName(accountName)
+
+		bm.LoadAllPasswordHistories()
+
+		a.LoginAttempts = bm.GetLoginAttempts()
+		a.PasswordsAccountSeen = bm.GetPasswordsAccountSeen()
+		a.PasswordsTotalSeen = bm.GetPasswordsTotalSeen()
 	}
 
 	return nil
@@ -2209,7 +2223,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	accountName = getUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
 	if accountName != "" {
 		return
 	}
@@ -2284,7 +2298,7 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 // It sets the protocol field of the authentication object by calling the Set method on auth.Protocol with the value of the "Auth-Protocol" header.
 // It parses the "Auth-Login-Attempt" header as an integer and assigns it to the loginAttempts variable.
 // If there is an error parsing the header or the loginAttempts is negative, it sets loginAttempts to 0.
-// It assigns the loginAttempts value to the LoginAttempts field of the authentication object using an immediately invoked function expression (IIFE).
+// It assigns the loginAttempts value to the loginAttempts field of the authentication object using an immediately invoked function expression (IIFE).
 // It retrieves the "Auth-Method" header from the request and assigns it to the method variable.
 // It checks the "mode" query parameter in the context.
 // If it is set to "no-auth", it sets the NoAuth field of the authentication object to true.

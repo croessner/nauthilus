@@ -17,9 +17,6 @@ package bktype
 
 import "github.com/croessner/nauthilus/server/definitions"
 
-// PasswordHistory is a map of hashed passwords with their failure counter.
-type PasswordHistory map[string]uint
-
 // PositivePasswordCache is a container that stores all kinds of user information upon a successful authentication. It
 // is used for Redis as a short cache object and as a proxy structure between Nauthilus instances. The cache object is not
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh

@@ -23,8 +23,9 @@ import (
 	"sort"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/core/tolerate"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
@@ -182,10 +183,10 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 		//nolint:exhaustive // Ignore some results
 		switch a.HandlePassword(ctx) {
 		case definitions.AuthResultOK:
-			tolerate.GetTolerate().SetIPAddress(a.ClientIP, a.Username, true)
+			tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, true)
 			a.AuthOK(ctx)
 		case definitions.AuthResultFail:
-			tolerate.GetTolerate().SetIPAddress(a.ClientIP, a.Username, false)
+			tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, false)
 			a.AuthFail(ctx)
 			ctx.Abort()
 		case definitions.AuthResultTempFail:
@@ -207,10 +208,10 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 func (a *AuthState) HandleSASLAuthdAuthentication(ctx *gin.Context) {
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
-		tolerate.GetTolerate().SetIPAddress(a.ClientIP, a.Username, true)
+		tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, true)
 		a.AuthOK(ctx)
 	case definitions.AuthResultFail:
-		tolerate.GetTolerate().SetIPAddress(a.ClientIP, a.Username, false)
+		tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, false)
 		a.AuthFail(ctx)
 		ctx.Abort()
 	case definitions.AuthResultTempFail:
@@ -463,7 +464,7 @@ func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (re
 }
 
 // processUserCmd processes the user command by performing the following steps:
-// 1. Calls the getUserAccountFromCache function to set up the cache flush and retrieve the account name, removeHash flag, and cacheFlushError flag.
+// 1. Calls the GetUserAccountFromCache function to set up the cache flush and retrieve the account name, removeHash flag, and cacheFlushError flag.
 // 2. If cacheFlushError is true, returns true immediately.
 // 3. Calls the prepareRedisUserKeys function to set the user keys using the user command and account name.
 // 4. Calls the removeUserFromCache function to remove the user from the cache by providing the user command, user keys, guid, and removeHash flag.
@@ -479,7 +480,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		userKeys      config.StringSet
 	)
 
-	if accountName = getUserAccountFromCache(ctx, userCmd.User, guid); accountName == "" {
+	if accountName = backend.GetUserAccountFromCache(ctx, userCmd.User, guid); accountName == "" {
 		return nil, true
 	}
 
@@ -502,7 +503,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Remove PW_HIST_SET from Redis
-	key := getPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName)
 	if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
@@ -531,7 +532,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, error) {
 	var ips []string
 
-	key := getPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName)
 
 	if result, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {
@@ -735,14 +736,11 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 
 	ruleFlushError := false
 
-	auth := &AuthState{
-		HTTPClientContext: ctx.Copy(),
-		ClientIP:          ipCmd.IPAddress,
-	}
-
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			if removedKey, err := auth.deleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
+			bm := bruteforce.NewBucketManager(ctx, guid, ipCmd.IPAddress)
+
+			if removedKey, err := bm.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
 				ruleFlushError = true
 
 				return ruleFlushError, removedKeys, err
@@ -752,7 +750,7 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 				}
 			}
 
-			if key := auth.getBruteForceBucketRedisKey(&rule); key != "" {
+			if key := bm.GetBruteForceBucketRedisKey(&rule); key != "" {
 				if result, err := rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
 					stats.GetMetrics().GetRedisWriteCounter().Inc()
 

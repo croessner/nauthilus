@@ -210,3 +210,20 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 
 	return err
 }
+
+// GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
+// Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
+func GetUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
+	var err error
+
+	accountName, err = LookupUserAccountFromRedis(ctx, username)
+	if err != nil || accountName == "" {
+		if err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		}
+
+		return ""
+	}
+
+	return accountName
+}
