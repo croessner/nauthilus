@@ -16,12 +16,15 @@ import (
 )
 
 func TestCheckRepeatingBruteForcer(t *testing.T) {
-	// Initialize the Redis mock
 	db, mock := redismock.NewClientMock()
 	rediscli.NewTestClient(db)
 
+	bruteForceFeature := config.Feature{}
+	bruteForceFeature.Set("brute_force")
+
 	config.SetTestFile(&config.FileSettings{
 		Server: &config.ServerSection{
+			Features: []*config.Feature{&bruteForceFeature},
 			Redis: config.Redis{
 				Prefix: "nt_",
 			}},
@@ -42,13 +45,12 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 	bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 
 	t.Run("IP already identified as brute forcer", func(t *testing.T) {
-		// Network to simulate in Redis map
 		testNetwork := "192.168.0.0/16"
 
-		// Redis mock: Hash key exists with a valid bucket name
-		mock.ExpectHGet("nt_"+definitions.RedisBruteForceHashKey, testNetwork).SetVal("testbucket")
+		mock.ExpectHGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			testNetwork).SetVal("testbucket")
 
-		// Prepare the network object for the function
 		network := &net.IPNet{}
 
 		var message string
@@ -56,24 +58,21 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 		withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(
 			config.GetFile().GetBruteForceRules(), &network, &message)
 
-		// Assertions
 		assert.False(t, withError, "No error should occur")
 		assert.True(t, alreadyTriggered, "The rule should already be triggered")
 		assert.Equal(t, "Brute force attack detected (cached result)", message)
 		assert.Equal(t, 0, ruleNumber, "The first rule should be triggered")
 
-		// Verify the Redis mock expectations
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("IP not identified as brute forcer", func(t *testing.T) {
-		// Network to simulate in Redis map
 		testNetwork := "192.168.0.0/16"
 
-		// Redis mock: No value exists for the network in the hash map
-		mock.ExpectHGet("nt_"+definitions.RedisBruteForceHashKey, testNetwork).RedisNil()
+		mock.ExpectHGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			testNetwork).RedisNil()
 
-		// Prepare the network object for the function
 		network := &net.IPNet{}
 
 		var message string
@@ -81,13 +80,50 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 		withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(
 			config.GetFile().GetBruteForceRules(), &network, &message)
 
-		// Assertions
 		assert.False(t, withError, "No error should occur")
 		assert.False(t, alreadyTriggered, "The rule should not be triggered")
 		assert.Empty(t, message, "The message should remain empty")
 		assert.Equal(t, 0, ruleNumber, "The rule index should be 0")
 
-		// Verify the Redis mock expectations
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IP not over the limit", func(t *testing.T) {
+		rule := config.GetFile().GetBruteForceRules()[0]
+		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("5")
+
+		network := &net.IPNet{}
+
+		var message string
+
+		withError, ruleTriggered, ruleNumber := bm.CheckBucketOverLimit(
+			config.GetFile().GetBruteForceRules(), &network, &message)
+
+		assert.False(t, withError, "No error should occur")
+		assert.False(t, ruleTriggered, "The rule should not be triggered")
+		assert.Empty(t, message, "The message should remain empty")
+		assert.Equal(t, 0, ruleNumber, "The rule index should remain 0")
+
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("IP over the limit", func(t *testing.T) {
+		rule := config.GetFile().GetBruteForceRules()[0]
+		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("15")
+
+		network := &net.IPNet{}
+
+		var message string
+
+		withError, ruleTriggered, ruleNumber := bm.CheckBucketOverLimit(
+			config.GetFile().GetBruteForceRules(), &network, &message)
+
+		assert.False(t, withError, "No error should occur")
+		assert.True(t, ruleTriggered, "The rule should be triggered")
+		assert.NotEmpty(t, message, "The message should not be empty")
+		assert.Contains(t, message, "Brute force attack detected", "The message should indicate a brute force attack is detected")
+		assert.Equal(t, 0, ruleNumber, "The first rule should be triggered")
+
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }
