@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/go-playground/validator/v10"
 )
 
 type LDAPSection struct {
@@ -73,10 +74,10 @@ type LDAPConf struct {
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 	SASLExternal  bool `mapstructure:"sasl_external"`
 
-	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"min=1"`
-	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"min=0"`
-	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"min=1"`
-	AuthIdlePoolSize   int `mapstructure:"auth_idle_pool_size" validate:"min=0"`
+	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"required,min=1"`
+	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"omitempty,min=0"`
+	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"validateAuthPoolRequired"`
+	AuthIdlePoolSize   int `mapstructure:"auth_idle_pool_size" validate:"omitempty,min=0"`
 
 	BindDN        string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
 	BindPW        string `mapstructure:"bind_pw" validate:"omitempty"`
@@ -86,6 +87,21 @@ type LDAPConf struct {
 
 	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
 	ServerURIs          []string      `mapstructure:"server_uri" validate:"required,dive,uri"`
+}
+
+// validateAuthPoolRequired validates the AuthPoolSize field in LDAPConf ensuring it's greater than 0 when PoolOnly is false.
+func validateAuthPoolRequired(fl validator.FieldLevel) bool {
+	conf, ok := fl.Parent().Interface().(LDAPConf)
+
+	if !ok {
+		return false
+	}
+
+	if !conf.PoolOnly && conf.AuthPoolSize <= 0 {
+		return false
+	}
+
+	return true
 }
 
 func (l *LDAPConf) String() string {
