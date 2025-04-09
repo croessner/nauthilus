@@ -309,6 +309,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		var useCache bool
 
 		defer setter()
+		defer bm.LoadAllPasswordHistories()
+		defer bm.SaveFailedPasswordCounterInRedis()
 
 		logBucketRuleDebug(bm, network, rule)
 
@@ -341,8 +343,6 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		bm.bruteForceName = rule.Name
 
 		bm.updateAffectedAccount()
-		bm.SaveFailedPasswordCounterInRedis()
-		bm.LoadAllPasswordHistories()
 
 		if ruleTriggered {
 			bm.setPreResultBruteForceRedis(rule)

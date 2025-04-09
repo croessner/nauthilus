@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -168,6 +169,24 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 				":%s", testIPAddress)).
 			SetVal(map[string]string{hashedPW: "100"})
 
+		// Bucket with account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s:%s", accountName, testIPAddress)).
+			SetVal(map[string]string{hashedPW: "101"})
+
+		// Bucket without account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s", testIPAddress)).
+			SetVal(map[string]string{hashedPW: "101"})
+
 		mock.MatchExpectationsInOrder(true)
 
 		_, network, _ := net.ParseCIDR("192.168.0.0/16")
@@ -175,17 +194,15 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 		rule := config.GetFile().GetBruteForceRules()[0]
 
 		var (
-			featureName       string
-			bruteForceName    string
-			bruteForceCounter map[string]uint
-			loginAttempts     uint
-			passwordHistory   *bruteforce.PasswordHistory
+			featureName     string
+			bruteForceName  string
+			loginAttempts   uint
+			passwordHistory *bruteforce.PasswordHistory
 		)
 
 		triggered := bm.ProcessBruteForce(true, false, &rule, network, message, func() {
 			featureName = bm.GetFeatureName()
 			bruteForceName = bm.GetBruteForceName()
-			bruteForceCounter = bm.GetBruteForceCounter()
 			loginAttempts = bm.GetLoginAttempts()
 			passwordHistory = bm.GetPasswordHistory()
 		})
@@ -193,13 +210,12 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 		assert.False(t, triggered, "Result should not trigger an action")
 		assert.Equal(t, "", featureName, "The feature name should be empty")
 		assert.Equal(t, "", bruteForceName, "The brute force name should be empty")
-		assert.Equal(t, 0, len(bruteForceCounter), "The brute force counter should be empty")
-		assert.Equal(t, uint(0), loginAttempts, "The login attempts should be 0")
+		assert.Equal(t, uint(101), loginAttempts, "The login attempts should be 101")
 		assert.NotNil(t, passwordHistory, "The password history should not be nil")
 
 		if passwordHistory != nil {
 			if value, okay := (*passwordHistory)[hashedPW]; okay {
-				assert.Equal(t, uint(100), value, "The password history should contain the correct value")
+				assert.Equal(t, uint(101), value, "The password history should contain the correct value")
 			} else {
 				assert.Fail(t, "The password history should contain the correct value")
 			}
@@ -259,27 +275,6 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 				GetPrefix()+definitions.RedisAffectedAccountsKey, accountName).
 			SetVal(1)
 
-		// Bucket with account informtion after processing "is-repeated" logic
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
-				":%s:%s", accountName, testIPAddress)).
-			SetVal(map[string]string{hashedPW: "101"})
-
-		// Bucket without account informtion after processing "is-repeated" logic
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
-				":%s", testIPAddress)).
-			SetVal(map[string]string{
-				hashedPW:    "101",
-				"otherHash": "1",
-			})
-
 		rule := config.GetFile().GetBruteForceRules()[0]
 		_, network, _ := net.ParseCIDR("192.168.0.0/16")
 
@@ -290,6 +285,27 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 				GetRedis().
 				GetPrefix()+definitions.RedisBruteForceHashKey, network.String(), rule.Name).
 			SetVal(1)
+
+		// Bucket with account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s:%s", accountName, testIPAddress)).
+			SetVal(map[string]string{hashedPW: "101"})
+
+		// Bucket without account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s", testIPAddress)).
+			SetVal(map[string]string{
+				hashedPW:    "101",
+				"otherHash": "1",
+			})
 
 		mock.MatchExpectationsInOrder(true)
 
@@ -312,6 +328,112 @@ func TestCheckRepeatingBruteForcer(t *testing.T) {
 		assert.True(t, triggered, "Result should trigger an action")
 		assert.Equal(t, "brute_force", featureName, "The feature name should not be empty")
 		assert.Equal(t, "testbucket", bruteForceName, "The brute force name should not be empty")
+		assert.Equal(t, uint(101), loginAttempts, "The login attempts should be 101")
+		assert.NotNil(t, passwordHistory, "The password history should not be nil")
+
+		if passwordHistory != nil {
+			if value, okay := (*passwordHistory)[hashedPW]; okay {
+				assert.Equal(t, uint(101), value, "The password history should contain the correct value")
+			} else {
+				assert.Fail(t, "The password history should contain the correct value")
+			}
+
+			assert.Equal(t, 2, len(*passwordHistory), "The password history should contain two entries")
+		}
+
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Brute force with 10% toleration", func(t *testing.T) {
+		const password = "<PASSWORD>"
+		const accountName = "testaccount"
+		const testIPAddress = "192.168.1.1"
+
+		tolerate.GetTolerate().SetCustomToleration(testIPAddress, 10, time.Hour)
+
+		hashedPW := util.GetHash(util.PreparePassword(password))
+
+		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+			WithUsername("testuser").
+			WithPassword(password).
+			WithAccountName(accountName)
+
+		// Bucket with account informtion
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s:%s", accountName, testIPAddress)).
+			SetVal(map[string]string{hashedPW: "100"})
+
+		// Bucket without account informtion
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s", testIPAddress)).
+			SetVal(map[string]string{
+				hashedPW:    "100",
+				"otherHash": "1",
+			})
+
+		// Get the current map with negative and positive counters
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + ":bf:TR:" + testIPAddress).
+			SetVal(map[string]string{
+				"positive": "100",
+				"negative": "5",
+			})
+
+		// Bucket with account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s:%s", accountName, testIPAddress)).
+			SetVal(map[string]string{hashedPW: "101"})
+
+		// Bucket without account informtion - defer
+		mock.ExpectHGetAll(
+			config.GetFile().
+				GetServer().
+				GetRedis().
+				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
+				":%s", testIPAddress)).
+			SetVal(map[string]string{
+				hashedPW:    "101",
+				"otherHash": "1",
+			})
+
+		mock.MatchExpectationsInOrder(true)
+
+		rule := config.GetFile().GetBruteForceRules()[0]
+		_, network, _ := net.ParseCIDR("192.168.0.0/16")
+		message := "test message"
+
+		var (
+			featureName     string
+			bruteForceName  string
+			loginAttempts   uint
+			passwordHistory *bruteforce.PasswordHistory
+		)
+
+		triggered := bm.ProcessBruteForce(true, false, &rule, network, message, func() {
+			featureName = bm.GetFeatureName()
+			bruteForceName = bm.GetBruteForceName()
+			loginAttempts = bm.GetLoginAttempts()
+			passwordHistory = bm.GetPasswordHistory()
+		})
+
+		assert.False(t, triggered, "Result should not trigger an action")
+		assert.Equal(t, "", featureName, "The feature name should be empty")
+		assert.Equal(t, "", bruteForceName, "The brute force name should be empty")
 		assert.Equal(t, uint(101), loginAttempts, "The login attempts should be 101")
 		assert.NotNil(t, passwordHistory, "The password history should not be nil")
 
