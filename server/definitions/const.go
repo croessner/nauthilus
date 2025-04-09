@@ -908,10 +908,6 @@ const (
 	LuaActionPostName = "post"
 )
 
-// SamePasswordsDifferentAccountLimit represents the limit for the number of times a user can repeatedly enter wrong passwords before it is considered an attack.
-// When the number of occurrences of a specific password for a specific user reaches the limit from SamePasswordsDifferentAccountLimit configured value, it is logged as a brute force
-const SamePasswordsDifferentAccountLimit = 5
-
 // LuaMaxExecutionTime represents the maximum execution time in seconds for Lua scripts.
 // It is set to 120 seconds.
 // Example usage:

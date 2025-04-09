@@ -570,28 +570,36 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
 
 	if bm.passwordHistory != nil {
-		if counter, foundPassword := (*bm.passwordHistory)[passwordHash]; foundPassword {
-			if counter > 1 {
-				if key := bm.getPasswordHistoryRedisHashKey(false); key != "" {
-					bm.loadPasswordHistoryFromRedis(key)
-				}
+		var (
+			counter       uint
+			foundPassword bool
+		)
 
-				if bm.passwordHistory != nil {
-					if counterTotal, foundPassword := (*bm.passwordHistory)[passwordHash]; foundPassword {
-						// Hint: We may make this configurable one day.
-						if counter+definitions.SamePasswordsDifferentAccountLimit >= counterTotal {
-							level.Info(log.Logger).Log(
-								definitions.LogKeyGUID, bm.guid,
-								definitions.LogKeyBruteForce, "Repeating wrong password",
-								definitions.LogKeyUsername, bm.username,
-								definitions.LogKeyClientIP, bm.clientIP,
-								"counter", counter,
-							)
+		if counter, foundPassword = (*bm.passwordHistory)[passwordHash]; !foundPassword {
+			return false, nil
+		}
 
-							return true, nil
-						}
-					}
-				}
+		if key := bm.getPasswordHistoryRedisHashKey(false); key != "" {
+			bm.loadPasswordHistoryFromRedis(key)
+		}
+
+		if bm.passwordHistory != nil {
+			totalPasswordCounter := uint(0)
+
+			for _, partialCounter := range *bm.passwordHistory {
+				totalPasswordCounter += partialCounter
+			}
+
+			if totalPasswordCounter == counter {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyBruteForce, "Repeating wrong password",
+					definitions.LogKeyUsername, bm.username,
+					definitions.LogKeyClientIP, bm.clientIP,
+					"counter", counter,
+				)
+
+				return true, nil
 			}
 		}
 	}
