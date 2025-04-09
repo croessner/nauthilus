@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCheckRepeatingBruteForcer(t *testing.T) {
+func TestBruteForceLogic(t *testing.T) {
 	db, mock := redismock.NewClientMock()
 	rediscli.NewTestClient(db)
 
