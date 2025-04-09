@@ -391,3 +391,13 @@ func NewEnvironmentConfig() Environment {
 
 	return newCfg
 }
+
+// NewTestEnvironmentConfig creates and returns a new instance of Environment with default settings.
+func NewTestEnvironmentConfig() Environment {
+	return &EnvironmentSettings{}
+}
+
+// SetTestEnvironmentConfig sets the environment configuration for the test environment using the provided Environment interface.
+func SetTestEnvironmentConfig(env Environment) {
+	environment = env
+}

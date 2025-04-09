@@ -157,6 +157,10 @@ func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8,
 
 	newTolerations := make([]config.Tolerate, 0)
 
+	if len(t.customTolerates) == 0 {
+		newTolerations = append(newTolerations, toleration)
+	}
+
 	for index, currentToleration := range t.customTolerates {
 		if currentToleration.IPAddress != toleration.IPAddress {
 			newTolerations = append(newTolerations, currentToleration)
@@ -294,13 +298,25 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		negative int64
 	)
 
-	if config.GetFile().GetBruteForce().GetTolerateTTL() == 0 {
+	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+
+	for _, customTolerate := range t.customTolerates {
+		if !t.findIP(customTolerate.IPAddress, ipAddress) {
+			continue
+		}
+
+		tolerateTTL = customTolerate.TolerateTTL
+
+		break
+	}
+
+	if tolerateTTL == 0 {
 		return false
 	}
 
 	ipMap := t.GetTolerateMap(ctx, ipAddress)
 
-	if positive, okay = ipMap[ipAddress]; !okay {
+	if positive, okay = ipMap["positive"]; !okay {
 		positive = 0
 	}
 
@@ -308,7 +324,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		return false
 	}
 
-	if negative, okay = ipMap[ipAddress]; !okay {
+	if negative, okay = ipMap["negative"]; !okay {
 		negative = 0
 	}
 
@@ -406,7 +422,6 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 	ipMap := make(map[string]int64)
 
 	result, err = rediscli.GetClient().GetReadHandle().HGetAll(ctx, t.getRedisKey(ipAddress)).Result()
-
 	if err != nil {
 		return ipMap
 	}
