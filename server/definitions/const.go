@@ -675,13 +675,17 @@ const LDAPSingleValue = 0
 // DistinguishedName represents the distinguished name attribute used in LDAP operations.
 const DistinguishedName = "dn"
 
-// LDAP change types.
 const (
 	// LDAPSearch is a constant representing a command used for LDAP search
 	LDAPSearch LDAPCommand = iota
 
-	// LDAPModifyAdd is a constant representing a command used for LDAP add modification
-	LDAPModifyAdd
+	// LDAPModify is a constant representing a command used for LDAP modification
+	LDAPModify
+)
+
+const (
+	// LDAPModifyAdd represents a subcommand for adding attributes or values in an LDAP modify operation.
+	LDAPModifyAdd LDAPSubCommand = iota
 )
 
 // Tri-state for LDAP connections.

@@ -134,7 +134,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 			return 1
 		}
 
-		ldapRequest := createLDAPRequest(fieldValues, scope, ctx)
+		ldapRequest := createLDAPRequest(fieldValues, scope, ctx, definitions.LDAPSearch)
 
 		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
 
@@ -202,7 +202,7 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 }
 
 // createLDAPRequest initializes an LDAPRequest with provided field values, scope, and context for an LDAP search operation.
-func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context) *bktype.LDAPRequest {
+func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context, cmd definitions.LDAPCommand) *bktype.LDAPRequest {
 	guid := fieldValues["session"].String()
 	basedn := fieldValues["basedn"].String()
 	filter := fieldValues["filter"].String()
@@ -221,7 +221,7 @@ func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScop
 		BaseDN:            basedn,
 		SearchAttributes:  attributes,
 		Scope:             *scope,
-		Command:           definitions.LDAPSearch,
+		Command:           cmd,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctx,
 	}

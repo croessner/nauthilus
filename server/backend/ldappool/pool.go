@@ -714,10 +714,10 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	}
 }
 
-// processLookupModifyAddRequest handles the ModifyAdd LDAP operation for the specified connection index.
-// It executes the ModifyAdd command and updates the LDAPReply's error field if an error occurs.
-func (l *ldapPoolImpl) processLookupModifyAddRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
-	if err := l.conn[index].ModifyAdd(ldapRequest); err != nil {
+// processLookupModifyRequest handles the Modify LDAP operation for the specified connection index.
+// It executes the Modify command and updates the LDAPReply's error field if an error occurs.
+func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
+	if err := l.conn[index].Modify(ldapRequest); err != nil {
 		ldapReply.Err = err
 	}
 }
@@ -746,8 +746,8 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 	switch ldapRequest.Command {
 	case definitions.LDAPSearch:
 		l.processLookupSearchRequest(index, ldapRequest, ldapReply)
-	case definitions.LDAPModifyAdd:
-		l.processLookupModifyAddRequest(index, ldapRequest, ldapReply)
+	case definitions.LDAPModify:
+		l.processLookupModifyRequest(index, ldapRequest, ldapReply)
 	}
 
 	sendLDAPReplyAndUnlockState(l, index, ldapRequest, ldapReply)

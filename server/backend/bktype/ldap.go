@@ -59,6 +59,11 @@ type LDAPRequest struct {
 	// Command represents the LDAP command to be executed (add, modify, delete, or search).
 	Command definitions.LDAPCommand
 
+	SubCommand definitions.LDAPSubCommand
+
+	// ModifyDN specifies the distinguished name (DN) to be modified during an LDAP modify operation.
+	ModifyDN string
+
 	// ModifyAttributes contains attributes information used in modify command.
 	ModifyAttributes LDAPModifyAttributes
 

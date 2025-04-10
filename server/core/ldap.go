@@ -411,8 +411,9 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err
 	}
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:    auth.GUID,
-		Command: definitions.LDAPModifyAdd,
+		GUID:       auth.GUID,
+		Command:    definitions.LDAPModify,
+		SubCommand: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,
