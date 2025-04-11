@@ -234,13 +234,6 @@ func setDefaultPooöName(fieldValues map[string]lua.LValue) {
 // Returns true if the field exists and matches the expected type, otherwise returns false.
 func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType string) bool {
 	lv := L.GetField(table, fieldName)
-	if lua.LVIsFalse(lv) {
-		if fieldName == "pool_name" {
-			return false
-		}
-
-		L.RaiseError("%s is required", fieldName)
-	}
 
 	switch fieldType {
 	case definitions.LuaLiteralString:
