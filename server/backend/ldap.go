@@ -128,6 +128,8 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 			return 0
 		}
 
+		setDefaultPooöName(fieldValues)
+
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
 
 		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
@@ -149,6 +151,8 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 			return 0
 		}
+
+		setDefaultPooöName(fieldValues)
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
 
@@ -173,8 +177,8 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 // Fields are matched against a predefined set of expected names and types, raising an error if a field is missing or invalid.
 func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
-		"session":    definitions.LuaLiteralString,
 		"pool_name":  definitions.LuaLiteralString,
+		"session":    definitions.LuaLiteralString,
 		"basedn":     definitions.LuaLiteralString,
 		"filter":     definitions.LuaLiteralString,
 		"scope":      definitions.LuaLiteralString,
@@ -199,8 +203,8 @@ func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string
 // Returns a map of extracted field values on success or nil if validation fails.
 func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
-		"session":    definitions.LuaLiteralString,
 		"pool_name":  definitions.LuaLiteralString,
+		"session":    definitions.LuaLiteralString,
 		"operation":  definitions.LuaLiteralString,
 		"dn":         definitions.LuaLiteralString,
 		"attributes": definitions.LuaLiteralTable,
@@ -218,18 +222,18 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 	return fieldValues
 }
 
+// setDefaultPooöName sets a default pool name if the "pool_name" field in the provided map is an empty string.
+func setDefaultPooöName(fieldValues map[string]lua.LValue) {
+	if fieldValues["pool_name"].String() == "default" {
+		fieldValues["pool_name"] = lua.LString(definitions.DefaultBackendName)
+	}
+}
+
 // validateField checks if a given field exists in a Lua table and validates its type, raising an error if invalid.
 // L represents the Lua state, table is the Lua table, fieldName is the field to verify, and fieldType is the expected data type.
 // Returns true if the field exists and matches the expected type, otherwise returns false.
 func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType string) bool {
 	lv := L.GetField(table, fieldName)
-	if lua.LVIsFalse(lv) {
-		if fieldName == "pool_name" {
-			return false
-		}
-
-		L.RaiseError("%s is required", fieldName)
-	}
 
 	switch fieldType {
 	case definitions.LuaLiteralString:
