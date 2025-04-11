@@ -128,6 +128,8 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 			return 0
 		}
 
+		setDefaultPooöName(fieldValues)
+
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
 
 		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
@@ -149,6 +151,8 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 			return 0
 		}
+
+		setDefaultPooöName(fieldValues)
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
 
@@ -216,6 +220,13 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 	}
 
 	return fieldValues
+}
+
+// setDefaultPooöName sets a default pool name if the "pool_name" field in the provided map is an empty string.
+func setDefaultPooöName(fieldValues map[string]lua.LValue) {
+	if fieldValues["pool_name"].String() == "" {
+		fieldValues["pool_name"] = lua.LString(definitions.DefaultBackendName)
+	}
 }
 
 // validateField checks if a given field exists in a Lua table and validates its type, raising an error if invalid.
