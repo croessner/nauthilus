@@ -112,6 +112,7 @@ var (
 	ErrLDAPConfig         = NewDetailedError("ldap_config_error")
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
+	ErrLDAPModify         = NewDetailedError("ldap_modify_error")
 )
 
 // lua.

@@ -47,6 +47,7 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnLDAPSearch: LuaLDAPSearch(ctx),
+			definitions.LuaFnLDAPModify: LuaLDAPModify(ctx),
 		})
 
 		L.Push(mod)

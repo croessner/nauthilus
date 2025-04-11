@@ -26,7 +26,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/segmentio/ksuid"
 	"github.com/yuin/gopher-lua"
 )
 
@@ -122,19 +121,14 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		table := L.CheckTable(1)
 
-		fieldValues := prepareAndValidateFields(L, table)
+		fieldValues := prepareAndValidateSearchFields(L, table)
 		if fieldValues == nil {
-			return 1
+			L.RaiseError("invalid search fields")
+
+			return 0
 		}
 
-		scope, scopeErr := convertScopeStringToLDAP(fieldValues["scope"].String())
-		if scopeErr != nil {
-			L.RaiseError("%s", scopeErr.Error())
-
-			return 1
-		}
-
-		ldapRequest := createLDAPRequest(fieldValues, scope, ctx, definitions.LDAPSearch)
+		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
 
 		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
 
@@ -142,9 +136,42 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 	}
 }
 
-// prepareAndValidateFields validates and retrieves expected fields from a Lua table, returning a map of field values.
+// LuaLDAPModify is a function that modifies LDAP entries based on the given Lua table input.
+// It validates the input table, creates an LDAP modification request, and sends it via appropriate channels.
+// The function returns results via Lua stack, "OK" on success, or an error message if the operation fails.
+func LuaLDAPModify(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		table := L.CheckTable(1)
+
+		fieldValues := prepareAndValidateModifyFields(L, table)
+		if fieldValues == nil {
+			L.RaiseError("invalid modify fields")
+
+			return 0
+		}
+
+		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
+
+		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
+
+		ldapReply := <-ldapRequest.GetLDAPReplyChan()
+
+		if ldapReply.Err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(ldapReply.Err.Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LString("OK"))
+
+		return 1
+	}
+}
+
+// prepareAndValidateSearchFields validates and retrieves expected fields from a Lua table, returning a map of field values.
 // Fields are matched against a predefined set of expected names and types, raising an error if a field is missing or invalid.
-func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
+func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
 		"session":    definitions.LuaLiteralString,
 		"pool_name":  definitions.LuaLiteralString,
@@ -157,12 +184,31 @@ func prepareAndValidateFields(L *lua.LState, table *lua.LTable) map[string]lua.L
 	fieldValues := make(map[string]lua.LValue)
 	for field, typeExpected := range expectedFields {
 		if !validateField(L, table, field, typeExpected) {
-			if field == "pool_name" {
-				fieldValues[field] = lua.LString(definitions.DefaultBackendName)
+			return nil
+		}
 
-				continue
-			}
+		fieldValues[field] = L.GetField(table, field)
+	}
 
+	return fieldValues
+}
+
+// prepareAndValidateModifyFields processes a Lua table, validates required fields, and returns a map of field values.
+// L is the Lua state, table is the Lua table containing field data to validate and extract values from.
+// Mandatory fields are checked for presence and type; a default value is applied for "pool_name" if not provided.
+// Returns a map of extracted field values on success or nil if validation fails.
+func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
+	expectedFields := map[string]string{
+		"session":    definitions.LuaLiteralString,
+		"pool_name":  definitions.LuaLiteralString,
+		"operation":  definitions.LuaLiteralString,
+		"dn":         definitions.LuaLiteralString,
+		"attributes": definitions.LuaLiteralTable,
+	}
+
+	fieldValues := make(map[string]lua.LValue)
+	for field, typeExpected := range expectedFields {
+		if !validateField(L, table, field, typeExpected) {
 			return nil
 		}
 
@@ -202,28 +248,77 @@ func validateField(L *lua.LState, table *lua.LTable, fieldName string, fieldType
 }
 
 // createLDAPRequest initializes an LDAPRequest with provided field values, scope, and context for an LDAP search operation.
-func createLDAPRequest(fieldValues map[string]lua.LValue, scope *config.LDAPScope, ctx context.Context, cmd definitions.LDAPCommand) *bktype.LDAPRequest {
-	guid := fieldValues["session"].String()
-	basedn := fieldValues["basedn"].String()
-	filter := fieldValues["filter"].String()
-	attrTable := fieldValues["attributes"].(*lua.LTable)
-	attributes := extractAttributes(attrTable)
+func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx context.Context, command definitions.LDAPCommand) *bktype.LDAPRequest {
+	var (
+		basedn           string
+		filter           string
+		operation        string
+		dn               string
+		searchAttributes []string
+		subCommand       definitions.LDAPSubCommand
+		modifyAttributes bktype.LDAPModifyAttributes
+	)
 
-	if guid == "" {
-		guid = ksuid.New().String()
+	scope := &config.LDAPScope{}
+
+	guid := fieldValues["session"].String()
+	attrTable := fieldValues["attributes"].(*lua.LTable)
+
+	if command == definitions.LDAPSearch {
+		basedn = fieldValues["basedn"].String()
+		filter = fieldValues["filter"].String()
+
+		if ldapScope, err := convertScopeStringToLDAP(fieldValues["scope"].String()); err != nil {
+			L.RaiseError("%s", err.Error())
+
+			return nil
+		} else {
+			scope = ldapScope
+		}
+
+		searchAttributes = extractAttributes(attrTable)
+	} else if command == definitions.LDAPModify {
+		dn = fieldValues["dn"].String()
+		operation = fieldValues["operation"].String()
+
+		switch operation {
+		case "add":
+			subCommand = definitions.LDAPModifyAdd
+		case "delete":
+			subCommand = definitions.LDAPModifyDelete
+		case "replace":
+			subCommand = definitions.LDAPModifyReplace
+		default:
+			L.RaiseError("unknown operation %s", operation)
+
+			return nil
+		}
+
+		modifyAttributes = make(bktype.LDAPModifyAttributes)
+		attrTable.ForEach(func(key lua.LValue, value lua.LValue) {
+			modifyAttributes[key.String()] = []string{value.String()}
+		})
 	}
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
 	ldapRequest := &bktype.LDAPRequest{
+		// Common fields
 		GUID:              &guid,
-		Filter:            filter,
-		BaseDN:            basedn,
-		SearchAttributes:  attributes,
-		Scope:             *scope,
-		Command:           cmd,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctx,
+
+		// Search
+		Filter:           filter,
+		BaseDN:           basedn,
+		Scope:            *scope,
+		Command:          command,
+		SubCommand:       subCommand,
+		SearchAttributes: searchAttributes,
+
+		// Modify
+		ModifyDN:         dn,
+		ModifyAttributes: modifyAttributes,
 	}
 
 	return ldapRequest

@@ -684,8 +684,17 @@ const (
 )
 
 const (
+	// LDAPModifyUnknown represents an undefined or uninitialized LDAP subcommand in modification operations.
+	LDAPModifyUnknown LDAPSubCommand = iota
+
 	// LDAPModifyAdd represents a subcommand for adding attributes or values in an LDAP modify operation.
-	LDAPModifyAdd LDAPSubCommand = iota
+	LDAPModifyAdd
+
+	// LDAPModifyDelete represents a subcommand for deleting attributes or values in an LDAP modify operation.
+	LDAPModifyDelete
+
+	// LDAPModifyReplace represents a subcommand for replacing attributes or values in an LDAP modify operation.
+	LDAPModifyReplace
 )
 
 // Tri-state for LDAP connections.
@@ -1256,6 +1265,9 @@ const (
 
 	// LuaFnLDAPSearch represents the name of the Lua function used to do an LDAP search request.
 	LuaFnLDAPSearch = "ldap_search"
+
+	// LuaFnLDAPModify is a constant representing the Lua function for modifying LDAP entries.
+	LuaFnLDAPModify = "ldap_modify"
 
 	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
 	LuaFnSendMail = "send_mail"

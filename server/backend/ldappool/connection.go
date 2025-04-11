@@ -304,12 +304,22 @@ func (l *LDAPConnectionImpl) Modify(ldapRequest *bktype.LDAPRequest) (err error)
 		distinguishedName = ldapRequest.ModifyDN
 	}
 
+	if ldapRequest.SubCommand == definitions.LDAPModifyUnknown {
+		err = errors.ErrLDAPModify.WithDetail("Undefined LDAP modify operation")
+
+		return
+	}
+
 	modifyRequest := ldap.NewModifyRequest(distinguishedName, nil)
 
 	if ldapRequest.ModifyAttributes != nil {
 		for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
 			if ldapRequest.SubCommand == definitions.LDAPModifyAdd {
 				modifyRequest.Add(attributeName, attributeValues)
+			} else if ldapRequest.SubCommand == definitions.LDAPModifyDelete {
+				modifyRequest.Delete(attributeName, attributeValues)
+			} else if ldapRequest.SubCommand == definitions.LDAPModifyReplace {
+				modifyRequest.Replace(attributeName, attributeValues)
 			}
 		}
 
