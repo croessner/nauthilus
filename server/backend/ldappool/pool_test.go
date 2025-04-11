@@ -35,7 +35,7 @@ func (m *mockLDAPConnection) Search(_ *bktype.LDAPRequest) (bktype.AttributeMapp
 	return nil, nil, nil
 }
 
-func (m *mockLDAPConnection) ModifyAdd(_ *bktype.LDAPRequest) error {
+func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error {
 	panic("implement me")
 }
 

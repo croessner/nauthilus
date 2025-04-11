@@ -1074,7 +1074,7 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 // Example:
 //
 //	a := &AuthState{
-//	    Attributes: map[string][]any{
+//	    SearchAttributes: map[string][]any{
 //	        "Attribute1": []any{"Value1"},
 //	        "Attribute2": []any{"Value2_1", "Value2_2"},
 //	    },
@@ -2860,7 +2860,7 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 //
 // Note: This method relies on the following declarations:
 // - `config.GetFile().Oauth2.Clients`: The OAuth2 clients configuration.
-// - `a.Attributes`: The AuthState object's Attributes map.
+// - `a.SearchAttributes`: The AuthState object's Attributes map.
 // - `util.DebugModule`: A function for logging debug messages.
 // - `global.DbgModule`, `global.LogKeyGUID`, `global.ClaimGroups`, `log.Logger`, `definitions.LogKeyMsg`: Various declarations used internally in the method.
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
@@ -3028,7 +3028,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 				level.Info(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, fmt.Sprintf(
-						"Attributes did not contain requested field '%s'",
+						"SearchAttributes did not contain requested field '%s'",
 						client.Subject,
 					),
 					"attributes", func() string {

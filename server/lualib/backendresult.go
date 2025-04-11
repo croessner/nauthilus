@@ -232,9 +232,9 @@ func backendResultGetSetDisplayNameField(L *lua.LState) int {
 	return 1
 }
 
-// backendResultGetSetAttributes sets or retrieves the Attributes field of the LuaBackendResult struct as a Lua table.
-// If called with a table argument, it updates the Attributes field with the provided key-value pairs.
-// If called without arguments, it returns the current Attributes field as a Lua table.
+// backendResultGetSetAttributes sets or retrieves the SearchAttributes field of the LuaBackendResult struct as a Lua table.
+// If called with a table argument, it updates the SearchAttributes field with the provided key-value pairs.
+// If called without arguments, it returns the current SearchAttributes field as a Lua table.
 func backendResultGetSetAttributes(L *lua.LState) int {
 	backendResult := checkBackendResult(L)
 

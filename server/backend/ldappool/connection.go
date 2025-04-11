@@ -66,8 +66,8 @@ type LDAPConnection interface {
 	// Search executes an LDAP search request based on the specified LDAPRequest and returns the results, raw entries, or an error.
 	Search(ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 
-	// ModifyAdd processes an LDAP ModifyAdd request by adding attributes to an entry based on the provided LDAPRequest.
-	ModifyAdd(ldapRequest *bktype.LDAPRequest) error
+	// Modify performs an LDAP modify operation based on the provided LDAP request and returns an error if the operation fails.
+	Modify(ldapRequest *bktype.LDAPRequest) error
 }
 
 // LDAPConnectionImpl represents the connection with an LDAP server.
@@ -271,40 +271,56 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *bktype.LDAPRequest) (result bkt
 	return result, searchResult.Entries, nil
 }
 
-// ModifyAdd performs an LDAP modify-add operation using the provided LDAPRequest to add attributes to an entry.
-// Returns an error if the operation fails or if the provided search filter yields no results.
-func (l *LDAPConnectionImpl) ModifyAdd(ldapRequest *bktype.LDAPRequest) (err error) {
+// Modify applies changes to an LDAP entry based on the given LDAP request and returns an error if any operation fails.
+func (l *LDAPConnectionImpl) Modify(ldapRequest *bktype.LDAPRequest) (err error) {
 	var (
 		assertOk           bool
 		distinguishedNames any
+		distinguishedName  string
 		result             bktype.AttributeMapping
 	)
 
-	if result, _, err = l.Search(ldapRequest); err != nil {
+	if ldapRequest.ModifyDN == "" {
+		if result, _, err = l.Search(ldapRequest); err != nil {
+			return
+		}
+
+		if distinguishedNames, assertOk = result[definitions.DistinguishedName]; !assertOk {
+			err = errors.ErrNoLDAPSearchResult.WithDetail(
+				fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
+
+			return
+		}
+
+		if len(distinguishedNames.([]any)) == 0 {
+			err = errors.ErrNoLDAPSearchResult.WithDetail(
+				fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
+
+			return
+		}
+
+		distinguishedName = distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
+	} else {
+		distinguishedName = ldapRequest.ModifyDN
+	}
+
+	if ldapRequest.SubCommand == definitions.LDAPModifyUnknown {
+		err = errors.ErrLDAPModify.WithDetail("Undefined LDAP modify operation")
+
 		return
 	}
 
-	if distinguishedNames, assertOk = result[definitions.DistinguishedName]; !assertOk {
-		err = errors.ErrNoLDAPSearchResult.WithDetail(
-			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
-
-		return
-	}
-
-	if len(distinguishedNames.([]any)) == 0 {
-		err = errors.ErrNoLDAPSearchResult.WithDetail(
-			fmt.Sprintf("No search result for filter: %v", ldapRequest.Filter))
-
-		return
-	}
-
-	dn := distinguishedNames.([]any)[definitions.LDAPSingleValue].(string)
-
-	modifyRequest := ldap.NewModifyRequest(dn, nil)
+	modifyRequest := ldap.NewModifyRequest(distinguishedName, nil)
 
 	if ldapRequest.ModifyAttributes != nil {
 		for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
-			modifyRequest.Add(attributeName, attributeValues)
+			if ldapRequest.SubCommand == definitions.LDAPModifyAdd {
+				modifyRequest.Add(attributeName, attributeValues)
+			} else if ldapRequest.SubCommand == definitions.LDAPModifyDelete {
+				modifyRequest.Delete(attributeName, attributeValues)
+			} else if ldapRequest.SubCommand == definitions.LDAPModifyReplace {
+				modifyRequest.Replace(attributeName, attributeValues)
+			}
 		}
 
 		err = l.conn.Modify(modifyRequest)
