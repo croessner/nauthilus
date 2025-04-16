@@ -196,3 +196,23 @@ func RedisPing(ctx context.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// RedisExists checks if a given key exists in Redis, returning the count of matching keys as a Lua number.
+func RedisExists(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		key := L.CheckString(2)
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		cmd := client.Exists(ctx, key)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}

@@ -1184,6 +1184,9 @@ const (
 	// LuaFnRedisExpire represents the function name for "redis_expire" in Lua
 	LuaFnRedisExpire = "redis_expire"
 
+	// LuaFnRedisExists represents the constant used to check if a key exists in the Redis database.
+	LuaFnRedisExists = "redis_exists"
+
 	// LuaFnRedisHGet represents the function name for "redis_hget" in Lua.
 	LuaFnRedisHGet = "redis_hget"
 
