@@ -27,8 +27,24 @@ import (
 
 type LDAPSection struct {
 	Config            *LDAPConf            `mapstructure:"config" validate:"required"`
-	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive"`
+	OptionalLDAPPools map[string]*LDAPConf `mapstructure:"optional_ldap_pools" validate:"omitempty,dive,validatDefaultBackendName"`
 	Search            []LDAPSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
+}
+
+// validatDefaultBackendName ensures the backend name is not set to "default" or the predefined DefaultBackendName constant.
+func validatDefaultBackendName(fl validator.FieldLevel) bool {
+	conf, ok := fl.Parent().Interface().(LDAPSection)
+	if !ok {
+		return false
+	}
+
+	for backendName := range conf.OptionalLDAPPools {
+		if backendName == "default" || backendName == definitions.DefaultBackendName {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (l *LDAPSection) String() string {

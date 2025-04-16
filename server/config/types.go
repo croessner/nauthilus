@@ -240,7 +240,12 @@ func (b *Backend) Set(value string) error {
 	regex := regexp.MustCompile(`^(ldap|lua)\((.*?)\)$`)
 
 	if matches := regex.FindStringSubmatch(value); matches != nil {
-		b.name = strings.TrimSpace(matches[2])
+		name := strings.TrimSpace(matches[2])
+		if name == "default" || name == definitions.DefaultBackendName {
+			return fmt.Errorf(errors.ErrWrongPassDB.Error(), name)
+		}
+
+		b.name = name
 		value = matches[1]
 	}
 
