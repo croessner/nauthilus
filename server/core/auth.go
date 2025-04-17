@@ -1209,7 +1209,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
 
 	switch a.Service {
-	case definitions.ServNginx:
+	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
 		maxWaitDelay := viper.GetUint("nginx_wait_delay")
 
 		if maxWaitDelay > 0 {
@@ -1217,7 +1217,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
-	case definitions.ServJSON:
+
 		if a.PasswordHistory != nil {
 			ctx.JSON(a.StatusCodeFail, *a.PasswordHistory)
 		} else {
@@ -1247,6 +1247,8 @@ func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 // AuthFail handles the failure of authentication.
 // It increases the login attempts, sets failure headers on the context, and performs login attempt processing.
 func (a *AuthState) AuthFail(ctx *gin.Context) {
+	setHeaderHeaders(ctx, a)
+
 	a.increaseLoginAttempts()
 	a.setFailureHeaders(ctx)
 	a.loginAttemptProcessing(ctx)
@@ -2115,10 +2117,6 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			a.StatusMessage = *statusMessage
 		}
 
-		if filterResult {
-			return definitions.AuthResultFail
-		}
-
 		for _, attributeName := range removeAttributes {
 			delete(a.Attributes, attributeName)
 		}
@@ -2134,6 +2132,10 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 					}
 				}
 			}
+		}
+
+		if filterResult {
+			return definitions.AuthResultFail
 		}
 
 		a.UsedBackendIP = *filterRequest.UsedBackendAddress
