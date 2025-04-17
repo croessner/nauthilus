@@ -1,0 +1,8 @@
+chore: Aktualisierung aller Abhängigkeiten auf neueste Versionen
+
+- Go-Module auf aktuelle Versionen aktualisiert
+- go.mod und go.sum Dateien aktualisiert
+- Vendor-Verzeichnis mit aktuellen Abhängigkeiten synchronisiert
+- Alle Tests erfolgreich durchgeführt
+
+Diese Aktualisierung verbessert die Sicherheit und Stabilität des Projekts durch die Verwendung der neuesten kompatiblen Versionen aller Abhängigkeiten.
