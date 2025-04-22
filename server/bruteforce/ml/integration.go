@@ -63,7 +63,8 @@ func (m *MLBucketManager) WithUsername(username string) bruteforce.BucketManager
 
 	// Initialize ML detector if we have both username and clientIP
 	if m.username != "" && m.clientIP != "" && m.mlDetector == nil {
-		m.mlDetector = NewBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+		// Use the singleton pattern to get the detector
+		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
 	}
 
 	return m
@@ -124,12 +125,43 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 		if err == nil {
 			// Record as a failed login if brute force was detected
 			success := !(ruleTriggered || alreadyTriggered)
-			_ = m.mlDetector.RecordLoginResult(success, features)
+			// Use the standalone RecordLoginResult function instead of the method
+			_ = RecordLoginResult(m.ctx, success, features)
 		}
 	}
 
 	// Use the standard processing
 	return m.BucketManager.ProcessBruteForce(ruleTriggered, alreadyTriggered, rule, network, message, setter)
+}
+
+// Close cleans up resources when the MLBucketManager is no longer needed
+// This is a no-op since we're using a global ML system
+func (m *MLBucketManager) Close() {
+	// No-op - the ML system is managed globally and will be cleaned up by ShutdownMLSystem
+}
+
+// TrainModel manually triggers training of the ML model
+func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
+	// Ensure the ML system is initialized
+	if globalTrainer == nil {
+		if err := InitMLSystem(m.ctx); err != nil {
+			return fmt.Errorf("failed to initialize ML system: %w", err)
+		}
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyGUID, m.guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Manually triggering ML model training with %d samples for %d epochs", maxSamples, epochs),
+	)
+
+	// Use the global trainer instead of the detector
+	err := globalTrainer.TrainWithStoredData(maxSamples, epochs)
+	if err != nil {
+		return err
+	}
+
+	// Save the trained model to Redis
+	return globalTrainer.SaveModelToRedis()
 }
 
 // How to use the ML-enhanced bucket manager:

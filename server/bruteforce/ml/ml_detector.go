@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -55,46 +57,643 @@ type LoginFeatures struct {
 
 // NeuralNetwork is a simplified implementation of a neural network
 type NeuralNetwork struct {
-	inputSize  int
-	hiddenSize int
-	outputSize int
-	weights    []float64 // In a real implementation, this would be a more complex structure
+	inputSize    int
+	hiddenSize   int
+	outputSize   int
+	weights      []float64  // In a real implementation, this would be a more complex structure
+	learningRate float64    // Learning rate for training
+	rng          *rand.Rand // Random number generator
 }
 
 // NewNeuralNetwork creates a new neural network with the specified layer sizes
 func NewNeuralNetwork(inputSize, hiddenSize, outputSize int) *NeuralNetwork {
-	// In a real implementation, weights would be initialized properly
-	// Here we just create a placeholder
-	return &NeuralNetwork{
-		inputSize:  inputSize,
-		hiddenSize: hiddenSize,
-		outputSize: outputSize,
-		weights:    make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
+	// Create a new random number generator with the current time as seed
+	source := rand.NewSource(time.Now().UnixNano())
+	rng := rand.New(source)
+
+	// Create a new neural network with properly initialized weights
+	nn := &NeuralNetwork{
+		inputSize:    inputSize,
+		hiddenSize:   hiddenSize,
+		outputSize:   outputSize,
+		weights:      make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
+		learningRate: 0.01, // Default learning rate
+		rng:          rng,
+	}
+
+	// Initialize weights with small random values
+	for i := range nn.weights {
+		nn.weights[i] = (nn.rng.Float64() - 0.5) * 0.1
+	}
+
+	return nn
+}
+
+// Train trains the neural network with the provided features and labels for a specified number of epochs
+func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs int) {
+	if len(features) == 0 || len(labels) == 0 {
+		return // Nothing to train on
+	}
+
+	// Initialize weights if they haven't been initialized properly
+	if len(nn.weights) != nn.inputSize*nn.hiddenSize+nn.hiddenSize*nn.outputSize {
+		nn.weights = make([]float64, nn.inputSize*nn.hiddenSize+nn.hiddenSize*nn.outputSize)
+		// Initialize weights with small random values
+		for i := range nn.weights {
+			nn.weights[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
+	}
+
+	// Implementation of stochastic gradient descent with backpropagation
+	for epoch := 0; epoch < epochs; epoch++ {
+		totalError := 0.0
+
+		// Shuffle the training data
+		indices := nn.rng.Perm(len(features))
+
+		// Iterate through each training example
+		for _, idx := range indices {
+			if idx >= len(labels) {
+				continue // Skip if no corresponding label
+			}
+
+			inputFeatures := features[idx]
+			targetLabels := labels[idx]
+
+			if len(inputFeatures) != nn.inputSize || len(targetLabels) != nn.outputSize {
+				continue // Skip if dimensions don't match
+			}
+
+			// Forward pass
+			// 1. Calculate hidden layer activations
+			hiddenActivations := make([]float64, nn.hiddenSize)
+			hiddenNetInputs := make([]float64, nn.hiddenSize) // Store net inputs for backprop
+			for i := 0; i < nn.hiddenSize; i++ {
+				sum := 0.0
+				for j := 0; j < nn.inputSize; j++ {
+					weightIndex := i*nn.inputSize + j
+					if weightIndex < len(nn.weights) {
+						sum += inputFeatures[j] * nn.weights[weightIndex]
+					}
+				}
+				hiddenNetInputs[i] = sum
+				hiddenActivations[i] = 1.0 / (1.0 + math.Exp(-sum)) // Sigmoid
+			}
+
+			// 2. Calculate output layer activations
+			outputActivations := make([]float64, nn.outputSize)
+			outputNetInputs := make([]float64, nn.outputSize) // Store net inputs for backprop
+			for i := 0; i < nn.outputSize; i++ {
+				sum := 0.0
+				for j := 0; j < nn.hiddenSize; j++ {
+					weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+					if weightIndex < len(nn.weights) {
+						sum += hiddenActivations[j] * nn.weights[weightIndex]
+					}
+				}
+				outputNetInputs[i] = sum
+				outputActivations[i] = 1.0 / (1.0 + math.Exp(-sum)) // Sigmoid
+			}
+
+			// Calculate error
+			outputErrors := make([]float64, nn.outputSize)
+			for i := 0; i < nn.outputSize; i++ {
+				if i < len(targetLabels) {
+					errorValue := targetLabels[i] - outputActivations[i]
+					outputErrors[i] = errorValue
+					totalError += errorValue * errorValue // Squared error
+				}
+			}
+
+			// Backpropagation
+			// 1. Calculate output layer deltas
+			outputDeltas := make([]float64, nn.outputSize)
+			for i := 0; i < nn.outputSize; i++ {
+				// Delta = error * derivative of sigmoid
+				sigmoidDerivative := outputActivations[i] * (1 - outputActivations[i])
+				outputDeltas[i] = outputErrors[i] * sigmoidDerivative
+			}
+
+			// 2. Calculate hidden layer deltas
+			hiddenDeltas := make([]float64, nn.hiddenSize)
+			for i := 0; i < nn.hiddenSize; i++ {
+				errorValue := 0.0
+				for j := 0; j < nn.outputSize; j++ {
+					weightIndex := nn.inputSize*nn.hiddenSize + j*nn.hiddenSize + i
+					if weightIndex < len(nn.weights) {
+						errorValue += outputDeltas[j] * nn.weights[weightIndex]
+					}
+				}
+				sigmoidDerivative := hiddenActivations[i] * (1 - hiddenActivations[i])
+				hiddenDeltas[i] = errorValue * sigmoidDerivative
+			}
+
+			// 3. Update weights
+			// Update weights between input and hidden layers
+			for i := 0; i < nn.hiddenSize; i++ {
+				for j := 0; j < nn.inputSize; j++ {
+					weightIndex := i*nn.inputSize + j
+					if weightIndex < len(nn.weights) {
+						delta := nn.learningRate * hiddenDeltas[i] * inputFeatures[j]
+						nn.weights[weightIndex] += delta
+					}
+				}
+			}
+
+			// Update weights between hidden and output layers
+			for i := 0; i < nn.outputSize; i++ {
+				for j := 0; j < nn.hiddenSize; j++ {
+					weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+					if weightIndex < len(nn.weights) {
+						delta := nn.learningRate * outputDeltas[i] * hiddenActivations[j]
+						nn.weights[weightIndex] += delta
+					}
+				}
+			}
+		}
+
+		// Log progress every 10 epochs
+		if epoch%10 == 0 {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Epoch %d: Average error = %.6f", epoch, totalError/float64(len(features))),
+			)
+		}
 	}
 }
 
 // FeedForward performs forward propagation through the network
 func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
-	// This is a simplified implementation that doesn't actually use the weights
-	// In a real neural network, this would perform matrix multiplications and apply activation functions
+	if len(inputs) != nn.inputSize {
+		// Handle error: input size doesn't match expected size
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Input size mismatch: expected %d, got %d", nn.inputSize, len(inputs)),
+		)
+		// Return a default value
+		return []float64{0.5}
+	}
 
-	// For demonstration purposes, we'll implement a simple heuristic
-	// that simulates what a trained neural network might do
+	// Implement a simple feed-forward neural network with one hidden layer
+	// 1. Calculate hidden layer activations
+	hiddenActivations := make([]float64, nn.hiddenSize)
+	for i := 0; i < nn.hiddenSize; i++ {
+		sum := 0.0
+		for j := 0; j < nn.inputSize; j++ {
+			// Get weight from input j to hidden i
+			weightIndex := i*nn.inputSize + j
+			if weightIndex < len(nn.weights) {
+				sum += inputs[j] * nn.weights[weightIndex]
+			}
+		}
+		// Apply sigmoid activation function
+		hiddenActivations[i] = 1.0 / (1.0 + math.Exp(-sum))
+	}
 
-	// Calculate a weighted sum of the inputs
-	sum := 0.0
-	weights := []float64{0.1, 0.3, 0.2, 0.25, 0.05, 0.1} // Example weights for each feature
+	// 2. Calculate output layer activations
+	outputs := make([]float64, nn.outputSize)
+	for i := 0; i < nn.outputSize; i++ {
+		sum := 0.0
+		for j := 0; j < nn.hiddenSize; j++ {
+			// Get weight from hidden j to output i
+			weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+			if weightIndex < len(nn.weights) {
+				sum += hiddenActivations[j] * nn.weights[weightIndex]
+			}
+		}
+		// Apply sigmoid activation function
+		outputs[i] = 1.0 / (1.0 + math.Exp(-sum))
+	}
 
-	for i, input := range inputs {
-		if i < len(weights) {
-			sum += input * weights[i]
+	return outputs
+}
+
+// TrainingData represents a single training example with login features and result
+type TrainingData struct {
+	Success  bool
+	Features *LoginFeatures
+	Time     time.Time
+}
+
+// MLTrainer handles the training of the ML model without requiring request-specific parameters
+type MLTrainer struct {
+	ctx   context.Context
+	model *NeuralNetwork
+}
+
+// NewMLTrainer creates a new ML trainer with a default context
+func NewMLTrainer() *MLTrainer {
+	return &MLTrainer{
+		ctx: context.Background(),
+	}
+}
+
+// WithContext sets the context for the trainer
+func (t *MLTrainer) WithContext(ctx context.Context) *MLTrainer {
+	t.ctx = ctx
+
+	return t
+}
+
+// InitModel initializes the neural network model
+func (t *MLTrainer) InitModel() {
+	// Create a neural network with 6 input neurons (for our features),
+	// 8 hidden neurons, and 1 output neuron (probability of brute force)
+	t.model = NewNeuralNetwork(6, 8, 1)
+}
+
+// LoadModelFromRedis loads a previously trained model from Redis
+func (t *MLTrainer) LoadModelFromRedis() error {
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	// Get the model data from Redis
+	jsonData, err := rediscli.GetClient().GetReadHandle().Get(t.ctx, key).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("no saved model found")
+		}
+
+		return fmt.Errorf("failed to retrieve model from Redis: %w", err)
+	}
+
+	// Parse the JSON data
+	var modelData struct {
+		InputSize    int       `json:"input_size"`
+		HiddenSize   int       `json:"hidden_size"`
+		OutputSize   int       `json:"output_size"`
+		Weights      []float64 `json:"weights"`
+		LearningRate float64   `json:"learning_rate"`
+	}
+
+	if err := json.Unmarshal(jsonData, &modelData); err != nil {
+		return fmt.Errorf("failed to deserialize model: %w", err)
+	}
+
+	// Create a new neural network with the loaded parameters
+	nn := &NeuralNetwork{
+		inputSize:    modelData.InputSize,
+		hiddenSize:   modelData.HiddenSize,
+		outputSize:   modelData.OutputSize,
+		weights:      modelData.Weights,
+		learningRate: modelData.LearningRate,
+	}
+
+	// Replace the current model
+	t.model = nn
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Model loaded from Redis successfully",
+	)
+
+	return nil
+}
+
+// SaveModelToRedis saves the trained neural network model to Redis
+func (t *MLTrainer) SaveModelToRedis() error {
+	if t.model == nil {
+		return fmt.Errorf("no model to save")
+	}
+
+	// Create a serializable representation of the model
+	modelData := struct {
+		InputSize    int       `json:"input_size"`
+		HiddenSize   int       `json:"hidden_size"`
+		OutputSize   int       `json:"output_size"`
+		Weights      []float64 `json:"weights"`
+		LearningRate float64   `json:"learning_rate"`
+	}{
+		InputSize:    t.model.inputSize,
+		HiddenSize:   t.model.hiddenSize,
+		OutputSize:   t.model.outputSize,
+		Weights:      t.model.weights,
+		LearningRate: t.model.learningRate,
+	}
+
+	// Serialize the model to JSON
+	jsonData, err := json.Marshal(modelData)
+	if err != nil {
+		return fmt.Errorf("failed to serialize model: %w", err)
+	}
+
+	// Save to Redis
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	err = rediscli.GetClient().GetWriteHandle().Set(
+		t.ctx,
+		key,
+		jsonData,
+		30*24*time.Hour, // 30 days TTL
+	).Err()
+
+	if err != nil {
+		return fmt.Errorf("failed to save model to Redis: %w", err)
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Model saved to Redis successfully",
+	)
+
+	return nil
+}
+
+// GetTrainingDataFromRedis retrieves the stored training data from Redis
+func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, error) {
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
+
+	// Limit the number of samples to retrieve
+	if maxSamples <= 0 {
+		maxSamples = 1000 // Default to 1000 samples
+	}
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	// Get the training data from Redis
+	jsonData, err := rediscli.GetClient().GetReadHandle().LRange(t.ctx, key, 0, int64(maxSamples-1)).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the JSON data into TrainingData objects
+	trainingData := make([]TrainingData, 0, len(jsonData))
+	for _, data := range jsonData {
+		var sample TrainingData
+
+		if err := json.Unmarshal([]byte(data), &sample); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Error parsing training data: %v", err),
+			)
+
+			continue
+		}
+
+		trainingData = append(trainingData, sample)
+	}
+
+	return trainingData, nil
+}
+
+// PrepareTrainingData converts the raw training data into features and labels for the neural network
+func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]float64) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	features := make([][]float64, 0, len(data))
+	labels := make([][]float64, 0, len(data))
+
+	for _, sample := range data {
+		if sample.Features == nil {
+			continue
+		}
+
+		// Extract features
+		featureVector := []float64{
+			sample.Features.TimeBetweenAttempts,
+			sample.Features.FailedAttemptsLastHour,
+			sample.Features.DifferentUsernames,
+			sample.Features.DifferentPasswords,
+			sample.Features.TimeOfDay,
+			sample.Features.SuspiciousNetwork,
+		}
+
+		// Normalize the features
+		normalizedFeatures := normalizeInputs(featureVector)
+		features = append(features, normalizedFeatures)
+
+		// Create label (1 for legitimate login, 0 for brute force)
+		// In this simplified model, we assume success=true means legitimate
+		var label float64
+		if sample.Success {
+			label = 1.0 // Legitimate login
+		} else {
+			label = 0.0 // Potential brute force
+		}
+
+		labels = append(labels, []float64{label})
+	}
+
+	return features, labels
+}
+
+// normalizeInputs normalizes the input features to a range suitable for the neural network
+func normalizeInputs(inputs []float64) []float64 {
+	// Define normalization ranges for each feature
+	ranges := []struct {
+		min float64
+		max float64
+	}{
+		{0, 3600}, // TimeBetweenAttempts (0 to 1 hour)
+		{0, 100},  // FailedAttemptsLastHour
+		{0, 20},   // DifferentUsernames
+		{0, 20},   // DifferentPasswords
+		{0, 1},    // TimeOfDay (already normalized)
+		{0, 1},    // SuspiciousNetwork (already normalized)
+	}
+
+	normalized := make([]float64, len(inputs))
+	for i, val := range inputs {
+		// Apply min-max normalization
+		normalized[i] = (val - ranges[i].min) / (ranges[i].max - ranges[i].min)
+
+		// Ensure values are within [0,1]
+		if normalized[i] < 0 {
+			normalized[i] = 0
+		} else if normalized[i] > 1 {
+			normalized[i] = 1
 		}
 	}
 
-	// Apply sigmoid activation function to get output between 0 and 1
-	output := 1.0 / (1.0 + math.Exp(-sum))
+	return normalized
+}
 
-	return []float64{output}
+// TrainWithStoredData retrieves training data from Redis and trains the model
+func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
+	// Initialize the model if it doesn't exist
+	if t.model == nil {
+		t.InitModel()
+	}
+
+	// Get training data from Redis
+	trainingData, err := t.GetTrainingDataFromRedis(maxSamples)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve training data: %w", err)
+	}
+
+	if len(trainingData) == 0 {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "No training data available in Redis",
+		)
+
+		return nil
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Retrieved %d training samples from Redis", len(trainingData)),
+	)
+
+	// Prepare the data for training
+	features, labels := t.PrepareTrainingData(trainingData)
+	if len(features) == 0 || len(labels) == 0 {
+		return fmt.Errorf("failed to prepare training data")
+	}
+
+	// Train the model
+	t.model.Train(features, labels, epochs)
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Model training completed successfully",
+	)
+
+	return nil
+}
+
+// GetModel returns the trained neural network model
+func (t *MLTrainer) GetModel() *NeuralNetwork {
+	return t.model
+}
+
+// RecordLoginResult records the result of a login attempt for future training
+func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures) error {
+	// Store the login attempt result and features for future model training
+	data := TrainingData{
+		Success:  success,
+		Features: features,
+		Time:     time.Now(),
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	err = rediscli.GetClient().GetWriteHandle().LPush(ctx, key, jsonData).Err()
+	if err != nil {
+		return err
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Trim the list to keep only the last 10000 entries
+	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, 9999).Err()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Global variables for the ML system
+var (
+	// Global model trainer
+	globalTrainer *MLTrainer
+
+	// Channel to signal training goroutine to stop
+	stopTrainingChan chan struct{}
+
+	// Initialization synchronization
+	initOnce sync.Once
+
+	// Mutex for thread-safe shutdown
+	shutdownMutex sync.Mutex
+
+	// Flag to track if the scheduler is running
+	schedulerStarted bool
+)
+
+// InitMLSystem initializes the ML system without requiring request-specific parameters
+// This should be called during application startup
+func InitMLSystem(ctx context.Context) error {
+	var err error
+
+	initOnce.Do(func() {
+		// Create a new trainer
+		trainer := NewMLTrainer().WithContext(ctx)
+
+		// Initialize the neural network model
+		trainer.InitModel()
+
+		// Try to load a previously trained model
+		if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, using default: %v", loadErr),
+			)
+		}
+
+		// Start scheduled training
+		stopChan := make(chan struct{})
+		stopTrainingChan = stopChan
+
+		go func() {
+			ticker := time.NewTicker(24 * time.Hour) // Train once per day
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopChan:
+					return
+				case <-ticker.C:
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Starting scheduled model training",
+					)
+
+					// Train with the last 5000 samples for 50 epochs
+					if trainErr := trainer.TrainWithStoredData(5000, 50); trainErr != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Scheduled training failed: %v", trainErr),
+						)
+
+						continue
+					}
+
+					// Save the trained model to Redis
+					if saveErr := trainer.SaveModelToRedis(); saveErr != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis: %v", saveErr),
+						)
+					}
+				}
+			}
+		}()
+
+		schedulerStarted = true
+		globalTrainer = trainer
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Started ML model training scheduler",
+		)
+	})
+
+	return err
+}
+
+// ShutdownMLSystem properly cleans up the ML system
+// This should be called during application shutdown
+func ShutdownMLSystem() {
+	shutdownMutex.Lock()
+
+	defer shutdownMutex.Unlock()
+
+	if schedulerStarted && stopTrainingChan != nil {
+		close(stopTrainingChan)
+
+		schedulerStarted = false
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Stopped ML model training scheduler",
+		)
+	}
+
+	// Clear global variables
+	globalTrainer = nil
+	stopTrainingChan = nil
 }
 
 // BruteForceMLDetector implements machine learning based brute force detection
@@ -106,26 +705,28 @@ type BruteForceMLDetector struct {
 	model    *NeuralNetwork
 }
 
-// NewBruteForceMLDetector creates a new ML-based brute force detector
-func NewBruteForceMLDetector(ctx context.Context, guid, clientIP, username string) *BruteForceMLDetector {
+// GetBruteForceMLDetector creates a new detector instance for a specific request
+func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username string) *BruteForceMLDetector {
+	// Ensure the ML system is initialized
+	if globalTrainer == nil {
+		if err := InitMLSystem(ctx); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to initialize ML system: %v", err),
+			)
+		}
+	}
+
+	// Create a new detector for this request
 	detector := &BruteForceMLDetector{
 		ctx:      ctx,
 		guid:     guid,
 		clientIP: clientIP,
 		username: username,
+		model:    globalTrainer.GetModel(), // Use the globally trained model
 	}
 
-	// Initialize the neural network model
-	detector.initModel()
-
 	return detector
-}
-
-// initModel initializes the neural network model
-func (d *BruteForceMLDetector) initModel() {
-	// Create a neural network with 6 input neurons (for our features),
-	// 8 hidden neurons, and 1 output neuron (probability of brute force)
-	d.model = NewNeuralNetwork(6, 8, 1)
 }
 
 // CollectFeatures gathers the necessary features for the ML model
@@ -211,8 +812,8 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		features.SuspiciousNetwork,
 	}
 
-	// Normalize inputs (simple min-max normalization)
-	normalizedInputs := d.normalizeInputs(inputs)
+	// Normalize inputs
+	normalizedInputs := normalizeInputs(inputs)
 
 	// Make prediction
 	outputs := d.model.FeedForward(normalizedInputs)
@@ -224,50 +825,6 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	isBruteForce := probability > 0.7 // Threshold can be adjusted
 
 	return isBruteForce, probability, nil
-}
-
-// Train trains the neural network with labeled data
-func (d *BruteForceMLDetector) Train(features [][]float64, labels [][]float64, epochs int) {
-	// In a real implementation, this would train the model with historical data
-	// For this example, we'll assume the model is already trained
-	level.Info(log.Logger).Log(
-		definitions.LogKeyGUID, d.guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Training ML model with %d samples for %d epochs", len(features), epochs),
-	)
-
-	// This is where the actual training would happen
-	// d.model.Train(features, labels, epochs)
-}
-
-// normalizeInputs normalizes the input features to a range suitable for the neural network
-func (d *BruteForceMLDetector) normalizeInputs(inputs []float64) []float64 {
-	// Define normalization ranges for each feature
-	ranges := []struct {
-		min float64
-		max float64
-	}{
-		{0, 3600}, // TimeBetweenAttempts (0 to 1 hour)
-		{0, 100},  // FailedAttemptsLastHour
-		{0, 20},   // DifferentUsernames
-		{0, 20},   // DifferentPasswords
-		{0, 1},    // TimeOfDay (already normalized)
-		{0, 1},    // SuspiciousNetwork (already normalized)
-	}
-
-	normalized := make([]float64, len(inputs))
-	for i, val := range inputs {
-		// Apply min-max normalization
-		normalized[i] = (val - ranges[i].min) / (ranges[i].max - ranges[i].min)
-
-		// Ensure values are within [0,1]
-		if normalized[i] < 0 {
-			normalized[i] = 0
-		} else if normalized[i] > 1 {
-			normalized[i] = 1
-		}
-	}
-
-	return normalized
 }
 
 // Helper methods to interact with Redis for feature collection
@@ -303,7 +860,7 @@ func (d *BruteForceMLDetector) storeLoginAttemptTime() error {
 		d.ctx,
 		key,
 		time.Now().Format(time.RFC3339),
-		time.Hour, // TTL of 1 hour
+		24*time.Hour, // 24 hour TTL
 	).Err()
 
 	return err
@@ -331,82 +888,131 @@ func (d *BruteForceMLDetector) incrementFailedAttempts() error {
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
+	// Increment the counter
 	err := rediscli.GetClient().GetWriteHandle().Incr(d.ctx, key).Err()
 	if err != nil {
 		return err
 	}
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
 	// Set expiration to 1 hour if not already set
 	err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, time.Hour).Err()
+	if err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 func (d *BruteForceMLDetector) getDifferentUsernames() (uint, error) {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:ip:usernames:" + d.clientIP
+	// This method tracks and returns the number of different usernames tried from this IP address
+	// It uses a Redis Set to store unique usernames and returns the cardinality of the set
 
+	// Get the key for storing usernames tried from this IP
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:usernames:" + d.clientIP
+
+	// Add the current username to the set if it's not empty
+	if d.username != "" {
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		err := rediscli.GetClient().GetWriteHandle().SAdd(d.ctx, key, d.username).Err()
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, d.guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to add username to set: %v", err),
+			)
+			return 0, err
+		}
+
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		// Set expiration to 1 hour if not already set
+		err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, time.Hour).Err()
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, d.guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to set expiration on username set: %v", err),
+			)
+			return 0, err
+		}
+	}
+
+	// Get the set size (number of different usernames)
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	count, err := rediscli.GetClient().GetReadHandle().SCard(d.ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
+			// If the key doesn't exist, there are no usernames yet
 			return 0, nil
 		}
 
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to get username set size: %v", err),
+		)
 		return 0, err
 	}
 
-	// Add current username to the set
-	if d.username != "" {
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		err = rediscli.GetClient().GetWriteHandle().SAdd(d.ctx, key, d.username).Err()
-		if err != nil {
-			return 0, err
-		}
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		// Set expiration to 24 hours
-		err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, 24*time.Hour).Err()
-		if err != nil {
-			return 0, err
-		}
-	}
+	// Log the number of different usernames for debugging
+	level.Debug(log.Logger).Log(
+		definitions.LogKeyGUID, d.guid,
+		definitions.LogKeyClientIP, d.clientIP,
+		definitions.LogKeyMsg, fmt.Sprintf("Number of different usernames tried: %d", count),
+	)
 
 	return uint(count), nil
 }
 
 func (d *BruteForceMLDetector) getDifferentPasswords() (uint, error) {
+	// This method retrieves the number of different passwords tried for this username
+	// It uses the existing password history implementation in bruteforce.go
+
+	// If username is empty, we can't get password history for a specific user
 	if d.username == "" {
 		return 0, nil
 	}
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:user:passwords:" + d.username
+	// Generate the Redis key for password history with username
+	// Following the same pattern as in bruteforce.go's getPasswordHistoryRedisHashKey
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + d.username + ":" + d.clientIP
 
+	// Get all password hashes from Redis
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	count, err := rediscli.GetClient().GetReadHandle().HLen(d.ctx, key).Result()
+	passwordHistory, err := rediscli.GetClient().GetReadHandle().HGetAll(d.ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
+			// If the key doesn't exist, there are no passwords yet
 			return 0, nil
 		}
 
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to get password history: %v", err),
+		)
 		return 0, err
 	}
+
+	// Count the number of different passwords (keys in the hash)
+	count := len(passwordHistory)
+
+	// Log the number of different passwords for debugging
+	level.Debug(log.Logger).Log(
+		definitions.LogKeyGUID, d.guid,
+		definitions.LogKeyClientIP, d.clientIP,
+		definitions.LogKeyUsername, d.username,
+		definitions.LogKeyMsg, fmt.Sprintf("Number of different passwords tried: %d", count),
+	)
 
 	return uint(count), nil
 }
 
 func (d *BruteForceMLDetector) isFromSuspiciousNetwork() (bool, error) {
-	// This would check against a list of known suspicious networks
-	// For this example, we'll return false
+	// In a real implementation, this would check if the IP is from a known
+	// suspicious network (e.g., Tor exit nodes, known proxy services, etc.)
+	// For simplicity, we'll return false
 	return false, nil
 }
-
-// Redis key helpers
 
 func (d *BruteForceMLDetector) getLoginTimeKey() string {
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:login:time:" + d.clientIP
@@ -414,50 +1020,4 @@ func (d *BruteForceMLDetector) getLoginTimeKey() string {
 
 func (d *BruteForceMLDetector) getFailedAttemptsKey() string {
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:failed:attempts:" + d.clientIP
-}
-
-// RecordLoginResult records the result of a login attempt for future training
-func (d *BruteForceMLDetector) RecordLoginResult(success bool, features *LoginFeatures) error {
-	// Store the login attempt result and features for future model training
-	data := struct {
-		Success  bool
-		Features *LoginFeatures
-		Time     time.Time
-	}{
-		Success:  success,
-		Features: features,
-		Time:     time.Now(),
-	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
-
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	err = rediscli.GetClient().GetWriteHandle().LPush(d.ctx, key, jsonData).Err()
-	if err != nil {
-		return err
-	}
-
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	// Trim the list to keep only the last 10000 entries
-	err = rediscli.GetClient().GetWriteHandle().LTrim(d.ctx, key, 0, 9999).Err()
-	if err != nil {
-		return err
-	}
-
-	// If login failed, increment the failed attempts counter
-	if !success {
-		err = d.incrementFailedAttempts()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

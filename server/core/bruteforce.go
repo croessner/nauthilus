@@ -196,6 +196,12 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 	}
 
+	defer func() {
+		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
+			mlBM.Close()
+		}
+	}()
+
 	network := &net.IPNet{}
 
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
