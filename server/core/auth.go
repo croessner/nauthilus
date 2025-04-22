@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -1817,6 +1818,8 @@ func (a *AuthState) processVerifyPassword(passDBs []*PassDBMap) (*PassDBResult, 
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
 func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
+	var bm bruteforce.BucketManager
+
 	if a.UserFound {
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
@@ -1824,10 +1827,17 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).
-				WithAccountName(accountName).
-				WithAccountName(accountName)
+			if config.GetEnvironment().GetExperimentalML() {
+				bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+					WithUsername(a.Username).
+					WithAccountName(accountName).
+					WithAccountName(accountName)
+			} else {
+				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+					WithUsername(a.Username).
+					WithAccountName(accountName).
+					WithAccountName(accountName)
+			}
 
 			bm.ProcessPWHist()
 		}
@@ -1932,6 +1942,8 @@ func (a *AuthState) processCacheUserLoginOk(accountName string) error {
 
 // processCacheUserLoginFail processes the cache update when a user login fails. It logs the event and updates the failure counter.
 func (a *AuthState) processCacheUserLoginFail(accountName string) {
+	var bm bruteforce.BucketManager
+
 	util.DebugModule(
 		definitions.DbgAuth,
 		definitions.LogKeyGUID, a.GUID,
@@ -1941,16 +1953,25 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	)
 
 	// Increase counters
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-		WithUsername(a.Username).
-		WithPassword(a.Password).
-		WithAccountName(accountName)
+	if config.GetEnvironment().GetExperimentalML() {
+		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).
+			WithAccountName(accountName).
+			WithAccountName(accountName)
+	} else {
+		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).
+			WithAccountName(accountName).
+			WithAccountName(accountName)
+	}
 
 	bm.SaveFailedPasswordCounterInRedis()
 }
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+	var bm bruteforce.BucketManager
+
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
 		if authenticated {
 			err := a.processCacheUserLoginOk(accountName)
@@ -1961,10 +1982,17 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			a.processCacheUserLoginFail(accountName)
 		}
 
-		bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-			WithUsername(a.Username).
-			WithPassword(a.Password).
-			WithAccountName(accountName)
+		if config.GetEnvironment().GetExperimentalML() {
+			bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).
+				WithAccountName(accountName).
+				WithAccountName(accountName)
+		} else {
+			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).
+				WithAccountName(accountName).
+				WithAccountName(accountName)
+		}
 
 		bm.LoadAllPasswordHistories()
 

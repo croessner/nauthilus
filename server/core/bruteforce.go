@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -119,6 +120,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	var (
 		ruleTriggered bool
 		message       string
+		bm            bruteforce.BucketManager
 	)
 
 	if a.NoAuth || a.ListAccounts {
@@ -188,7 +190,11 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	if config.GetEnvironment().GetExperimentalML() {
+		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	} else {
+		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	}
 
 	network := &net.IPNet{}
 
@@ -225,6 +231,8 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
 func (a *AuthState) UpdateBruteForceBucketsCounter() {
+	var bm bruteforce.BucketManager
+
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
@@ -290,7 +298,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		break
 	}
 
-	bm := bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	if config.GetEnvironment().GetExperimentalML() {
+		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	} else {
+		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+	}
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
