@@ -336,6 +336,8 @@ func (d *BruteForceMLDetector) incrementFailedAttempts() error {
 		return err
 	}
 
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
 	// Set expiration to 1 hour if not already set
 	err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, time.Hour).Err()
 
@@ -364,6 +366,8 @@ func (d *BruteForceMLDetector) getDifferentUsernames() (uint, error) {
 		if err != nil {
 			return 0, err
 		}
+
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 		// Set expiration to 24 hours
 		err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, 24*time.Hour).Err()
@@ -438,6 +442,8 @@ func (d *BruteForceMLDetector) RecordLoginResult(success bool, features *LoginFe
 	if err != nil {
 		return err
 	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Trim the list to keep only the last 10000 entries
 	err = rediscli.GetClient().GetWriteHandle().LTrim(d.ctx, key, 0, 9999).Err()
