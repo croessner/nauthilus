@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -732,13 +733,20 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 // Finally, it returns the ruleFlushError flag indicating if there was any error during rule flushing,
 // and a nil error value if no error occurred.
 func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) (bool, []string, error) {
-	var removedKeys []string
+	var (
+		removedKeys []string
+		bm          bruteforce.BucketManager
+	)
 
 	ruleFlushError := false
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			bm := bruteforce.NewBucketManager(ctx, guid, ipCmd.IPAddress)
+			if config.GetEnvironment().GetExperimentalML() {
+				bm = ml.NewMLBucketManager(ctx, guid, ipCmd.IPAddress)
+			} else {
+				bm = bruteforce.NewBucketManager(ctx, guid, ipCmd.IPAddress)
+			}
 
 			if removedKey, err := bm.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
 				ruleFlushError = true

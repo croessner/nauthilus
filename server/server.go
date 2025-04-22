@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
@@ -277,6 +278,8 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 
 	statsTicker.Stop()
 	ngxMonitoringTicker.Stop()
+
+	ml.ShutdownMLSystem()
 }
 
 // handleUsr1Signal listens for SIGUSR1 signals to trigger server restarts for updating or refreshing server processes.
