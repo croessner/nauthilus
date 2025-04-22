@@ -823,6 +823,9 @@ const (
 
 	// DbgTolerate represents the debug module for operations related to tolerance or error allowances.
 	DbgTolerate
+
+	// DbgNeural represents the debug module identifier for neural network-related operations.
+	DbgNeural
 )
 
 const (
@@ -876,6 +879,9 @@ const (
 
 	// DbgTolerateName represents the debug mode for tolerating certain conditions or operations during execution.
 	DbgTolerateName = "tolerate"
+
+	// DbgNeuralName specifies the debug identifier for neural-related processes or functionalities.
+	DbgNeuralName = "neural"
 )
 
 const (
