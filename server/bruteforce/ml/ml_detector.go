@@ -16,12 +16,15 @@
 package ml
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"math/rand"
+	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -34,6 +37,13 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
+
+var httpClient *http.Client
+
+// InitHTTPClient initializes and assigns a new HTTP client to the package-wide httpClient variable.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
 
 // LoginFeatures represents the features used for brute force detection
 type LoginFeatures struct {
@@ -1652,10 +1662,112 @@ func (d *BruteForceMLDetector) getDifferentPasswords() (uint, error) {
 }
 
 func (d *BruteForceMLDetector) isFromSuspiciousNetwork() (bool, error) {
-	// In a real implementation, this would check if the IP is from a known
-	// suspicious network (e.g., Tor exit nodes, known proxy services, etc.)
-	// For simplicity, we'll return false
-	return false, nil
+	// Check if the IP is in the blocklist service
+	// Create a JSON payload with the client IP
+	payload := map[string]string{
+		"ip": d.clientIP,
+	}
+
+	// Convert the payload to JSON
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to marshal JSON payload: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Get the blocklist URL from environment
+	blocklistURL := os.Getenv("BLOCKLIST_URL")
+	if blocklistURL == "" {
+		// If no blocklist URL is configured, skip the check
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, "No blocklist URL configured, skipping check",
+		)
+
+		return false, nil
+	}
+
+	// Create a context with timeout for the HTTP request
+	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
+
+	defer cancel()
+
+	// Create the HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, blocklistURL, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to create HTTP request: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Nauthilus")
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to send HTTP request: %v", err),
+		)
+
+		return false, err
+	}
+
+	defer resp.Body.Close()
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Blocklist service returned non-OK status: %d", resp.StatusCode),
+		)
+
+		return false, fmt.Errorf("blocklist service returned status %d", resp.StatusCode)
+	}
+
+	// Parse the response
+	var response struct {
+		Found bool   `json:"found"`
+		Error string `json:"error,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to decode response: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Check if there was an error in the response
+	if response.Error != "" {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Blocklist service returned error: %s", response.Error),
+		)
+
+		return false, fmt.Errorf("blocklist service error: %s", response.Error)
+	}
+
+	// Log the result for debugging
+	util.DebugModule(
+		definitions.DbgNeural,
+		definitions.LogKeyGUID, d.guid,
+		definitions.LogKeyClientIP, d.clientIP,
+		definitions.LogKeyMsg, fmt.Sprintf("IP in suspicious network: %t", response.Found),
+	)
+
+	return response.Found, nil
 }
 
 func (d *BruteForceMLDetector) getLoginTimeKey() string {
