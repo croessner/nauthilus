@@ -115,6 +115,12 @@ func NewNeuralNetwork(inputSize, hiddenSize, outputSize int) *NeuralNetwork {
 		"weights_count", len(nn.weights),
 	)
 
+	// Record network structure metrics
+	GetMLMetrics().RecordNetworkStructure(inputSize, hiddenSize, outputSize)
+
+	// Record initial weight values
+	nn.recordWeightMetrics()
+
 	return nn
 }
 
@@ -126,6 +132,9 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		"labels_count", len(labels),
 		"epochs", epochs,
 	)
+
+	// Record the number of training samples
+	GetMLMetrics().RecordTrainingSamplesUsed(len(features))
 
 	if len(features) == 0 || len(labels) == 0 {
 		util.DebugModule(definitions.DbgNeural,
@@ -286,6 +295,9 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 				"total_epochs", epochs,
 				"average_error", avgError,
 			)
+
+			// Record training error metrics
+			GetMLMetrics().RecordTrainingError(epoch, avgError)
 		}
 	}
 
@@ -293,6 +305,34 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		"action", "train_complete",
 		"epochs_completed", epochs,
 	)
+
+	// Record final weight values after training
+	nn.recordWeightMetrics()
+}
+
+// recordWeightMetrics records the current weight values as Prometheus metrics
+func (nn *NeuralNetwork) recordWeightMetrics() {
+	metrics := GetMLMetrics()
+
+	// Record weights between input and hidden layers
+	for i := 0; i < nn.hiddenSize; i++ {
+		for j := 0; j < nn.inputSize; j++ {
+			weightIndex := i*nn.inputSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("input", j, "hidden", i, nn.weights[weightIndex])
+			}
+		}
+	}
+
+	// Record weights between hidden and output layers
+	for i := 0; i < nn.outputSize; i++ {
+		for j := 0; j < nn.hiddenSize; j++ {
+			weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("hidden", j, "output", i, nn.weights[weightIndex])
+			}
+		}
+	}
 }
 
 // FeedForward performs forward propagation through the network
@@ -339,7 +379,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		}
 
 		// Apply sigmoid activation function
-		hiddenActivations[i] = 1.0 / (1.0 + math.Exp(-sum))
+		activation := 1.0 / (1.0 + math.Exp(-sum))
+		hiddenActivations[i] = activation
+
+		// Record neuron activation metrics
+		GetMLMetrics().RecordNeuronActivation("hidden", i, activation)
 	}
 
 	// 2. Calculate output layer activations
@@ -360,7 +404,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		}
 
 		// Apply sigmoid activation function
-		outputs[i] = 1.0 / (1.0 + math.Exp(-sum))
+		activation := 1.0 / (1.0 + math.Exp(-sum))
+		outputs[i] = activation
+
+		// Record neuron activation metrics
+		GetMLMetrics().RecordNeuronActivation("output", i, activation)
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -1506,8 +1554,13 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 		)
 	}
 
+	// Initialize additional features if not already initialized
+	if d.additionalFeatures == nil {
+		d.additionalFeatures = make(map[string]any)
+	}
+
 	// Add any additional features that have been set
-	if d.additionalFeatures != nil && len(d.additionalFeatures) > 0 {
+	if len(d.additionalFeatures) > 0 {
 		features.AdditionalFeatures = d.additionalFeatures
 
 		util.DebugModule(definitions.DbgNeural,
@@ -1533,6 +1586,9 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 
 // Predict determines if the current login attempt is part of a brute force attack
 func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
+	// Start timing the prediction
+	startTime := time.Now()
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_start",
 		definitions.LogKeyGUID, d.guid,
@@ -1650,6 +1706,66 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		definitions.LogKeyGUID, d.guid,
 	)
 
+	// Record feature values as metrics
+	metrics := GetMLMetrics()
+	metrics.RecordFeatureValue("time_between_attempts", features.TimeBetweenAttempts)
+	metrics.RecordFeatureValue("failed_attempts_last_hour", features.FailedAttemptsLastHour)
+	metrics.RecordFeatureValue("different_usernames", features.DifferentUsernames)
+	metrics.RecordFeatureValue("different_passwords", features.DifferentPasswords)
+	metrics.RecordFeatureValue("time_of_day", features.TimeOfDay)
+	metrics.RecordFeatureValue("suspicious_network", features.SuspiciousNetwork)
+
+	// Record additional features
+	if features.AdditionalFeatures != nil {
+		for key, value := range features.AdditionalFeatures {
+			// Convert the value to float64
+			var floatValue float64
+			switch v := value.(type) {
+			case float64:
+				floatValue = v
+			case float32:
+				floatValue = float64(v)
+			case int:
+				floatValue = float64(v)
+			case int64:
+				floatValue = float64(v)
+			case bool:
+				if v {
+					floatValue = 1.0
+				} else {
+					floatValue = 0.0
+				}
+			case string:
+				// Try to convert string to float
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					floatValue = f
+				} else {
+					// If string can't be converted to float, use a hash of the string
+					// normalized to [0,1]
+					hash := util.GetHash(v)
+					// Use the first 8 characters of the hash as a hex number
+					if len(hash) > 8 {
+						hash = hash[:8]
+					}
+
+					// Convert hex to int
+					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+						// Normalize to [0,1]
+						floatValue = float64(hashInt%1000) / 1000.0
+					} else {
+						// Fallback
+						floatValue = 0.5
+					}
+				}
+			default:
+				// For other types, use a default value
+				floatValue = 0.5
+			}
+
+			metrics.RecordFeatureValue("additional_"+key, floatValue)
+		}
+	}
+
 	// Normalize inputs
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_normalize_inputs",
@@ -1692,6 +1808,12 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		"threshold", threshold,
 		definitions.LogKeyGUID, d.guid,
 	)
+
+	// Calculate prediction duration
+	duration := time.Since(startTime).Seconds()
+
+	// Record prediction metrics
+	metrics.RecordPrediction(probability, isBruteForce, duration)
 
 	return isBruteForce, probability, nil
 }
