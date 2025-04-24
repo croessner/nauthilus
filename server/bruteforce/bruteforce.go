@@ -78,6 +78,10 @@ type BucketManager interface {
 	// WithAccountName sets the account name for the BucketManager instance and returns the updated BucketManager.
 	WithAccountName(accountName string) BucketManager
 
+	// WithAdditionalFeatures sets additional features for the BucketManager instance and returns the updated BucketManager.
+	// These features can be used by ML-based detection systems to enhance their prediction capabilities.
+	WithAdditionalFeatures(features map[string]any) BucketManager
+
 	// LoadAllPasswordHistories retrieves all recorded password history entries for further processing or analysis.
 	LoadAllPasswordHistories()
 
@@ -119,13 +123,14 @@ type bucketManagerImpl struct {
 	bruteForceCounter map[string]uint
 	passwordHistory   *PasswordHistory
 
-	guid           string
-	username       string
-	password       string
-	clientIP       string
-	accountName    string
-	bruteForceName string
-	featureName    string
+	guid               string
+	username           string
+	password           string
+	clientIP           string
+	accountName        string
+	bruteForceName     string
+	featureName        string
+	additionalFeatures map[string]any
 }
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
@@ -209,6 +214,14 @@ func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
 // WithAccountName sets the account name for the bucket manager and returns the modified BucketManager instance.
 func (bm *bucketManagerImpl) WithAccountName(accountName string) BucketManager {
 	bm.accountName = accountName
+
+	return bm
+}
+
+// WithAdditionalFeatures sets additional features for the bucket manager and returns the modified BucketManager instance.
+// These features can be used by ML-based detection systems to enhance their prediction capabilities.
+func (bm *bucketManagerImpl) WithAdditionalFeatures(features map[string]any) BucketManager {
+	bm.additionalFeatures = features
 
 	return bm
 }
