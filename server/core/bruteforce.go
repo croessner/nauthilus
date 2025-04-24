@@ -305,7 +305,15 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	}
 
 	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).WithPassword(a.Password)
+
+		// Record the login attempt for ML training when a feature is triggered
+		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+			mlManager.RecordLoginFeature()
+		}
+
+		bm = mlBM
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 	}

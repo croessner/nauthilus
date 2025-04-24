@@ -178,6 +178,30 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 	return globalTrainer.SaveModelToRedis()
 }
 
+// RecordLoginFeature records a login feature for ML training
+func (m *MLBucketManager) RecordLoginFeature() {
+	// Record the login attempt for future ML training
+	if m.mlDetector != nil {
+		features, err := m.mlDetector.CollectFeatures()
+		if err == nil {
+			// This is a triggered feature, so it's a failed login
+			_ = RecordLoginResult(m.ctx, false, features)
+		}
+	}
+}
+
+// RecordSuccessfulLogin records a successful login for ML training
+func (m *MLBucketManager) RecordSuccessfulLogin() {
+	// Record the login attempt for future ML training
+	if m.mlDetector != nil {
+		features, err := m.mlDetector.CollectFeatures()
+		if err == nil {
+			// This is a successful login
+			_ = RecordLoginResult(m.ctx, true, features)
+		}
+	}
+}
+
 // How to use the ML-enhanced bucket manager:
 //
 // 1. Replace the standard bucket manager creation with the ML version:
