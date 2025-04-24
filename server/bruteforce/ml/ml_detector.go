@@ -899,7 +899,21 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 			"action", "train_with_stored_data_init_model",
 			"reason", "model_not_initialized",
 		)
-		t.InitModel()
+
+		// Try to load a previously trained model first
+		if loadErr := t.LoadModelFromRedis(); loadErr != nil {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "train_with_stored_data_load_model_failed",
+				"error", loadErr.Error(),
+			)
+
+			// Fall back to initializing with random weights
+			t.InitModel()
+		} else {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "train_with_stored_data_load_model_success",
+			)
+		}
 	}
 
 	// Get training data from Redis
@@ -1057,14 +1071,7 @@ func InitMLSystem(ctx context.Context) error {
 			"action", "init_ml_system_trainer_created",
 		)
 
-		// Initialize the neural network model
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_init_model",
-		)
-
-		trainer.InitModel()
-
-		// Try to load a previously trained model
+		// Try to load a previously trained model first
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_ml_system_load_model",
 		)
@@ -1076,8 +1083,15 @@ func InitMLSystem(ctx context.Context) error {
 			)
 
 			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, using default: %v", loadErr),
+				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
 			)
+
+			// Initialize the neural network model with random weights as fallback
+			util.DebugModule(definitions.DbgNeural,
+				"action", "init_ml_system_init_model",
+			)
+
+			trainer.InitModel()
 		} else {
 			util.DebugModule(definitions.DbgNeural,
 				"action", "init_ml_system_load_model_success",
