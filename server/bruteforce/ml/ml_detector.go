@@ -16,12 +16,17 @@
 package ml
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"math/rand"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +39,13 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
+
+var httpClient *http.Client
+
+// InitHTTPClient initializes and assigns a new HTTP client to the package-wide httpClient variable.
+func InitHTTPClient() {
+	httpClient = util.NewHTTPClient()
+}
 
 // LoginFeatures represents the features used for brute force detection
 type LoginFeatures struct {
@@ -54,6 +66,9 @@ type LoginFeatures struct {
 
 	// Is the IP address from a known suspicious network
 	SuspiciousNetwork float64
+
+	// Additional features that can be provided from outside
+	AdditionalFeatures map[string]any
 }
 
 // NeuralNetwork is a simplified implementation of a neural network
@@ -100,6 +115,12 @@ func NewNeuralNetwork(inputSize, hiddenSize, outputSize int) *NeuralNetwork {
 		"weights_count", len(nn.weights),
 	)
 
+	// Record network structure metrics
+	GetMLMetrics().RecordNetworkStructure(inputSize, hiddenSize, outputSize)
+
+	// Record initial weight values
+	nn.recordWeightMetrics()
+
 	return nn
 }
 
@@ -111,6 +132,9 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		"labels_count", len(labels),
 		"epochs", epochs,
 	)
+
+	// Record the number of training samples
+	GetMLMetrics().RecordTrainingSamplesUsed(len(features))
 
 	if len(features) == 0 || len(labels) == 0 {
 		util.DebugModule(definitions.DbgNeural,
@@ -271,6 +295,9 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 				"total_epochs", epochs,
 				"average_error", avgError,
 			)
+
+			// Record training error metrics
+			GetMLMetrics().RecordTrainingError(epoch, avgError)
 		}
 	}
 
@@ -278,6 +305,34 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		"action", "train_complete",
 		"epochs_completed", epochs,
 	)
+
+	// Record final weight values after training
+	nn.recordWeightMetrics()
+}
+
+// recordWeightMetrics records the current weight values as Prometheus metrics
+func (nn *NeuralNetwork) recordWeightMetrics() {
+	metrics := GetMLMetrics()
+
+	// Record weights between input and hidden layers
+	for i := 0; i < nn.hiddenSize; i++ {
+		for j := 0; j < nn.inputSize; j++ {
+			weightIndex := i*nn.inputSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("input", j, "hidden", i, nn.weights[weightIndex])
+			}
+		}
+	}
+
+	// Record weights between hidden and output layers
+	for i := 0; i < nn.outputSize; i++ {
+		for j := 0; j < nn.hiddenSize; j++ {
+			weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("hidden", j, "output", i, nn.weights[weightIndex])
+			}
+		}
+	}
 }
 
 // FeedForward performs forward propagation through the network
@@ -324,7 +379,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		}
 
 		// Apply sigmoid activation function
-		hiddenActivations[i] = 1.0 / (1.0 + math.Exp(-sum))
+		activation := 1.0 / (1.0 + math.Exp(-sum))
+		hiddenActivations[i] = activation
+
+		// Record neuron activation metrics
+		GetMLMetrics().RecordNeuronActivation("hidden", i, activation)
 	}
 
 	// 2. Calculate output layer activations
@@ -345,7 +404,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		}
 
 		// Apply sigmoid activation function
-		outputs[i] = 1.0 / (1.0 + math.Exp(-sum))
+		activation := 1.0 / (1.0 + math.Exp(-sum))
+		outputs[i] = activation
+
+		// Record neuron activation metrics
+		GetMLMetrics().RecordNeuronActivation("output", i, activation)
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -389,13 +452,30 @@ func (t *MLTrainer) InitModel() {
 		"action", "init_model_start",
 	)
 
-	// Create a neural network with 6 input neurons (for our features),
+	// Default input size is 6 for the standard features
+	inputSize := 6
+
+	// Check if we have any training data with additional features
+	trainingData, err := t.GetTrainingDataFromRedis(1)
+	if err == nil && len(trainingData) > 0 && trainingData[0].Features != nil &&
+		trainingData[0].Features.AdditionalFeatures != nil && len(trainingData[0].Features.AdditionalFeatures) > 0 {
+		// Add the number of additional features to the input size
+		inputSize += len(trainingData[0].Features.AdditionalFeatures)
+
+		util.DebugModule(definitions.DbgNeural,
+			"action", "init_model_with_additional_features",
+			"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
+			"total_input_size", inputSize,
+		)
+	}
+
+	// Create a neural network with the appropriate number of input neurons,
 	// 8 hidden neurons, and 1 output neuron (probability of brute force)
-	t.model = NewNeuralNetwork(6, 8, 1)
+	t.model = NewNeuralNetwork(inputSize, 8, 1)
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "init_model_complete",
-		"input_size", 6,
+		"input_size", inputSize,
 		"hidden_size", 8,
 		"output_size", 1,
 	)
@@ -696,7 +776,7 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 			continue
 		}
 
-		// Extract features
+		// Start with standard features
 		featureVector := []float64{
 			sample.Features.TimeBetweenAttempts,
 			sample.Features.FailedAttemptsLastHour,
@@ -704,6 +784,82 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 			sample.Features.DifferentPasswords,
 			sample.Features.TimeOfDay,
 			sample.Features.SuspiciousNetwork,
+		}
+
+		// Add additional features if they exist
+		if sample.Features.AdditionalFeatures != nil && len(sample.Features.AdditionalFeatures) > 0 {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "prepare_training_data_additional_features",
+				"additional_features_count", len(sample.Features.AdditionalFeatures),
+				"sample_index", i,
+			)
+
+			// Sort keys for consistent order
+			keys := make([]string, 0, len(sample.Features.AdditionalFeatures))
+			for k := range sample.Features.AdditionalFeatures {
+				keys = append(keys, k)
+			}
+
+			sort.Strings(keys)
+
+			// Add each additional feature to the inputs
+			for _, key := range keys {
+				value := sample.Features.AdditionalFeatures[key]
+
+				// Convert the value to float64
+				var floatValue float64
+				switch v := value.(type) {
+				case float64:
+					floatValue = v
+				case float32:
+					floatValue = float64(v)
+				case int:
+					floatValue = float64(v)
+				case int64:
+					floatValue = float64(v)
+				case bool:
+					if v {
+						floatValue = 1.0
+					} else {
+						floatValue = 0.0
+					}
+				case string:
+					// Try to convert string to float
+					if f, err := strconv.ParseFloat(v, 64); err == nil {
+						floatValue = f
+					} else {
+						// If string can't be converted to float, use a hash of the string
+						// normalized to [0,1]
+						hash := util.GetHash(v)
+						// Use the first 8 characters of the hash as a hex number
+						if len(hash) > 8 {
+							hash = hash[:8]
+						}
+
+						// Convert hex to int
+						if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+							// Normalize to [0,1]
+							floatValue = float64(hashInt%1000) / 1000.0
+						} else {
+							// Fallback
+							floatValue = 0.5
+						}
+					}
+				default:
+					// For other types, use a default value
+					floatValue = 0.5
+				}
+
+				featureVector = append(featureVector, floatValue)
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "prepare_training_data_additional_feature",
+					"key", key,
+					"value", value,
+					"float_value", floatValue,
+					"sample_index", i,
+				)
+			}
 		}
 
 		// Normalize the features
@@ -735,8 +891,8 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 
 // normalizeInputs normalizes the input features to a range suitable for the neural network
 func normalizeInputs(inputs []float64) []float64 {
-	// Define normalization ranges for each feature
-	ranges := []struct {
+	// Define normalization ranges for each standard feature
+	standardRanges := []struct {
 		min float64
 		max float64
 	}{
@@ -750,8 +906,21 @@ func normalizeInputs(inputs []float64) []float64 {
 
 	normalized := make([]float64, len(inputs))
 	for i, val := range inputs {
-		// Apply min-max normalization
-		normalized[i] = (val - ranges[i].min) / (ranges[i].max - ranges[i].min)
+		if i < len(standardRanges) {
+			// Apply min-max normalization for standard features
+			normalized[i] = (val - standardRanges[i].min) / (standardRanges[i].max - standardRanges[i].min)
+		} else {
+			// For additional features, use a default range of 0-1
+			// This assumes additional features are already normalized or will be normalized by the caller
+			normalized[i] = val
+
+			// If the value is outside the range [0,1], clamp it
+			if normalized[i] < 0 {
+				normalized[i] = 0
+			} else if normalized[i] > 1 {
+				normalized[i] = 1
+			}
+		}
 
 		// Ensure values are within [0,1]
 		if normalized[i] < 0 {
@@ -778,7 +947,21 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 			"action", "train_with_stored_data_init_model",
 			"reason", "model_not_initialized",
 		)
-		t.InitModel()
+
+		// Try to load a previously trained model first
+		if loadErr := t.LoadModelFromRedis(); loadErr != nil {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "train_with_stored_data_load_model_failed",
+				"error", loadErr.Error(),
+			)
+
+			// Fall back to initializing with random weights
+			t.InitModel()
+		} else {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "train_with_stored_data_load_model_success",
+			)
+		}
 	}
 
 	// Get training data from Redis
@@ -936,14 +1119,7 @@ func InitMLSystem(ctx context.Context) error {
 			"action", "init_ml_system_trainer_created",
 		)
 
-		// Initialize the neural network model
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_init_model",
-		)
-
-		trainer.InitModel()
-
-		// Try to load a previously trained model
+		// Try to load a previously trained model first
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_ml_system_load_model",
 		)
@@ -955,8 +1131,15 @@ func InitMLSystem(ctx context.Context) error {
 			)
 
 			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, using default: %v", loadErr),
+				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
 			)
+
+			// Initialize the neural network model with random weights as fallback
+			util.DebugModule(definitions.DbgNeural,
+				"action", "init_ml_system_init_model",
+			)
+
+			trainer.InitModel()
 		} else {
 			util.DebugModule(definitions.DbgNeural,
 				"action", "init_ml_system_load_model_success",
@@ -1113,11 +1296,17 @@ func ShutdownMLSystem() {
 
 // BruteForceMLDetector implements machine learning based brute force detection
 type BruteForceMLDetector struct {
-	ctx      context.Context
-	guid     string
-	clientIP string
-	username string
-	model    *NeuralNetwork
+	ctx                context.Context
+	guid               string
+	clientIP           string
+	username           string
+	model              *NeuralNetwork
+	additionalFeatures map[string]any
+}
+
+// SetAdditionalFeatures sets additional features for the detector
+func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
+	d.additionalFeatures = features
 }
 
 // GetBruteForceMLDetector creates a new detector instance for a specific request
@@ -1158,11 +1347,12 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 
 	// Create a new detector for this request
 	detector := &BruteForceMLDetector{
-		ctx:      ctx,
-		guid:     guid,
-		clientIP: clientIP,
-		username: username,
-		model:    globalTrainer.GetModel(), // Use the globally trained model
+		ctx:                ctx,
+		guid:               guid,
+		clientIP:           clientIP,
+		username:           username,
+		model:              globalTrainer.GetModel(), // Use the globally trained model
+		additionalFeatures: make(map[string]any),     // Initialize empty additional features
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -1364,6 +1554,22 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 		)
 	}
 
+	// Initialize additional features if not already initialized
+	if d.additionalFeatures == nil {
+		d.additionalFeatures = make(map[string]any)
+	}
+
+	// Add any additional features that have been set
+	if len(d.additionalFeatures) > 0 {
+		features.AdditionalFeatures = d.additionalFeatures
+
+		util.DebugModule(definitions.DbgNeural,
+			"action", "collect_features_additional",
+			"additional_features_count", len(d.additionalFeatures),
+			definitions.LogKeyGUID, d.guid,
+		)
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "collect_features_complete",
 		"time_between_attempts", features.TimeBetweenAttempts,
@@ -1380,6 +1586,9 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 
 // Predict determines if the current login attempt is part of a brute force attack
 func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
+	// Start timing the prediction
+	startTime := time.Now()
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_start",
 		definitions.LogKeyGUID, d.guid,
@@ -1405,7 +1614,7 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		return false, 0, err
 	}
 
-	// Convert features to input array
+	// Start with standard features
 	inputs := []float64{
 		features.TimeBetweenAttempts,
 		features.FailedAttemptsLastHour,
@@ -1415,11 +1624,147 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		features.SuspiciousNetwork,
 	}
 
+	// Add additional features if they exist
+	if features.AdditionalFeatures != nil && len(features.AdditionalFeatures) > 0 {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "predict_additional_features",
+			"additional_features_count", len(features.AdditionalFeatures),
+			definitions.LogKeyGUID, d.guid,
+		)
+
+		// Sort keys for consistent order
+		keys := make([]string, 0, len(features.AdditionalFeatures))
+		for k := range features.AdditionalFeatures {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		// Add each additional feature to the inputs
+		for _, key := range keys {
+			value := features.AdditionalFeatures[key]
+
+			// Convert the value to float64
+			var floatValue float64
+			switch v := value.(type) {
+			case float64:
+				floatValue = v
+			case float32:
+				floatValue = float64(v)
+			case int:
+				floatValue = float64(v)
+			case int64:
+				floatValue = float64(v)
+			case bool:
+				if v {
+					floatValue = 1.0
+				} else {
+					floatValue = 0.0
+				}
+			case string:
+				// Try to convert string to float
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					floatValue = f
+				} else {
+					// If string can't be converted to float, use a hash of the string
+					// normalized to [0,1]
+					hash := util.GetHash(v)
+					// Use the first 8 characters of the hash as a hex number
+					if len(hash) > 8 {
+						hash = hash[:8]
+					}
+
+					// Convert hex to int
+					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+						// Normalize to [0,1]
+						floatValue = float64(hashInt%1000) / 1000.0
+					} else {
+						// Fallback
+						floatValue = 0.5
+					}
+				}
+			default:
+				// For other types, use a default value
+				floatValue = 0.5
+			}
+
+			inputs = append(inputs, floatValue)
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "predict_additional_feature",
+				"key", key,
+				"value", value,
+				"float_value", floatValue,
+				definitions.LogKeyGUID, d.guid,
+			)
+		}
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_inputs_prepared",
 		"inputs", fmt.Sprintf("%v", inputs),
+		"input_count", len(inputs),
 		definitions.LogKeyGUID, d.guid,
 	)
+
+	// Record feature values as metrics
+	metrics := GetMLMetrics()
+	metrics.RecordFeatureValue("time_between_attempts", features.TimeBetweenAttempts)
+	metrics.RecordFeatureValue("failed_attempts_last_hour", features.FailedAttemptsLastHour)
+	metrics.RecordFeatureValue("different_usernames", features.DifferentUsernames)
+	metrics.RecordFeatureValue("different_passwords", features.DifferentPasswords)
+	metrics.RecordFeatureValue("time_of_day", features.TimeOfDay)
+	metrics.RecordFeatureValue("suspicious_network", features.SuspiciousNetwork)
+
+	// Record additional features
+	if features.AdditionalFeatures != nil {
+		for key, value := range features.AdditionalFeatures {
+			// Convert the value to float64
+			var floatValue float64
+			switch v := value.(type) {
+			case float64:
+				floatValue = v
+			case float32:
+				floatValue = float64(v)
+			case int:
+				floatValue = float64(v)
+			case int64:
+				floatValue = float64(v)
+			case bool:
+				if v {
+					floatValue = 1.0
+				} else {
+					floatValue = 0.0
+				}
+			case string:
+				// Try to convert string to float
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					floatValue = f
+				} else {
+					// If string can't be converted to float, use a hash of the string
+					// normalized to [0,1]
+					hash := util.GetHash(v)
+					// Use the first 8 characters of the hash as a hex number
+					if len(hash) > 8 {
+						hash = hash[:8]
+					}
+
+					// Convert hex to int
+					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+						// Normalize to [0,1]
+						floatValue = float64(hashInt%1000) / 1000.0
+					} else {
+						// Fallback
+						floatValue = 0.5
+					}
+				}
+			default:
+				// For other types, use a default value
+				floatValue = 0.5
+			}
+
+			metrics.RecordFeatureValue("additional_"+key, floatValue)
+		}
+	}
 
 	// Normalize inputs
 	util.DebugModule(definitions.DbgNeural,
@@ -1463,6 +1808,12 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		"threshold", threshold,
 		definitions.LogKeyGUID, d.guid,
 	)
+
+	// Calculate prediction duration
+	duration := time.Since(startTime).Seconds()
+
+	// Record prediction metrics
+	metrics.RecordPrediction(probability, isBruteForce, duration)
 
 	return isBruteForce, probability, nil
 }
@@ -1652,10 +2003,112 @@ func (d *BruteForceMLDetector) getDifferentPasswords() (uint, error) {
 }
 
 func (d *BruteForceMLDetector) isFromSuspiciousNetwork() (bool, error) {
-	// In a real implementation, this would check if the IP is from a known
-	// suspicious network (e.g., Tor exit nodes, known proxy services, etc.)
-	// For simplicity, we'll return false
-	return false, nil
+	// Check if the IP is in the blocklist service
+	// Create a JSON payload with the client IP
+	payload := map[string]string{
+		"ip": d.clientIP,
+	}
+
+	// Convert the payload to JSON
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to marshal JSON payload: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Get the blocklist URL from environment
+	blocklistURL := os.Getenv("BLOCKLIST_URL")
+	if blocklistURL == "" {
+		// If no blocklist URL is configured, skip the check
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, "No blocklist URL configured, skipping check",
+		)
+
+		return false, nil
+	}
+
+	// Create a context with timeout for the HTTP request
+	ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
+
+	defer cancel()
+
+	// Create the HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, blocklistURL, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to create HTTP request: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Nauthilus")
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to send HTTP request: %v", err),
+		)
+
+		return false, err
+	}
+
+	defer resp.Body.Close()
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Blocklist service returned non-OK status: %d", resp.StatusCode),
+		)
+
+		return false, fmt.Errorf("blocklist service returned status %d", resp.StatusCode)
+	}
+
+	// Parse the response
+	var response struct {
+		Found bool   `json:"found"`
+		Error string `json:"error,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to decode response: %v", err),
+		)
+
+		return false, err
+	}
+
+	// Check if there was an error in the response
+	if response.Error != "" {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, d.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Blocklist service returned error: %s", response.Error),
+		)
+
+		return false, fmt.Errorf("blocklist service error: %s", response.Error)
+	}
+
+	// Log the result for debugging
+	util.DebugModule(
+		definitions.DbgNeural,
+		definitions.LogKeyGUID, d.guid,
+		definitions.LogKeyClientIP, d.clientIP,
+		definitions.LogKeyMsg, fmt.Sprintf("IP in suspicious network: %t", response.Found),
+	)
+
+	return response.Found, nil
 }
 
 func (d *BruteForceMLDetector) getLoginTimeKey() string {

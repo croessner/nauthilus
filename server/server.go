@@ -893,6 +893,7 @@ func initializeHTTPClients() {
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
 	hook.InitHTTPClient()
+	ml.InitHTTPClient()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.

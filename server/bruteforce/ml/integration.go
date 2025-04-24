@@ -30,13 +30,14 @@ import (
 // MLBucketManager extends the standard BucketManager with machine learning capabilities
 type MLBucketManager struct {
 	bruteforce.BucketManager
-	mlDetector *BruteForceMLDetector
-	ctx        context.Context
-	guid       string
-	clientIP   string
-	username   string
-	password   string
-	threshold  float64
+	mlDetector         *BruteForceMLDetector
+	ctx                context.Context
+	guid               string
+	clientIP           string
+	username           string
+	password           string
+	threshold          float64
+	additionalFeatures map[string]any
 }
 
 // NewMLBucketManager creates a new bucket manager with ML capabilities
@@ -65,6 +66,11 @@ func (m *MLBucketManager) WithUsername(username string) bruteforce.BucketManager
 	if m.username != "" && m.clientIP != "" && m.mlDetector == nil {
 		// Use the singleton pattern to get the detector
 		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+		// Pass any additional features to the detector
+		if m.additionalFeatures != nil {
+			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
+		}
 	}
 
 	return m
@@ -74,6 +80,14 @@ func (m *MLBucketManager) WithUsername(username string) bruteforce.BucketManager
 func (m *MLBucketManager) WithPassword(password string) bruteforce.BucketManager {
 	m.password = password
 	m.BucketManager = m.BucketManager.WithPassword(password)
+
+	return m
+}
+
+// WithAdditionalFeatures sets additional features for the bucket manager
+func (m *MLBucketManager) WithAdditionalFeatures(features map[string]any) bruteforce.BucketManager {
+	m.additionalFeatures = features
+	m.BucketManager = m.BucketManager.WithAdditionalFeatures(features)
 
 	return m
 }
@@ -176,3 +190,19 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 //
 // 2. The rest of the code remains the same, as the ML-enhanced version
 //    implements the same BucketManager interface
+//
+// 3. To add additional features for the ML system, use the WithAdditionalFeatures method:
+//
+//    // Create a map of additional features
+//    additionalFeatures := map[string]any{
+//        "geo_country": "DE",
+//        "geo_city": "Berlin",
+//        "device_type": "mobile",
+//        "connection_type": "4G",
+//    }
+//
+//    // Add the features to the bucket manager
+//    bm = bm.WithAdditionalFeatures(additionalFeatures)
+//
+//    // These features will be stored in the LoginFeatures struct and can be used
+//    // for future model improvements or other purposes.
