@@ -506,6 +506,9 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
+	// AdditionalFeatures is a map that stores additional features for neural network processing.
+	AdditionalFeatures map[string]any
+
 	*bruteforce.PasswordHistory
 	*lualib.Context
 }

@@ -653,6 +653,9 @@ const (
 	// CtxGUIDKey is used as a key to store the session's unique identifier in session.Store
 	CtxGUIDKey = "guid"
 
+	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
+	CtxAdditionalFeaturesKey = "additional_features"
+
 	// CtxCSRFTokenKey is used as a key to store the session's CSRF token in session.Store
 	CtxCSRFTokenKey = "csrf"
 
@@ -1127,6 +1130,9 @@ const (
 	// LuaModPsnet is a constant representing the module name "nauthilus_psnet".
 	LuaModPsnet = "nauthilus_psnet"
 
+	// LuaModNeural is a constant representing the module name "nauthilus_neural" for neural network integration.
+	LuaModNeural = "nauthilus_neural"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 
@@ -1365,6 +1371,9 @@ const (
 
 	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
 	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
+
+	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
+	LuaFnAddAdditionalFeatures = "add_additional_features"
 )
 
 const (
