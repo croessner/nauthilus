@@ -28,6 +28,7 @@ type BruteForceSection struct {
 	ToleratePercent   uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
 	CustomTolerations []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	TolerateTTL       time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
+	NeuralNetwork     NeuralNetwork    `mapstructure:"neural_network" validate:"omitempty"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -89,6 +90,11 @@ func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
 	return b.CustomTolerations
 }
 
+// GetNeuralNetwork retrieves a pointer to the NeuralNetwork configuration from the ServerSection instance.
+func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
+	return &s.NeuralNetwork
+}
+
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
 type Tolerate struct {
 	IPAddress       string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
@@ -113,4 +119,14 @@ func (b *BruteForceRule) String() string {
 	}
 
 	return fmt.Sprintf("Name: %s, Period: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)
+}
+
+// NeuralNetwork represents the configuration for the neural network machine learning system.
+type NeuralNetwork struct {
+	MaxTrainingRecords int32 `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
+}
+
+// GetMaxTrainingRecords retrieves the maximum number of training records to keep for the neural network.
+func (n *NeuralNetwork) GetMaxTrainingRecords() int32 {
+	return n.MaxTrainingRecords
 }

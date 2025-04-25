@@ -1070,8 +1070,15 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Trim the list to keep only the last 10000 entries
-	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, 9999).Err()
+	// Get the maximum number of training records from config or use default
+	maxRecords := int64(10000) // Default value for backward compatibility
+	configMaxRecords := config.GetFile().GetBruteForce().GetNeuralNetwork().GetMaxTrainingRecords()
+	if configMaxRecords > 0 {
+		maxRecords = int64(configMaxRecords)
+	}
+
+	// Trim the list to keep only the last maxRecords entries
+	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, maxRecords-1).Err()
 	if err != nil {
 		return err
 	}
