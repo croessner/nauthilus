@@ -362,10 +362,6 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 
 	// Implement a simple feed-forward neural network with one hidden layer
 	// 1. Calculate hidden layer activations
-	util.DebugModule(definitions.DbgNeural,
-		"action", "calculate_hidden_activations",
-		"hidden_size", nn.hiddenSize,
-	)
 
 	hiddenActivations := make([]float64, nn.hiddenSize)
 	for i := 0; i < nn.hiddenSize; i++ {
@@ -387,10 +383,6 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 	}
 
 	// 2. Calculate output layer activations
-	util.DebugModule(definitions.DbgNeural,
-		"action", "calculate_output_activations",
-		"output_size", nn.outputSize,
-	)
 
 	outputs := make([]float64, nn.outputSize)
 	for i := 0; i < nn.outputSize; i++ {
@@ -483,16 +475,7 @@ func (t *MLTrainer) InitModel() {
 
 // LoadModelFromRedis loads a previously trained model from Redis
 func (t *MLTrainer) LoadModelFromRedis() error {
-	util.DebugModule(definitions.DbgNeural,
-		"action", "load_model_start",
-	)
-
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "load_model_redis_key",
-		"key", key,
-	)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -500,19 +483,8 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 	jsonData, err := rediscli.GetClient().GetReadHandle().Get(t.ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "load_model_error",
-				"reason", "no_saved_model",
-			)
-
 			return fmt.Errorf("no saved model found")
 		}
-
-		util.DebugModule(definitions.DbgNeural,
-			"action", "load_model_error",
-			"reason", "redis_error",
-			"error", err.Error(),
-		)
 
 		return fmt.Errorf("failed to retrieve model from Redis: %w", err)
 	}
@@ -532,12 +504,6 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 	}
 
 	if err := json.Unmarshal(jsonData, &modelData); err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "load_model_error",
-			"reason", "json_unmarshal_error",
-			"error", err.Error(),
-		)
-
 		return fmt.Errorf("failed to deserialize model: %w", err)
 	}
 
@@ -565,25 +531,12 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 		definitions.LogKeyMsg, "Model loaded from Redis successfully",
 	)
 
-	util.DebugModule(definitions.DbgNeural,
-		"action", "load_model_complete",
-	)
-
 	return nil
 }
 
 // SaveModelToRedis saves the trained neural network model to Redis
 func (t *MLTrainer) SaveModelToRedis() error {
-	util.DebugModule(definitions.DbgNeural,
-		"action", "save_model_start",
-	)
-
 	if t.model == nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "save_model_error",
-			"reason", "no_model",
-		)
-
 		return fmt.Errorf("no model to save")
 	}
 
@@ -613,12 +566,6 @@ func (t *MLTrainer) SaveModelToRedis() error {
 	// Serialize the model to JSON
 	jsonData, err := json.Marshal(modelData)
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "save_model_error",
-			"reason", "json_marshal_error",
-			"error", err.Error(),
-		)
-
 		return fmt.Errorf("failed to serialize model: %w", err)
 	}
 
@@ -630,11 +577,6 @@ func (t *MLTrainer) SaveModelToRedis() error {
 	// Save to Redis
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
 
-	util.DebugModule(definitions.DbgNeural,
-		"action", "save_model_redis_key",
-		"key", key,
-	)
-
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	err = rediscli.GetClient().GetWriteHandle().Set(
@@ -645,21 +587,11 @@ func (t *MLTrainer) SaveModelToRedis() error {
 	).Err()
 
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "save_model_error",
-			"reason", "redis_error",
-			"error", err.Error(),
-		)
-
 		return fmt.Errorf("failed to save model to Redis: %w", err)
 	}
 
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, "Model saved to Redis successfully",
-	)
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "save_model_complete",
 	)
 
 	return nil
@@ -673,11 +605,6 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 	)
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "get_training_data_redis_key",
-		"key", key,
-	)
 
 	// Limit the number of samples to retrieve
 	if maxSamples <= 0 {
@@ -694,12 +621,6 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 	// Get the training data from Redis
 	jsonData, err := rediscli.GetClient().GetReadHandle().LRange(t.ctx, key, 0, int64(maxSamples-1)).Result()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "get_training_data_error",
-			"reason", "redis_error",
-			"error", err.Error(),
-		)
-
 		return nil, err
 	}
 
@@ -712,18 +633,12 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 	trainingData := make([]TrainingData, 0, len(jsonData))
 	parseErrors := 0
 
-	for i, data := range jsonData {
+	for _, data := range jsonData {
 		var sample TrainingData
 
 		if err := json.Unmarshal([]byte(data), &sample); err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Error parsing training data: %v", err),
-			)
-
-			util.DebugModule(definitions.DbgNeural,
-				"action", "get_training_data_parse_error",
-				"sample_index", i,
-				"error", err.Error(),
 			)
 
 			parseErrors++
@@ -751,11 +666,6 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 	)
 
 	if len(data) == 0 {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "prepare_training_data_error",
-			"reason", "no_data",
-		)
-
 		return nil, nil
 	}
 
@@ -765,12 +675,6 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 
 	for i, sample := range data {
 		if sample.Features == nil {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "prepare_training_data_skip_sample",
-				"sample_index", i,
-				"reason", "nil_features",
-			)
-
 			skippedSamples++
 
 			continue
@@ -943,49 +847,20 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 
 	// Initialize the model if it doesn't exist
 	if t.model == nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "train_with_stored_data_init_model",
-			"reason", "model_not_initialized",
-		)
-
 		// Try to load a previously trained model first
 		if loadErr := t.LoadModelFromRedis(); loadErr != nil {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "train_with_stored_data_load_model_failed",
-				"error", loadErr.Error(),
-			)
-
 			// Fall back to initializing with random weights
 			t.InitModel()
-		} else {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "train_with_stored_data_load_model_success",
-			)
 		}
 	}
 
 	// Get training data from Redis
-	util.DebugModule(definitions.DbgNeural,
-		"action", "train_with_stored_data_get_data",
-	)
-
 	trainingData, err := t.GetTrainingDataFromRedis(maxSamples)
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "train_with_stored_data_error",
-			"reason", "get_training_data_failed",
-			"error", err.Error(),
-		)
-
 		return fmt.Errorf("failed to retrieve training data: %w", err)
 	}
 
 	if len(trainingData) == 0 {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "train_with_stored_data_abort",
-			"reason", "no_training_data",
-		)
-
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "No training data available in Redis",
 		)
@@ -993,20 +868,11 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 		return nil
 	}
 
-	util.DebugModule(definitions.DbgNeural,
-		"action", "train_with_stored_data_data_received",
-		"samples_count", len(trainingData),
-	)
-
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Retrieved %d training samples from Redis", len(trainingData)),
 	)
 
 	// Prepare the data for training
-	util.DebugModule(definitions.DbgNeural,
-		"action", "train_with_stored_data_prepare_data",
-	)
-
 	features, labels := t.PrepareTrainingData(trainingData)
 	if len(features) == 0 || len(labels) == 0 {
 		util.DebugModule(definitions.DbgNeural,
@@ -1031,10 +897,6 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, "Model training completed successfully",
-	)
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "train_with_stored_data_complete",
 	)
 
 	return nil
@@ -1070,8 +932,15 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Trim the list to keep only the last 10000 entries
-	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, 9999).Err()
+	// Get the maximum number of training records from config or use default
+	maxRecords := int64(10000) // Default value for backward compatibility
+	configMaxRecords := config.GetFile().GetBruteForce().GetNeuralNetwork().GetMaxTrainingRecords()
+	if configMaxRecords > 0 {
+		maxRecords = int64(configMaxRecords)
+	}
+
+	// Trim the list to keep only the last maxRecords entries
+	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, maxRecords-1).Err()
 	if err != nil {
 		return err
 	}
@@ -1100,57 +969,26 @@ var (
 // InitMLSystem initializes the ML system without requiring request-specific parameters
 // This should be called during application startup
 func InitMLSystem(ctx context.Context) error {
-	util.DebugModule(definitions.DbgNeural,
-		"action", "init_ml_system_start",
-	)
 
 	var err error
 
 	initOnce.Do(func() {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_singleton",
-			"message", "First initialization",
-		)
 
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_trainer_created",
-		)
-
 		// Try to load a previously trained model first
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_load_model",
-		)
 
 		if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "init_ml_system_load_model_failed",
-				"error", loadErr.Error(),
-			)
-
 			level.Info(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
 			)
 
 			// Initialize the neural network model with random weights as fallback
-			util.DebugModule(definitions.DbgNeural,
-				"action", "init_ml_system_init_model",
-			)
-
 			trainer.InitModel()
-		} else {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "init_ml_system_load_model_success",
-			)
 		}
 
 		// Start scheduled training
-		util.DebugModule(definitions.DbgNeural,
-			"action", "init_ml_system_start_scheduler",
-		)
-
 		stopChan := make(chan struct{})
 		stopTrainingChan = stopChan
 
@@ -1158,43 +996,19 @@ func InitMLSystem(ctx context.Context) error {
 			ticker := time.NewTicker(24 * time.Hour) // Train once per day
 			defer ticker.Stop()
 
-			util.DebugModule(definitions.DbgNeural,
-				"action", "init_ml_system_scheduler_started",
-				"interval", "24h",
-			)
-
 			for {
 				select {
 				case <-ctx.Done():
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_ml_system_scheduler_stopped",
-						"reason", "context_done",
-					)
-
 					return
 				case <-stopChan:
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_ml_system_scheduler_stopped",
-						"reason", "stop_channel_closed",
-					)
-
 					return
 				case <-ticker.C:
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_ml_system_scheduled_training",
-					)
-
 					level.Info(log.Logger).Log(
 						definitions.LogKeyMsg, "Starting scheduled model training",
 					)
 
 					// Train with the last 5000 samples for 50 epochs
 					if trainErr := trainer.TrainWithStoredData(5000, 50); trainErr != nil {
-						util.DebugModule(definitions.DbgNeural,
-							"action", "init_ml_system_scheduled_training_failed",
-							"error", trainErr.Error(),
-						)
-
 						level.Error(log.Logger).Log(
 							definitions.LogKeyMsg, fmt.Sprintf("Scheduled training failed: %v", trainErr),
 						)
@@ -1202,27 +1016,10 @@ func InitMLSystem(ctx context.Context) error {
 						continue
 					}
 
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_ml_system_scheduled_training_success",
-					)
-
 					// Save the trained model to Redis
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_ml_system_save_model",
-					)
-
 					if saveErr := trainer.SaveModelToRedis(); saveErr != nil {
-						util.DebugModule(definitions.DbgNeural,
-							"action", "init_ml_system_save_model_failed",
-							"error", saveErr.Error(),
-						)
-
 						level.Error(log.Logger).Log(
 							definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis: %v", saveErr),
-						)
-					} else {
-						util.DebugModule(definitions.DbgNeural,
-							"action", "init_ml_system_save_model_success",
 						)
 					}
 				}
@@ -1248,15 +1045,8 @@ func InitMLSystem(ctx context.Context) error {
 // ShutdownMLSystem properly cleans up the ML system
 // This should be called during application shutdown
 func ShutdownMLSystem() {
-	util.DebugModule(definitions.DbgNeural,
-		"action", "shutdown_ml_system_start",
-	)
 
 	shutdownMutex.Lock()
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "shutdown_ml_system_mutex_acquired",
-	)
 
 	defer shutdownMutex.Unlock()
 
@@ -1282,16 +1072,8 @@ func ShutdownMLSystem() {
 	}
 
 	// Clear global variables
-	util.DebugModule(definitions.DbgNeural,
-		"action", "shutdown_ml_system_clear_globals",
-	)
-
 	globalTrainer = nil
 	stopTrainingChan = nil
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "shutdown_ml_system_complete",
-	)
 }
 
 // BruteForceMLDetector implements machine learning based brute force detection
@@ -1337,11 +1119,6 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to initialize ML system: %v", err),
 			)
-		} else {
-			util.DebugModule(definitions.DbgNeural,
-				"action", "get_detector_init_system_success",
-				definitions.LogKeyGUID, guid,
-			)
 		}
 	}
 
@@ -1376,20 +1153,9 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 	features := &LoginFeatures{}
 
 	// Get the last login attempt time for this IP
-	util.DebugModule(definitions.DbgNeural,
-		"action", "collect_features_get_last_attempt_time",
-		definitions.LogKeyGUID, d.guid,
-	)
 
 	lastAttemptTime, err := d.getLastLoginAttemptTime()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "last_attempt_time",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
@@ -1414,37 +1180,13 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 	}
 
 	// Store current attempt time
-	util.DebugModule(definitions.DbgNeural,
-		"action", "collect_features_store_attempt_time",
-		definitions.LogKeyGUID, d.guid,
-	)
-
 	if err := d.storeLoginAttemptTime(); err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "store_attempt_time",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
 	// Get failed attempts in the last hour
-	util.DebugModule(definitions.DbgNeural,
-		"action", "collect_features_get_failed_attempts",
-		definitions.LogKeyGUID, d.guid,
-	)
-
 	failedAttempts, err := d.getFailedAttemptsLastHour()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "failed_attempts",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
@@ -1464,13 +1206,6 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 
 	differentUsernames, err := d.getDifferentUsernames()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "different_usernames",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
@@ -1483,20 +1218,8 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 	)
 
 	// Get different passwords tried for this username
-	util.DebugModule(definitions.DbgNeural,
-		"action", "collect_features_get_different_passwords",
-		definitions.LogKeyGUID, d.guid,
-	)
-
 	differentPasswords, err := d.getDifferentPasswords()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "different_passwords",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
@@ -1520,20 +1243,9 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 	)
 
 	// Check if IP is from a suspicious network
-	util.DebugModule(definitions.DbgNeural,
-		"action", "collect_features_check_suspicious_network",
-		definitions.LogKeyGUID, d.guid,
-	)
 
 	suspicious, err := d.isFromSuspiciousNetwork()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_error",
-			"feature", "suspicious_network",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return nil, err
 	}
 
@@ -1597,20 +1309,9 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	)
 
 	// Collect features for prediction
-	util.DebugModule(definitions.DbgNeural,
-		"action", "predict_collect_features",
-		definitions.LogKeyGUID, d.guid,
-	)
 
 	features, err := d.CollectFeatures()
 	if err != nil {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "predict_error",
-			"reason", "collect_features_failed",
-			"error", err.Error(),
-			definitions.LogKeyGUID, d.guid,
-		)
-
 		return false, 0, err
 	}
 
@@ -1767,11 +1468,6 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	}
 
 	// Normalize inputs
-	util.DebugModule(definitions.DbgNeural,
-		"action", "predict_normalize_inputs",
-		definitions.LogKeyGUID, d.guid,
-	)
-
 	normalizedInputs := normalizeInputs(inputs)
 
 	util.DebugModule(definitions.DbgNeural,
@@ -1781,11 +1477,6 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	)
 
 	// Make prediction
-	util.DebugModule(definitions.DbgNeural,
-		"action", "predict_feed_forward",
-		definitions.LogKeyGUID, d.guid,
-	)
-
 	outputs := d.model.FeedForward(normalizedInputs)
 
 	// The output is the probability of a brute force attack
@@ -1948,7 +1639,8 @@ func (d *BruteForceMLDetector) getDifferentUsernames() (uint, error) {
 	}
 
 	// Log the number of different usernames for debugging
-	level.Debug(log.Logger).Log(
+	util.DebugModule(
+		definitions.DbgNeural,
 		definitions.LogKeyGUID, d.guid,
 		definitions.LogKeyClientIP, d.clientIP,
 		definitions.LogKeyMsg, fmt.Sprintf("Number of different usernames tried: %d", count),
@@ -1992,7 +1684,8 @@ func (d *BruteForceMLDetector) getDifferentPasswords() (uint, error) {
 	count := len(passwordHistory)
 
 	// Log the number of different passwords for debugging
-	level.Debug(log.Logger).Log(
+	util.DebugModule(
+		definitions.DbgNeural,
 		definitions.LogKeyGUID, d.guid,
 		definitions.LogKeyClientIP, d.clientIP,
 		definitions.LogKeyUsername, d.username,

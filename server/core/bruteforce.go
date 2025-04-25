@@ -192,6 +192,13 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 
 	if config.GetEnvironment().GetExperimentalML() {
 		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+
+		// Check if additional features are available from the Context
+		if a.Context != nil {
+			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
+				bm = bm.WithAdditionalFeatures(features)
+			}
+		}
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 	}
@@ -305,7 +312,22 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	}
 
 	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).WithPassword(a.Password)
+
+		// Check if additional features are available from the Context
+		if a.Context != nil {
+			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
+				mlBM = mlBM.WithAdditionalFeatures(features)
+			}
+		}
+
+		// Record the login attempt for ML training when a feature is triggered
+		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+			mlManager.RecordLoginFeature()
+		}
+
+		bm = mlBM
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 	}

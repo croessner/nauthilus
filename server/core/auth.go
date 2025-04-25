@@ -1007,6 +1007,28 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 	if !(a.NoAuth || a.ListAccounts) {
 		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
+
+		if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+			return
+		}
+
+		// Record successful login for ML training if ML is enabled
+		if config.GetEnvironment().GetExperimentalML() {
+			mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).WithPassword(a.Password)
+
+			// Check if additional features are available from the Context
+			if a.Context != nil {
+				if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
+					mlBM = mlBM.WithAdditionalFeatures(features)
+				}
+			}
+
+			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+				// Create a new method in MLBucketManager to record successful logins
+				mlManager.RecordSuccessfulLogin()
+			}
+		}
 	}
 }
 

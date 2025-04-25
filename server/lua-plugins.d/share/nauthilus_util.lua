@@ -119,6 +119,104 @@ function nauthilus_util.generate_random_string(length)
     return res
 end
 
+--- nauthilus_util.is_routable_ip checks if an IP address is routable on the internet.
+--- Returns true for routable IPs, false for non-routable IPs (private, reserved ranges).
+---@param ip string
+---@return boolean
+function nauthilus_util.is_routable_ip(ip)
+    -- Check if it's an IPv4 address
+    local ipv4_pattern = "^(%d+)%.(%d+)%.(%d+)%.(%d+)$"
+    local o1, o2, o3, o4 = ip:match(ipv4_pattern)
+
+    if o1 and o2 and o3 and o4 then
+        -- Convert to numbers
+        o1, o2, o3, o4 = tonumber(o1), tonumber(o2), tonumber(o3), tonumber(o4)
+
+        -- Check private IPv4 ranges
+        -- 10.0.0.0/8
+        if o1 == 10 then
+            return false
+        end
+
+        -- 172.16.0.0/12
+        if o1 == 172 and o2 >= 16 and o2 <= 31 then
+            return false
+        end
+
+        -- 192.168.0.0/16
+        if o1 == 192 and o2 == 168 then
+            return false
+        end
+
+        -- 169.254.0.0/16 (Link-local)
+        if o1 == 169 and o2 == 254 then
+            return false
+        end
+
+        -- 127.0.0.0/8 (Loopback) - Special case, we check for 127.0.0.1 separately
+        if o1 == 127 then
+            return false
+        end
+
+        -- 0.0.0.0/8 (Current network)
+        if o1 == 0 then
+            return false
+        end
+
+        -- 100.64.0.0/10 (Shared address space for carrier-grade NAT)
+        if o1 == 100 and o2 >= 64 and o2 <= 127 then
+            return false
+        end
+
+        -- 192.0.0.0/24 (IETF Protocol Assignments)
+        if o1 == 192 and o2 == 0 and o3 == 0 then
+            return false
+        end
+
+        -- 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (Documentation)
+        if (o1 == 192 and o2 == 0 and o3 == 2) or
+           (o1 == 198 and o2 == 51 and o3 == 100) or
+           (o1 == 203 and o2 == 0 and o3 == 113) then
+            return false
+        end
+
+        -- 192.88.99.0/24 (IPv6 to IPv4 relay)
+        if o1 == 192 and o2 == 88 and o3 == 99 then
+            return false
+        end
+
+        -- 224.0.0.0/4 (Multicast)
+        if o1 >= 224 and o1 <= 239 then
+            return false
+        end
+
+        -- 240.0.0.0/4 (Reserved for future use)
+        if o1 >= 240 and o1 <= 255 then
+            return false
+        end
+
+        -- If we got here, it's a routable IPv4 address
+        return true
+    end
+
+    -- Check if it's an IPv6 address
+    -- Simple check for common non-routable IPv6 prefixes
+    if ip:match("^[fF][cCdD]") or -- fc00::/7 (Unique local addresses)
+       ip:match("^[fF][eE][8-9a-bA-B]") or -- fe80::/10 (Link-local addresses)
+       ip:match("^::1$") or -- ::1 (Loopback)
+       ip:match("^::$") then -- :: (Unspecified address)
+        return false
+    end
+
+    -- If we got here and it contains colons, assume it's a routable IPv6 address
+    if ip:find(":") then
+        return true
+    end
+
+    -- If we can't determine, assume it's not routable
+    return false
+end
+
 --- nauthilus_util.print_result is a helper function that creates a log line in different formats dependend on the logging object.
 --- The result table is a set of key/value pairs to log. If the err_string is set, an additional error message and flag is added.
 ---@param logging table

@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 )
 
@@ -89,6 +90,11 @@ func (m *MLBucketManager) WithAdditionalFeatures(features map[string]any) brutef
 	m.additionalFeatures = features
 	m.BucketManager = m.BucketManager.WithAdditionalFeatures(features)
 
+	// If the mlDetector is already initialized, pass the features to it
+	if m.mlDetector != nil {
+		m.mlDetector.SetAdditionalFeatures(features)
+	}
+
 	return m
 }
 
@@ -133,14 +139,23 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 
 // ProcessBruteForce handles the result of brute force detection
 func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
-	// Record the login attempt for future ML training
-	if m.mlDetector != nil {
+	// Record the login attempt for future ML training only if it's a failed login
+	// Successful logins are recorded in RecordSuccessfulLogin
+	if m.mlDetector != nil && (ruleTriggered || alreadyTriggered) {
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
 			// Record as a failed login if brute force was detected
-			success := !(ruleTriggered || alreadyTriggered)
 			// Use the standalone RecordLoginResult function instead of the method
-			_ = RecordLoginResult(m.ctx, success, features)
+			// Debug log to help diagnose the issue
+			util.DebugModule(definitions.DbgNeural,
+				"action", "record_failed_login",
+				"guid", m.guid,
+				"client_ip", m.clientIP,
+				"username", m.username,
+				"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
+			)
+
+			_ = RecordLoginResult(m.ctx, false, features)
 		}
 	}
 
@@ -176,6 +191,39 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 
 	// Save the trained model to Redis
 	return globalTrainer.SaveModelToRedis()
+}
+
+// RecordLoginFeature records a login feature for ML training
+func (m *MLBucketManager) RecordLoginFeature() {
+	// Record the login attempt for future ML training
+	if m.mlDetector != nil {
+		features, err := m.mlDetector.CollectFeatures()
+		if err == nil {
+			// This is a triggered feature, so it's a failed login
+			_ = RecordLoginResult(m.ctx, false, features)
+		}
+	}
+}
+
+// RecordSuccessfulLogin records a successful login for ML training
+func (m *MLBucketManager) RecordSuccessfulLogin() {
+	// Record the login attempt for future ML training
+	if m.mlDetector != nil {
+		features, err := m.mlDetector.CollectFeatures()
+		if err == nil {
+			// This is a successful login
+			// Debug log to help diagnose the issue
+			util.DebugModule(definitions.DbgNeural,
+				"action", "record_successful_login",
+				"guid", m.guid,
+				"client_ip", m.clientIP,
+				"username", m.username,
+				"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
+			)
+
+			_ = RecordLoginResult(m.ctx, true, features)
+		}
+	}
 }
 
 // How to use the ML-enhanced bucket manager:
