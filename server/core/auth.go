@@ -506,9 +506,6 @@ type AuthState struct {
 	// MasterUserMode is a flag for a backend to indicate a master user mode is ongoing.
 	MasterUserMode bool
 
-	// AdditionalFeatures is a map that stores additional features for neural network processing.
-	AdditionalFeatures map[string]any
-
 	*bruteforce.PasswordHistory
 	*lualib.Context
 }
@@ -1019,6 +1016,13 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 		if config.GetEnvironment().GetExperimentalML() {
 			mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).WithPassword(a.Password)
+
+			// Check if additional features are available from the Context
+			if a.Context != nil {
+				if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
+					mlBM = mlBM.WithAdditionalFeatures(features)
+				}
+			}
 
 			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
 				// Create a new method in MLBucketManager to record successful logins

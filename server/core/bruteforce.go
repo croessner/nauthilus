@@ -196,8 +196,6 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		// Check if additional features are available from the Context
 		if a.Context != nil {
 			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
-				// Store the features in the AuthState's AdditionalFeatures field
-				a.AdditionalFeatures = features
 				bm = bm.WithAdditionalFeatures(features)
 			}
 		}
@@ -320,8 +318,6 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		// Check if additional features are available from the Context
 		if a.Context != nil {
 			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
-				// Store the features in the AuthState's AdditionalFeatures field
-				a.AdditionalFeatures = features
 				mlBM = mlBM.WithAdditionalFeatures(features)
 			}
 		}
