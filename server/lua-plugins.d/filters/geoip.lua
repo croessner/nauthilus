@@ -105,7 +105,7 @@ function nauthilus_call_filter(request)
         nauthilus_util.if_error_raise(err_jdec)
 
         if response.err == nil then
-            local current_iso_code= "unknown"
+            local current_iso_code = ""
 
             nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
 
@@ -135,6 +135,17 @@ function nauthilus_call_filter(request)
                     end
 
                     nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
+                end
+            end
+
+            -- If country code is empty, set it based on IP routability
+            if current_iso_code == "" then
+                if request.client_ip == "127.0.0.1" then
+                    current_iso_code = "localhost"
+                elseif nauthilus_util.is_routable_ip(request.client_ip) then
+                    current_iso_code = "unknown"
+                else
+                    current_iso_code = "unroutable"
                 end
             end
 
@@ -231,7 +242,7 @@ function nauthilus_call_filter(request)
                     nauthilus_util.if_error_raise(err_jdec)
 
                     if response.err == nil then
-                        local current_iso_code = "unknown"
+                        local current_iso_code = ""
 
                         if response.object then
                             -- Try to get the ISO country code
@@ -243,6 +254,15 @@ function nauthilus_call_filter(request)
                                         end
                                     end
                                 end
+                            end
+                        end
+
+                        -- If country code is empty, set it based on IP routability
+                        if current_iso_code == "" then
+                            if nauthilus_util.is_routable_ip(request.client_ip) then
+                                current_iso_code = "unknown"
+                            else
+                                current_iso_code = "unroutable"
                             end
                         end
 
