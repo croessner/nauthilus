@@ -1275,6 +1275,24 @@ func (a *AuthState) AuthFail(ctx *gin.Context) {
 	a.increaseLoginAttempts()
 	a.setFailureHeaders(ctx)
 	a.loginAttemptProcessing(ctx)
+
+	// Record failed login for ML training if ML is enabled
+	if config.GetEnvironment().GetExperimentalML() {
+		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).WithPassword(a.Password)
+
+		// Check if additional features are available from the Context
+		if a.Context != nil {
+			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
+				mlBM = mlBM.WithAdditionalFeatures(features)
+			}
+		}
+
+		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+			// Create a new method in MLBucketManager to record successful logins
+			mlManager.RecordLoginFeature()
+		}
+	}
 }
 
 // setSMPTHeaders sets SMTP headers in the specified `gin.Context` if the `Service` is `ServNginx` and the `Protocol` is `ProtoSMTP`.
