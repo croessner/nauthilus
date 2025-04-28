@@ -17,7 +17,7 @@ package ml
 
 import (
 	"strconv"
-	"sync"
+	"sync" // Used for sync.Once in the singleton pattern
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -53,9 +53,6 @@ type MLMetrics struct {
 
 	// Weight metrics
 	weightValues *prometheus.GaugeVec // Labels: from_layer, from_index, to_layer, to_index
-
-	// Mutex for thread safety
-	mu sync.RWMutex
 }
 
 // GetMLMetrics returns the singleton instance of MLMetrics
@@ -165,10 +162,6 @@ func newMLMetrics() *MLMetrics {
 
 // RecordNetworkStructure records the structure of the neural network
 func (m *MLMetrics) RecordNetworkStructure(inputSize, hiddenSize, outputSize int) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.networkStructure.WithLabelValues("input").Set(float64(inputSize))
 	m.networkStructure.WithLabelValues("hidden").Set(float64(hiddenSize))
 	m.networkStructure.WithLabelValues("output").Set(float64(outputSize))
@@ -176,29 +169,17 @@ func (m *MLMetrics) RecordNetworkStructure(inputSize, hiddenSize, outputSize int
 
 // RecordTrainingError records the error during training
 func (m *MLMetrics) RecordTrainingError(epoch int, error float64) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.trainingError.WithLabelValues(strconv.Itoa(epoch)).Set(error)
 	m.trainingProgress.Set(float64(epoch))
 }
 
 // RecordTrainingSamplesUsed records the number of samples used in training
 func (m *MLMetrics) RecordTrainingSamplesUsed(samples int) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.trainingSamplesUsed.Set(float64(samples))
 }
 
 // RecordTrainingDuration records the duration of training
 func (m *MLMetrics) RecordTrainingDuration(duration float64, success bool) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	result := "failure"
 	if success {
 		result = "success"
@@ -209,10 +190,6 @@ func (m *MLMetrics) RecordTrainingDuration(duration float64, success bool) {
 
 // RecordPrediction records a prediction made by the neural network
 func (m *MLMetrics) RecordPrediction(confidence float64, isBruteForce bool, duration float64) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	result := "false"
 	if isBruteForce {
 		result = "true"
@@ -225,27 +202,15 @@ func (m *MLMetrics) RecordPrediction(confidence float64, isBruteForce bool, dura
 
 // RecordFeatureValue records a feature value used in prediction
 func (m *MLMetrics) RecordFeatureValue(featureName string, value float64) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.featureValues.WithLabelValues(featureName).Set(value)
 }
 
 // RecordNeuronActivation records the activation of a neuron
 func (m *MLMetrics) RecordNeuronActivation(layer string, neuronIndex int, activation float64) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.neuronActivations.WithLabelValues(layer, strconv.Itoa(neuronIndex)).Set(activation)
 }
 
 // RecordWeightValue records a weight value in the neural network
 func (m *MLMetrics) RecordWeightValue(fromLayer string, fromIndex int, toLayer string, toIndex int, weight float64) {
-	m.mu.Lock()
-
-	defer m.mu.Unlock()
-
 	m.weightValues.WithLabelValues(fromLayer, strconv.Itoa(fromIndex), toLayer, strconv.Itoa(toIndex)).Set(weight)
 }
