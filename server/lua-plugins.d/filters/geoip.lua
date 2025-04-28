@@ -60,7 +60,7 @@ function nauthilus_call_feature(request)
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
-        local result, request_err = http.post(os.getenv("GEOIP_POLICY_URL")+"?info=1", {
+        local result, request_err = http.post(os.getenv("GEOIP_POLICY_URL") .. "?info=1", {
             timeout = "10s",
             headers = {
                 Accept = "*/*",
@@ -100,6 +100,8 @@ function nauthilus_call_feature(request)
             if current_iso_code == "" then
                 current_iso_code = "unknown"
             end
+
+            nauthilus_builtin.custom_log_add("country_code", current_iso_code)
 
             -- Add country code to neural network
             dynamic_loader("nauthilus_neural")
@@ -167,9 +169,6 @@ function nauthilus_call_filter(request)
     end
 
     local ts = nauthilus_util.get_current_timestamp()
-    if ts == nil then
-        ts = "unknown"
-    end
 
     if request.authenticated then
         dynamic_loader("nauthilus_context")
@@ -250,22 +249,6 @@ function nauthilus_call_filter(request)
 
                     nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
                 end
-            end
-
-            -- If country code is empty, set it to "unknown" (we know IP is routable)
-            if current_iso_code == "" then
-                current_iso_code = "unknown"
-            end
-
-            -- Add country code to neural network if experimental ML is enabled
-            if os.getenv("NAUTHILUS_EXPERIMENTAL_ML") == "true" then
-                dynamic_loader("nauthilus_neural")
-                local nauthilus_neural = require("nauthilus_neural")
-
-                -- Add country code as a feature for authenticated users
-                nauthilus_neural.add_additional_features({
-                    country_code = current_iso_code
-                })
             end
 
             if response.object and nauthilus_util.is_table(response.object) and response.object.policy_reject then
