@@ -59,9 +59,11 @@ func main() {
 
 	inititalizeBruteForceTolerate(ctx)
 	initializeHTTPClients()
+	initializeMLMetrics(ctx)
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis(ctx)
+
 	runLuaaInitScript(ctx)
 	core.LoadStatsFromRedis(ctx)
 	startHTTPServer(ctx, store)

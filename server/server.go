@@ -896,6 +896,22 @@ func initializeHTTPClients() {
 	ml.InitHTTPClient()
 }
 
+// initializeMLMetrics initializes and logs the status of the ML system during application startup.
+func initializeMLMetrics(ctx context.Context) {
+	// Initialize ML system
+	if err := ml.InitMLSystem(ctx); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to initialize ML system",
+			definitions.LogKeyMsg, err,
+		)
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "ML system initialized successfully",
+		)
+	}
+
+}
+
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
 func runConnectionManager(ctx context.Context) {
 	manager := connmgr.GetConnectionManager()
