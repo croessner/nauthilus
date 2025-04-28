@@ -60,7 +60,7 @@ function nauthilus_call_feature(request)
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
-        local result, request_err = http.post(os.getenv("GEOIP_POLICY_URL")+"?info=1", {
+        local result, request_err = http.post(os.getenv("GEOIP_POLICY_URL") .. "?info=1", {
             timeout = "10s",
             headers = {
                 Accept = "*/*",
