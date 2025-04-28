@@ -101,6 +101,8 @@ function nauthilus_call_feature(request)
                 current_iso_code = "unknown"
             end
 
+            nauthilus_builtin.custom_log_add("country_code", current_iso_code)
+
             -- Add country code to neural network
             dynamic_loader("nauthilus_neural")
             local nauthilus_neural = require("nauthilus_neural")
@@ -167,9 +169,6 @@ function nauthilus_call_filter(request)
     end
 
     local ts = nauthilus_util.get_current_timestamp()
-    if ts == nil then
-        ts = "unknown"
-    end
 
     if request.authenticated then
         dynamic_loader("nauthilus_context")
