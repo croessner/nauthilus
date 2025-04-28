@@ -252,22 +252,6 @@ function nauthilus_call_filter(request)
                 end
             end
 
-            -- If country code is empty, set it to "unknown" (we know IP is routable)
-            if current_iso_code == "" then
-                current_iso_code = "unknown"
-            end
-
-            -- Add country code to neural network if experimental ML is enabled
-            if os.getenv("NAUTHILUS_EXPERIMENTAL_ML") == "true" then
-                dynamic_loader("nauthilus_neural")
-                local nauthilus_neural = require("nauthilus_neural")
-
-                -- Add country code as a feature for authenticated users
-                nauthilus_neural.add_additional_features({
-                    country_code = current_iso_code
-                })
-            end
-
             if response.object and nauthilus_util.is_table(response.object) and response.object.policy_reject then
                 nauthilus_prometheus.increment_counter(N .. "_count", {
                     country = current_iso_code,
