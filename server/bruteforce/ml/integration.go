@@ -139,27 +139,48 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 
 // ProcessBruteForce handles the result of brute force detection
 func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
-	// Record the login attempt for future ML training only if it's a failed login
-	// Successful logins are recorded in RecordSuccessfulLogin
-	if m.mlDetector != nil && (ruleTriggered || alreadyTriggered) {
+	// Always run the ML detector for all login attempts, not just when static rules trigger
+	if m.mlDetector != nil {
+		// First, collect features for ML processing
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
-			// Record as a failed login if brute force was detected
-			// Use the standalone RecordLoginResult function instead of the method
-			// Debug log to help diagnose the issue
-			util.DebugModule(definitions.DbgNeural,
-				"action", "record_failed_login",
-				"guid", m.guid,
-				"client_ip", m.clientIP,
-				"username", m.username,
-				"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
-			)
+			// Only record as a failed login if a rule was triggered
+			if ruleTriggered || alreadyTriggered {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "record_login_attempt",
+					"guid", m.guid,
+					"client_ip", m.clientIP,
+					"username", m.username,
+					"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
+				)
 
-			_ = RecordLoginResult(m.ctx, false, features)
+				_ = RecordLoginResult(m.ctx, false, features)
+			}
+
+			// If static rules haven't triggered, check if ML detector would trigger
+			if !ruleTriggered && !alreadyTriggered {
+				isBruteForce, probability, predErr := m.mlDetector.Predict()
+				if predErr == nil && isBruteForce {
+					// ML detector has detected a brute force attack
+					ruleTriggered = true
+					message = fmt.Sprintf("ML-based brute force detection triggered (probability: %.2f)", probability)
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyGUID, m.guid,
+						definitions.LogKeyBruteForce, message,
+						definitions.LogKeyUsername, m.username,
+						definitions.LogKeyClientIP, m.clientIP,
+						"probability", probability,
+					)
+
+					// Record this detection for future ML training
+					_ = RecordLoginResult(m.ctx, false, features)
+				}
+			}
 		}
 	}
 
-	// Use the standard processing
+	// Use the standard processing with potentially updated ruleTriggered flag
 	return m.BucketManager.ProcessBruteForce(ruleTriggered, alreadyTriggered, rule, network, message, setter)
 }
 

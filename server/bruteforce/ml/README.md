@@ -88,11 +88,14 @@ This approach provides several benefits:
 The ML-based detection works alongside the existing rule-based system:
 
 1. First, the traditional rule-based checks are performed
-2. If no rule is triggered, the ML model evaluates the login attempt
-3. If the ML model predicts a brute force attack with high probability, it blocks the attempt
-4. All login attempts (successful or not) are recorded for future model training
-5. The model is automatically trained with historical data once per day
-6. Trained models are persisted in Redis for reuse across restarts
+2. The ML model evaluates all login attempts, regardless of whether a rule was triggered
+3. If the ML model predicts a brute force attack with high probability, it blocks the attempt, even if no static rule was triggered
+4. Failed login attempts are recorded for future model training in two cases:
+   - When a static rule is triggered
+   - When the ML detector itself identifies a brute force attack
+5. Successful login attempts are recorded separately via the `RecordSuccessfulLogin` method
+6. The model is automatically trained with historical data once per day
+7. Trained models are persisted in Redis for reuse across restarts
 
 ### Separation of Training and Prediction
 

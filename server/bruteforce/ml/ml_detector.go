@@ -73,12 +73,13 @@ type LoginFeatures struct {
 
 // NeuralNetwork is a simplified implementation of a neural network
 type NeuralNetwork struct {
-	inputSize    int
-	hiddenSize   int
-	outputSize   int
-	weights      []float64  // In a real implementation, this would be a more complex structure
-	learningRate float64    // Learning rate for training
-	rng          *rand.Rand // Random number generator
+	inputSize          int
+	hiddenSize         int
+	outputSize         int
+	weights            []float64  // In a real implementation, this would be a more complex structure
+	learningRate       float64    // Learning rate for training
+	rng                *rand.Rand // Random number generator
+	activationFunction string     // Activation function to use (sigmoid, tanh, relu, leaky_relu)
 }
 
 // NewNeuralNetwork creates a new neural network with the specified layer sizes
@@ -92,12 +93,19 @@ func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
 		hiddenSize = hiddenSizeConf
 	}
 
+	// Get activation function from config or use default
+	activationFunction := config.GetFile().GetBruteForce().GetNeuralNetwork().ActivationFunction
+	if activationFunction == "" {
+		activationFunction = "sigmoid" // Default to sigmoid if not specified
+	}
+
 	// Debug: Log neural network creation
 	util.DebugModule(definitions.DbgNeural,
 		"action", "create_neural_network",
 		"input_size", inputSize,
 		"hidden_size", hiddenSize,
 		"output_size", outputSize,
+		"activation_function", activationFunction,
 	)
 
 	// Create a new random number generator with the current time as seed
@@ -106,12 +114,13 @@ func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
 
 	// Create a new neural network with properly initialized weights
 	nn := &NeuralNetwork{
-		inputSize:    inputSize,
-		hiddenSize:   hiddenSize,
-		outputSize:   outputSize,
-		weights:      make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
-		learningRate: 0.01, // Default learning rate
-		rng:          rng,
+		inputSize:          inputSize,
+		hiddenSize:         hiddenSize,
+		outputSize:         outputSize,
+		weights:            make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
+		learningRate:       0.01, // Default learning rate
+		rng:                rng,
+		activationFunction: activationFunction,
 	}
 
 	// Initialize weights with small random values
@@ -212,7 +221,7 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 				}
 
 				hiddenNetInputs[i] = sum
-				hiddenActivations[i] = 1.0 / (1.0 + math.Exp(-sum)) // Sigmoid
+				hiddenActivations[i] = nn.activate(sum) // Apply activation function
 			}
 
 			// 2. Calculate output layer activations
@@ -229,7 +238,7 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 				}
 
 				outputNetInputs[i] = sum
-				outputActivations[i] = 1.0 / (1.0 + math.Exp(-sum)) // Sigmoid
+				outputActivations[i] = nn.activate(sum) // Apply activation function
 			}
 
 			// Calculate error
@@ -246,9 +255,9 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 			// 1. Calculate output layer deltas
 			outputDeltas := make([]float64, nn.outputSize)
 			for i := 0; i < nn.outputSize; i++ {
-				// Delta = error * derivative of sigmoid
-				sigmoidDerivative := outputActivations[i] * (1 - outputActivations[i])
-				outputDeltas[i] = outputErrors[i] * sigmoidDerivative
+				// Delta = error * derivative of activation function
+				derivative := nn.activateDerivative(outputNetInputs[i])
+				outputDeltas[i] = outputErrors[i] * derivative
 			}
 
 			// 2. Calculate hidden layer deltas
@@ -262,8 +271,8 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 					}
 				}
 
-				sigmoidDerivative := hiddenActivations[i] * (1 - hiddenActivations[i])
-				hiddenDeltas[i] = errorValue * sigmoidDerivative
+				derivative := nn.activateDerivative(hiddenNetInputs[i])
+				hiddenDeltas[i] = errorValue * derivative
 			}
 
 			// 3. Update weights
@@ -344,6 +353,56 @@ func (nn *NeuralNetwork) recordWeightMetrics() {
 	}
 }
 
+// activate applies the selected activation function to the input
+func (nn *NeuralNetwork) activate(x float64) float64 {
+	switch nn.activationFunction {
+	case "tanh":
+		return math.Tanh(x)
+	case "relu":
+		if x > 0 {
+			return x
+		}
+
+		return 0
+	case "leaky_relu":
+		if x > 0 {
+			return x
+		}
+
+		return 0.01 * x // Alpha value of 0.01 for leaky ReLU
+	default: // "sigmoid" or any other value defaults to sigmoid
+		return 1.0 / (1.0 + math.Exp(-x))
+	}
+}
+
+// activateDerivative calculates the derivative of the selected activation function
+func (nn *NeuralNetwork) activateDerivative(x float64) float64 {
+	switch nn.activationFunction {
+	case "tanh":
+		// Derivative of tanh(x) is 1 - tanh²(x)
+		tanhX := math.Tanh(x)
+
+		return 1.0 - tanhX*tanhX
+	case "relu":
+		if x > 0 {
+			return 1.0
+		}
+
+		return 0.0
+	case "leaky_relu":
+		if x > 0 {
+			return 1.0
+		}
+
+		return 0.01 // Alpha value of 0.01 for leaky ReLU
+	default: // "sigmoid" or any other value defaults to sigmoid
+		// For sigmoid, we can use the property that sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x))
+		sigmoidX := 1.0 / (1.0 + math.Exp(-x))
+
+		return sigmoidX * (1.0 - sigmoidX)
+	}
+}
+
 // FeedForward performs forward propagation through the network
 func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 	util.DebugModule(definitions.DbgNeural,
@@ -383,8 +442,8 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 			}
 		}
 
-		// Apply sigmoid activation function
-		activation := 1.0 / (1.0 + math.Exp(-sum))
+		// Apply activation function
+		activation := nn.activate(sum)
 		hiddenActivations[i] = activation
 
 		// Record neuron activation metrics
@@ -404,8 +463,8 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 			}
 		}
 
-		// Apply sigmoid activation function
-		activation := 1.0 / (1.0 + math.Exp(-sum))
+		// Apply activation function
+		activation := nn.activate(sum)
 		outputs[i] = activation
 
 		// Record neuron activation metrics
@@ -505,15 +564,26 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 
 	// Parse the JSON data
 	var modelData struct {
-		InputSize    int       `json:"input_size"`
-		HiddenSize   int       `json:"hidden_size"`
-		OutputSize   int       `json:"output_size"`
-		Weights      []float64 `json:"weights"`
-		LearningRate float64   `json:"learning_rate"`
+		InputSize          int       `json:"input_size"`
+		HiddenSize         int       `json:"hidden_size"`
+		OutputSize         int       `json:"output_size"`
+		Weights            []float64 `json:"weights"`
+		LearningRate       float64   `json:"learning_rate"`
+		ActivationFunction string    `json:"activation_function"`
 	}
 
 	if err := json.Unmarshal(jsonData, &modelData); err != nil {
 		return fmt.Errorf("failed to deserialize model: %w", err)
+	}
+
+	// Get activation function from config or use default if not in the model data
+	activationFunction := modelData.ActivationFunction
+	if activationFunction == "" {
+		// For backward compatibility with models saved before this change
+		activationFunction = config.GetFile().GetBruteForce().GetNeuralNetwork().ActivationFunction
+		if activationFunction == "" {
+			activationFunction = "sigmoid" // Default to sigmoid if not specified
+		}
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -522,15 +592,17 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
 		"weights_count", len(modelData.Weights),
+		"activation_function", activationFunction,
 	)
 
 	// Create a new neural network with the loaded parameters
 	nn := &NeuralNetwork{
-		inputSize:    modelData.InputSize,
-		hiddenSize:   modelData.HiddenSize,
-		outputSize:   modelData.OutputSize,
-		weights:      modelData.Weights,
-		learningRate: modelData.LearningRate,
+		inputSize:          modelData.InputSize,
+		hiddenSize:         modelData.HiddenSize,
+		outputSize:         modelData.OutputSize,
+		weights:            modelData.Weights,
+		learningRate:       modelData.LearningRate,
+		activationFunction: activationFunction,
 	}
 
 	// Replace the current model
@@ -551,17 +623,19 @@ func (t *MLTrainer) SaveModelToRedis() error {
 
 	// Create a serializable representation of the model
 	modelData := struct {
-		InputSize    int       `json:"input_size"`
-		HiddenSize   int       `json:"hidden_size"`
-		OutputSize   int       `json:"output_size"`
-		Weights      []float64 `json:"weights"`
-		LearningRate float64   `json:"learning_rate"`
+		InputSize          int       `json:"input_size"`
+		HiddenSize         int       `json:"hidden_size"`
+		OutputSize         int       `json:"output_size"`
+		Weights            []float64 `json:"weights"`
+		LearningRate       float64   `json:"learning_rate"`
+		ActivationFunction string    `json:"activation_function"`
 	}{
-		InputSize:    t.model.inputSize,
-		HiddenSize:   t.model.hiddenSize,
-		OutputSize:   t.model.outputSize,
-		Weights:      t.model.weights,
-		LearningRate: t.model.learningRate,
+		InputSize:          t.model.inputSize,
+		HiddenSize:         t.model.hiddenSize,
+		OutputSize:         t.model.outputSize,
+		Weights:            t.model.weights,
+		LearningRate:       t.model.learningRate,
+		ActivationFunction: t.model.activationFunction,
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -570,6 +644,7 @@ func (t *MLTrainer) SaveModelToRedis() error {
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
 		"weights_count", len(modelData.Weights),
+		"activation_function", modelData.ActivationFunction,
 	)
 
 	// Serialize the model to JSON
