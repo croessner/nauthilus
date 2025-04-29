@@ -682,6 +682,7 @@ func (t *MLTrainer) SaveModelToRedis() error {
 }
 
 // GetTrainingDataFromRedis retrieves the stored training data from Redis
+// with balanced ratio of successful and failed login attempts
 func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, error) {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "get_training_data_start",
@@ -702,8 +703,10 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	// Get the training data from Redis
-	jsonData, err := rediscli.GetClient().GetReadHandle().LRange(t.ctx, key, 0, int64(maxSamples-1)).Result()
+	// Get all available training data from Redis (we'll balance it later)
+	// We retrieve more than maxSamples to ensure we have enough of each class
+	retrieveSamples := maxSamples * 3 // Get more samples to ensure we have enough of each class
+	jsonData, err := rediscli.GetClient().GetReadHandle().LRange(t.ctx, key, 0, int64(retrieveSamples-1)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +717,9 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 	)
 
 	// Parse the JSON data into TrainingData objects
-	trainingData := make([]TrainingData, 0, len(jsonData))
+	var successfulSamples []TrainingData
+	var failedSamples []TrainingData
+
 	parseErrors := 0
 
 	for _, data := range jsonData {
@@ -730,16 +735,116 @@ func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, er
 			continue
 		}
 
-		trainingData = append(trainingData, sample)
+		// Separate samples into successful and failed login attempts
+		if sample.Success {
+			successfulSamples = append(successfulSamples, sample)
+		} else {
+			failedSamples = append(failedSamples, sample)
+		}
 	}
+
+	// Balance the dataset with a maximum ratio of 80:20 between classes
+	// This prevents the model from being biased towards one class
+	balancedData := balanceTrainingData(successfulSamples, failedSamples, maxSamples)
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "get_training_data_complete",
-		"samples_parsed", len(trainingData),
+		"samples_parsed", len(balancedData),
+		"successful_samples", len(successfulSamples),
+		"failed_samples", len(failedSamples),
+		"balanced_samples", len(balancedData),
 		"parse_errors", parseErrors,
 	)
 
-	return trainingData, nil
+	return balancedData, nil
+}
+
+// balanceTrainingData ensures a balanced ratio between successful and failed login attempts
+// to prevent the model from being biased towards one class.
+//
+// This function implements the 80:20 rule, where no class (successful or failed logins)
+// should represent more than 80% of the training data. This prevents the model from
+// becoming biased towards one class, which could lead to either:
+// 1. Too many false positives (if trained mostly on failed logins)
+// 2. Too many false negatives (if trained mostly on successful logins)
+//
+// The function takes the available successful and failed samples, calculates the
+// appropriate ratio, and returns a balanced dataset for training.
+func balanceTrainingData(successfulSamples, failedSamples []TrainingData, maxSamples int) []TrainingData {
+	// Calculate the total number of samples we want
+	totalSamples := maxSamples
+	if totalSamples > len(successfulSamples)+len(failedSamples) {
+		totalSamples = len(successfulSamples) + len(failedSamples)
+	}
+
+	// Define the maximum ratio between classes (80:20 rule)
+	// No class should represent more than 80% of the data
+	maxRatio := 0.8
+	minRatio := 1.0 - maxRatio // 0.2
+
+	// Calculate the ideal number of samples for each class
+	// based on the available samples and the desired ratio
+	successCount := len(successfulSamples)
+	failedCount := len(failedSamples)
+
+	// Calculate the ratio of successful samples in the original data
+	originalSuccessRatio := float64(successCount) / float64(successCount+failedCount)
+
+	// Determine how many samples of each class to include
+	var successSamplesToUse, failedSamplesToUse int
+
+	if originalSuccessRatio > maxRatio {
+		// Too many successful samples, cap at maxRatio
+		// This prevents the model from being biased towards successful logins
+		successSamplesToUse = int(float64(totalSamples) * maxRatio)
+		failedSamplesToUse = totalSamples - successSamplesToUse
+	} else if originalSuccessRatio < minRatio {
+		// Too many failed samples, cap at minRatio for successful samples
+		// This prevents the model from being biased towards failed logins
+		successSamplesToUse = int(float64(totalSamples) * minRatio)
+		failedSamplesToUse = totalSamples - successSamplesToUse
+	} else {
+		// The ratio is already within acceptable bounds, maintain it
+		// This preserves the natural distribution when it's already balanced
+		successSamplesToUse = int(float64(totalSamples) * originalSuccessRatio)
+		failedSamplesToUse = totalSamples - successSamplesToUse
+	}
+
+	// Ensure we don't request more samples than available
+	if successSamplesToUse > successCount {
+		successSamplesToUse = successCount
+	}
+	if failedSamplesToUse > failedCount {
+		failedSamplesToUse = failedCount
+	}
+
+	// Shuffle and select the required number of samples from each class
+	// This ensures we get a random selection rather than just the most recent
+	// which helps prevent temporal bias in the training data
+	rand.Shuffle(len(successfulSamples), func(i, j int) {
+		successfulSamples[i], successfulSamples[j] = successfulSamples[j], successfulSamples[i]
+	})
+	rand.Shuffle(len(failedSamples), func(i, j int) {
+		failedSamples[i], failedSamples[j] = failedSamples[j], failedSamples[i]
+	})
+
+	// Select the required number of samples from each class
+	successfulSamples = successfulSamples[:successSamplesToUse]
+	failedSamples = failedSamples[:failedSamplesToUse]
+
+	// Combine and shuffle the balanced dataset
+	balancedData := append(successfulSamples, failedSamples...)
+	rand.Shuffle(len(balancedData), func(i, j int) {
+		balancedData[i], balancedData[j] = balancedData[j], balancedData[i]
+	})
+
+	// Log the balancing results
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Balanced training data: %d successful, %d failed (%.1f%% successful)",
+			successSamplesToUse, failedSamplesToUse, float64(successSamplesToUse)/float64(successSamplesToUse+failedSamplesToUse)*100),
+	)
+
+	return balancedData
 }
 
 // PrepareTrainingData converts the raw training data into features and labels for the neural network
@@ -991,7 +1096,16 @@ func (t *MLTrainer) GetModel() *NeuralNetwork {
 	return t.model
 }
 
-// RecordLoginResult records the result of a login attempt for future training
+// RecordLoginResult records the result of a login attempt for future training.
+// It checks the current balance of training data before recording to prevent imbalance.
+//
+// This function implements the 80:20 rule to ensure that neither successful nor failed
+// login attempts dominate the training data. If adding a new sample would cause the
+// ratio to exceed these bounds, the recording is skipped and an info message is logged.
+//
+// This prevents the model from becoming biased over time, which could happen if there
+// is a sudden influx of only one type of login attempt (e.g., during an attack or
+// during normal operation with very few failures).
 func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures) error {
 	// Store the login attempt result and features for future model training
 	data := TrainingData{
@@ -1000,16 +1114,80 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 		Time:     time.Now(),
 	}
 
-	jsonData, err := json.Marshal(data)
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
+
+	// Check current balance before recording
+	// We'll sample a subset of the data to determine the current ratio
+	sampleSize := 1000 // Sample size to check ratio
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	jsonData, err := rediscli.GetClient().GetReadHandle().LRange(ctx, key, 0, int64(sampleSize-1)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+
+	// If we have enough data to check the ratio
+	if len(jsonData) > 50 { // Only check if we have a meaningful sample size
+		successCount := 0
+		failCount := 0
+
+		// Count successful and failed samples
+		for _, item := range jsonData {
+			var sample TrainingData
+			if err := json.Unmarshal([]byte(item), &sample); err != nil {
+				continue // Skip invalid entries
+			}
+
+			if sample.Success {
+				successCount++
+			} else {
+				failCount++
+			}
+		}
+
+		totalCount := successCount + failCount
+		if totalCount > 0 {
+			// Calculate current ratio
+			currentSuccessRatio := float64(successCount) / float64(totalCount)
+
+			// Define the maximum ratio (80:20 rule)
+			maxRatio := 0.8
+			minRatio := 1.0 - maxRatio // 0.2
+
+			// Check if adding this sample would increase imbalance
+			wouldIncreaseBias := false
+
+			if success && currentSuccessRatio >= maxRatio {
+				// Too many successful samples already, and trying to add another successful one
+				wouldIncreaseBias = true
+			} else if !success && currentSuccessRatio <= minRatio {
+				// Too many failed samples already, and trying to add another failed one
+				wouldIncreaseBias = true
+			}
+
+			if wouldIncreaseBias {
+				// Skip recording to prevent further imbalance
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Skipped recording %s login for training to maintain balance (current ratio: %.1f%% successful)",
+						map[bool]string{true: "successful", false: "failed"}[success],
+						currentSuccessRatio*100),
+				)
+
+				return nil
+			}
+		}
+	}
+
+	// If we reach here, it's safe to record the sample
+	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
-
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	err = rediscli.GetClient().GetWriteHandle().LPush(ctx, key, jsonData).Err()
+	err = rediscli.GetClient().GetWriteHandle().LPush(ctx, key, jsonBytes).Err()
 	if err != nil {
 		return err
 	}
