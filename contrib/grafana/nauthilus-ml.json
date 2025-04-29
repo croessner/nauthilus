@@ -157,7 +157,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_network_structure",
+          "expr": "nauthilus_ml_network_structure{instance=~\"$instance\"}",
           "legendFormat": "{{layer}} layer",
           "range": true,
           "refId": "A"
@@ -260,7 +260,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_training_error",
+          "expr": "nauthilus_ml_training_error{instance=~\"$instance\"}",
           "legendFormat": "Epoch {{epoch}}",
           "range": true,
           "refId": "A"
@@ -322,7 +322,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_training_progress",
+          "expr": "nauthilus_ml_training_progress{instance=~\"$instance\"}",
           "legendFormat": "Current Epoch",
           "range": true,
           "refId": "A"
@@ -384,7 +384,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_training_samples_used",
+          "expr": "nauthilus_ml_training_samples_used{instance=~\"$instance\"}",
           "legendFormat": "Samples Used",
           "range": true,
           "refId": "A"
@@ -474,7 +474,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(nauthilus_ml_training_duration_seconds_bucket[5m])) by (le, result))",
+          "expr": "histogram_quantile(0.95, sum(rate(nauthilus_ml_training_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le, result))",
           "legendFormat": "{{result}} (p95)",
           "range": true,
           "refId": "A"
@@ -485,7 +485,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(nauthilus_ml_training_duration_seconds_bucket[5m])) by (le, result))",
+          "expr": "histogram_quantile(0.50, sum(rate(nauthilus_ml_training_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le, result))",
           "hide": false,
           "legendFormat": "{{result}} (p50)",
           "range": true,
@@ -569,7 +569,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_prediction_confidence{result=\"true\"}",
+          "expr": "nauthilus_ml_prediction_confidence{result=\"true\", instance=~\"$instance\"}",
           "legendFormat": "Brute Force Confidence",
           "range": true,
           "refId": "A"
@@ -638,7 +638,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_prediction_count",
+          "expr": "nauthilus_ml_prediction_count{instance=~\"$instance\"}",
           "legendFormat": "{{result}}",
           "range": true,
           "refId": "A"
@@ -728,7 +728,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(nauthilus_ml_prediction_duration_seconds_bucket[5m])) by (le, result))",
+          "expr": "histogram_quantile(0.95, sum(rate(nauthilus_ml_prediction_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le, result))",
           "legendFormat": "{{result}} (p95)",
           "range": true,
           "refId": "A"
@@ -739,7 +739,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(nauthilus_ml_prediction_duration_seconds_bucket[5m])) by (le, result))",
+          "expr": "histogram_quantile(0.50, sum(rate(nauthilus_ml_prediction_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le, result))",
           "hide": false,
           "legendFormat": "{{result}} (p50)",
           "range": true,
@@ -842,7 +842,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_feature_values",
+          "expr": "nauthilus_ml_feature_values{instance=~\"$instance\"}",
           "legendFormat": "{{feature_name}}",
           "range": true,
           "refId": "A"
@@ -934,7 +934,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_neuron_activations{layer=\"hidden\"}",
+          "expr": "nauthilus_ml_neuron_activations{layer=\"hidden\", instance=~\"$instance\"}",
           "legendFormat": "Neuron {{neuron_index}}",
           "range": true,
           "refId": "A"
@@ -1007,7 +1007,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_ml_neuron_activations{layer=\"output\"}",
+          "expr": "nauthilus_ml_neuron_activations{layer=\"output\", instance=~\"$instance\"}",
           "legendFormat": "Output {{neuron_index}}",
           "range": true,
           "refId": "A"
@@ -1026,7 +1026,35 @@
     "neural network"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(up{job=\"nauthilus\"},instance)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Instance",
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(up{job=\"nauthilus\"},instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-1h",
