@@ -82,7 +82,16 @@ type NeuralNetwork struct {
 }
 
 // NewNeuralNetwork creates a new neural network with the specified layer sizes
-func NewNeuralNetwork(inputSize, hiddenSize, outputSize int) *NeuralNetwork {
+func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
+	var hiddenSize int
+
+	hiddenSizeConf := config.GetFile().GetBruteForce().GetNeuralNetwork().HiddenNeurons
+	if hiddenSizeConf == 0 {
+		hiddenSize = 10
+	} else {
+		hiddenSize = hiddenSizeConf
+	}
+
 	// Debug: Log neural network creation
 	util.DebugModule(definitions.DbgNeural,
 		"action", "create_neural_network",
@@ -463,12 +472,12 @@ func (t *MLTrainer) InitModel() {
 
 	// Create a neural network with the appropriate number of input neurons,
 	// 8 hidden neurons, and 1 output neuron (probability of brute force)
-	t.model = NewNeuralNetwork(inputSize, 8, 1)
+	t.model = NewNeuralNetwork(inputSize, 1)
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "init_model_complete",
 		"input_size", inputSize,
-		"hidden_size", 8,
+		"hidden_size", t.model.hiddenSize,
 		"output_size", 1,
 	)
 }
@@ -993,7 +1002,7 @@ func InitMLSystem(ctx context.Context) error {
 		stopTrainingChan = stopChan
 
 		go func() {
-			ticker := time.NewTicker(24 * time.Hour) // Train once per day
+			ticker := time.NewTicker(12 * time.Hour) // Train once twice per day
 			defer ticker.Stop()
 
 			for {

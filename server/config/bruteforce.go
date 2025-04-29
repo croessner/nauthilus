@@ -123,7 +123,9 @@ func (b *BruteForceRule) String() string {
 
 // NeuralNetwork represents the configuration for the neural network machine learning system.
 type NeuralNetwork struct {
-	MaxTrainingRecords int32 `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
+	MaxTrainingRecords int32  `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
+	HiddenNeurons      int    `mapstructure:"hidden_neurons" validate:"omitempty,min=8,max=20"`
+	ActivationFunction string `mapstructure:"activation_function" validate:"omitempty,oneof=sigmoid tanh relu leaky_relu"`
 }
 
 // GetMaxTrainingRecords retrieves the maximum number of training records to keep for the neural network.
