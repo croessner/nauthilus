@@ -105,6 +105,14 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 
 	// If the standard check didn't trigger, try the ML-based detection
 	if !ruleTriggered && !withError && m.mlDetector != nil {
+		// Log the state of static bucket system before ML prediction
+		util.DebugModule(definitions.DbgNeural,
+			"action", "pre_ml_prediction",
+			"static_rule_triggered", ruleTriggered,
+			"static_error", withError,
+			definitions.LogKeyGUID, m.guid,
+		)
+
 		isBruteForce, probability, err := m.mlDetector.Predict()
 		if err != nil {
 			level.Error(log.Logger).Log(
@@ -119,6 +127,17 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 			ruleTriggered = true
 			*message = fmt.Sprintf("ML-based brute force detection triggered (probability: %.2f)", probability)
 
+			// Log the state after ML prediction
+			util.DebugModule(definitions.DbgNeural,
+				"action", "post_ml_prediction",
+				"static_rule_triggered", false, // It was false before ML prediction
+				"ml_rule_triggered", true,
+				"final_rule_triggered", ruleTriggered,
+				"probability", probability,
+				"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
+				definitions.LogKeyGUID, m.guid,
+			)
+
 			level.Info(log.Logger).Log(
 				definitions.LogKeyGUID, m.guid,
 				definitions.LogKeyBruteForce, *message,
@@ -131,6 +150,17 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 			if len(rules) > 0 {
 				ruleNumber = 0
 			}
+		} else {
+			// Log the state after ML prediction when no brute force is detected
+			util.DebugModule(definitions.DbgNeural,
+				"action", "post_ml_prediction",
+				"static_rule_triggered", false, // It was false before ML prediction
+				"ml_rule_triggered", false,
+				"final_rule_triggered", ruleTriggered,
+				"probability", probability,
+				"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
+				definitions.LogKeyGUID, m.guid,
+			)
 		}
 	}
 
@@ -159,11 +189,31 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 
 			// If static rules haven't triggered, check if ML detector would trigger
 			if !ruleTriggered && !alreadyTriggered {
+				// Log the state before ML prediction
+				util.DebugModule(definitions.DbgNeural,
+					"action", "process_pre_ml_prediction",
+					"rule_triggered", ruleTriggered,
+					"already_triggered", alreadyTriggered,
+					definitions.LogKeyGUID, m.guid,
+				)
+
 				isBruteForce, probability, predErr := m.mlDetector.Predict()
 				if predErr == nil && isBruteForce {
 					// ML detector has detected a brute force attack
 					ruleTriggered = true
 					message = fmt.Sprintf("ML-based brute force detection triggered (probability: %.2f)", probability)
+
+					// Log the state after ML prediction
+					util.DebugModule(definitions.DbgNeural,
+						"action", "process_post_ml_prediction",
+						"static_rule_triggered", false, // It was false before ML prediction
+						"already_triggered", alreadyTriggered,
+						"ml_rule_triggered", true,
+						"final_rule_triggered", ruleTriggered,
+						"probability", probability,
+						"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
+						definitions.LogKeyGUID, m.guid,
+					)
 
 					level.Info(log.Logger).Log(
 						definitions.LogKeyGUID, m.guid,
@@ -175,6 +225,18 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 
 					// Record this detection for future ML training
 					_ = RecordLoginResult(m.ctx, false, features)
+				} else {
+					// Log the state after ML prediction when no brute force is detected
+					util.DebugModule(definitions.DbgNeural,
+						"action", "process_post_ml_prediction",
+						"static_rule_triggered", false, // It was false before ML prediction
+						"already_triggered", alreadyTriggered,
+						"ml_rule_triggered", false,
+						"final_rule_triggered", ruleTriggered,
+						"probability", probability,
+						"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
+						definitions.LogKeyGUID, m.guid,
+					)
 				}
 			}
 		}

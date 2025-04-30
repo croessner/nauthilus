@@ -27,6 +27,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,11 @@ type NeuralNetwork struct {
 
 // NewNeuralNetwork creates a new neural network with the specified layer sizes
 func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
+	return NewNeuralNetworkWithSeed(inputSize, outputSize, time.Now().UnixNano())
+}
+
+// NewNeuralNetworkWithSeed creates a new neural network with the specified layer sizes and a fixed seed for reproducibility
+func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetwork {
 	var hiddenSize int
 
 	hiddenSizeConf := config.GetFile().GetBruteForce().GetNeuralNetwork().HiddenNeurons
@@ -106,10 +112,11 @@ func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
 		"hidden_size", hiddenSize,
 		"output_size", outputSize,
 		"activation_function", activationFunction,
+		"seed", seed,
 	)
 
-	// Create a new random number generator with the current time as seed
-	source := rand.NewSource(time.Now().UnixNano())
+	// Create a new random number generator with the provided seed
+	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
 	// Create a new neural network with properly initialized weights
@@ -1662,10 +1669,21 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		}
 	}
 
+	// Create human-readable descriptions for the input values
+	inputDescriptions := []string{
+		fmt.Sprintf("TimeBetweenAttempts: %.2f seconds", features.TimeBetweenAttempts),
+		fmt.Sprintf("FailedAttemptsLastHour: %.0f", features.FailedAttemptsLastHour),
+		fmt.Sprintf("DifferentUsernames: %.0f", features.DifferentUsernames),
+		fmt.Sprintf("DifferentPasswords: %.0f", features.DifferentPasswords),
+		fmt.Sprintf("TimeOfDay: %.2f (hour: %.0f)", features.TimeOfDay, features.TimeOfDay*24),
+		fmt.Sprintf("SuspiciousNetwork: %v", features.SuspiciousNetwork > 0.5),
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_inputs_prepared",
 		"inputs", fmt.Sprintf("%v", inputs),
 		"input_count", len(inputs),
+		"input_descriptions", strings.Join(inputDescriptions, ", "),
 		definitions.LogKeyGUID, d.guid,
 	)
 
@@ -1732,9 +1750,20 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	// Normalize inputs
 	normalizedInputs := normalizeInputs(inputs)
 
+	// Create human-readable descriptions for the normalized input values
+	normalizedDescriptions := []string{
+		fmt.Sprintf("TimeBetweenAttempts: %.2f", normalizedInputs[0]),
+		fmt.Sprintf("FailedAttemptsLastHour: %.2f", normalizedInputs[1]),
+		fmt.Sprintf("DifferentUsernames: %.2f", normalizedInputs[2]),
+		fmt.Sprintf("DifferentPasswords: %.2f", normalizedInputs[3]),
+		fmt.Sprintf("TimeOfDay: %.2f", normalizedInputs[4]),
+		fmt.Sprintf("SuspiciousNetwork: %.2f", normalizedInputs[5]),
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_inputs_normalized",
 		"normalized_inputs", fmt.Sprintf("%v", normalizedInputs),
+		"normalized_descriptions", strings.Join(normalizedDescriptions, ", "),
 		definitions.LogKeyGUID, d.guid,
 	)
 
@@ -1744,9 +1773,13 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	// The output is the probability of a brute force attack
 	probability := outputs[0]
 
+	// Human-readable probability description
+	probabilityDesc := fmt.Sprintf("%.2f%%", probability*100)
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_probability_calculated",
 		"probability", probability,
+		"probability_percent", probabilityDesc,
 		definitions.LogKeyGUID, d.guid,
 	)
 
@@ -1754,11 +1787,21 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	threshold := 0.7 // Threshold can be adjusted
 	isBruteForce := probability > threshold
 
+	// Human-readable threshold and decision description
+	thresholdDesc := fmt.Sprintf("%.2f%%", threshold*100)
+	decisionDesc := "No brute force attack detected"
+	if isBruteForce {
+		decisionDesc = "Brute force attack detected"
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "predict_complete",
 		"is_brute_force", isBruteForce,
+		"decision", decisionDesc,
 		"probability", probability,
+		"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
 		"threshold", threshold,
+		"threshold_percent", thresholdDesc,
 		definitions.LogKeyGUID, d.guid,
 	)
 
