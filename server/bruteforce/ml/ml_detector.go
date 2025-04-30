@@ -565,22 +565,26 @@ func (t *MLTrainer) InitModel() {
 
 // LoadModelFromRedis loads a previously trained model from Redis
 func (t *MLTrainer) LoadModelFromRedis() error {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
+	return t.LoadModelFromRedisWithKey(config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model")
+}
 
+// LoadModelFromRedisWithKey loads a previously trained model from Redis using the specified key
+func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Get the model data from Redis
 	jsonData, err := rediscli.GetClient().GetReadHandle().Get(t.ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return fmt.Errorf("no saved model found")
+			return fmt.Errorf("no saved model found for key %s", key)
 		}
 
-		return fmt.Errorf("failed to retrieve model from Redis: %w", err)
+		return fmt.Errorf("failed to retrieve model from Redis for key %s: %w", key, err)
 	}
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "load_model_data_received",
+		"key", key,
 		"data_size", len(jsonData),
 	)
 
@@ -610,6 +614,7 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "load_model_parsed",
+		"key", key,
 		"input_size", modelData.InputSize,
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
@@ -631,7 +636,7 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 	t.model = nn
 
 	level.Info(log.Logger).Log(
-		definitions.LogKeyMsg, "Model loaded from Redis successfully",
+		definitions.LogKeyMsg, fmt.Sprintf("Model loaded from Redis successfully (key: %s)", key),
 	)
 
 	return nil
@@ -639,6 +644,11 @@ func (t *MLTrainer) LoadModelFromRedis() error {
 
 // SaveModelToRedis saves the trained neural network model to Redis
 func (t *MLTrainer) SaveModelToRedis() error {
+	return t.SaveModelToRedisWithKey(config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model")
+}
+
+// SaveModelToRedisWithKey saves the trained neural network model to Redis using the specified key
+func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 	if t.model == nil {
 		return fmt.Errorf("no model to save")
 	}
@@ -662,6 +672,7 @@ func (t *MLTrainer) SaveModelToRedis() error {
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "save_model_prepare",
+		"key", key,
 		"input_size", modelData.InputSize,
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
@@ -677,12 +688,11 @@ func (t *MLTrainer) SaveModelToRedis() error {
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "save_model_serialized",
+		"key", key,
 		"data_size", len(jsonData),
 	)
 
 	// Save to Redis
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model"
-
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	err = rediscli.GetClient().GetWriteHandle().Set(
@@ -697,7 +707,7 @@ func (t *MLTrainer) SaveModelToRedis() error {
 	}
 
 	level.Info(log.Logger).Log(
-		definitions.LogKeyMsg, "Model saved to Redis successfully",
+		definitions.LogKeyMsg, fmt.Sprintf("Model saved to Redis successfully (key: %s)", key),
 	)
 
 	return nil
@@ -1370,6 +1380,21 @@ type BruteForceMLDetector struct {
 	additionalFeatures map[string]any
 }
 
+// GetAdditionalFeaturesRedisKey returns the Redis key for additional features
+func GetAdditionalFeaturesRedisKey() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:additional_features"
+}
+
+// SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
+func (t *MLTrainer) SaveAdditionalFeaturesToRedis() error {
+	return t.SaveModelToRedisWithKey(GetAdditionalFeaturesRedisKey())
+}
+
+// LoadAdditionalFeaturesFromRedis loads a model with additional features from a separate Redis key
+func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
+	return t.LoadModelFromRedisWithKey(GetAdditionalFeaturesRedisKey())
+}
+
 // SetAdditionalFeatures sets additional features for the detector
 func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 	// Check if we need to reinitialize the model due to new additional features
@@ -1392,29 +1417,43 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 				// Create a new model with the correct input size
 				newModel := NewNeuralNetwork(expectedInputSize, 1)
 
-				// Check if we can find a saved model with the same additional features
-				// to use its weights instead of random initialization
+				// First try to load a model with additional features from the separate Redis key
 				tempTrainer := NewMLTrainer().WithContext(d.ctx)
-				err := tempTrainer.LoadModelFromRedis()
+				err := tempTrainer.LoadAdditionalFeaturesFromRedis()
 
-				// Flag to track if we found a suitable saved model
-				useSavedWeights := err == nil && tempTrainer.model != nil && tempTrainer.model.inputSize >= expectedInputSize
+				// Flag to track if we found a suitable saved model with additional features
+				useSavedAdditionalFeatures := err == nil && tempTrainer.model != nil && tempTrainer.model.inputSize >= expectedInputSize
 
-				if useSavedWeights {
+				if useSavedAdditionalFeatures {
 					util.DebugModule(definitions.DbgNeural,
-						"action", "using_saved_weights_for_additional_features",
+						"action", "using_saved_additional_features",
 						"saved_model_input_size", tempTrainer.model.inputSize,
 						"expected_input_size", expectedInputSize,
 						definitions.LogKeyGUID, d.guid,
 					)
 				} else {
-					// No suitable saved model found, initialize with random weights
-					util.DebugModule(definitions.DbgNeural,
-						"action", "using_random_weights_for_additional_features",
-						"reason", "no_suitable_saved_model",
-						"error", fmt.Sprintf("%v", err),
-						definitions.LogKeyGUID, d.guid,
-					)
+					// If no additional features model found, try the main model as fallback
+					err = tempTrainer.LoadModelFromRedis()
+
+					// Flag to track if we found a suitable saved model
+					useSavedWeights := err == nil && tempTrainer.model != nil && tempTrainer.model.inputSize >= expectedInputSize
+
+					if useSavedWeights {
+						util.DebugModule(definitions.DbgNeural,
+							"action", "using_saved_weights_for_additional_features",
+							"saved_model_input_size", tempTrainer.model.inputSize,
+							"expected_input_size", expectedInputSize,
+							definitions.LogKeyGUID, d.guid,
+						)
+					} else {
+						// No suitable saved model found, initialize with random weights
+						util.DebugModule(definitions.DbgNeural,
+							"action", "using_random_weights_for_additional_features",
+							"reason", "no_suitable_saved_model",
+							"error", fmt.Sprintf("%v", err),
+							definitions.LogKeyGUID, d.guid,
+						)
+					}
 				}
 
 				// Copy weights for existing connections where possible
@@ -1434,8 +1473,8 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 					for j := d.model.inputSize; j < expectedInputSize; j++ {
 						newWeightIndex := i*expectedInputSize + j
 
-						if useSavedWeights {
-							// Use weights from the saved model for the new connections
+						if useSavedAdditionalFeatures {
+							// Use weights from the saved additional features model for the new connections
 							savedWeightIndex := i*tempTrainer.model.inputSize + j
 
 							if savedWeightIndex < len(tempTrainer.model.weights) && newWeightIndex < len(newModel.weights) {
@@ -1485,10 +1524,17 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 								definitions.LogKeyMsg, fmt.Sprintf("Failed to train model after reinitializing for additional features: %v", err),
 							)
 						} else {
-							// Save the trained model to Redis
+							// Save the trained model to both Redis keys
 							if err := globalTrainer.SaveModelToRedis(); err != nil {
 								level.Error(log.Logger).Log(
 									definitions.LogKeyMsg, fmt.Sprintf("Failed to save reinitialized model to Redis: %v", err),
+								)
+							}
+
+							// Also save to the additional features key
+							if err := globalTrainer.SaveAdditionalFeaturesToRedis(); err != nil {
+								level.Error(log.Logger).Log(
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to save additional features model to Redis: %v", err),
 								)
 							}
 						}

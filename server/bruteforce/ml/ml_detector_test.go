@@ -125,6 +125,58 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 	}
 }
 
+func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
+	// Set up test configuration
+	setupTestConfig()
+
+	// Create a Redis mock
+	db, mock := redismock.NewClientMock()
+	if db == nil || mock == nil {
+		t.Fatalf("Failed to create Redis mock client.")
+	}
+
+	// Inject the mock client
+	rediscli.NewTestClient(db)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Create an ML trainer
+	trainer := NewMLTrainer().WithContext(ctx)
+
+	// Initialize the model with additional features (8 inputs total: 6 standard + 2 additional)
+	trainer.model = NewNeuralNetwork(8, 1)
+
+	// Set up expectations for SaveAdditionalFeaturesToRedis
+	// The model is saved as a JSON string using SET
+	// Use a matcher that accepts any string for the model data
+	additionalFeaturesKey := GetAdditionalFeaturesRedisKey()
+	mock.Regexp().ExpectSet(additionalFeaturesKey, `.*`, 30*24*time.Hour).SetVal("OK")
+
+	// Save the additional features model
+	err := trainer.SaveAdditionalFeaturesToRedis()
+	assert.NoError(t, err, "SaveAdditionalFeaturesToRedis should not return an error")
+
+	// Set up expectations for LoadAdditionalFeaturesFromRedis
+	// The model is loaded as a JSON string using GET
+	// Provide a valid JSON model structure for the test
+	mock.ExpectGet(additionalFeaturesKey).SetVal(`{"input_size":8,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8],"learning_rate":0.01,"activation_function":"sigmoid"}`)
+
+	// Load the additional features model
+	err = trainer.LoadAdditionalFeaturesFromRedis()
+	assert.NoError(t, err, "LoadAdditionalFeaturesFromRedis should not return an error")
+
+	// Verify the model was loaded correctly
+	assert.Equal(t, 8, trainer.model.inputSize, "Model input size should be 8")
+	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
+	assert.Equal(t, 8, len(trainer.model.weights), "Model should have 8 weights")
+
+	// Verify all expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
 func TestMLTrainer_GetTrainingDataFromRedis(t *testing.T) {
 	// Set up test configuration
 	setupTestConfig()
