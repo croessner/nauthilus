@@ -356,12 +356,17 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 		return err
 	}
 
-	if err := L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(definitions.LuaFnCallAction),
-		NRet:    1,
-		Protect: true,
-	}, request); err != nil {
-		return err
+	// Check if the script has a nauthilus_call_action function
+	actionFunc := L.GetGlobal(definitions.LuaFnCallAction)
+
+	if actionFunc.Type() == lua.LTFunction {
+		if err := L.CallByParam(lua.P{
+			Fn:      L.GetGlobal(definitions.LuaFnCallAction),
+			NRet:    1,
+			Protect: true,
+		}, request); err != nil {
+			return err
+		}
 	}
 
 	return nil

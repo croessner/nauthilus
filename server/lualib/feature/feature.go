@@ -159,7 +159,7 @@ func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
 }
 
 // registerModule preloads a Lua module by its name into the Lua state if not already registered in the registry.
-// It supports specific modules like context, HTTP requests, and LDAP, raising errors for unsupported configurations.
+// It supports specific modules like context, HTTP requests, LDAP, and neural, raising errors for unsupported configurations.
 func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
 	switch modName {
 	case definitions.LuaModContext:
@@ -172,6 +172,8 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
+	case definitions.LuaModNeural:
+		L.PreloadModule(modName, lualib.LoaderModNeural(ctx))
 	default:
 		return
 	}
@@ -253,6 +255,7 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 		}
 
 		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+
 		L.SetContext(luaCtx)
 
 		if err = lualib.PackagePath(L); err != nil {
@@ -267,26 +270,31 @@ func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.L
 			break
 		}
 
-		if err = L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(definitions.LuaFnCallFeature),
-			NRet:    3,
-			Protect: true,
-		}, request); err != nil {
-			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
+		// Check if the script has a nauthilus_call_feature function
+		callFeaturesFunc := L.GetGlobal(definitions.LuaFnCallFeature)
 
-			break
+		if callFeaturesFunc.Type() == lua.LTFunction {
+			if err = L.CallByParam(lua.P{
+				Fn:      L.GetGlobal(definitions.LuaFnCallFeature),
+				NRet:    3,
+				Protect: true,
+			}, request); err != nil {
+				r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
+
+				break
+			}
+
+			ret := L.ToInt(-1)
+			L.Pop(1)
+
+			abortFeatures = L.ToBool(-1)
+			L.Pop(1)
+
+			triggered = L.ToBool(-1)
+			L.Pop(1)
+
+			r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 		}
-
-		ret := L.ToInt(-1)
-		L.Pop(1)
-
-		abortFeatures = L.ToBool(-1)
-		L.Pop(1)
-
-		triggered = L.ToBool(-1)
-		L.Pop(1)
-
-		r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
 
 		if stopTimer != nil {
 			stopTimer()
@@ -352,4 +360,93 @@ func (r *Request) formatResult(ret int) string {
 	}
 
 	return fmt.Sprintf("unknown(%d)", ret)
+}
+
+// CollectAdditionalFeatures executes Lua scripts to collect additional features for the neural network.
+// It creates a new Lua state, registers the neural module, and executes all feature scripts.
+// The additional features are stored in the context for later use by the neural network.
+// Returns an error if any occur during script execution.
+func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
+	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
+		return errors.ErrNoFiltersDefined // Using existing error for no filters defined
+	}
+
+	r.Logs = new(lualib.CustomLogKeyValue)
+
+	LuaFeatures.Mu.RLock()
+
+	defer LuaFeatures.Mu.RUnlock()
+
+	L := lua.NewState()
+
+	defer L.Close()
+
+	// Register the dynamic loader
+	r.registerDynamicLoader(L, ctx)
+	L.PreloadModule(definitions.LuaModNeural, lualib.LoaderModNeural(ctx))
+
+	// Set up globals
+	globals := L.NewTable()
+
+	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
+
+	L.SetGlobal(definitions.LuaDefaultTable, globals)
+
+	request := r.setRequest(L)
+
+	// Execute each feature script
+	for _, script := range LuaFeatures.LuaScripts {
+		if L.GetTop() != 0 {
+			L.SetTop(0)
+		}
+
+		if stderrors.Is(ctx.Err(), context.Canceled) {
+			return ctx.Err()
+		}
+
+		stopTimer := stats.PrometheusTimer(definitions.PromFeature, script.Name)
+
+		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+
+		L.SetContext(luaCtx)
+
+		err := lualib.PackagePath(L)
+		if err != nil {
+			r.handleError(luaCancel, err, script.Name, stopTimer)
+
+			return err
+		}
+
+		err = lualib.DoCompiledFile(L, script.CompiledScript)
+		if err != nil {
+			r.handleError(luaCancel, err, script.Name, stopTimer)
+
+			return err
+		}
+
+		// Check if the script has a nauthilus_call_neural_network function
+		collectFeaturesFunc := L.GetGlobal(definitions.LuaFnCallNeuralNetwork)
+
+		if collectFeaturesFunc.Type() == lua.LTFunction {
+			err = L.CallByParam(lua.P{
+				Fn:      collectFeaturesFunc,
+				NRet:    0,
+				Protect: true,
+			}, request)
+
+			if err != nil {
+				r.handleError(luaCancel, err, script.Name, stopTimer)
+
+				return err
+			}
+		}
+
+		if stopTimer != nil {
+			stopTimer()
+		}
+
+		luaCancel()
+	}
+
+	return nil
 }
