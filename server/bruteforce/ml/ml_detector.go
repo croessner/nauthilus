@@ -417,15 +417,15 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		"input_size", len(inputs),
 	)
 
-	if len(inputs) != nn.inputSize {
-		// Handle error: input size doesn't match expected size
+	if len(inputs) < nn.inputSize {
+		// Handle error: not enough inputs for the network
 		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Input size mismatch: expected %d, got %d", nn.inputSize, len(inputs)),
+			definitions.LogKeyMsg, fmt.Sprintf("Not enough inputs: expected at least %d, got %d", nn.inputSize, len(inputs)),
 		)
 
 		util.DebugModule(definitions.DbgNeural,
 			"action", "feed_forward_error",
-			"reason", "input_size_mismatch",
+			"reason", "insufficient_inputs",
 			"input_size", len(inputs),
 			"expected_input_size", nn.inputSize,
 		)
@@ -434,13 +434,29 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		return []float64{0.5}
 	}
 
+	// If there are more inputs than expected, log a warning but continue with the first nn.inputSize inputs
+	if len(inputs) > nn.inputSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "feed_forward_warning",
+			"reason", "extra_inputs",
+			"input_size", len(inputs),
+			"using_input_size", nn.inputSize,
+		)
+	}
+
 	// Implement a simple feed-forward neural network with one hidden layer
 	// 1. Calculate hidden layer activations
+
+	// Use the actual number of inputs, but limit to nn.inputSize to match the weights
+	actualInputSize := len(inputs)
+	if actualInputSize > nn.inputSize {
+		actualInputSize = nn.inputSize
+	}
 
 	hiddenActivations := make([]float64, nn.hiddenSize)
 	for i := 0; i < nn.hiddenSize; i++ {
 		sum := 0.0
-		for j := 0; j < nn.inputSize; j++ {
+		for j := 0; j < actualInputSize; j++ {
 			// Get weight from input j to hidden i
 			weightIndex := i*nn.inputSize + j
 			if weightIndex < len(nn.weights) {
@@ -1356,6 +1372,133 @@ type BruteForceMLDetector struct {
 
 // SetAdditionalFeatures sets additional features for the detector
 func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
+	// Check if we need to reinitialize the model due to new additional features
+	if d.model != nil && features != nil && len(features) > 0 {
+		// Calculate the expected input size based on standard features (6) plus additional features
+		expectedInputSize := 6 + len(features)
+
+		// If the model's input size is smaller than what we need, we need to reinitialize
+		if d.model.inputSize < expectedInputSize {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "reinitialize_model_for_additional_features",
+				"current_input_size", d.model.inputSize,
+				"expected_input_size", expectedInputSize,
+				"additional_features_count", len(features),
+				definitions.LogKeyGUID, d.guid,
+			)
+
+			// We need to reinitialize the global model to handle the new features
+			if globalTrainer != nil {
+				// Create a new model with the correct input size
+				newModel := NewNeuralNetwork(expectedInputSize, 1)
+
+				// Check if we can find a saved model with the same additional features
+				// to use its weights instead of random initialization
+				tempTrainer := NewMLTrainer().WithContext(d.ctx)
+				err := tempTrainer.LoadModelFromRedis()
+
+				// Flag to track if we found a suitable saved model
+				useSavedWeights := err == nil && tempTrainer.model != nil && tempTrainer.model.inputSize >= expectedInputSize
+
+				if useSavedWeights {
+					util.DebugModule(definitions.DbgNeural,
+						"action", "using_saved_weights_for_additional_features",
+						"saved_model_input_size", tempTrainer.model.inputSize,
+						"expected_input_size", expectedInputSize,
+						definitions.LogKeyGUID, d.guid,
+					)
+				} else {
+					// No suitable saved model found, initialize with random weights
+					util.DebugModule(definitions.DbgNeural,
+						"action", "using_random_weights_for_additional_features",
+						"reason", "no_suitable_saved_model",
+						"error", fmt.Sprintf("%v", err),
+						definitions.LogKeyGUID, d.guid,
+					)
+				}
+
+				// Copy weights for existing connections where possible
+				// For input to hidden layer
+				for i := 0; i < d.model.hiddenSize; i++ {
+					// Copy weights for existing connections
+					for j := 0; j < d.model.inputSize; j++ {
+						oldWeightIndex := i*d.model.inputSize + j
+						newWeightIndex := i*expectedInputSize + j
+
+						if oldWeightIndex < len(d.model.weights) && newWeightIndex < len(newModel.weights) {
+							newModel.weights[newWeightIndex] = d.model.weights[oldWeightIndex]
+						}
+					}
+
+					// Initialize weights for new connections
+					for j := d.model.inputSize; j < expectedInputSize; j++ {
+						newWeightIndex := i*expectedInputSize + j
+
+						if useSavedWeights {
+							// Use weights from the saved model for the new connections
+							savedWeightIndex := i*tempTrainer.model.inputSize + j
+
+							if savedWeightIndex < len(tempTrainer.model.weights) && newWeightIndex < len(newModel.weights) {
+								newModel.weights[newWeightIndex] = tempTrainer.model.weights[savedWeightIndex]
+							}
+						} else {
+							// Initialize with random weights
+							if newWeightIndex < len(newModel.weights) {
+								newModel.weights[newWeightIndex] = (newModel.rng.Float64() - 0.5) * 0.1
+							}
+						}
+					}
+				}
+
+				// For hidden to output layer
+				hiddenToOutputOffset := d.model.inputSize * d.model.hiddenSize
+				newHiddenToOutputOffset := expectedInputSize * newModel.hiddenSize
+
+				for i := 0; i < d.model.outputSize; i++ {
+					for j := 0; j < d.model.hiddenSize; j++ {
+						oldWeightIndex := hiddenToOutputOffset + i*d.model.hiddenSize + j
+						newWeightIndex := newHiddenToOutputOffset + i*newModel.hiddenSize + j
+
+						if oldWeightIndex < len(d.model.weights) && newWeightIndex < len(newModel.weights) {
+							newModel.weights[newWeightIndex] = d.model.weights[oldWeightIndex]
+						}
+					}
+				}
+
+				// Update the global trainer's model
+				globalTrainer.model = newModel
+
+				// Update this detector's model
+				d.model = newModel
+
+				level.Info(log.Logger).Log(
+					definitions.LogKeyGUID, d.guid,
+					definitions.LogKeyMsg, fmt.Sprintf("Reinitialized neural network model to handle %d additional features (new input size: %d)", len(features), expectedInputSize),
+				)
+
+				// Schedule a training to optimize the new weights
+				// Skip training during tests to avoid Redis errors
+				if os.Getenv("NAUTHILUS_TESTING") != "1" {
+					go func() {
+						if err := globalTrainer.TrainWithStoredData(1000, 20); err != nil {
+							level.Error(log.Logger).Log(
+								definitions.LogKeyMsg, fmt.Sprintf("Failed to train model after reinitializing for additional features: %v", err),
+							)
+						} else {
+							// Save the trained model to Redis
+							if err := globalTrainer.SaveModelToRedis(); err != nil {
+								level.Error(log.Logger).Log(
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to save reinitialized model to Redis: %v", err),
+								)
+							}
+						}
+					}()
+				}
+			}
+		}
+	}
+
+	// Set the additional features
 	d.additionalFeatures = features
 }
 
