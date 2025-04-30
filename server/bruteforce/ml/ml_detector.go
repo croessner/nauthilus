@@ -85,6 +85,11 @@ type NeuralNetwork struct {
 
 // NewNeuralNetwork creates a new neural network with the specified layer sizes
 func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
+	return NewNeuralNetworkWithSeed(inputSize, outputSize, time.Now().UnixNano())
+}
+
+// NewNeuralNetworkWithSeed creates a new neural network with the specified layer sizes and a fixed seed for reproducibility
+func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetwork {
 	var hiddenSize int
 
 	hiddenSizeConf := config.GetFile().GetBruteForce().GetNeuralNetwork().HiddenNeurons
@@ -107,10 +112,11 @@ func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
 		"hidden_size", hiddenSize,
 		"output_size", outputSize,
 		"activation_function", activationFunction,
+		"seed", seed,
 	)
 
-	// Create a new random number generator with the current time as seed
-	source := rand.NewSource(time.Now().UnixNano())
+	// Create a new random number generator with the provided seed
+	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
 	// Create a new neural network with properly initialized weights

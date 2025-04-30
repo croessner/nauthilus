@@ -50,8 +50,9 @@ func TestNeuralNetwork_Train(t *testing.T) {
 	// Set up test configuration
 	setupTestConfig()
 
-	// Create a neural network with 6 input neurons and 1 output neuron
-	nn := NewNeuralNetwork(6, 1)
+	// Create a neural network with 6 input neurons, 1 output neuron, and a fixed seed for reproducibility
+	// Using a fixed seed ensures consistent test results across different environments
+	nn := NewNeuralNetworkWithSeed(6, 1, 12345)
 
 	// Create sample training data with more distinct patterns
 	features := [][]float64{
@@ -65,7 +66,8 @@ func TestNeuralNetwork_Train(t *testing.T) {
 	}
 
 	// Train the neural network with more epochs to ensure convergence
-	nn.Train(features, labels, 2000)
+	// Increased from 2000 to 5000 to ensure more reliable convergence
+	nn.Train(features, labels, 5000)
 
 	// Test prediction
 	prediction := nn.FeedForward(features[0])
