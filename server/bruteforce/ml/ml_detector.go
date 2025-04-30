@@ -1540,16 +1540,14 @@ func (d *BruteForceMLDetector) CollectFeatures() (*LoginFeatures, error) {
 		d.additionalFeatures = make(map[string]any)
 	}
 
-	// Add any additional features that have been set
-	if len(d.additionalFeatures) > 0 {
-		features.AdditionalFeatures = d.additionalFeatures
+	// Always set AdditionalFeatures, even if empty
+	features.AdditionalFeatures = d.additionalFeatures
 
-		util.DebugModule(definitions.DbgNeural,
-			"action", "collect_features_additional",
-			"additional_features_count", len(d.additionalFeatures),
-			definitions.LogKeyGUID, d.guid,
-		)
-	}
+	util.DebugModule(definitions.DbgNeural,
+		"action", "collect_features_additional",
+		"additional_features_count", len(d.additionalFeatures),
+		definitions.LogKeyGUID, d.guid,
+	)
 
 	util.DebugModule(definitions.DbgNeural,
 		"action", "collect_features_complete",
