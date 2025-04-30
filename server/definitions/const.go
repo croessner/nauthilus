@@ -1136,6 +1136,9 @@ const (
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 
+	// LuaFnCallNeuralNetwork represents the Lua function name used to invoke a neural network call in the system.
+	LuaFnCallNeuralNetwork = "nauthilus_call_neural_network"
+
 	// LuaFnCallAction represents the function name for "nauthilus_call_action" in Lua
 	LuaFnCallAction = "nauthilus_call_action"
 

@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -191,6 +192,72 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	}
 
 	if config.GetEnvironment().GetExperimentalML() {
+		// Collect additional features from Lua scripts before creating the ML bucket manager
+		if config.GetFile().HaveLuaFeatures() {
+			featureRequest := feature.Request{
+				Context: a.Context,
+				CommonRequest: &lualib.CommonRequest{
+					Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
+					Repeating:           false, // unavailable
+					UserFound:           false, // unavailable,
+					Authenticated:       false, // unavailable
+					NoAuth:              a.NoAuth,
+					BruteForceCounter:   0, // unavailable
+					Service:             a.Service,
+					Session:             *a.GUID,
+					ClientIP:            a.ClientIP,
+					ClientPort:          a.XClientPort,
+					ClientNet:           "", // unavailable
+					ClientHost:          a.ClientHost,
+					ClientID:            a.XClientID,
+					UserAgent:           *a.UserAgent,
+					LocalIP:             a.XLocalIP,
+					LocalPort:           a.XPort,
+					Username:            a.Username,
+					Account:             "", // unavailable
+					AccountField:        "", // unavailable
+					UniqueUserID:        "", // unavailable
+					DisplayName:         "", // unavailable
+					Password:            a.Password,
+					Protocol:            a.Protocol.String(),
+					BruteForceName:      "", // unavailable
+					FeatureName:         "brute_force",
+					StatusMessage:       &a.StatusMessage,
+					XSSL:                a.XSSL,
+					XSSLSessionID:       a.XSSLSessionID,
+					XSSLClientVerify:    a.XSSLClientVerify,
+					XSSLClientDN:        a.XSSLClientDN,
+					XSSLClientCN:        a.XSSLClientCN,
+					XSSLIssuer:          a.XSSLIssuer,
+					XSSLClientNotBefore: a.XSSLClientNotBefore,
+					XSSLClientNotAfter:  a.XSSLClientNotAfter,
+					XSSLSubjectDN:       a.XSSLSubjectDN,
+					XSSLIssuerDN:        a.XSSLIssuerDN,
+					XSSLClientSubjectDN: a.XSSLClientSubjectDN,
+					XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
+					XSSLProtocol:        a.XSSLProtocol,
+					XSSLCipher:          a.XSSLCipher,
+					SSLSerial:           a.SSLSerial,
+					SSLFingerprint:      a.SSLFingerprint,
+				},
+			}
+
+			// Collect additional features
+			err := featureRequest.CollectAdditionalFeatures(a.HTTPClientContext)
+			if err != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyBruteForce, "Failed to collect additional features",
+					"error", err)
+			}
+
+			if featureRequest.Logs != nil {
+				for index := range *featureRequest.Logs {
+					a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
+				}
+			}
+		}
+
 		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 
 		// Check if additional features are available from the Context

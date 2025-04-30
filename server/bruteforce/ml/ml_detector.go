@@ -415,7 +415,6 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "feed_forward_start",
 		"input_size", len(inputs),
-		"expected_input_size", nn.inputSize,
 	)
 
 	if len(inputs) != nn.inputSize {

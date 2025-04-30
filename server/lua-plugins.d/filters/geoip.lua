@@ -17,11 +17,10 @@ local N = "geoippolicyd"
 
 local HCCR = "http_client_concurrent_requests_total"
 
-function nauthilus_call_feature(request)
+function nauthilus_call_neural_network(request)
     if request.no_auth then
-        return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
+        return
     end
-
     local nauthilus_util = require("nauthilus_util")
 
     -- Check if the IP is routable at the very beginning
@@ -32,7 +31,7 @@ function nauthilus_call_feature(request)
 
     -- Early termination for non-routable addresses while respecting the authentication result
     if not is_routable then
-        return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
+        return
     end
 
     if os.getenv("NAUTHILUS_EXPERIMENTAL_ML") == "true" then
@@ -115,7 +114,7 @@ function nauthilus_call_feature(request)
         end
     end
 
-    return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
+    return
 end
 
 function nauthilus_call_filter(request)

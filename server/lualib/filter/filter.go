@@ -404,21 +404,25 @@ func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Reque
 		return false, scriptErr
 	}
 
-	callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(definitions.LuaFnCallFilter), NRet: 2, Protect: true}, request)
-	if callErr != nil {
-		return false, callErr
-	}
+	filterFunc := L.GetGlobal(definitions.LuaFnCallFilter)
 
-	result := L.ToInt(-1)
-	L.Pop(1)
+	if filterFunc.Type() == lua.LTFunction {
+		callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(definitions.LuaFnCallFilter), NRet: 2, Protect: true}, request)
+		if callErr != nil {
+			return false, callErr
+		}
 
-	action := L.ToBool(-1)
-	L.Pop(1)
+		result := L.ToInt(-1)
+		L.Pop(1)
 
-	logResult(r, script, action, result)
+		action := L.ToBool(-1)
+		L.Pop(1)
 
-	if action {
-		return true, err
+		logResult(r, script, action, result)
+
+		if action {
+			return true, err
+		}
 	}
 
 	return false, err

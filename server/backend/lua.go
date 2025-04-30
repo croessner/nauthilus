@@ -246,12 +246,17 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 		processError(err, luaRequest, logs)
 	}
 
-	if err = L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(luaCommand),
-		NRet:    nret,
-		Protect: true,
-	}, request); err != nil {
-		processError(err, luaRequest, logs)
+	// Check if the script has a "luaCommand" function
+	commandFunc := L.GetGlobal(luaCommand)
+
+	if commandFunc.Type() == lua.LTFunction {
+		if err = L.CallByParam(lua.P{
+			Fn:      L.GetGlobal(luaCommand),
+			NRet:    nret,
+			Protect: true,
+		}, request); err != nil {
+			processError(err, luaRequest, logs)
+		}
 	}
 
 	return err
