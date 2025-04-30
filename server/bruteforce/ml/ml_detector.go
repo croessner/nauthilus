@@ -565,7 +565,7 @@ func (t *MLTrainer) InitModel() {
 
 // LoadModelFromRedis loads a previously trained model from Redis
 func (t *MLTrainer) LoadModelFromRedis() error {
-	return t.LoadModelFromRedisWithKey(config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model")
+	return t.LoadModelFromRedisWithKey(getMLRedisKeyPrefix() + "model")
 }
 
 // LoadModelFromRedisWithKey loads a previously trained model from Redis using the specified key
@@ -644,7 +644,7 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 
 // SaveModelToRedis saves the trained neural network model to Redis
 func (t *MLTrainer) SaveModelToRedis() error {
-	return t.SaveModelToRedisWithKey(config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:model")
+	return t.SaveModelToRedisWithKey(getMLRedisKeyPrefix() + "model")
 }
 
 // SaveModelToRedisWithKey saves the trained neural network model to Redis using the specified key
@@ -1380,9 +1380,15 @@ type BruteForceMLDetector struct {
 	additionalFeatures map[string]any
 }
 
+// getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
+func getMLRedisKeyPrefix() string {
+	instanceName := config.GetFile().GetServer().GetInstanceName()
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:" + instanceName + ":trained:"
+}
+
 // GetAdditionalFeaturesRedisKey returns the Redis key for additional features
 func GetAdditionalFeaturesRedisKey() string {
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:trained:additional_features"
+	return getMLRedisKeyPrefix() + "additional_features"
 }
 
 // SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
