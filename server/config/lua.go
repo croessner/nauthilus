@@ -140,6 +140,7 @@ func (l *LuaFilter) String() string {
 }
 
 type LuaConf struct {
+	NumberOfWorkers   int    `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=100"`
 	PackagePath       string `mapstructure:"package_path"`
 	BackendScriptPath string `mapstructure:"backend_script_path" validate:"omitempty,file"`
 	InitScriptPath    string `mapstructure:"init_script_path" validate:"omitempty,file"`
@@ -151,6 +152,19 @@ func (l *LuaConf) String() string {
 	}
 
 	return l.BackendScriptPath
+}
+
+// GetNumberOfWorkers returns the number of workers configured in the LuaConf object. Defaults to 0 if the receiver is nil.
+func (l *LuaConf) GetNumberOfWorkers() int {
+	if l == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if l.NumberOfWorkers == 0 {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	return l.NumberOfWorkers
 }
 
 type LuaSearchProtocol struct {

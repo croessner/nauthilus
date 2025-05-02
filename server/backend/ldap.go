@@ -40,27 +40,31 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 	ldapPool.SetIdleConnections(true)
 
-	for {
-		select {
-		case <-ctx.Done():
-			ldapPool.Close()
+	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetLookupEndChan(poolName) <- bktype.Done{}
+					GetChannel().GetLdapChannel().GetLookupEndChan(poolName) <- bktype.Done{}
 
-			return
+					return
 
-		case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(poolName):
-			// Check that we have enough idle connections.
-			if err := ldapPool.SetIdleConnections(true); err != nil {
-				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+				case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(poolName):
+					// Check that we have enough idle connections.
+					if err := ldapPool.SetIdleConnections(true); err != nil {
+						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					}
+
+					if err := ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup); err != nil {
+						ldapWaitGroup.Done()
+
+						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					}
+				}
 			}
-
-			if err := ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup); err != nil {
-				ldapWaitGroup.Done()
-
-				ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
-			}
-		}
+		}()
 	}
 }
 
@@ -76,26 +80,30 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 	ldapPool.SetIdleConnections(false)
 
-	for {
-		select {
-		case <-ctx.Done():
-			ldapPool.Close()
+	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					ldapPool.Close()
 
-			GetChannel().GetLdapChannel().GetAuthEndChan(poolName) <- bktype.Done{}
+					GetChannel().GetLdapChannel().GetAuthEndChan(poolName) <- bktype.Done{}
 
-			return
-		case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(poolName):
-			// Check that we have enough idle connections.
-			if err := ldapPool.SetIdleConnections(false); err != nil {
-				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					return
+				case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(poolName):
+					// Check that we have enough idle connections.
+					if err := ldapPool.SetIdleConnections(false); err != nil {
+						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					}
+
+					if err := ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup); err != nil {
+						ldapWaitGroup.Done()
+
+						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+					}
+				}
 			}
-
-			if err := ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup); err != nil {
-				ldapWaitGroup.Done()
-
-				ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
-			}
-		}
+		}()
 	}
 }
 

@@ -276,6 +276,9 @@ const (
 	// MaxActionWorkers is the maximum number of action workers
 	MaxActionWorkers = 10
 
+	// DefaultNumberOfWorkers defines the default number of workers to be used if no specific value is provided.
+	DefaultNumberOfWorkers = 10
+
 	// MaxConcurrentRequests represents the maximum number of simultaneous connections allowed.
 	MaxConcurrentRequests = 3000
 
