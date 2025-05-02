@@ -60,11 +60,16 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It ensures graceful termination by signaling completion through the Done channel.
 func LuaMainWorker(ctx context.Context, backendName string) (err error) {
-	var scriptPath string
+	var (
+		numberOfWorkers int
+		scriptPath      string
+	)
 
 	errMsg := fmt.Sprintf("Lua backend script path not set for backend %s", backendName)
 
 	if backendName == definitions.DefaultBackendName {
+		numberOfWorkers = config.GetFile().GetLuaNumberOfWorkers()
+
 		scriptPath = config.GetFile().GetLuaScriptPath()
 		if scriptPath == "" {
 			panic(errMsg)
@@ -77,6 +82,8 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 		}
 
 		if backendConf, found := optionalBackends[backendName]; found {
+			numberOfWorkers = backendConf.GetNumberOfWorkers()
+
 			if backendConf.BackendScriptPath != "" {
 				scriptPath = backendConf.BackendScriptPath
 			} else {
@@ -92,17 +99,31 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 		panic(err)
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			GetChannel().GetLuaChannel().GetLookupEndChan(backendName) <- bktype.Done{}
+	util.DebugModule(
+		definitions.DbgLua,
+		definitions.LogKeyMsg, "lua_main_worker_created",
+		definitions.LogKeyBackendName, backendName,
+		"number_of_workers", numberOfWorkers,
+		"script_path", scriptPath,
+	)
 
-			return
+	for i := 0; i < numberOfWorkers; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					GetChannel().GetLuaChannel().GetLookupEndChan(backendName) <- bktype.Done{}
 
-		case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(backendName):
-			go handleLuaRequest(ctx, luaRequest, compiledScript)
-		}
+					return
+
+				case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(backendName):
+					handleLuaRequest(ctx, luaRequest, compiledScript)
+				}
+			}
+		}()
 	}
+
+	return
 }
 
 // registerDynamicLoader registers a dynamic_loader function in the Lua state to dynamically load modules at runtime.

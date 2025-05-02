@@ -90,6 +90,7 @@ type LDAPConf struct {
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 	SASLExternal  bool `mapstructure:"sasl_external"`
 
+	NumberOfWorkers    int `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=100"`
 	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"required,min=1"`
 	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"omitempty,min=0"`
 	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"validateAuthPoolRequired"`
@@ -146,6 +147,19 @@ func (l *LDAPConf) String() string {
 	}
 
 	return result[1:]
+}
+
+// GetNumberOfWorkers returns the number of workers configured in the LDAPConf. Returns 0 if the LDAPConf is nil.
+func (l *LDAPConf) GetNumberOfWorkers() int {
+	if l == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if l.NumberOfWorkers == 0 {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	return l.NumberOfWorkers
 }
 
 type LDAPFilter struct {

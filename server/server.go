@@ -409,36 +409,29 @@ func startActionWorker(actionWorkers []*action.Worker, act *contextTuple) {
 // startLDAPWorkers initializes and starts LDAP worker routines for lookup and authentication based on the configuration.
 // It launches the `LDAPMainWorker` for processing LDAP requests and, if applicable, `LDAPAuthWorker` for authentication.
 func startLDAPWorkers(store *contextStore) {
-	go backend.LDAPMainWorker(store.ldapLookup.ctx, definitions.DefaultBackendName)
-
-	if !config.GetFile().LDAPHavePoolOnly(definitions.DefaultBackendName) {
-		go backend.LDAPAuthWorker(store.ldapAuth.ctx, definitions.DefaultBackendName)
-	}
-
 	for _, ldapBackend := range config.GetFile().GetServer().GetBackends() {
-		if ldapBackend.GetName() != "" && ldapBackend.Get() == definitions.BackendLDAP {
-			backend.GetChannel().GetLdapChannel().AddChannel(ldapBackend.GetName())
-
-			go backend.LDAPMainWorker(store.ldapLookup.ctx, ldapBackend.GetName())
-
-			if !config.GetFile().LDAPHavePoolOnly(ldapBackend.GetName()) {
-				go backend.LDAPAuthWorker(store.ldapAuth.ctx, ldapBackend.GetName())
-			}
+		if ldapBackend.GetName() != "" && ldapBackend.Get() != definitions.BackendLDAP {
+			continue
 		}
 
+		backend.GetChannel().GetLdapChannel().AddChannel(ldapBackend.GetName())
+		backend.LDAPMainWorker(store.ldapLookup.ctx, ldapBackend.GetName())
+
+		if !config.GetFile().LDAPHavePoolOnly(ldapBackend.GetName()) {
+			backend.LDAPAuthWorker(store.ldapAuth.ctx, ldapBackend.GetName())
+		}
 	}
 }
 
-// startLuaWorker starts a goroutine that runs the backend.LuaMainWorker function
-func startLuaWorker(store *contextStore) {
-	go backend.LuaMainWorker(store.lua.ctx, definitions.DefaultBackendName)
-
+// startLuaWorkers starts a goroutine that runs the backend.LuaMainWorker function
+func startLuaWorkers(store *contextStore) {
 	for _, luaBackend := range config.GetFile().GetServer().GetBackends() {
-		if luaBackend.GetName() != "" && luaBackend.Get() == definitions.BackendLua {
-			backend.GetChannel().GetLuaChannel().AddChannel(luaBackend.GetName())
-
-			go backend.LuaMainWorker(store.lua.ctx, luaBackend.GetName())
+		if luaBackend.GetName() != "" && luaBackend.Get() != definitions.BackendLua {
+			continue
 		}
+
+		backend.GetChannel().GetLuaChannel().AddChannel(luaBackend.GetName())
+		backend.LuaMainWorker(store.lua.ctx, luaBackend.GetName())
 	}
 }
 
@@ -462,6 +455,13 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 
 // handleReload reloads the server configurations, restarts backend workers, and applies the new settings dynamically.
 func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
+	var (
+		ldapStopped bool
+		ldapStarted bool
+		luaStopped  bool
+		luaStarted  bool
+	)
+
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, "Reloading Nauthilus", "signal", sig,
 	)
@@ -469,9 +469,21 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
+			if ldapStopped {
+				continue
+			}
+
 			handleLDAPBackend(store.ldapLookup, store.ldapAuth)
+
+			ldapStopped = true
 		case definitions.BackendLua:
+			if luaStopped {
+				continue
+			}
+
 			handleLuaBackend(store.lua)
+
+			luaStopped = true
 		case definitions.BackendCache:
 		default:
 			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
@@ -508,14 +520,21 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			store.ldapLookup = newContextTuple(ctx)
-			store.ldapAuth = newContextTuple(ctx)
+			if ldapStarted {
+				continue
+			}
 
-			startLDAPWorkers(store)
+			setupLDAPWorker(store, ctx)
+
+			ldapStarted = true
 		case definitions.BackendLua:
-			store.lua = newContextTuple(ctx)
+			if luaStarted {
+				continue
+			}
 
-			startLuaWorker(store)
+			setupLuaWorker(store, ctx)
+
+			luaStarted = true
 		case definitions.BackendCache:
 		default:
 			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
@@ -544,14 +563,31 @@ func initializeActionWorkers() []*action.Worker {
 
 // setupWorkers initializes action workers and backend workers (LDAP, Lua, etc.) based on the provided configuration.
 func setupWorkers(ctx context.Context, store *contextStore, actionWorkers []*action.Worker) {
+	var (
+		ldapStarted bool
+		luaStarted  bool
+	)
+
 	startActionWorker(actionWorkers, store.action)
 
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
+			if ldapStarted {
+				continue
+			}
+
 			setupLDAPWorker(store, ctx)
+
+			ldapStarted = true
 		case definitions.BackendLua:
+			if luaStarted {
+				continue
+			}
+
 			setupLuaWorker(store, ctx)
+
+			luaStarted = true
 		case definitions.BackendCache:
 		default:
 			level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
@@ -571,7 +607,7 @@ func setupLDAPWorker(store *contextStore, ctx context.Context) {
 func setupLuaWorker(store *contextStore, ctx context.Context) {
 	store.lua = newContextTuple(ctx)
 
-	startLuaWorker(store)
+	startLuaWorkers(store)
 }
 
 // checkRedisConnections validates the availability of both write and read Redis connections using Ping commands.

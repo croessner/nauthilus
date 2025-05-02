@@ -276,6 +276,9 @@ const (
 	// MaxActionWorkers is the maximum number of action workers
 	MaxActionWorkers = 10
 
+	// DefaultNumberOfWorkers defines the default number of workers to be used if no specific value is provided.
+	DefaultNumberOfWorkers = 10
+
 	// MaxConcurrentRequests represents the maximum number of simultaneous connections allowed.
 	MaxConcurrentRequests = 3000
 
@@ -1014,6 +1017,9 @@ const (
 	// LuaModBruteForce is a constant representing the module name for handling brute force prevention functionalities.
 	LuaModBruteForce = "nauthilus_brute_force"
 
+	// LuaModDNS represents the module identifier for DNS-related Lua functionality.
+	LuaModDNS = "nauthilus_dns"
+
 	// LuaModGLuaCrypto is a constant that represents the name of the GLuaCrypto module in Lua.
 	LuaModGLuaCrypto = "nauthilus_gluacrypto"
 
@@ -1377,6 +1383,9 @@ const (
 
 	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
 	LuaFnAddAdditionalFeatures = "add_additional_features"
+
+	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
+	LuaFnDNSResolve = "resolve"
 )
 
 const (

@@ -38,6 +38,9 @@ type LDAPPool interface {
 	// StartHouseKeeper starts a background process for resource management and cleanup within the LDAP pool.
 	StartHouseKeeper()
 
+	// GetNumberOfWorkers returns the total number of workers allocated to the LDAP pool.
+	GetNumberOfWorkers() int
+
 	// SetIdleConnections configures and manages idle connections in the pool based on the provided bind parameter.
 	SetIdleConnections(bind bool) error
 
@@ -61,6 +64,9 @@ type ldapPoolImpl struct {
 
 	// idlePoolSize defines the maximum number of idle connections in the connection pool.
 	idlePoolSize int
+
+	// numberOfWorkers specifies the total count of workers allocated for a specific task or operation in the program.
+	numberOfWorkers int
 
 	// name specifies the name of the LDAP connection pool.
 	name string
@@ -167,25 +173,31 @@ func (l *ldapPoolImpl) Close() {
 	)
 }
 
+// GetNumberOfWorkers returns the number of workers currently configured in the LDAP pool.
+func (l *ldapPoolImpl) GetNumberOfWorkers() int {
+	return l.numberOfWorkers
+}
+
 var _ LDAPPool = (*ldapPoolImpl)(nil)
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
 func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	var (
-		poolSize      int
-		idlePoolSize  int
-		name          string
-		conn          []LDAPConnection
-		conf          []*config.LDAPConf
-		serverURIs    []string
-		bindDN        string
-		bindPW        string
-		startTLS      bool
-		tlsSkipVerify bool
-		tlsCAFile     string
-		tlsClientCert string
-		tlsClientKey  string
-		saslExternal  bool
+		poolSize        int
+		idlePoolSize    int
+		numberOfWorkers int
+		name            string
+		conn            []LDAPConnection
+		conf            []*config.LDAPConf
+		serverURIs      []string
+		bindDN          string
+		bindPW          string
+		startTLS        bool
+		tlsSkipVerify   bool
+		tlsCAFile       string
+		tlsClientCert   string
+		tlsClientKey    string
+		saslExternal    bool
 	)
 
 	if config.GetFile().GetLDAP() == nil {
@@ -195,6 +207,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	poolMap := config.GetFile().GetLDAP().GetOptionalLDAPPools()
 
 	if poolName == definitions.DefaultBackendName {
+		numberOfWorkers = config.GetFile().GetLDAPConfigNumberOfWorkers()
 		serverURIs = config.GetFile().GetLDAPConfigServerURIs()
 		bindDN = config.GetFile().GetLDAPConfigBindDN()
 		bindPW = config.GetFile().GetLDAPConfigBindPW()
@@ -209,6 +222,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 			panic(fmt.Sprintf("LDAP pool %s is not defined", poolName))
 		}
 
+		numberOfWorkers = poolMap[poolName].GetNumberOfWorkers()
 		serverURIs = poolMap[poolName].ServerURIs
 		bindDN = poolMap[poolName].BindDN
 		bindPW = poolMap[poolName].BindPW
@@ -270,14 +284,25 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		conn[index].SetState(definitions.LDAPStateClosed)
 	}
 
+	util.DebugModule(
+		definitions.DbgLDAPPool,
+		definitions.LogKeyMsg, "ldap_worker_created",
+		definitions.LogKeyLDAPPoolName, name,
+		"number_of_workers", numberOfWorkers,
+		"pool_type", poolType,
+		"pool_size", poolSize,
+		"idle_pool_size", idlePoolSize,
+	)
+
 	return &ldapPoolImpl{
-		poolType:     poolType,
-		poolSize:     poolSize,
-		idlePoolSize: idlePoolSize,
-		ctx:          ctx,
-		name:         name,
-		conn:         conn,
-		conf:         conf,
+		numberOfWorkers: numberOfWorkers,
+		poolType:        poolType,
+		poolSize:        poolSize,
+		idlePoolSize:    idlePoolSize,
+		ctx:             ctx,
+		name:            name,
+		conn:            conn,
+		conf:            conf,
 	}
 }
 

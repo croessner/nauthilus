@@ -103,6 +103,9 @@ type File interface {
 	// GetLuaPackagePath retrieves the Lua package path from the configuration.
 	GetLuaPackagePath() string
 
+	// GetLuaNumberOfWorkers returns the number of Lua workers configured for handling Lua scripts.
+	GetLuaNumberOfWorkers() int
+
 	// GetLuaScriptPath returns the path to the Lua script.
 	GetLuaScriptPath() string
 
@@ -151,6 +154,9 @@ type File interface {
 
 	// GetLDAPConfigTLSClientKey returns the TLS client key for LDAP.
 	GetLDAPConfigTLSClientKey() string
+
+	// GetLDAPConfigNumberOfWorkers returns the configured number of worker threads for LDAP processing.
+	GetLDAPConfigNumberOfWorkers() int
 
 	// GetLDAPConfigServerURIs retrieves a list of LDAP server URIs.
 	GetLDAPConfigServerURIs() []string
@@ -410,6 +416,24 @@ func (f *FileSettings) GetBackendServer(protocol string) *BackendServer {
 /*
  * LDAP Config
  */
+
+// GetLDAPConfigNumberOfWorkers retrieves the number of workers for the LDAP configuration. Defaults to a predefined value.
+func (f *FileSettings) GetLDAPConfigNumberOfWorkers() int {
+	if f == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLDAP)
+	if getConfig == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
+		return ldapConf.GetNumberOfWorkers()
+	}
+
+	return definitions.DefaultNumberOfWorkers
+}
 
 // GetLDAPConfigStartTLS determines if StartTLS is enabled for the LDAP configuration in the provided file.
 // Returns false if the file or configuration is nil or not of type *LDAPConf.
@@ -718,6 +742,24 @@ func (f *FileSettings) GetLDAPOptionalPools() map[string]*LDAPConf {
 /*
  * Lua config
  */
+
+// GetLuaNumberOfWorkers retrieves the number of workers configured for the Lua backend or returns the default if unset.
+func (f *FileSettings) GetLuaNumberOfWorkers() int {
+	if f == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetNumberOfWorkers()
+	}
+
+	return definitions.DefaultNumberOfWorkers
+}
 
 // GetLuaScriptPath retrieves the backend Lua script file path from the configuration. Returns an empty string if unavailable.
 func (f *FileSettings) GetLuaScriptPath() string {
