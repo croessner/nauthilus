@@ -1339,7 +1339,6 @@ func InitMLSystem(ctx context.Context) error {
 // ShutdownMLSystem properly cleans up the ML system
 // This should be called during application shutdown
 func ShutdownMLSystem() {
-
 	shutdownMutex.Lock()
 
 	defer shutdownMutex.Unlock()
@@ -1383,6 +1382,7 @@ type BruteForceMLDetector struct {
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
+
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:" + instanceName + ":trained:"
 }
 

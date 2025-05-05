@@ -102,6 +102,11 @@ function nauthilus_run_hook(logging)
         nauthilus_psnet.register_connection_target(geoip_policyd_addr, "remote", "geoippolicyd")
     end
 
+    -- neural.lua
+    if geoip_policyd_addr then
+        nauthilus_prometheus.create_histogram_vec("neural_duration_seconds", "HTTP request to the neural service", { "http" })
+    end
+
     result.status = "finished"
 
     if logging.log_level == "debug" or logging.log_level == "info" then
