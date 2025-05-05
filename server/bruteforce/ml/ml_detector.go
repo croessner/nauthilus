@@ -1247,6 +1247,9 @@ var (
 	// Global model trainer
 	globalTrainer *MLTrainer
 
+	// RWMutex to protect access to globalTrainer
+	globalTrainerMutex sync.RWMutex
+
 	// Channel to signal training goroutine to stop
 	stopTrainingChan chan struct{}
 
@@ -1301,8 +1304,13 @@ func InitMLSystem(ctx context.Context) error {
 						definitions.LogKeyMsg, "Starting scheduled model training",
 					)
 
+					// Acquire write lock before training
+					globalTrainerMutex.RLock()
+					localTrainer := globalTrainer
+					globalTrainerMutex.RUnlock()
+
 					// Train with the last 5000 samples for 50 epochs
-					if trainErr := trainer.TrainWithStoredData(5000, 50); trainErr != nil {
+					if trainErr := localTrainer.TrainWithStoredData(5000, 50); trainErr != nil {
 						level.Error(log.Logger).Log(
 							definitions.LogKeyMsg, fmt.Sprintf("Scheduled training failed: %v", trainErr),
 						)
@@ -1311,7 +1319,7 @@ func InitMLSystem(ctx context.Context) error {
 					}
 
 					// Save the trained model to Redis
-					if saveErr := trainer.SaveModelToRedis(); saveErr != nil {
+					if saveErr := localTrainer.SaveModelToRedis(); saveErr != nil {
 						level.Error(log.Logger).Log(
 							definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis: %v", saveErr),
 						)
@@ -1321,7 +1329,11 @@ func InitMLSystem(ctx context.Context) error {
 		}()
 
 		schedulerStarted = true
+
+		// Acquire write lock before setting globalTrainer
+		globalTrainerMutex.Lock()
 		globalTrainer = trainer
+		globalTrainerMutex.Unlock()
 
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_ml_system_complete",
@@ -1365,7 +1377,10 @@ func ShutdownMLSystem() {
 	}
 
 	// Clear global variables
+	globalTrainerMutex.Lock()
 	globalTrainer = nil
+	globalTrainerMutex.Unlock()
+
 	stopTrainingChan = nil
 }
 
@@ -1419,7 +1434,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 			)
 
 			// We need to reinitialize the global model to handle the new features
-			if globalTrainer != nil {
+			globalTrainerMutex.RLock()
+			trainerExists := globalTrainer != nil
+			globalTrainerMutex.RUnlock()
+
+			if trainerExists {
 				// Create a new model with the correct input size
 				newModel := NewNeuralNetwork(expectedInputSize, 1)
 
@@ -1511,7 +1530,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 				}
 
 				// Update the global trainer's model
-				globalTrainer.model = newModel
+				globalTrainerMutex.Lock()
+				if globalTrainer != nil {
+					globalTrainer.model = newModel
+				}
+				globalTrainerMutex.Unlock()
 
 				// Update this detector's model
 				d.model = newModel
@@ -1525,20 +1548,33 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 				// Skip training during tests to avoid Redis errors
 				if os.Getenv("NAUTHILUS_TESTING") != "1" {
 					go func() {
-						if err := globalTrainer.TrainWithStoredData(1000, 20); err != nil {
+						// Get a local copy of globalTrainer
+						globalTrainerMutex.RLock()
+						localTrainer := globalTrainer
+						globalTrainerMutex.RUnlock()
+
+						if localTrainer == nil {
+							level.Error(log.Logger).Log(
+								definitions.LogKeyMsg, "Cannot train model: global trainer is nil",
+							)
+
+							return
+						}
+
+						if err := localTrainer.TrainWithStoredData(1000, 20); err != nil {
 							level.Error(log.Logger).Log(
 								definitions.LogKeyMsg, fmt.Sprintf("Failed to train model after reinitializing for additional features: %v", err),
 							)
 						} else {
 							// Save the trained model to both Redis keys
-							if err := globalTrainer.SaveModelToRedis(); err != nil {
+							if err := localTrainer.SaveModelToRedis(); err != nil {
 								level.Error(log.Logger).Log(
 									definitions.LogKeyMsg, fmt.Sprintf("Failed to save reinitialized model to Redis: %v", err),
 								)
 							}
 
 							// Also save to the additional features key
-							if err := globalTrainer.SaveAdditionalFeaturesToRedis(); err != nil {
+							if err := localTrainer.SaveAdditionalFeaturesToRedis(); err != nil {
 								level.Error(log.Logger).Log(
 									definitions.LogKeyMsg, fmt.Sprintf("Failed to save additional features model to Redis: %v", err),
 								)
@@ -1563,8 +1599,13 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		definitions.LogKeyUsername, username,
 	)
 
+	// Acquire read lock to check if globalTrainer is nil
+	globalTrainerMutex.RLock()
+	trainerIsNil := globalTrainer == nil
+	globalTrainerMutex.RUnlock()
+
 	// Ensure the ML system is initialized
-	if globalTrainer == nil {
+	if trainerIsNil {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "get_detector_init_system",
 			"reason", "global_trainer_nil",
@@ -1585,14 +1626,19 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		}
 	}
 
+	// Acquire read lock to get the model
+	globalTrainerMutex.RLock()
+	model := globalTrainer.GetModel()
+	globalTrainerMutex.RUnlock()
+
 	// Create a new detector for this request
 	detector := &BruteForceMLDetector{
 		ctx:                ctx,
 		guid:               guid,
 		clientIP:           clientIP,
 		username:           username,
-		model:              globalTrainer.GetModel(), // Use the globally trained model
-		additionalFeatures: make(map[string]any),     // Initialize empty additional features
+		model:              model,                // Use the globally trained model
+		additionalFeatures: make(map[string]any), // Initialize empty additional features
 	}
 
 	util.DebugModule(definitions.DbgNeural,
