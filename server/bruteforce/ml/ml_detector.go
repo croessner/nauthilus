@@ -1128,6 +1128,59 @@ func (t *MLTrainer) GetModel() *NeuralNetwork {
 	return t.model
 }
 
+// ShouldIgnoreIP checks if an IP address should be ignored for ML training.
+// It applies the same filtering logic as the CheckBruteForce function:
+// - Checks if the IP is localhost or empty
+// - Checks if the IP is in the soft whitelist
+// - Checks if the IP is in the IP whitelist
+func ShouldIgnoreIP(clientIP, username, guid string) bool {
+	// Check if the IP is localhost or empty
+	if clientIP == definitions.Localhost4 || clientIP == definitions.Localhost6 || clientIP == "" {
+		util.DebugModule(
+			definitions.DbgNeural,
+			"action", "ignore_ip_for_ml_training",
+			"reason", "localhost_or_empty",
+			"client_ip", clientIP,
+			"guid", guid,
+		)
+
+		return true
+	}
+
+	// Check if the IP is in the soft whitelist
+	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(username, clientIP, guid, config.GetFile().GetBruteForce().SoftWhitelist) {
+			util.DebugModule(
+				definitions.DbgNeural,
+				"action", "ignore_ip_for_ml_training",
+				"reason", "soft_whitelisted",
+				"client_ip", clientIP,
+				"username", username,
+				"guid", guid,
+			)
+
+			return true
+		}
+	}
+
+	// Check if the IP is in the IP whitelist
+	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
+		if util.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist, guid, clientIP) {
+			util.DebugModule(
+				definitions.DbgNeural,
+				"action", "ignore_ip_for_ml_training",
+				"reason", "ip_whitelisted",
+				"client_ip", clientIP,
+				"guid", guid,
+			)
+
+			return true
+		}
+	}
+
+	return false
+}
+
 // RecordLoginResult records the result of a login attempt for future training.
 // It checks the current balance of training data before recording to prevent imbalance.
 //
@@ -1138,7 +1191,12 @@ func (t *MLTrainer) GetModel() *NeuralNetwork {
 // This prevents the model from becoming biased over time, which could happen if there
 // is a sudden influx of only one type of login attempt (e.g., during an attack or
 // during normal operation with very few failures).
-func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures) error {
+func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures, clientIP string, username string, guid string) error {
+	// Check if the IP should be ignored for ML training
+	if ShouldIgnoreIP(clientIP, username, guid) {
+		return nil
+	}
+
 	// Store the login attempt result and features for future model training
 	data := TrainingData{
 		Success:  success,

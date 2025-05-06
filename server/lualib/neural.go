@@ -27,9 +27,18 @@ func AddAdditionalFeatures(ctx context.Context) lua.LGFunction {
 		luaTable.ForEach(func(key, value lua.LValue) {
 			// Only string keys are supported
 			if keyStr, ok := key.(lua.LString); ok {
+				keyStrVal := string(keyStr)
+
+				// Skip ClientIP and Username as per requirements
+				if keyStrVal == "ClientIP" || keyStrVal == "client_ip" ||
+					keyStrVal == "Username" || keyStrVal == "username" {
+					// Skip these fields
+					return
+				}
+
 				// Convert Lua value to Go value using convert package
 				goValue := convert.LuaValueToGo(value)
-				features[string(keyStr)] = goValue
+				features[keyStrVal] = goValue
 			}
 		})
 
