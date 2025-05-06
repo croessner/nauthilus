@@ -3,12 +3,13 @@ package lualib
 import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // AddAdditionalFeatures returns a Lua function that adds additional features to the AuthState for neural network processing.
 // The function expects a Lua table as input, which will be converted to a map[string]any and stored in the lualib.Context.
-func AddAdditionalFeatures(ctx *Context) lua.LGFunction {
+func AddAdditionalFeatures(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		// Check if we have a table as the first argument
 		luaTable := L.CheckTable(1)
@@ -42,8 +43,8 @@ func AddAdditionalFeatures(ctx *Context) lua.LGFunction {
 		// Check if there are existing features in the context
 		var existingFeatures map[string]any
 
-		if existing := ctx.Get(definitions.CtxAdditionalFeaturesKey); existing != nil {
-			if existingMap, ok := existing.(map[string]any); ok {
+		if exists, ok := ctx.Get(definitions.CtxAdditionalFeaturesKey); ok {
+			if existingMap, ok := exists.(map[string]any); ok {
 				existingFeatures = existingMap
 			}
 		}
@@ -76,21 +77,23 @@ func AddAdditionalFeatures(ctx *Context) lua.LGFunction {
 
 // GetAdditionalFeatures retrieves the additional features from the lualib.Context
 // This function is called from core/bruteforce.go to get the additional features
-func GetAdditionalFeatures(ctx *Context) map[string]any {
+func GetAdditionalFeatures(ctx *gin.Context) map[string]any {
 	if ctx == nil {
 		return nil
 	}
 
 	// Get the features from the lualib.Context
-	if features, ok := ctx.Get(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
-		return features
+	if exists, ok := ctx.Get(definitions.CtxAdditionalFeaturesKey); ok {
+		if features, ok := exists.(map[string]any); ok {
+			return features
+		}
 	}
 
 	return nil
 }
 
 // LoaderModNeural loads Lua functions for neural network integration and returns them as a Lua module.
-func LoaderModNeural(ctx *Context) lua.LGFunction {
+func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
