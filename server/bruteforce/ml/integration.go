@@ -114,10 +114,10 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 	if !ruleTriggered && !withError && m.mlDetector != nil {
 		// Log the state of static bucket system before ML prediction
 		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
 			"action", "pre_ml_prediction",
 			"static_rule_triggered", ruleTriggered,
 			"static_error", withError,
-			definitions.LogKeyGUID, m.guid,
 		)
 
 		isBruteForce, probability, err := m.mlDetector.Predict()
@@ -136,13 +136,13 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 
 			// Log the state after ML prediction
 			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
 				"action", "post_ml_prediction",
 				"static_rule_triggered", false, // It was false before ML prediction
 				"ml_rule_triggered", true,
 				"final_rule_triggered", ruleTriggered,
 				"probability", probability,
 				"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
-				definitions.LogKeyGUID, m.guid,
 			)
 
 			level.Info(log.Logger).Log(
@@ -160,13 +160,13 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 		} else {
 			// Log the state after ML prediction when no brute force is detected
 			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
 				"action", "post_ml_prediction",
 				"static_rule_triggered", false, // It was false before ML prediction
 				"ml_rule_triggered", false,
 				"final_rule_triggered", ruleTriggered,
 				"probability", probability,
 				"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
-				definitions.LogKeyGUID, m.guid,
 			)
 		}
 	}
@@ -184,8 +184,8 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 			// Only record as a failed login if a rule was triggered
 			if ruleTriggered || alreadyTriggered {
 				util.DebugModule(definitions.DbgNeural,
+					definitions.LogKeyGUID, m.guid,
 					"action", "record_login_attempt",
-					"guid", m.guid,
 					"client_ip", m.clientIP,
 					"username", m.username,
 					"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
@@ -198,10 +198,10 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 			if !ruleTriggered && !alreadyTriggered {
 				// Log the state before ML prediction
 				util.DebugModule(definitions.DbgNeural,
+					definitions.LogKeyGUID, m.guid,
 					"action", "process_pre_ml_prediction",
 					"rule_triggered", ruleTriggered,
 					"already_triggered", alreadyTriggered,
-					definitions.LogKeyGUID, m.guid,
 				)
 
 				isBruteForce, probability, predErr := m.mlDetector.Predict()
@@ -235,6 +235,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 				} else {
 					// Log the state after ML prediction when no brute force is detected
 					util.DebugModule(definitions.DbgNeural,
+						definitions.LogKeyGUID, m.guid,
 						"action", "process_post_ml_prediction",
 						"static_rule_triggered", false, // It was false before ML prediction
 						"already_triggered", alreadyTriggered,
@@ -242,7 +243,6 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 						"final_rule_triggered", ruleTriggered,
 						"probability", probability,
 						"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
-						definitions.LogKeyGUID, m.guid,
 					)
 				}
 			}
@@ -288,9 +288,9 @@ func (m *MLBucketManager) RecordLoginFeature() {
 	// Don't record login attempts in NoAuth mode
 	if m.noAuth {
 		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
 			"action", "skip_record_login_feature",
 			"reason", "no_auth_mode",
-			"guid", m.guid,
 			"client_ip", m.clientIP,
 			"username", m.username,
 		)
@@ -312,13 +312,27 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 	// Don't record login attempts in NoAuth mode
 	if m.noAuth {
 		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
 			"action", "skip_record_successful_login",
 			"reason", "no_auth_mode",
-			"guid", m.guid,
 			"client_ip", m.clientIP,
 			"username", m.username,
 		)
 		return
+	}
+
+	// Initialize ML detector if needed
+	if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
+		// Use the singleton pattern to get the detector
+		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+		// Log that we had to initialize the detector
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "initialize_ml_detector_for_successful_login",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
 	}
 
 	// Record the login attempt for future ML training
@@ -326,6 +340,14 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 		// Ensure additional features are set on the detector before collecting features
 		if m.additionalFeatures != nil {
 			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
+		} else {
+			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
+				"action", "record_successful_login",
+				"warning", "no_additional_features",
+				"client_ip", m.clientIP,
+				"username", m.username,
+			)
 		}
 
 		features, err := m.mlDetector.CollectFeatures()
@@ -333,15 +355,31 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 			// This is a successful login
 			// Debug log to help diagnose the issue
 			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
 				"action", "record_successful_login",
-				"guid", m.guid,
 				"client_ip", m.clientIP,
 				"username", m.username,
 				"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
 			)
 
 			_ = RecordLoginResult(m.ctx, true, features, m.clientIP, m.username, m.guid)
+		} else {
+			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
+				"action", "record_successful_login_error",
+				"error", err.Error(),
+				"client_ip", m.clientIP,
+				"username", m.username,
+			)
 		}
+	} else {
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "skip_record_successful_login",
+			"reason", "ml_detector_not_initialized",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
 	}
 }
 
