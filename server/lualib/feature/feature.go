@@ -172,8 +172,6 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
-	case definitions.LuaModNeural:
-		L.PreloadModule(modName, lualib.LoaderModNeural(ctx))
 	default:
 		return
 	}
@@ -240,6 +238,12 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 // It manages Lua script execution within a timeout, processes errors, and updates execution flags: triggered and abortFeatures.
 func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.LTable) (triggered bool, abortFeatures bool, err error) {
 	for index := range LuaFeatures.LuaScripts {
+		util.DebugModule(definitions.DbgFeature,
+			definitions.LogKeyGUID, r.Session,
+			definitions.LogKeyMsg, "Executing feature script",
+			"name", LuaFeatures.LuaScripts[index].Name,
+		)
+
 		if L.GetTop() != 0 {
 			L.SetTop(0)
 		}
@@ -368,7 +372,7 @@ func (r *Request) formatResult(ret int) string {
 // Returns an error if any occur during script execution.
 func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
-		return errors.ErrNoFiltersDefined // Using existing error for no filters defined
+		return errors.ErrNoFeatureDefined
 	}
 
 	r.Logs = new(lualib.CustomLogKeyValue)
@@ -383,7 +387,7 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 
 	// Register the dynamic loader
 	r.registerDynamicLoader(L, ctx)
-	L.PreloadModule(definitions.LuaModNeural, lualib.LoaderModNeural(ctx))
+	L.PreloadModule(definitions.LuaModNeural, lualib.LoaderModNeural(r.Context))
 
 	// Set up globals
 	globals := L.NewTable()
@@ -395,7 +399,13 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 	request := r.setRequest(L)
 
 	// Execute each feature script
-	for _, script := range LuaFeatures.LuaScripts {
+	for index := range LuaFeatures.LuaScripts {
+		util.DebugModule(definitions.DbgFeature,
+			definitions.LogKeyGUID, r.Session,
+			definitions.LogKeyMsg, "Executing feature script",
+			"name", LuaFeatures.LuaScripts[index].Name,
+		)
+
 		if L.GetTop() != 0 {
 			L.SetTop(0)
 		}
@@ -404,7 +414,7 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 			return ctx.Err()
 		}
 
-		stopTimer := stats.PrometheusTimer(definitions.PromFeature, script.Name)
+		stopTimer := stats.PrometheusTimer(definitions.PromFeature, LuaFeatures.LuaScripts[index].Name)
 
 		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
@@ -412,14 +422,14 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 
 		err := lualib.PackagePath(L)
 		if err != nil {
-			r.handleError(luaCancel, err, script.Name, stopTimer)
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
 
 			return err
 		}
 
-		err = lualib.DoCompiledFile(L, script.CompiledScript)
+		err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript)
 		if err != nil {
-			r.handleError(luaCancel, err, script.Name, stopTimer)
+			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
 
 			return err
 		}
@@ -435,7 +445,7 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 			}, request)
 
 			if err != nil {
-				r.handleError(luaCancel, err, script.Name, stopTimer)
+				r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
 
 				return err
 			}
