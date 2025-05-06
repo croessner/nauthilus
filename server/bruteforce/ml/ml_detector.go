@@ -809,15 +809,22 @@ func balanceTrainingData(successfulSamples, failedSamples []TrainingData, maxSam
 		totalSamples = len(successfulSamples) + len(failedSamples)
 	}
 
+	// If there are no samples at all, return an empty slice
+	successCount := len(successfulSamples)
+	failedCount := len(failedSamples)
+
+	if successCount+failedCount == 0 {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "No training data available for balancing",
+		)
+
+		return []TrainingData{}
+	}
+
 	// Define the maximum ratio between classes (80:20 rule)
 	// No class should represent more than 80% of the data
 	maxRatio := 0.8
 	minRatio := 1.0 - maxRatio // 0.2
-
-	// Calculate the ideal number of samples for each class
-	// based on the available samples and the desired ratio
-	successCount := len(successfulSamples)
-	failedCount := len(failedSamples)
 
 	// Calculate the ratio of successful samples in the original data
 	originalSuccessRatio := float64(successCount) / float64(successCount+failedCount)
