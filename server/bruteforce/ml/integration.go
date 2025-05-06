@@ -39,6 +39,7 @@ type MLBucketManager struct {
 	password           string
 	threshold          float64
 	additionalFeatures map[string]any
+	noAuth             bool
 }
 
 // NewMLBucketManager creates a new bucket manager with ML capabilities
@@ -52,7 +53,8 @@ func NewMLBucketManager(ctx context.Context, guid, clientIP string) bruteforce.B
 		ctx:           ctx,
 		guid:          guid,
 		clientIP:      clientIP,
-		threshold:     0.7, // Default threshold, could be configurable
+		threshold:     0.7,   // Default threshold, could be configurable
+		noAuth:        false, // Default to false, will be set by the caller if needed
 	}
 
 	return mlBM
@@ -96,6 +98,11 @@ func (m *MLBucketManager) WithAdditionalFeatures(features map[string]any) brutef
 	}
 
 	return m
+}
+
+// SetNoAuth sets the NoAuth flag for the bucket manager
+func (m *MLBucketManager) SetNoAuth(noAuth bool) {
+	m.noAuth = noAuth
 }
 
 // CheckBucketOverLimit enhances the standard bucket check with ML-based detection
@@ -278,6 +285,18 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 
 // RecordLoginFeature records a login feature for ML training
 func (m *MLBucketManager) RecordLoginFeature() {
+	// Don't record login attempts in NoAuth mode
+	if m.noAuth {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "skip_record_login_feature",
+			"reason", "no_auth_mode",
+			"guid", m.guid,
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+		return
+	}
+
 	// Record the login attempt for future ML training
 	if m.mlDetector != nil {
 		features, err := m.mlDetector.CollectFeatures()
@@ -290,6 +309,18 @@ func (m *MLBucketManager) RecordLoginFeature() {
 
 // RecordSuccessfulLogin records a successful login for ML training
 func (m *MLBucketManager) RecordSuccessfulLogin() {
+	// Don't record login attempts in NoAuth mode
+	if m.noAuth {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "skip_record_successful_login",
+			"reason", "no_auth_mode",
+			"guid", m.guid,
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+		return
+	}
+
 	// Record the login attempt for future ML training
 	if m.mlDetector != nil {
 		features, err := m.mlDetector.CollectFeatures()

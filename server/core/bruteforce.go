@@ -260,6 +260,11 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 
 		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 
+		// Set NoAuth flag
+		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
+			mlBM.SetNoAuth(a.NoAuth)
+		}
+
 		// Check if additional features are available from the Context
 		if a.Context != nil {
 			if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
@@ -381,6 +386,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 	if config.GetEnvironment().GetExperimentalML() {
 		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).WithPassword(a.Password)
+
+		// Set NoAuth flag
+		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+			mlManager.SetNoAuth(a.NoAuth)
+		}
 
 		// Check if additional features are available from the Context
 		if a.Context != nil {
