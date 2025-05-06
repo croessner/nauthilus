@@ -1535,8 +1535,7 @@ func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *P
 
 	// Handle AdditionalFeatures if they exist in the PassDBResult
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
-		// If auth.Context is nil, we can't update AdditionalFeatures
-		if auth.Context != nil && auth.HTTPClientContext != nil {
+		if auth.HTTPClientContext != nil {
 			// Set AdditionalFeatures in the gin.Context
 			auth.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 		}
