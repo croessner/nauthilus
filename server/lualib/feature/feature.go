@@ -440,11 +440,6 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 				return err
 			}
 		}
-		println()
-		println()
-		println()
-		println()
-		println()
 
 		if stopTimer != nil {
 			stopTimer()
