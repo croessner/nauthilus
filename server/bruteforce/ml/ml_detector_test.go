@@ -19,14 +19,20 @@ import (
 )
 
 // setupTestConfig initializes the configuration for testing
-func setupTestConfig() {
+// If enableML is true, it sets the experimental_ml environment variable to true
+func setupTestConfig(enableML bool) {
 	feature := config.Feature{}
 	feature.Set("brute_force")
 
 	backend := config.Backend{}
 	backend.Set("cache")
 
-	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+	// Create a test environment config with experimental_ml set based on the parameter
+	testEnv := &config.EnvironmentSettings{
+		ExperimentalML: enableML,
+	}
+	config.SetTestEnvironmentConfig(testEnv)
+
 	config.SetTestFile(&config.FileSettings{
 		Server: &config.ServerSection{
 			Features:     []*config.Feature{&feature},
@@ -48,8 +54,8 @@ func setupTestConfig() {
 }
 
 func TestNeuralNetwork_Train(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a neural network with 6 input neurons, 1 output neuron, and a fixed seed for reproducibility
 	// Using a fixed seed ensures consistent test results across different environments
@@ -81,8 +87,8 @@ func TestNeuralNetwork_Train(t *testing.T) {
 }
 
 func TestMLTrainer_LoadSaveModel(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -128,8 +134,8 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 }
 
 func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -180,8 +186,8 @@ func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
 }
 
 func TestMLTrainer_GetTrainingDataFromRedis(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -233,8 +239,8 @@ func TestMLTrainer_GetTrainingDataFromRedis(t *testing.T) {
 }
 
 func TestMLTrainer_TrainWithStoredData(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -273,8 +279,8 @@ func TestMLTrainer_TrainWithStoredData(t *testing.T) {
 }
 
 func TestRecordLoginResult(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -319,8 +325,8 @@ func TestRecordLoginResult(t *testing.T) {
 }
 
 func TestInitMLSystem(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
@@ -350,8 +356,8 @@ func TestInitMLSystem(t *testing.T) {
 }
 
 func TestNormalizeInputs(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Test with various inputs
 	inputs := []float64{
@@ -380,8 +386,8 @@ func TestNormalizeInputs(t *testing.T) {
 }
 
 func TestPrepareTrainingData(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create sample training data
 	data := []TrainingData{
@@ -432,8 +438,8 @@ func TestPrepareTrainingData(t *testing.T) {
 }
 
 func TestBalanceTrainingData(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create sample training data with imbalance
 	successfulSamples := []TrainingData{
@@ -483,8 +489,8 @@ func TestBalanceTrainingData(t *testing.T) {
 }
 
 func TestGetBruteForceMLDetector(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a context
 	ctx := context.Background()
@@ -502,8 +508,8 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 }
 
 func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Set environment variable to skip training during tests
 	oldEnv := os.Getenv("NAUTHILUS_TESTING")
@@ -688,8 +694,8 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 
 // TestNeuralNetwork_ActivationFunctions tests all activation functions and their derivatives
 func TestNeuralNetwork_ActivationFunctions(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	testCases := []struct {
 		name                string
@@ -834,8 +840,8 @@ func TestNeuralNetwork_ActivationFunctions(t *testing.T) {
 
 // TestNeuralNetwork_FeedForwardEdgeCases tests edge cases for the FeedForward method
 func TestNeuralNetwork_FeedForwardEdgeCases(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	t.Run("Input size mismatch", func(t *testing.T) {
 		// Create a neural network with 6 input neurons and 1 output neuron
@@ -886,10 +892,46 @@ func TestNeuralNetwork_FeedForwardEdgeCases(t *testing.T) {
 	})
 }
 
+// TestMLFunctionsWithExperimentalMLDisabled tests that ML functions behave correctly when experimental_ml is disabled
+func TestMLFunctionsWithExperimentalMLDisabled(t *testing.T) {
+	// Set up test configuration with ML disabled
+	setupTestConfig(false)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Test GetBruteForceMLDetector
+	detector := GetBruteForceMLDetector(ctx, "test-guid", "127.0.0.1", "testuser")
+	assert.Nil(t, detector, "Detector should be nil when experimental_ml is disabled")
+
+	// Test RecordLoginResult
+	features := &LoginFeatures{
+		TimeBetweenAttempts:    60,
+		FailedAttemptsLastHour: 0,
+		DifferentUsernames:     1,
+		DifferentPasswords:     1,
+		TimeOfDay:              0.5,
+		SuspiciousNetwork:      0.0,
+		AdditionalFeatures:     make(map[string]any),
+	}
+	err := RecordLoginResult(ctx, true, features, "192.168.1.1", "testuser", "test-guid")
+	assert.NoError(t, err, "RecordLoginResult should not return an error when experimental_ml is disabled")
+
+	// Test InitMLSystem
+	err = InitMLSystem(ctx)
+	assert.NoError(t, err, "InitMLSystem should not return an error when experimental_ml is disabled")
+
+	// Test NewMLBucketManager
+	bm := NewMLBucketManager(ctx, "test-guid", "127.0.0.1")
+	// When ML is disabled, NewMLBucketManager should return a standard bucket manager
+	_, isMLBucketManager := bm.(*MLBucketManager)
+	assert.False(t, isMLBucketManager, "NewMLBucketManager should return a standard bucket manager when experimental_ml is disabled")
+}
+
 // TestBruteForceMLDetector_IsFromSuspiciousNetwork tests the isFromSuspiciousNetwork method
 func TestBruteForceMLDetector_IsFromSuspiciousNetwork(t *testing.T) {
-	// Set up test configuration
-	setupTestConfig()
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
 
 	// Create a Redis mock
 	db, mock := redismock.NewClientMock()
