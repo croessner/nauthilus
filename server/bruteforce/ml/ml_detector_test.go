@@ -308,8 +308,8 @@ func TestRecordLoginResult(t *testing.T) {
 	// Expect LTRIM to keep the list at a manageable size
 	mock.ExpectLTrim("nauthilus:ml:training:data", 0, 9999).SetVal("OK")
 
-	// Record login result
-	err := RecordLoginResult(ctx, true, features)
+	// Record login result - use a non-localhost IP to avoid being filtered out
+	err := RecordLoginResult(ctx, true, features, "192.168.1.1", "testuser", "test-guid")
 	assert.NoError(t, err, "RecordLoginResult should not return an error")
 
 	// Verify all expectations were met

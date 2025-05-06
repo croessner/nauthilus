@@ -184,7 +184,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 					"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
 				)
 
-				_ = RecordLoginResult(m.ctx, false, features)
+				_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
 			}
 
 			// If static rules haven't triggered, check if ML detector would trigger
@@ -224,7 +224,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 					)
 
 					// Record this detection for future ML training
-					_ = RecordLoginResult(m.ctx, false, features)
+					_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
 				} else {
 					// Log the state after ML prediction when no brute force is detected
 					util.DebugModule(definitions.DbgNeural,
@@ -283,7 +283,7 @@ func (m *MLBucketManager) RecordLoginFeature() {
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
 			// This is a triggered feature, so it's a failed login
-			_ = RecordLoginResult(m.ctx, false, features)
+			_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
 		}
 	}
 }
@@ -304,7 +304,7 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 				"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
 			)
 
-			_ = RecordLoginResult(m.ctx, true, features)
+			_ = RecordLoginResult(m.ctx, true, features, m.clientIP, m.username, m.guid)
 		}
 	}
 }
