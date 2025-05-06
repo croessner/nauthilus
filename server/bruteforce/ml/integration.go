@@ -323,6 +323,11 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 
 	// Record the login attempt for future ML training
 	if m.mlDetector != nil {
+		// Ensure additional features are set on the detector before collecting features
+		if m.additionalFeatures != nil {
+			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
+		}
+
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
 			// This is a successful login
