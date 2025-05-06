@@ -1127,6 +1127,25 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 		definitions.LogKeyMsg, "Model training completed successfully",
 	)
 
+	// Set the modelTrained flag if we have enough data
+	// We consider the model trained if we have at least 100 samples
+	if len(trainingData) >= 100 {
+		modelTrainedMutex.Lock()
+		modelTrained = true
+		modelTrainedMutex.Unlock()
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Model is now considered trained with real data",
+		)
+
+		// Save the flag to Redis for future use
+		if saveErr := SaveModelTrainedFlagToRedis(t.ctx); saveErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", saveErr),
+			)
+		}
+	}
+
 	return nil
 }
 
@@ -1326,6 +1345,12 @@ var (
 
 	// Flag to track if the scheduler is running
 	schedulerStarted bool
+
+	// Flag to track if the model has been trained with real data
+	modelTrained bool
+
+	// Mutex to protect access to modelTrained flag
+	modelTrainedMutex sync.RWMutex
 )
 
 // InitMLSystem initializes the ML system without requiring request-specific parameters
@@ -1335,12 +1360,16 @@ func InitMLSystem(ctx context.Context) error {
 	var err error
 
 	initOnce.Do(func() {
+		// Initialize modelTrained flag to false
+		modelTrainedMutex.Lock()
+		modelTrained = false
+		modelTrainedMutex.Unlock()
 
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
 		// Try to load a previously trained model first
-
+		modelLoadedFromRedis := false
 		if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
 			level.Info(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
@@ -1348,6 +1377,53 @@ func InitMLSystem(ctx context.Context) error {
 
 			// Initialize the neural network model with random weights as fallback
 			trainer.InitModel()
+		} else {
+			modelLoadedFromRedis = true
+		}
+
+		// Try to load the model trained flag from Redis
+		if loadFlagErr := LoadModelTrainedFlagFromRedis(ctx); loadFlagErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flag from Redis: %v", loadFlagErr),
+			)
+
+			// If we can't load the flag, check if we have enough training data
+			// to consider the model trained
+			if modelLoadedFromRedis {
+				// Get a sample of training data to check if we have enough
+				trainingData, err := trainer.GetTrainingDataFromRedis(100)
+				if err == nil && len(trainingData) >= 100 {
+					modelTrainedMutex.Lock()
+					modelTrained = true
+					modelTrainedMutex.Unlock()
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Loaded model is considered trained with real data",
+					)
+
+					// Save the flag to Redis for future use
+					_ = SaveModelTrainedFlagToRedis(ctx)
+				} else {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Loaded model does not have enough training data, starting in learning mode",
+					)
+				}
+			}
+		} else {
+			// Flag was loaded successfully, log the current state
+			modelTrainedMutex.RLock()
+			isModelTrained := modelTrained
+			modelTrainedMutex.RUnlock()
+
+			if isModelTrained {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Model is marked as trained with real data",
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Model is in learning mode",
+				)
+			}
 		}
 
 		// Start scheduled training
@@ -1471,6 +1547,11 @@ func GetAdditionalFeaturesRedisKey() string {
 	return getMLRedisKeyPrefix() + "additional_features"
 }
 
+// getModelTrainedRedisKey returns the Redis key for the model trained flag
+func getModelTrainedRedisKey() string {
+	return getMLRedisKeyPrefix() + "model_trained"
+}
+
 // SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
 func (t *MLTrainer) SaveAdditionalFeaturesToRedis() error {
 	return t.SaveModelToRedisWithKey(GetAdditionalFeaturesRedisKey())
@@ -1479,6 +1560,73 @@ func (t *MLTrainer) SaveAdditionalFeaturesToRedis() error {
 // LoadAdditionalFeaturesFromRedis loads a model with additional features from a separate Redis key
 func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
 	return t.LoadModelFromRedisWithKey(GetAdditionalFeaturesRedisKey())
+}
+
+// SaveModelTrainedFlagToRedis saves the model trained flag to Redis
+func SaveModelTrainedFlagToRedis(ctx context.Context) error {
+	modelTrainedMutex.RLock()
+	isModelTrained := modelTrained
+	modelTrainedMutex.RUnlock()
+
+	key := getModelTrainedRedisKey()
+	value := "0"
+	if isModelTrained {
+		value = "1"
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	err := rediscli.GetClient().GetWriteHandle().Set(
+		ctx,
+		key,
+		value,
+		0, // No expiration
+	).Err()
+
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", err),
+		)
+		return err
+	}
+
+	util.DebugModule(definitions.DbgNeural,
+		"action", "save_model_trained_flag",
+		"model_trained", isModelTrained,
+	)
+
+	return nil
+}
+
+// LoadModelTrainedFlagFromRedis loads the model trained flag from Redis
+func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
+	key := getModelTrainedRedisKey()
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	val, err := rediscli.GetClient().GetReadHandle().Get(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// Key doesn't exist, model is not trained
+			modelTrainedMutex.Lock()
+			modelTrained = false
+			modelTrainedMutex.Unlock()
+			return nil
+		}
+		return err
+	}
+
+	isModelTrained := val == "1"
+	modelTrainedMutex.Lock()
+	modelTrained = isModelTrained
+	modelTrainedMutex.Unlock()
+
+	util.DebugModule(definitions.DbgNeural,
+		"action", "load_model_trained_flag",
+		"model_trained", isModelTrained,
+	)
+
+	return nil
 }
 
 // SetAdditionalFeatures sets additional features for the detector
@@ -2086,15 +2234,39 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		definitions.LogKeyGUID, d.guid,
 	)
 
+	// Check if the model has been trained with real data
+	modelTrainedMutex.RLock()
+	isModelTrained := modelTrained
+	modelTrainedMutex.RUnlock()
+
 	// Determine if it's a brute force attack based on threshold
 	threshold := 0.7 // Threshold can be adjusted
 	isBruteForce := probability > threshold
+
+	// If the model hasn't been trained yet, we're in learning mode
+	// We still collect data but don't make decisions based on ML predictions
+	if !isModelTrained {
+		// In learning mode, we don't consider it a brute force attack
+		isBruteForce = false
+
+		util.DebugModule(definitions.DbgNeural,
+			"action", "predict_learning_mode",
+			"reason", "model_not_trained_yet",
+			"probability", probability,
+			"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
+			"threshold", threshold,
+			"threshold_percent", fmt.Sprintf("%.2f%%", threshold*100),
+			definitions.LogKeyGUID, d.guid,
+		)
+	}
 
 	// Human-readable threshold and decision description
 	thresholdDesc := fmt.Sprintf("%.2f%%", threshold*100)
 	decisionDesc := "No brute force attack detected"
 	if isBruteForce {
 		decisionDesc = "Brute force attack detected"
+	} else if !isModelTrained {
+		decisionDesc = "Learning mode - collecting data"
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -2105,6 +2277,7 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
 		"threshold", threshold,
 		"threshold_percent", thresholdDesc,
+		"model_trained", isModelTrained,
 		definitions.LogKeyGUID, d.guid,
 	)
 
