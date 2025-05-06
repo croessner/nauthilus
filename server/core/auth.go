@@ -1017,6 +1017,11 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 			mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).WithPassword(a.Password)
 
+			// Set NoAuth flag
+			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+				mlManager.SetNoAuth(a.NoAuth)
+			}
+
 			// Check if additional features are available from the Context
 			if a.Context != nil {
 				if features := lualib.GetAdditionalFeatures(a.Context); features != nil {
@@ -1854,6 +1859,11 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 					WithUsername(a.Username).
 					WithAccountName(accountName).
 					WithAccountName(accountName)
+
+				// Set NoAuth flag
+				if mlManager, ok := bm.(*ml.MLBucketManager); ok {
+					mlManager.SetNoAuth(a.NoAuth)
+				}
 			} else {
 				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 					WithUsername(a.Username).
@@ -1980,6 +1990,11 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 			WithUsername(a.Username).
 			WithAccountName(accountName).
 			WithAccountName(accountName)
+
+		// Set NoAuth flag
+		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
+			mlManager.SetNoAuth(a.NoAuth)
+		}
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
@@ -2009,6 +2024,11 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 				WithUsername(a.Username).
 				WithAccountName(accountName).
 				WithAccountName(accountName)
+
+			// Set NoAuth flag
+			if mlManager, ok := bm.(*ml.MLBucketManager); ok {
+				mlManager.SetNoAuth(a.NoAuth)
+			}
 		} else {
 			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).

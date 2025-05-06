@@ -744,6 +744,11 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
 			if config.GetEnvironment().GetExperimentalML() {
 				bm = ml.NewMLBucketManager(ctx, guid, ipCmd.IPAddress)
+
+				// Set NoAuth flag to false for administrative operations
+				if mlManager, ok := bm.(*ml.MLBucketManager); ok {
+					mlManager.SetNoAuth(false)
+				}
 			} else {
 				bm = bruteforce.NewBucketManager(ctx, guid, ipCmd.IPAddress)
 			}
