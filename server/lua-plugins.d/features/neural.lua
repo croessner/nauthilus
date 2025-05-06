@@ -36,6 +36,11 @@ function nauthilus_call_neural_network(request)
         return
     end
 
+    local logs = {}
+
+    logs.caller = N .. ".lua"
+    logs.level = "info"
+
     -- For non-authenticated users, we still need to get the country code
     dynamic_loader("nauthilus_prometheus")
     local nauthilus_prometheus = require("nauthilus_prometheus")
@@ -126,12 +131,23 @@ function nauthilus_call_neural_network(request)
 
         -- Add country code as a feature for non-authenticated users
         -- Using the actual country code retrieved from the GeoIP service
-        nauthilus_neural.add_additional_features({
+        local additional_features = {
             country_code = current_iso_code,
             client_host = client_host,
             client_id = client_id,
             user_agent = user_agent,
-        })
+        }
+
+        for k, v in pairs(additional_features) do
+            logs[k] = v
+
+            nauthilus_builtin.custom_log_add(N .. "_" .. k, v)
+        end
+
+        nauthilus_util.print_result({ log_format = "json"}, logs)
+
+        -- Add to neural network
+        nauthilus_neural.add_additional_features(additional_features)
     end
 
     return
