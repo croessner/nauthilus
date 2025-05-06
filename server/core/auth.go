@@ -543,6 +543,9 @@ type PassDBResult struct {
 
 	// Attributes is the result catalog returned by the underlying password Database.
 	Attributes bktype.AttributeMapping
+
+	// AdditionalFeatures contains additional features for machine learning
+	AdditionalFeatures map[string]any
 }
 
 type (
@@ -1529,6 +1532,15 @@ func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *P
 	if passDBResult.Attributes != nil && len(passDBResult.Attributes) > 0 {
 		auth.Attributes = passDBResult.Attributes
 	}
+
+	// Handle AdditionalFeatures if they exist in the PassDBResult
+	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
+		// If auth.Context is nil, we can't update AdditionalFeatures
+		if auth.Context != nil && auth.HTTPClientContext != nil {
+			// Set AdditionalFeatures in the gin.Context
+			auth.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+		}
+	}
 }
 
 // SetStatusCodes sets different status codes for various services.
@@ -2076,6 +2088,13 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
+			// Get AdditionalFeatures from the gin.Context and add them to the PassDBResult before caching
+			if a.HTTPClientContext != nil {
+				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
+					passDBResult.AdditionalFeatures = features
+				}
+			}
+
 			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 
@@ -3166,6 +3185,11 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 			backend: definitions.BackendLocalCache,
 			fn:      nil,
 		})
+
+		// Set AdditionalFeatures in the gin.Context if they exist in the cached result
+		if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
+			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+		}
 
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
 
