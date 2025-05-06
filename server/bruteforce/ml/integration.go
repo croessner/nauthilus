@@ -43,9 +43,16 @@ type MLBucketManager struct {
 }
 
 // NewMLBucketManager creates a new bucket manager with ML capabilities
+// If experimental_ml is not enabled, it returns a standard bucket manager instead
 func NewMLBucketManager(ctx context.Context, guid, clientIP string) bruteforce.BucketManager {
 	// Create the standard bucket manager
 	standardBM := bruteforce.NewBucketManager(ctx, guid, clientIP)
+
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		// If ML is not enabled, return the standard bucket manager
+		return standardBM
+	}
 
 	// Create our ML-enhanced bucket manager
 	mlBM := &MLBucketManager{
@@ -65,13 +72,13 @@ func (m *MLBucketManager) WithUsername(username string) bruteforce.BucketManager
 	m.username = username
 	m.BucketManager = m.BucketManager.WithUsername(username)
 
-	// Initialize ML detector if we have both username and clientIP
-	if m.username != "" && m.clientIP != "" && m.mlDetector == nil {
+	// Initialize ML detector if we have both username and clientIP and experimental_ml is enabled
+	if m.username != "" && m.clientIP != "" && m.mlDetector == nil && config.GetEnvironment().GetExperimentalML() {
 		// Use the singleton pattern to get the detector
 		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
 
-		// Pass any additional features to the detector
-		if m.additionalFeatures != nil {
+		// Pass any additional features to the detector if detector was created
+		if m.mlDetector != nil && m.additionalFeatures != nil {
 			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
 		}
 	}
@@ -111,7 +118,8 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 	withError, ruleTriggered, ruleNumber = m.BucketManager.CheckBucketOverLimit(rules, network, message)
 
 	// If the standard check didn't trigger, try the ML-based detection
-	if !ruleTriggered && !withError && m.mlDetector != nil {
+	// Only if experimental_ml is enabled and we have a detector
+	if !ruleTriggered && !withError && m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
 		// Log the state of static bucket system before ML prediction
 		util.DebugModule(definitions.DbgNeural,
 			definitions.LogKeyGUID, m.guid,
@@ -260,7 +268,13 @@ func (m *MLBucketManager) Close() {
 }
 
 // TrainModel manually triggers training of the ML model
+// Returns an error if experimental_ml is not enabled
 func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		return fmt.Errorf("cannot train model: experimental_ml is not enabled")
+	}
+
 	// Ensure the ML system is initialized
 	if globalTrainer == nil {
 		if err := InitMLSystem(m.ctx); err != nil {
@@ -294,6 +308,20 @@ func (m *MLBucketManager) RecordLoginFeature() {
 			"client_ip", m.clientIP,
 			"username", m.username,
 		)
+
+		return
+	}
+
+	// Don't record login attempts if experimental_ml is not enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "skip_record_login_feature",
+			"reason", "experimental_ml_not_enabled",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+
 		return
 	}
 
@@ -318,6 +346,20 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 			"client_ip", m.clientIP,
 			"username", m.username,
 		)
+
+		return
+	}
+
+	// Don't record login attempts if experimental_ml is not enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "skip_record_successful_login",
+			"reason", "experimental_ml_not_enabled",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+
 		return
 	}
 

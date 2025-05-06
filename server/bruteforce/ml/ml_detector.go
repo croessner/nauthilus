@@ -1218,6 +1218,17 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 // is a sudden influx of only one type of login attempt (e.g., during an attack or
 // during normal operation with very few failures).
 func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures, clientIP string, username string, guid string) error {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "skip_record_login_result",
+			"reason", "experimental_ml_not_enabled",
+			definitions.LogKeyGUID, guid,
+		)
+
+		return nil
+	}
+
 	// Check if the IP should be ignored for ML training
 	if ShouldIgnoreIP(clientIP, username, guid) {
 		return nil
@@ -1355,7 +1366,16 @@ var (
 
 // InitMLSystem initializes the ML system without requiring request-specific parameters
 // This should be called during application startup
+// It will only initialize the ML system if the experimental_ml environment variable is set
 func InitMLSystem(ctx context.Context) error {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "ML system initialization skipped: experimental_ml is not enabled",
+		)
+
+		return nil
+	}
 
 	var err error
 
@@ -1804,7 +1824,19 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 }
 
 // GetBruteForceMLDetector creates a new detector instance for a specific request
+// Returns nil if experimental_ml is not enabled
 func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username string) *BruteForceMLDetector {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "get_detector_skipped",
+			"reason", "experimental_ml_not_enabled",
+			definitions.LogKeyGUID, guid,
+		)
+
+		return nil
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "get_detector_start",
 		definitions.LogKeyGUID, guid,
