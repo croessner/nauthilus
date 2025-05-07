@@ -82,9 +82,20 @@ func GetChannel() Channel {
 
 // NewChannel initializes and returns a new instance of the Channel interface implementation.
 func NewChannel() Channel {
+	var ldapChannel LDAPChannel
+	var luaChannel LuaChannel
+
+	if config.GetFile().HaveLDAPBackend() {
+		ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
+	}
+
+	if config.GetFile().HaveLuaBackend() {
+		luaChannel = NewLuaChannel(definitions.DefaultBackendName)
+	}
+
 	return &channelImpl{
-		ldapChannel: NewLDAPChannel(definitions.DefaultBackendName),
-		luaChannel:  NewLuaChannel(definitions.DefaultBackendName),
+		ldapChannel: ldapChannel,
+		luaChannel:  luaChannel,
 	}
 }
 

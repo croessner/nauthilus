@@ -97,6 +97,9 @@ type File interface {
 	// HaveLua checks if Lua-based configuration in general is available.
 	HaveLua() bool
 
+	// HaveLuaBackend returns a boolean indicating whether a Lua backend is available in the current configuration.
+	HaveLuaBackend() bool
+
 	// GetLuaInitScriptPath returns the path to the Lua initialization script.
 	GetLuaInitScriptPath() string
 
@@ -952,6 +955,21 @@ func (f *FileSettings) HaveLua() bool {
 	}
 
 	return f.Lua != nil
+}
+
+// HaveLuaBackend checks if the FileSettings instance has a Lua backend configured and returns true if found, otherwise false.
+func (f *FileSettings) HaveLuaBackend() bool {
+	if f == nil {
+		return false
+	}
+
+	for _, backendType := range f.Server.Backends {
+		if backendType.Get() == definitions.BackendLua {
+			return true
+		}
+	}
+
+	return false
 }
 
 // HaveLDAPBackend checks if the configuration includes an LDAP backend and returns true if it exists, otherwise false.
