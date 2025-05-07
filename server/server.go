@@ -940,12 +940,7 @@ func initializeMLMetrics(ctx context.Context) {
 			definitions.LogKeyMsg, "Failed to initialize ML system",
 			definitions.LogKeyMsg, err,
 		)
-	} else {
-		level.Info(log.Logger).Log(
-			definitions.LogKeyMsg, "ML system initialized successfully",
-		)
 	}
-
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
