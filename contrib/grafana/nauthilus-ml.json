@@ -184,7 +184,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Error during neural network training over time",
+      "description": "Shows the error during neural network training over time. A lower value means that the model is better adapted to the training data. The error is calculated as the average deviation between the predicted and actual values for all training data.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -398,7 +398,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Duration of neural network training",
+      "description": "Duration of neural network training in seconds. 'p95' means that 95% of training operations are faster than this value (95th percentile). 'p50' is the median value, where 50% of training operations are faster and 50% are slower. In the legend, 'success' indicates successful training operations, and 'failure' indicates failed training operations.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -513,7 +513,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Confidence score of neural network predictions",
+      "description": "Shows the probability (between 0 and 1) that the current login attempt is part of a brute force attack. Higher values indicate a higher probability of an attack. 'No data' is displayed when the neural network has not yet been trained or no predictions have been made.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -652,7 +652,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Duration of neural network prediction",
+      "description": "Shows the duration of neural network predictions in seconds. 'p95' means that 95% of predictions are faster than this value (95th percentile). 'p50' is the median value, where 50% of predictions are faster and 50% are slower. In the legend, 'true' indicates predictions where a brute force attack was detected, and 'false' indicates predictions where no brute force attack was detected. This metric helps to monitor the performance and response time of the ML system.",
       "fieldConfig": {
         "defaults": {
           "color": {
