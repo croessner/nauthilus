@@ -235,7 +235,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 						definitions.LogKeyBruteForce, message,
 						definitions.LogKeyUsername, m.username,
 						definitions.LogKeyClientIP, m.clientIP,
-						"probability", probability,
+						"probability_percent", fmt.Sprintf("%.2f%%", probability*100),
 					)
 
 					// Record this detection for future ML training
@@ -423,6 +423,10 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 			"username", m.username,
 		)
 	}
+}
+
+func (m *MLBucketManager) GetBruteForceName() string {
+	return "neural"
 }
 
 // How to use the ML-enhanced bucket manager:
