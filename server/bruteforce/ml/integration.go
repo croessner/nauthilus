@@ -40,6 +40,7 @@ type MLBucketManager struct {
 	threshold          float64
 	additionalFeatures map[string]any
 	noAuth             bool
+	mlDetected         bool
 }
 
 // NewMLBucketManager creates a new bucket manager with ML capabilities
@@ -216,6 +217,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 				if predErr == nil && isBruteForce {
 					// ML detector has detected a brute force attack
 					ruleTriggered = true
+					m.mlDetected = true
 					message = fmt.Sprintf("ML-based brute force detection triggered (probability: %.2f)", probability)
 
 					// Log the state after ML prediction
@@ -425,8 +427,13 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 	}
 }
 
+// GetBruteForceName returns the name of the brute force detection mechanism, using ML if detected, or fallback otherwise.
 func (m *MLBucketManager) GetBruteForceName() string {
-	return "neural"
+	if m.mlDetected {
+		return "neural_network"
+	}
+
+	return m.BucketManager.GetBruteForceName()
 }
 
 // How to use the ML-enhanced bucket manager:
