@@ -5,7 +5,7 @@ package common
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,7 +102,7 @@ func BootTimeWithContext(ctx context.Context, enableCache bool) (uint64, error) 
 	currentTime := float64(time.Now().UnixNano()) / float64(time.Second)
 
 	if len(lines) != 1 {
-		return 0, errors.New("wrong uptime format")
+		return 0, fmt.Errorf("wrong uptime format")
 	}
 	f := strings.Fields(lines[0])
 	b, err := strconv.ParseFloat(f[0], 64)
@@ -142,7 +142,7 @@ func readBootTimeStat(ctx context.Context) (uint64, error) {
 	if strings.HasPrefix(line, "btime") {
 		f := strings.Fields(line)
 		if len(f) != 2 {
-			return 0, errors.New("wrong btime format")
+			return 0, fmt.Errorf("wrong btime format")
 		}
 		b, err := strconv.ParseInt(f[1], 10, 64)
 		if err != nil {
@@ -151,7 +151,7 @@ func readBootTimeStat(ctx context.Context) (uint64, error) {
 		t := uint64(b)
 		return t, nil
 	}
-	return 0, errors.New("could not find btime")
+	return 0, fmt.Errorf("could not find btime")
 }
 
 func Virtualization() (string, string, error) {
@@ -196,20 +196,19 @@ func VirtualizationWithContext(ctx context.Context) (string, string, error) {
 	if PathExists(filename) {
 		contents, err := ReadLines(filename)
 		if err == nil {
-			switch {
-			case StringsContains(contents, "kvm"):
+			if StringsContains(contents, "kvm") {
 				system = "kvm"
 				role = "host"
-			case StringsContains(contents, "hv_util"):
+			} else if StringsContains(contents, "hv_util") {
 				system = "hyperv"
 				role = "guest"
-			case StringsContains(contents, "vboxdrv"):
+			} else if StringsContains(contents, "vboxdrv") {
 				system = "vbox"
 				role = "host"
-			case StringsContains(contents, "vboxguest"):
+			} else if StringsContains(contents, "vboxguest") {
 				system = "vbox"
 				role = "guest"
-			case StringsContains(contents, "vmware"):
+			} else if StringsContains(contents, "vmware") {
 				system = "vmware"
 				role = "guest"
 			}
@@ -274,17 +273,16 @@ func VirtualizationWithContext(ctx context.Context) (string, string, error) {
 	if PathExists(filepath.Join(filename, "self", "cgroup")) {
 		contents, err := ReadLines(filepath.Join(filename, "self", "cgroup"))
 		if err == nil {
-			switch {
-			case StringsContains(contents, "lxc"):
+			if StringsContains(contents, "lxc") {
 				system = "lxc"
 				role = "guest"
-			case StringsContains(contents, "docker"):
+			} else if StringsContains(contents, "docker") {
 				system = "docker"
 				role = "guest"
-			case StringsContains(contents, "machine-rkt"):
+			} else if StringsContains(contents, "machine-rkt") {
 				system = "rkt"
 				role = "guest"
-			case PathExists("/usr/bin/lxc-version"):
+			} else if PathExists("/usr/bin/lxc-version") {
 				system = "lxc"
 				role = "host"
 			}
