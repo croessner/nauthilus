@@ -175,6 +175,58 @@ if mlBM, ok := bm.(*ml.MLBucketManager); ok {
 4. **Earlier Detection**: May detect attacks earlier, before they reach rule-based thresholds
 5. **Contextual Awareness**: Considers multiple factors beyond just the number of failed attempts
 
+## Feature Encoding
+
+The ML system supports both numerical and categorical features:
+
+### Numerical Features
+
+Numerical features (like time between attempts, failed attempts count, etc.) are used directly in the neural network after normalization.
+
+### Categorical Features
+
+For categorical features (like country codes, continent codes, ASN numbers, etc.), the system uses one-hot encoding:
+
+1. **What is One-Hot Encoding?**
+   - A technique to represent categorical variables as binary vectors
+   - Each category gets its own binary feature (0 or 1)
+   - Only one feature is "hot" (set to 1) at a time
+
+2. **Benefits of One-Hot Encoding**:
+   - Preserves categorical relationships (no artificial ordering)
+   - Allows the model to learn separate weights for each category
+   - Handles high-cardinality features (many possible values)
+   - Improves model accuracy for categorical data
+
+3. **Implementation Details**:
+   - The system automatically detects string values that can't be converted to numbers
+   - Each unique value for a feature gets assigned a unique index
+   - The encoding is consistent across training and prediction
+   - Encodings are persisted in Redis alongside the model
+
+4. **Example**:
+   - For a "continent" feature with values like "EU", "NA", "AS", etc.
+   - Instead of hashing to arbitrary values, each continent gets its own dimension
+   - The model can learn that some continents have higher risk than others
+
+### Adding Categorical Features via Lua
+
+You can add categorical features through the Lua interface:
+
+```lua
+function nauthilus_call_neural_network(request)
+    -- Add categorical features
+    neural.add_additional_features({
+        continent_code = "EU",
+        country_code = "DE",
+        asn = "AS12345",
+        network_type = "mobile"
+    })
+end
+```
+
+These features will be automatically one-hot encoded and used by the neural network.
+
 ## Future Improvements
 
 1. **Advanced Model Architecture**: Implement more sophisticated neural network architectures (e.g., LSTM, GRU)
@@ -184,3 +236,4 @@ if mlBM, ok := bm.(*ml.MLBucketManager); ok {
 5. **Explainability**: Add tools to explain why a particular login attempt was flagged as suspicious
 6. **Real-time Adaptation**: Implement online learning to adapt the model in real-time
 7. **Model Evaluation**: Add metrics and tools to evaluate model performance
+8. **Embedding Layers**: For very high-cardinality features, implement embedding layers instead of one-hot encoding

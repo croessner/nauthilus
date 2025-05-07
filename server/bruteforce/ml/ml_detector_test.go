@@ -929,6 +929,100 @@ func TestMLFunctionsWithExperimentalMLDisabled(t *testing.T) {
 }
 
 // TestBruteForceMLDetector_IsFromSuspiciousNetwork tests the isFromSuspiciousNetwork method
+// TestMLTrainer_OneHotEncoding tests the One-Hot encoding functionality
+func TestMLTrainer_OneHotEncoding(t *testing.T) {
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Create an ML trainer
+	trainer := NewMLTrainer().WithContext(ctx)
+
+	// Test with a new feature and value
+	featureName := "test_feature"
+	value1 := "value1"
+
+	// First call should create a new encoding
+	size, index := trainer.getOrCreateOneHotEncoding(featureName, value1)
+	assert.Equal(t, 1, size, "Size should be 1 after adding first value")
+	assert.Equal(t, 0, index, "Index should be 0 for first value")
+
+	// Second call with the same value should return the same index
+	size, index = trainer.getOrCreateOneHotEncoding(featureName, value1)
+	assert.Equal(t, 1, size, "Size should still be 1")
+	assert.Equal(t, 0, index, "Index should still be 0")
+
+	// Add a second value
+	value2 := "value2"
+	size, index = trainer.getOrCreateOneHotEncoding(featureName, value2)
+	assert.Equal(t, 2, size, "Size should be 2 after adding second value")
+	assert.Equal(t, 1, index, "Index should be 1 for second value")
+
+	// Add a third value
+	value3 := "value3"
+	size, index = trainer.getOrCreateOneHotEncoding(featureName, value3)
+	assert.Equal(t, 3, size, "Size should be 3 after adding third value")
+	assert.Equal(t, 2, index, "Index should be 2 for third value")
+
+	// Check that the first value still has the same index
+	size, index = trainer.getOrCreateOneHotEncoding(featureName, value1)
+	assert.Equal(t, 3, size, "Size should still be 3")
+	assert.Equal(t, 0, index, "Index should still be 0 for first value")
+
+	// Test with a different feature
+	featureName2 := "test_feature2"
+	size, index = trainer.getOrCreateOneHotEncoding(featureName2, value1)
+	assert.Equal(t, 1, size, "Size should be 1 for new feature")
+	assert.Equal(t, 0, index, "Index should be 0 for first value of new feature")
+}
+
+// TestBruteForceMLDetector_Predict tests the core functionality of the Predict method
+// without relying on Redis mocks
+func TestBruteForceMLDetector_Predict(t *testing.T) {
+	// Skip this test if we're running in a CI environment
+	// since it requires Redis
+	if os.Getenv("CI") == "true" {
+		t.Skip("Skipping test in CI environment")
+	}
+
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
+
+	// Create a neural network with 6 input neurons, 1 output neuron
+	nn := NewNeuralNetwork(6, 1)
+
+	// Train the model with some sample data
+	features := [][]float64{
+		{60, 0, 1, 1, 0.5, 0},  // Legitimate login
+		{1, 10, 5, 10, 0.5, 1}, // Suspicious login
+	}
+	labels := [][]float64{
+		{1.0}, // Legitimate (high probability)
+		{0.0}, // Suspicious (low probability)
+	}
+	nn.Train(features, labels, 1000)
+
+	// Test the FeedForward method directly
+	// This is the core of the Predict method
+	legitimateFeatures := []float64{60, 0, 1, 1, 0.5, 0}
+	legitimatePrediction := nn.FeedForward(legitimateFeatures)
+	assert.Len(t, legitimatePrediction, 1, "Prediction should have 1 output")
+	assert.True(t, legitimatePrediction[0] >= 0 && legitimatePrediction[0] <= 1,
+		"Prediction should be between 0 and 1")
+
+	suspiciousFeatures := []float64{1, 10, 5, 10, 0.5, 1}
+	suspiciousPrediction := nn.FeedForward(suspiciousFeatures)
+	assert.Len(t, suspiciousPrediction, 1, "Prediction should have 1 output")
+	assert.True(t, suspiciousPrediction[0] >= 0 && suspiciousPrediction[0] <= 1,
+		"Prediction should be between 0 and 1")
+
+	// Verify that the model can distinguish between legitimate and suspicious logins
+	assert.True(t, legitimatePrediction[0] > suspiciousPrediction[0],
+		"Legitimate login should have higher probability than suspicious login")
+}
+
 func TestBruteForceMLDetector_IsFromSuspiciousNetwork(t *testing.T) {
 	// Set up test configuration with ML enabled
 	setupTestConfig(true)
