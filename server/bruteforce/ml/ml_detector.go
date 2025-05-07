@@ -1121,10 +1121,17 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 		"epochs", epochs,
 	)
 
+	// Record the start time for training duration metric
+	startTime := time.Now()
+
 	t.model.Train(features, labels, epochs)
 
+	// Calculate and record the training duration
+	trainingDuration := time.Since(startTime).Seconds()
+	GetMLMetrics().RecordTrainingDuration(trainingDuration, true)
+
 	level.Info(log.Logger).Log(
-		definitions.LogKeyMsg, "Model training completed successfully",
+		definitions.LogKeyMsg, fmt.Sprintf("Model training completed successfully in %.2f seconds", trainingDuration),
 	)
 
 	// Set the modelTrained flag if we have enough data
