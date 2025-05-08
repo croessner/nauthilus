@@ -90,7 +90,7 @@ type LDAPConf struct {
 	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
 	SASLExternal  bool `mapstructure:"sasl_external"`
 
-	NumberOfWorkers    int `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=100"`
+	NumberOfWorkers    int `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
 	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"required,min=1"`
 	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"omitempty,min=0"`
 	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"validateAuthPoolRequired"`
