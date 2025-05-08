@@ -1298,7 +1298,7 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 			"action", "ignore_ip_for_ml_training",
 			"reason", "localhost_or_empty",
 			"client_ip", clientIP,
-			"guid", guid,
+			definitions.LogKeyGUID, guid,
 		)
 
 		return true
@@ -1313,7 +1313,7 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 				"reason", "soft_whitelisted",
 				"client_ip", clientIP,
 				"username", username,
-				"guid", guid,
+				definitions.LogKeyGUID, guid,
 			)
 
 			return true
@@ -1328,7 +1328,7 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 				"action", "ignore_ip_for_ml_training",
 				"reason", "ip_whitelisted",
 				"client_ip", clientIP,
-				"guid", guid,
+				definitions.LogKeyGUID, guid,
 			)
 
 			return true
