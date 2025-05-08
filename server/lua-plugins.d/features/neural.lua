@@ -109,20 +109,20 @@ function nauthilus_call_neural_network(request)
 
         nauthilus_builtin.custom_log_add("country_code", current_iso_code)
 
-        local client_host = request.client_hostname
+        local identifier
         local client_id = request.client_id
         local user_agent = request.user_agent
 
-        if not client_host or client_host == "" then
-            client_host = "unknown"
+        if client_id and client_id ~= "" then
+            identifier = client_id
         end
 
-        if not client_id or client_id == "" then
-            client_id = "unknown"
+        if not identifier and user_agent ~= "" then
+            identifier = user_agent
         end
 
-        if not user_agent or user_agent == "" then
-            user_agent = "unknown"
+        if not identifier then
+            identifier = "unknown"
         end
 
         -- Add country code to neural network
@@ -133,9 +133,7 @@ function nauthilus_call_neural_network(request)
         -- Using the actual country code retrieved from the GeoIP service
         local additional_features = {
             country_code = current_iso_code,
-            client_host = client_host,
-            client_id = client_id,
-            user_agent = user_agent,
+            identifier = identifier,
         }
 
         for k, v in pairs(additional_features) do
