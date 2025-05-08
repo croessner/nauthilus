@@ -183,8 +183,8 @@ func (c *ldapChannelImpl) AddChannel(poolName string) error {
 
 	c.lookupEndChan[poolName] = make(chan bktype.Done, 1)
 	c.authEndChan[poolName] = make(chan bktype.Done, 1)
-	c.lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, config.GetFile().GetLDAP().Config.LookupPoolSize)
-	c.authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, config.GetFile().GetLDAP().Config.AuthPoolSize)
+	c.lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, definitions.MaxChannelSize)
+	c.authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, definitions.MaxChannelSize)
 
 	return nil
 }
@@ -199,8 +199,8 @@ func NewLDAPChannel(poolName string) LDAPChannel {
 
 	lookupEndChan[poolName] = make(chan bktype.Done, 1)
 	authEndChan[poolName] = make(chan bktype.Done, 1)
-	lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, config.GetFile().GetLDAP().Config.LookupPoolSize)
-	authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, config.GetFile().GetLDAP().Config.AuthPoolSize)
+	lookupReqChan[poolName] = make(chan *bktype.LDAPRequest, definitions.MaxChannelSize)
+	authReqChan[poolName] = make(chan *bktype.LDAPAuthRequest, definitions.MaxChannelSize)
 
 	return &ldapChannelImpl{
 		lookupEndChan: lookupEndChan,
