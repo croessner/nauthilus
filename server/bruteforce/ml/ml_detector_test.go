@@ -61,6 +61,17 @@ func TestNeuralNetwork_Train(t *testing.T) {
 	// Using a fixed seed ensures consistent test results across different environments
 	nn := NewNeuralNetworkWithSeed(6, 1, 12345)
 
+	// Verify that bias terms are initialized
+	assert.Equal(t, nn.hiddenSize, len(nn.hiddenBias), "Hidden bias should be initialized with correct size")
+	assert.Equal(t, nn.outputSize, len(nn.outputBias), "Output bias should be initialized with correct size")
+
+	// Store initial bias values for comparison after training
+	initialHiddenBias := make([]float64, len(nn.hiddenBias))
+	copy(initialHiddenBias, nn.hiddenBias)
+
+	initialOutputBias := make([]float64, len(nn.outputBias))
+	copy(initialOutputBias, nn.outputBias)
+
 	// Create sample training data with more distinct patterns
 	features := [][]float64{
 		{0.1, 0.1, 0.1, 0.1, 0.1, 0.1}, // Sample 1 - Legitimate login (all low values)
@@ -75,6 +86,25 @@ func TestNeuralNetwork_Train(t *testing.T) {
 	// Train the neural network with more epochs to ensure convergence
 	// Increased from 2000 to 5000 to ensure more reliable convergence
 	nn.Train(features, labels, 5000)
+
+	// Verify that bias terms have been updated during training
+	biasChanged := false
+	for i, bias := range nn.hiddenBias {
+		if bias != initialHiddenBias[i] {
+			biasChanged = true
+			break
+		}
+	}
+	assert.True(t, biasChanged, "Hidden bias should change during training")
+
+	biasChanged = false
+	for i, bias := range nn.outputBias {
+		if bias != initialOutputBias[i] {
+			biasChanged = true
+			break
+		}
+	}
+	assert.True(t, biasChanged, "Output bias should change during training")
 
 	// Test prediction
 	prediction := nn.FeedForward(features[0])
@@ -120,12 +150,24 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 
 	// Set up expectations for LoadModelFromRedis
 	// The model is loaded as a JSON string using GET
-	// Provide a valid JSON model structure for the test
-	mock.ExpectGet(modelKey).SetVal(`{"input_size":6,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6],"learning_rate":0.01,"activation_function":"sigmoid"}`)
+	// Provide a valid JSON model structure for the test including bias terms
+	mock.ExpectGet(modelKey).SetVal(`{"input_size":6,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6],"hidden_bias":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.1],"output_bias":[0.5],"learning_rate":0.01,"activation_function":"sigmoid"}`)
 
 	// Load the model
 	err = trainer.LoadModelFromRedis()
 	assert.NoError(t, err, "LoadModelFromRedis should not return an error")
+
+	// Verify the model was loaded correctly
+	assert.Equal(t, 6, trainer.model.inputSize, "Model input size should be 6")
+	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
+	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
+	assert.Equal(t, 6, len(trainer.model.weights), "Model should have 6 weights")
+
+	// Verify bias terms were loaded correctly
+	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
+	assert.Equal(t, 1, len(trainer.model.outputBias), "Model should have 1 output bias term")
+	assert.Equal(t, 0.1, trainer.model.hiddenBias[0], "First hidden bias should be 0.1")
+	assert.Equal(t, 0.5, trainer.model.outputBias[0], "Output bias should be 0.5")
 
 	// Verify all expectations were met
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -167,8 +209,8 @@ func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
 
 	// Set up expectations for LoadAdditionalFeaturesFromRedis
 	// The model is loaded as a JSON string using GET
-	// Provide a valid JSON model structure for the test
-	mock.ExpectGet(additionalFeaturesKey).SetVal(`{"input_size":8,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8],"learning_rate":0.01,"activation_function":"sigmoid"}`)
+	// Provide a valid JSON model structure for the test including bias terms
+	mock.ExpectGet(additionalFeaturesKey).SetVal(`{"input_size":8,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8],"hidden_bias":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.1],"output_bias":[0.5],"learning_rate":0.01,"activation_function":"sigmoid"}`)
 
 	// Load the additional features model
 	err = trainer.LoadAdditionalFeaturesFromRedis()
@@ -176,8 +218,60 @@ func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
 
 	// Verify the model was loaded correctly
 	assert.Equal(t, 8, trainer.model.inputSize, "Model input size should be 8")
+	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
 	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
 	assert.Equal(t, 8, len(trainer.model.weights), "Model should have 8 weights")
+
+	// Verify bias terms were loaded correctly
+	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
+	assert.Equal(t, 1, len(trainer.model.outputBias), "Model should have 1 output bias term")
+	assert.Equal(t, 0.1, trainer.model.hiddenBias[0], "First hidden bias should be 0.1")
+	assert.Equal(t, 0.5, trainer.model.outputBias[0], "Output bias should be 0.5")
+
+	// Verify all expectations were met
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestMLTrainer_LoadModelBackwardCompatibility(t *testing.T) {
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
+
+	// Create a Redis mock
+	db, mock := redismock.NewClientMock()
+	if db == nil || mock == nil {
+		t.Fatalf("Failed to create Redis mock client.")
+	}
+
+	// Inject the mock client
+	rediscli.NewTestClient(db)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Create an ML trainer
+	trainer := NewMLTrainer().WithContext(ctx)
+
+	// Set up expectations for LoadModelFromRedis
+	// The model is loaded as a JSON string using GET
+	// Provide a JSON model structure WITHOUT bias terms to test backward compatibility
+	modelKey := getMLRedisKeyPrefix() + "model"
+	mock.ExpectGet(modelKey).SetVal(`{"input_size":6,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6],"learning_rate":0.01,"activation_function":"sigmoid"}`)
+
+	// Load the model
+	err := trainer.LoadModelFromRedis()
+	assert.NoError(t, err, "LoadModelFromRedis should not return an error")
+
+	// Verify the model was loaded correctly
+	assert.Equal(t, 6, trainer.model.inputSize, "Model input size should be 6")
+	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
+	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
+	assert.Equal(t, 6, len(trainer.model.weights), "Model should have 6 weights")
+
+	// Verify bias terms were initialized correctly (backward compatibility)
+	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
+	assert.Equal(t, 1, len(trainer.model.outputBias), "Model should have 1 output bias term")
 
 	// Verify all expectations were met
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -889,6 +983,57 @@ func TestNeuralNetwork_FeedForwardEdgeCases(t *testing.T) {
 		// Note: We can't directly check for NaN with assert.Equal, so we use math.IsNaN
 		assert.True(t, math.IsNaN(outputs[0]) || (outputs[0] >= 0 && outputs[0] <= 1),
 			"Output should handle NaN inputs gracefully")
+	})
+
+	t.Run("Bias influence", func(t *testing.T) {
+		// Create a neural network with 2 input neurons, 2 hidden neurons, and 1 output neuron
+		nn := NewNeuralNetworkWithSeed(2, 1, 12345)
+
+		// Set all weights to zero to isolate the effect of bias
+		for i := range nn.weights {
+			nn.weights[i] = 0.0
+		}
+
+		// Set non-zero weights from hidden to output layer to allow hidden bias changes to propagate
+		// The weights array layout is: [input-to-hidden weights, hidden-to-output weights]
+		// For a 2-2-1 network, the hidden-to-output weights start at index 2*2=4
+		hiddenToOutputStartIndex := nn.inputSize * nn.hiddenSize
+		// In FeedForward, the weights are accessed using: nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+		// where i is the output neuron index and j is the hidden neuron index
+		for i := 0; i < nn.outputSize; i++ {
+			for j := 0; j < nn.hiddenSize; j++ {
+				weightIndex := hiddenToOutputStartIndex + i*nn.hiddenSize + j
+				if weightIndex < len(nn.weights) {
+					nn.weights[weightIndex] = 1.0 // Set to 1.0 to allow hidden activations to propagate
+				}
+			}
+		}
+
+		// Set known bias values
+		nn.hiddenBias[0] = 1.0 // Positive bias for first hidden neuron
+		if len(nn.hiddenBias) > 1 {
+			nn.hiddenBias[1] = -1.0 // Negative bias for second hidden neuron
+		}
+		nn.outputBias[0] = 0.5 // Positive bias for output neuron
+
+		// Test with zero inputs - output should be influenced only by bias
+		inputs := []float64{0.0, 0.0}
+		outputs := nn.FeedForward(inputs)
+		assert.Len(t, outputs, 1, "Should return an output array of length 1")
+
+		// Store the output with initial bias
+		initialOutput := outputs[0]
+
+		// Change the output bias and verify the output changes
+		nn.outputBias[0] = 2.0
+		outputs = nn.FeedForward(inputs)
+		assert.NotEqual(t, initialOutput, outputs[0], "Output should change when bias changes")
+
+		// Change the hidden bias and verify the output changes
+		nn.outputBias[0] = 0.5 // Reset output bias
+		nn.hiddenBias[0] = 3.0 // Change hidden bias
+		outputs = nn.FeedForward(inputs)
+		assert.NotEqual(t, initialOutput, outputs[0], "Output should change when hidden bias changes")
 	})
 }
 
