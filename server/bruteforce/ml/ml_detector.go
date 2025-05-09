@@ -78,6 +78,8 @@ type NeuralNetwork struct {
 	hiddenSize         int
 	outputSize         int
 	weights            []float64  // In a real implementation, this would be a more complex structure
+	hiddenBias         []float64  // Bias terms for hidden layer neurons
+	outputBias         []float64  // Bias terms for output layer neurons
 	learningRate       float64    // Learning rate for training
 	rng                *rand.Rand // Random number generator
 	activationFunction string     // Activation function to use (sigmoid, tanh, relu, leaky_relu)
@@ -119,12 +121,14 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
-	// Create a new neural network with properly initialized weights
+	// Create a new neural network with properly initialized weights and biases
 	nn := &NeuralNetwork{
 		inputSize:          inputSize,
 		hiddenSize:         hiddenSize,
 		outputSize:         outputSize,
 		weights:            make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
+		hiddenBias:         make([]float64, hiddenSize),
+		outputBias:         make([]float64, outputSize),
 		learningRate:       0.01, // Default learning rate
 		rng:                rng,
 		activationFunction: activationFunction,
@@ -133,6 +137,15 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 	// Initialize weights with small random values
 	for i := range nn.weights {
 		nn.weights[i] = (nn.rng.Float64() - 0.5) * 0.1
+	}
+
+	// Initialize bias terms with small random values
+	for i := range nn.hiddenBias {
+		nn.hiddenBias[i] = (nn.rng.Float64() - 0.5) * 0.1
+	}
+
+	for i := range nn.outputBias {
+		nn.outputBias[i] = (nn.rng.Float64() - 0.5) * 0.1
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -170,7 +183,7 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		return // Nothing to train on
 	}
 
-	// Initialize weights if they haven't been initialized properly
+	// Initialize weights and biases if they haven't been initialized properly
 	if len(nn.weights) != nn.inputSize*nn.hiddenSize+nn.hiddenSize*nn.outputSize {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "reinitialize_weights",
@@ -182,6 +195,35 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 		// Initialize weights with small random values
 		for i := range nn.weights {
 			nn.weights[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
+	}
+
+	// Initialize bias terms if they haven't been initialized properly
+	if len(nn.hiddenBias) != nn.hiddenSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "reinitialize_hidden_bias",
+			"expected_size", nn.hiddenSize,
+			"actual_size", len(nn.hiddenBias),
+		)
+
+		nn.hiddenBias = make([]float64, nn.hiddenSize)
+		// Initialize hidden bias with small random values
+		for i := range nn.hiddenBias {
+			nn.hiddenBias[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
+	}
+
+	if len(nn.outputBias) != nn.outputSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "reinitialize_output_bias",
+			"expected_size", nn.outputSize,
+			"actual_size", len(nn.outputBias),
+		)
+
+		nn.outputBias = make([]float64, nn.outputSize)
+		// Initialize output bias with small random values
+		for i := range nn.outputBias {
+			nn.outputBias[i] = (nn.rng.Float64() - 0.5) * 0.1
 		}
 	}
 
@@ -227,6 +269,11 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 					}
 				}
 
+				// Add bias term
+				if i < len(nn.hiddenBias) {
+					sum += nn.hiddenBias[i]
+				}
+
 				hiddenNetInputs[i] = sum
 				hiddenActivations[i] = nn.activate(sum) // Apply activation function
 			}
@@ -242,6 +289,11 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 					if weightIndex < len(nn.weights) {
 						sum += hiddenActivations[j] * nn.weights[weightIndex]
 					}
+				}
+
+				// Add bias term
+				if i < len(nn.outputBias) {
+					sum += nn.outputBias[i]
 				}
 
 				outputNetInputs[i] = sum
@@ -282,7 +334,7 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 				hiddenDeltas[i] = errorValue * derivative
 			}
 
-			// 3. Update weights
+			// 3. Update weights and biases
 			// Update weights between input and hidden layers
 			for i := 0; i < nn.hiddenSize; i++ {
 				for j := 0; j < nn.inputSize; j++ {
@@ -291,6 +343,12 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 						delta := nn.learningRate * hiddenDeltas[i] * inputFeatures[j]
 						nn.weights[weightIndex] += delta
 					}
+				}
+
+				// Update hidden layer bias
+				if i < len(nn.hiddenBias) {
+					delta := nn.learningRate * hiddenDeltas[i] // No input multiplication for bias
+					nn.hiddenBias[i] += delta
 				}
 			}
 
@@ -302,6 +360,12 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 						delta := nn.learningRate * outputDeltas[i] * hiddenActivations[j]
 						nn.weights[weightIndex] += delta
 					}
+				}
+
+				// Update output layer bias
+				if i < len(nn.outputBias) {
+					delta := nn.learningRate * outputDeltas[i] // No input multiplication for bias
+					nn.outputBias[i] += delta
 				}
 			}
 		}
@@ -335,7 +399,7 @@ func (nn *NeuralNetwork) Train(features [][]float64, labels [][]float64, epochs 
 	nn.recordWeightMetrics()
 }
 
-// recordWeightMetrics records the current weight values as Prometheus metrics
+// recordWeightMetrics records the current weight and bias values as Prometheus metrics
 func (nn *NeuralNetwork) recordWeightMetrics() {
 	metrics := GetMLMetrics()
 
@@ -347,6 +411,11 @@ func (nn *NeuralNetwork) recordWeightMetrics() {
 				metrics.RecordWeightValue("input", j, "hidden", i, nn.weights[weightIndex])
 			}
 		}
+
+		// Record hidden layer bias
+		if i < len(nn.hiddenBias) {
+			metrics.RecordWeightValue("bias", 0, "hidden", i, nn.hiddenBias[i])
+		}
 	}
 
 	// Record weights between hidden and output layers
@@ -356,6 +425,11 @@ func (nn *NeuralNetwork) recordWeightMetrics() {
 			if weightIndex < len(nn.weights) {
 				metrics.RecordWeightValue("hidden", j, "output", i, nn.weights[weightIndex])
 			}
+		}
+
+		// Record output layer bias
+		if i < len(nn.outputBias) {
+			metrics.RecordWeightValue("bias", 0, "output", i, nn.outputBias[i])
 		}
 	}
 }
@@ -464,6 +538,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 			}
 		}
 
+		// Add bias term
+		if i < len(nn.hiddenBias) {
+			sum += nn.hiddenBias[i]
+		}
+
 		// Apply activation function
 		activation := nn.activate(sum)
 		hiddenActivations[i] = activation
@@ -483,6 +562,11 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 			if weightIndex < len(nn.weights) {
 				sum += hiddenActivations[j] * nn.weights[weightIndex]
 			}
+		}
+
+		// Add bias term
+		if i < len(nn.outputBias) {
+			sum += nn.outputBias[i]
 		}
 
 		// Apply activation function
@@ -638,6 +722,8 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		HiddenSize         int       `json:"hidden_size"`
 		OutputSize         int       `json:"output_size"`
 		Weights            []float64 `json:"weights"`
+		HiddenBias         []float64 `json:"hidden_bias"`
+		OutputBias         []float64 `json:"output_bias"`
 		LearningRate       float64   `json:"learning_rate"`
 		ActivationFunction string    `json:"activation_function"`
 	}
@@ -663,6 +749,8 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
 		"weights_count", len(modelData.Weights),
+		"hidden_bias_count", len(modelData.HiddenBias),
+		"output_bias_count", len(modelData.OutputBias),
 		"activation_function", activationFunction,
 	)
 
@@ -672,8 +760,42 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		hiddenSize:         modelData.HiddenSize,
 		outputSize:         modelData.OutputSize,
 		weights:            modelData.Weights,
+		hiddenBias:         modelData.HiddenBias,
+		outputBias:         modelData.OutputBias,
 		learningRate:       modelData.LearningRate,
 		activationFunction: activationFunction,
+		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+
+	// Initialize bias terms if they're not present in the loaded model (backward compatibility)
+	if len(nn.hiddenBias) != nn.hiddenSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "initialize_missing_hidden_bias",
+			"reason", "backward_compatibility",
+			"expected_size", nn.hiddenSize,
+			"actual_size", len(nn.hiddenBias),
+		)
+
+		nn.hiddenBias = make([]float64, nn.hiddenSize)
+		// Initialize with small random values
+		for i := range nn.hiddenBias {
+			nn.hiddenBias[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
+	}
+
+	if len(nn.outputBias) != nn.outputSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "initialize_missing_output_bias",
+			"reason", "backward_compatibility",
+			"expected_size", nn.outputSize,
+			"actual_size", len(nn.outputBias),
+		)
+
+		nn.outputBias = make([]float64, nn.outputSize)
+		// Initialize with small random values
+		for i := range nn.outputBias {
+			nn.outputBias[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
 	}
 
 	// Replace the current model
@@ -740,6 +862,8 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 		HiddenSize         int       `json:"hidden_size"`
 		OutputSize         int       `json:"output_size"`
 		Weights            []float64 `json:"weights"`
+		HiddenBias         []float64 `json:"hidden_bias"`
+		OutputBias         []float64 `json:"output_bias"`
 		LearningRate       float64   `json:"learning_rate"`
 		ActivationFunction string    `json:"activation_function"`
 	}{
@@ -747,6 +871,8 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 		HiddenSize:         t.model.hiddenSize,
 		OutputSize:         t.model.outputSize,
 		Weights:            t.model.weights,
+		HiddenBias:         t.model.hiddenBias,
+		OutputBias:         t.model.outputBias,
 		LearningRate:       t.model.learningRate,
 		ActivationFunction: t.model.activationFunction,
 	}
@@ -758,6 +884,8 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 		"hidden_size", modelData.HiddenSize,
 		"output_size", modelData.OutputSize,
 		"weights_count", len(modelData.Weights),
+		"hidden_bias_count", len(modelData.HiddenBias),
+		"output_bias_count", len(modelData.OutputBias),
 		"activation_function", modelData.ActivationFunction,
 	)
 
@@ -1845,7 +1973,7 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 					}
 				}
 
-				// Copy weights for existing connections where possible
+				// Copy weights and biases for existing connections where possible
 				// For input to hidden layer
 				for i := 0; i < d.model.hiddenSize; i++ {
 					// Copy weights for existing connections
@@ -1876,6 +2004,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 							}
 						}
 					}
+
+					// Copy hidden layer bias
+					if i < len(d.model.hiddenBias) && i < len(newModel.hiddenBias) {
+						newModel.hiddenBias[i] = d.model.hiddenBias[i]
+					}
 				}
 
 				// For hidden to output layer
@@ -1890,6 +2023,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 						if oldWeightIndex < len(d.model.weights) && newWeightIndex < len(newModel.weights) {
 							newModel.weights[newWeightIndex] = d.model.weights[oldWeightIndex]
 						}
+					}
+
+					// Copy output layer bias
+					if i < len(d.model.outputBias) && i < len(newModel.outputBias) {
+						newModel.outputBias[i] = d.model.outputBias[i]
 					}
 				}
 
