@@ -676,6 +676,9 @@ const (
 
 	// CtxLocalCacheAuthKey is used as a key to store an Authentication structure for an authenticated user.
 	CtxLocalCacheAuthKey = "local_cache_auth"
+
+	// CtxJWTClaimsKey is used as a key to store JWT claims in the context.
+	CtxJWTClaimsKey = "jwt_claims"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

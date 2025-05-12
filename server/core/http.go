@@ -740,17 +740,41 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 // - A POST endpoint with the path "/:category/:service" that is also handled by the LuaContextMiddleware and RequestHandler functions.
 // - A DELETE endpoint with the path "/:category/:service" that is handled by the CacheHandler function.
 func setupBackChannelEndpoints(router *gin.Engine) {
+	// Create public JWT endpoints first (for token generation and refresh)
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		jwtGroup := router.Group("/api/v1/jwt")
+		jwtGroup.Use(LuaContextMiddleware())
+
+		// Token generation endpoint
+		jwtGroup.POST("/token", HandleJWTTokenGeneration)
+
+		// Token refresh endpoint
+		if config.GetFile().GetServer().GetJWTAuth().IsRefreshTokenEnabled() {
+			jwtGroup.POST("/refresh", HandleJWTTokenRefresh)
+		}
+	}
+
+	// Create the main API group with appropriate authentication
 	group := router.Group("/api/v1")
 
+	// Apply authentication middleware based on configuration
 	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
 		group.Use(BasicAuthMiddleware())
 	}
 
-	group.GET("/:category/:service", LuaContextMiddleware(), RequestHandler)
-	group.POST("/:category/:service", LuaContextMiddleware(), RequestHandler)
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		group.Use(JWTAuthMiddleware())
+	}
+
+	// Add LuaContextMiddleware to all routes
+	group.Use(LuaContextMiddleware())
+
+	// Set up the main API endpoints
+	group.GET("/:category/:service", RequestHandler)
+	group.POST("/:category/:service", RequestHandler)
 	group.DELETE("/:category/:service", CacheHandler)
 
-	group.Any("/custom/*hook", LuaContextMiddleware(), CustomRequestHandler)
+	group.Any("/custom/*hook", CustomRequestHandler)
 }
 
 // setupWebAuthnEndpoints is a function that sets up the endpoints related to WebAuthn in the given Gin router.

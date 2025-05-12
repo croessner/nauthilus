@@ -32,6 +32,7 @@ type ServerSection struct {
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
+	JWTAuth                   JWTAuth                  `mapstructure:"jwt_auth" validate:"omitempty"`
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`
@@ -86,6 +87,11 @@ func (s *ServerSection) GetEndpoint() *Endpoint {
 // GetBasicAuth retrieves a pointer to the BasicAuth configuration from the ServerSection instance.
 func (s *ServerSection) GetBasicAuth() *BasicAuth {
 	return &s.BasicAuth
+}
+
+// GetJWTAuth retrieves a pointer to the JWTAuth configuration from the ServerSection instance.
+func (s *ServerSection) GetJWTAuth() *JWTAuth {
+	return &s.JWTAuth
 }
 
 // GetTLS retrieves the TLS configuration from the ServerSection instance.
@@ -155,6 +161,7 @@ type Endpoint struct {
 	AuthBasic     bool `mapstructure:"auth_basic"`
 	AuthNginx     bool `mapstructure:"auth_nginx"`
 	AuthSASLAuthd bool `mapstructure:"auth_saslauthd"`
+	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
 }
 
@@ -181,6 +188,11 @@ func (e *Endpoint) IsAuthNginxEnabled() bool {
 // IsAuthSASLAuthdEnabled checks if SASL authentication is enabled for the endpoint and returns the corresponding boolean value.
 func (e *Endpoint) IsAuthSASLAuthdEnabled() bool {
 	return e.AuthSASLAuthd
+}
+
+// IsAuthJWTEnabled checks if JWT authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthJWTEnabled() bool {
+	return e.AuthJWT
 }
 
 // IsCustomHooksEnabled checks if custom hooks are enabled for the endpoint and returns the corresponding boolean value.
@@ -256,9 +268,71 @@ type BasicAuth struct {
 	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
 }
 
+// JWTAuth represents the configuration for JWT authentication.
+type JWTAuth struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	SecretKey    string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumunicode,excludesall= "`
+	TokenExpiry  time.Duration `mapstructure:"token_expiry" validate:"omitempty,gt=0"`
+	RefreshToken bool          `mapstructure:"refresh_token"`
+	Users        []*JWTUser    `mapstructure:"users" validate:"omitempty,dive"`
+	StoreInRedis bool          `mapstructure:"store_in_redis"`
+}
+
+// JWTUser represents a user configuration for JWT authentication.
+type JWTUser struct {
+	Username string   `mapstructure:"username" validate:"required,excludesall= "`
+	Password string   `mapstructure:"password" validate:"required,min=8,excludesall= "`
+	Roles    []string `mapstructure:"roles" validate:"omitempty,dive,oneof=authenticated user_info list_accounts"`
+}
+
 // IsEnabled returns true if basic HTTP authentication is enabled, otherwise false.
 func (b *BasicAuth) IsEnabled() bool {
 	return b.Enabled
+}
+
+// IsEnabled returns true if JWT authentication is enabled, otherwise false.
+func (j *JWTAuth) IsEnabled() bool {
+	return j.Enabled
+}
+
+// GetSecretKey returns the secret key used for JWT signing.
+func (j *JWTAuth) GetSecretKey() string {
+	return j.SecretKey
+}
+
+// GetTokenExpiry returns the token expiry duration.
+func (j *JWTAuth) GetTokenExpiry() time.Duration {
+	return j.TokenExpiry
+}
+
+// IsRefreshTokenEnabled returns true if refresh tokens are enabled.
+func (j *JWTAuth) IsRefreshTokenEnabled() bool {
+	return j.RefreshToken
+}
+
+// GetUsers returns the list of JWT users.
+func (j *JWTAuth) GetUsers() []*JWTUser {
+	return j.Users
+}
+
+// IsStoreInRedisEnabled returns true if tokens should be stored in Redis.
+func (j *JWTAuth) IsStoreInRedisEnabled() bool {
+	return j.StoreInRedis
+}
+
+// GetUsername returns the username of the JWT user.
+func (u *JWTUser) GetUsername() string {
+	return u.Username
+}
+
+// GetPassword returns the password of the JWT user.
+func (u *JWTUser) GetPassword() string {
+	return u.Password
+}
+
+// GetRoles returns the roles of the JWT user.
+func (u *JWTUser) GetRoles() []string {
+	return u.Roles
 }
 
 // GetUsername returns the username configured for basic HTTP authentication.
