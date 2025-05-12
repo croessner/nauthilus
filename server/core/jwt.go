@@ -300,6 +300,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Skip if JWT auth is not enabled
 		if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
 			ctx.Next()
+
 			return
 		}
 
@@ -307,6 +308,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		tokenString, err := ExtractJWTToken(ctx)
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+
 			return
 		}
 
@@ -314,6 +316,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		claims, err := ValidateJWTToken(tokenString)
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
 			return
 		}
 
@@ -632,6 +635,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	auth := NewAuthStateFromContext(ctx)
 	if auth == nil {
 		ctx.AbortWithStatus(http.StatusBadRequest)
+
 		return
 	}
 
