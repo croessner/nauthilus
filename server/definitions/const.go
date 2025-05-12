@@ -659,6 +659,9 @@ const (
 	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
 	CtxAdditionalFeaturesKey = "additional_features"
 
+	// CtxFeatureEncodingTypeKey is the key used to store feature encoding type preferences in the lualib.Context
+	CtxFeatureEncodingTypeKey = "feature_encoding_type"
+
 	// CtxCSRFTokenKey is used as a key to store the session's CSRF token in session.Store
 	CtxCSRFTokenKey = "csrf"
 

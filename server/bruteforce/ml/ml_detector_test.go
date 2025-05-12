@@ -1168,6 +1168,172 @@ func TestBruteForceMLDetector_Predict(t *testing.T) {
 		"Legitimate login should have higher probability than suspicious login")
 }
 
+// TestMLTrainer_Embedding tests the embedding functionality
+func TestMLTrainer_Embedding(t *testing.T) {
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Create an ML trainer
+	trainer := NewMLTrainer().WithContext(ctx)
+
+	// Test with default embedding size
+	assert.Equal(t, 8, trainer.embeddingSize, "Default embedding size should be 8")
+
+	// Test setting embedding size
+	trainer.SetEmbeddingSize(16)
+	assert.Equal(t, 16, trainer.embeddingSize, "Embedding size should be updated to 16")
+
+	// Test generating embeddings
+	value1 := "test_value"
+	embedding1 := trainer.generateEmbedding(value1)
+	assert.Len(t, embedding1, 16, "Embedding should have the specified size")
+
+	// Test that embeddings are deterministic (same input produces same output)
+	embedding2 := trainer.generateEmbedding(value1)
+	assert.Equal(t, embedding1, embedding2, "Same input should produce same embedding")
+
+	// Test that different inputs produce different embeddings
+	value2 := "different_value"
+	embedding3 := trainer.generateEmbedding(value2)
+	assert.NotEqual(t, embedding1, embedding3, "Different inputs should produce different embeddings")
+
+	// Test empty string
+	emptyEmbedding := trainer.generateEmbedding("")
+	assert.Len(t, emptyEmbedding, 16, "Empty string should produce an embedding of the specified size")
+	// All values should be 0 for empty string
+	for _, val := range emptyEmbedding {
+		assert.Equal(t, 0.0, val, "Empty string should produce zero embedding")
+	}
+
+	// Test setting feature encoding type
+	trainer.SetFeatureEncodingType("feature1", OneHotEncoding)
+	assert.Equal(t, OneHotEncoding, trainer.GetFeatureEncodingType("feature1"), "Feature encoding type should be set correctly")
+
+	trainer.SetFeatureEncodingType("feature2", EmbeddingEncoding)
+	assert.Equal(t, EmbeddingEncoding, trainer.GetFeatureEncodingType("feature2"), "Feature encoding type should be set correctly")
+
+	// Test default encoding type
+	assert.Equal(t, OneHotEncoding, trainer.GetFeatureEncodingType("unknown_feature"), "Default encoding type should be OneHotEncoding")
+}
+
+// TestMixedEncodingTypes tests that both One-Hot and Embedding encoding types can be used together
+func TestMixedEncodingTypes(t *testing.T) {
+	// Set up test configuration with ML enabled
+	setupTestConfig(true)
+
+	// Create a context
+	ctx := context.Background()
+
+	// Create a neural network with enough inputs for our test
+	// We'll need: 6 standard features + 3 one-hot encoded values + 8 embedding values = 17 inputs
+	nn := NewNeuralNetwork(17, 1)
+
+	// Create a global trainer for the test
+	originalGlobalTrainer := globalTrainer
+	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+
+	// Create a trainer with context
+	trainer := NewMLTrainer().WithContext(ctx)
+	trainer.model = nn
+	trainer.SetEmbeddingSize(8)
+
+	// Set up encoding types
+	trainer.SetFeatureEncodingType("one_hot_feature", OneHotEncoding)
+	trainer.SetFeatureEncodingType("embedding_feature", EmbeddingEncoding)
+
+	// Set up one-hot encoding values
+	trainer.getOrCreateOneHotEncoding("one_hot_feature", "value1") // Index 0
+	trainer.getOrCreateOneHotEncoding("one_hot_feature", "value2") // Index 1
+	trainer.getOrCreateOneHotEncoding("one_hot_feature", "value3") // Index 2
+
+	// Set the global trainer
+	globalTrainer = trainer
+
+	// Create a detector with the model
+	detector := &BruteForceMLDetector{
+		ctx:                ctx,
+		guid:               "test-guid",
+		clientIP:           "127.0.0.1",
+		username:           "testuser",
+		model:              nn,
+		additionalFeatures: make(map[string]any),
+		featureEncodingTypes: map[string]string{
+			"one_hot_feature":   "one-hot",
+			"embedding_feature": "embedding",
+		},
+	}
+
+	// Set additional features with both encoding types
+	detector.additionalFeatures = map[string]any{
+		"one_hot_feature":   "value1",
+		"embedding_feature": "test_value",
+	}
+
+	// Create a LoginFeatures struct with the additional features
+	features := &LoginFeatures{
+		TimeBetweenAttempts:    60,
+		FailedAttemptsLastHour: 0,
+		DifferentUsernames:     1,
+		DifferentPasswords:     1,
+		TimeOfDay:              0.5,
+		SuspiciousNetwork:      0,
+		AdditionalFeatures:     detector.additionalFeatures,
+	}
+
+	// Collect features and prepare for prediction
+	inputs := []float64{
+		features.TimeBetweenAttempts,
+		features.FailedAttemptsLastHour,
+		features.DifferentUsernames,
+		features.DifferentPasswords,
+		features.TimeOfDay,
+		features.SuspiciousNetwork,
+	}
+
+	// Process additional features
+	for _, key := range []string{"one_hot_feature", "embedding_feature"} {
+		value := features.AdditionalFeatures[key]
+		if strValue, isString := value.(string); isString {
+			encodingType := detector.featureEncodingTypes[key]
+			if encodingType == "embedding" {
+				// Use embedding encoding
+				embedding := trainer.generateEmbedding(strValue)
+				inputs = append(inputs, embedding...)
+
+				// Verify embedding size
+				assert.Len(t, embedding, 8, "Embedding should have size 8")
+			} else {
+				// Use one-hot encoding
+				size, index := trainer.oneHotSizes["one_hot_feature"], trainer.oneHotEncodings["one_hot_feature"][strValue]
+				for j := 0; j < size; j++ {
+					if j == index {
+						inputs = append(inputs, 1.0)
+					} else {
+						inputs = append(inputs, 0.0)
+					}
+				}
+
+				// Verify one-hot encoding
+				assert.Equal(t, 3, size, "One-hot encoding size should be 3")
+				assert.Equal(t, 0, index, "Index for 'value1' should be 0")
+			}
+		}
+	}
+
+	// Verify the total input size
+	assert.Len(t, inputs, 17, "Total inputs should be 17 (6 standard + 3 one-hot + 8 embedding)")
+
+	// Feed the inputs to the neural network
+	output := nn.FeedForward(inputs)
+
+	// Verify that the output is a valid probability
+	assert.Len(t, output, 1, "Output should have length 1")
+	assert.True(t, output[0] >= 0 && output[0] <= 1, "Output should be a valid probability between 0 and 1")
+}
+
 func TestBruteForceMLDetector_IsFromSuspiciousNetwork(t *testing.T) {
 	// Set up test configuration with ML enabled
 	setupTestConfig(true)
