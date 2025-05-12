@@ -2339,6 +2339,52 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	return
 }
 
+// HasJWTRole checks if the user has the specified role in their JWT token.
+// It retrieves the JWT claims from the context and checks if the user has the required role.
+// If JWT authentication is not enabled or no claims are found, it returns false.
+func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
+	// Check if JWT auth is enabled
+	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		return false
+	}
+
+	// Get JWT claims from context
+	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
+	if !exists {
+		return false
+	}
+
+	// Try direct type assertion for the most common case
+	if claims, ok := claimsValue.(*JWTClaims); ok {
+		// Check if the user has the required role
+		for _, r := range claims.Roles {
+			if r == role {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	// Fallback to map[string]any for backward compatibility
+	if claims, ok := claimsValue.(map[string]any); ok {
+		if rolesValue, exists := claims["roles"]; exists {
+			if roles, ok := rolesValue.([]string); ok {
+				for _, r := range roles {
+					if r == role {
+						return true
+					}
+				}
+			}
+		}
+
+		return false
+	}
+
+	// If we get here, the claims are in an unexpected format
+	return false
+}
+
 // SetOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.
 // It retrieves the GUID from the gin context and uses it for logging purposes.
 // The operation mode can be "no-auth" or "list-accounts".
@@ -2365,11 +2411,35 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	case "no-auth":
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
-		a.NoAuth = true
+		// Check if JWT is enabled and user has the required role
+		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+			if a.HasJWTRole(ctx, "user_info") {
+				a.NoAuth = true
+			} else {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "JWT user does not have the 'user_info' role required for no-auth mode",
+				)
+			}
+		} else {
+			a.NoAuth = true
+		}
 	case "list-accounts":
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
 
-		a.ListAccounts = true
+		// Check if JWT is enabled and user has the required role
+		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+			if a.HasJWTRole(ctx, "list_accounts") {
+				a.ListAccounts = true
+			} else {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "JWT user does not have the 'list_accounts' role required for list-accounts mode",
+				)
+			}
+		} else {
+			a.ListAccounts = true
+		}
 	}
 
 	if ctx.Query("in-memory") == "0" {
