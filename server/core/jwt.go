@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/golang-jwt/jwt/v5"
@@ -259,7 +260,8 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		storedToken, err := GetTokenFromRedis(claims.Username)
 		if err != nil {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token not found in Redis",
 				"error", err,
 				"username", claims.Username,
@@ -270,7 +272,8 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 
 		// Verify that the token matches the one in Redis
 		if storedToken != tokenString {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token does not match the one in Redis",
 				"username", claims.Username,
 			)
@@ -649,7 +652,8 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		storedRefreshToken, err := GetRefreshTokenFromRedis(claims.Subject)
 		if err != nil {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Refresh token not found in Redis",
 				"error", err,
 				"username", claims.Subject,
@@ -661,7 +665,8 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 		// Verify that the refresh token matches the one in Redis
 		if storedRefreshToken != refreshToken {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Refresh token does not match the one in Redis",
 				"username", claims.Subject,
 			)

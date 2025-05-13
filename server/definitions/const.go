@@ -838,6 +838,12 @@ const (
 
 	// DbgNeural represents the debug module identifier for neural network-related operations.
 	DbgNeural
+
+	// DbgJWT represents the debug module for JWT-related operations.
+	DbgJWT
+
+	// DbgHTTP represents the debug module for HTTP-related operations.
+	DbgHTTP
 )
 
 const (
@@ -894,6 +900,12 @@ const (
 
 	// DbgNeuralName specifies the debug identifier for neural-related processes or functionalities.
 	DbgNeuralName = "neural"
+
+	// DbgJWTName is the debug identifier for JWT
+	DbgJWTName = "jwt"
+
+	// DbgHTTPName is the debug identifier for HTTP
+	DbgHTTPName = "http"
 )
 
 const (

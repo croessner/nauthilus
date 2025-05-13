@@ -20,9 +20,8 @@ import (
 	"reflect"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 )
 
 // HasRole checks if the user has the specified role in their JWT token.
@@ -32,7 +31,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 	// Get JWT claims from context
 	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
 	if !exists {
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "JWT claims not found in context",
 		)
@@ -41,7 +41,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 	}
 
 	// Log the type of claims for debugging
-	level.Debug(log.Logger).Log(
+	util.DebugModule(
+		definitions.DbgJWT,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, fmt.Sprintf("JWT claims type: %s", reflect.TypeOf(claimsValue)),
 	)
@@ -53,7 +54,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 		rolesField := structValue.FieldByName("Roles")
 
 		if rolesField.IsValid() && rolesField.Kind() == reflect.Slice {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 				definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched struct with Roles field, roles: %v", rolesField.Interface()),
 			)
@@ -62,7 +64,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 			for i := 0; i < rolesField.Len(); i++ {
 				roleValue := rolesField.Index(i)
 				if roleValue.Kind() == reflect.String && roleValue.String() == role {
-					level.Debug(log.Logger).Log(
+					util.DebugModule(
+						definitions.DbgJWT,
 						definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 						definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
 					)
@@ -71,7 +74,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 				}
 			}
 
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 				definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
 			)
@@ -85,14 +89,16 @@ func HasRole(ctx *gin.Context, role string) bool {
 		Username string   `json:"username"`
 		Roles    []string `json:"roles,omitempty"`
 	}); ok {
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched *JWTClaims struct, roles: %v", claims.Roles),
 		)
 
 		for _, r := range claims.Roles {
 			if r == role {
-				level.Debug(log.Logger).Log(
+				util.DebugModule(
+					definitions.DbgJWT,
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
 				)
@@ -100,7 +106,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 				return true
 			}
 		}
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
 		)
@@ -110,21 +117,24 @@ func HasRole(ctx *gin.Context, role string) bool {
 
 	// Try direct type assertion for the most common case
 	if claims, ok := claimsValue.(map[string]interface{}); ok {
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched map[string]interface{}, keys: %v", reflect.ValueOf(claims).MapKeys()),
 		)
 
 		if rolesValue, exists := claims["roles"]; exists {
 			if roles, ok := rolesValue.([]interface{}); ok {
-				level.Debug(log.Logger).Log(
+				util.DebugModule(
+					definitions.DbgJWT,
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, fmt.Sprintf("JWT roles: %v", roles),
 				)
 
 				for _, r := range roles {
 					if roleStr, ok := r.(string); ok && roleStr == role {
-						level.Debug(log.Logger).Log(
+						util.DebugModule(
+							definitions.DbgJWT,
 							definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 							definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
 						)
@@ -135,7 +145,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 			}
 		}
 
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
 		)
@@ -145,21 +156,24 @@ func HasRole(ctx *gin.Context, role string) bool {
 
 	// Try to handle the case where roles might be a []string
 	if claims, ok := claimsValue.(map[string]any); ok {
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched map[string]any, keys: %v", reflect.ValueOf(claims).MapKeys()),
 		)
 
 		if rolesValue, exists := claims["roles"]; exists {
 			if roles, ok := rolesValue.([]string); ok {
-				level.Debug(log.Logger).Log(
+				util.DebugModule(
+					definitions.DbgJWT,
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyMsg, fmt.Sprintf("JWT roles: %v", roles),
 				)
 
 				for _, r := range roles {
 					if r == role {
-						level.Debug(log.Logger).Log(
+						util.DebugModule(
+							definitions.DbgJWT,
 							definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 							definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
 						)
@@ -170,7 +184,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 			}
 		}
 
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
 		)
@@ -179,7 +194,8 @@ func HasRole(ctx *gin.Context, role string) bool {
 	}
 
 	// If we get here, the claims are in an unexpected format
-	level.Debug(log.Logger).Log(
+	util.DebugModule(
+		definitions.DbgJWT,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, fmt.Sprintf("JWT claims in unexpected format: %v", claimsValue),
 	)
