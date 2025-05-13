@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -35,12 +36,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// JWTClaims represents the claims in a JWT token
-type JWTClaims struct {
-	Username string   `json:"username"`
-	Roles    []string `json:"roles,omitempty"`
-	jwt.RegisteredClaims
-}
+// JWTClaims is an alias for jwtclaims.JWTClaims
+type JWTClaims = jwtclaims.JWTClaims
 
 // JWTRequest represents the request body for JWT token generation
 type JWTRequest struct {
