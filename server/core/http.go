@@ -223,8 +223,15 @@ func RequestHandler(ctx *gin.Context) {
 // CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
 // If JWT is enabled, it checks if the user has the required roles for the hook.
 func CustomRequestHandler(ctx *gin.Context) {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+
 	// Check if custom hooks are enabled
-	if !config.GetFile().GetServer().GetEndpoint().IsCustomHooksEnabled() {
+	if config.GetFile().GetServer().GetEndpoint().IsCustomHooksDisabled() {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Custom hooks are disabled",
+		)
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
@@ -233,19 +240,67 @@ func CustomRequestHandler(ctx *gin.Context) {
 	// Get the hook name and method from the request
 	hookName := ctx.Param("hook")
 	hookMethod := ctx.Request.Method
+	util.DebugModule(
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Processing custom hook: %s %s", hookMethod, hookName),
+	)
+
+	// Log JWT claims for debugging
+	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
+	if exists {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("JWT claims found in context, type: %T", claimsValue),
+		)
+	} else {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "No JWT claims found in context",
+		)
+	}
 
 	// Check if the user has the required roles for this hook
 	if !hook.HasRequiredRoles(ctx, hookName, hookMethod) {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("User does not have required roles for hook: %s %s", hookMethod, hookName),
+		)
 		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
 
 		return
 	}
 
+	util.DebugModule(
+		definitions.DbgHTTP,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("User has required roles for hook: %s %s, executing hook", hookMethod, hookName),
+	)
+
 	// Execute the hook
 	if result, err := hook.RunLuaHook(ctx); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),
+			"error", err,
+		)
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 	} else if result != nil {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
+		)
 		ctx.JSON(http.StatusOK, result)
+	} else {
+		util.DebugModule(
+			definitions.DbgHTTP,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no result: %s %s", hookMethod, hookName),
+		)
 	}
 }
 

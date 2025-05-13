@@ -698,7 +698,8 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 	}
 
 	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
-		level.Debug(log.Logger).Log(
+		util.DebugModule(
+			definitions.DbgWebAuthn,
 			definitions.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),
 		)

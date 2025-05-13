@@ -279,6 +279,10 @@ func DebugModule(module definitions.DbgModule, keyvals ...any) {
 		moduleName = definitions.DbgTolerateName
 	case definitions.DbgNeural:
 		moduleName = definitions.DbgNeuralName
+	case definitions.DbgJWT:
+		moduleName = definitions.DbgJWTName
+	case definitions.DbgHTTP:
+		moduleName = definitions.DbgHTTPName
 	default:
 		return
 	}

@@ -147,9 +147,28 @@ func (l CustomLocation) GetCustomHook(location string) CustomHook {
 
 // GetScript retrieves a precompiled Lua script based on the provided location and HTTP method. Returns the script or nil.
 func (l CustomLocation) GetScript(location, method string) *PrecompiledLuaScript {
+	// Try with the original location
 	if hook := l.GetCustomHook(location); hook != nil {
 		if script := hook.GetScript(method); script != nil {
 			return script
+		}
+	}
+
+	// If not found and location doesn't have a leading slash, try with a leading slash
+	if !strings.HasPrefix(location, "/") {
+		if hook := l.GetCustomHook("/" + location); hook != nil {
+			if script := hook.GetScript(method); script != nil {
+				return script
+			}
+		}
+	}
+
+	// If not found and location has a leading slash, try without it
+	if strings.HasPrefix(location, "/") {
+		if hook := l.GetCustomHook(strings.TrimPrefix(location, "/")); hook != nil {
+			if script := hook.GetScript(method); script != nil {
+				return script
+			}
 		}
 	}
 
@@ -188,27 +207,90 @@ func GetHookRoles(location, method string) []string {
 
 // HasRequiredRoles checks if the user has any of the required roles for a hook.
 // If no roles are configured for the hook, it returns true (allowing access).
-// If JWT is not enabled, it returns true (allowing access).
+// If JWT is not enabled or not properly configured, it returns true (allowing access).
 func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+
 	// Check if JWT auth is enabled
-	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+	jwtAuth := config.GetFile().GetServer().GetJWTAuth()
+	if !jwtAuth.IsEnabled() {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "JWT authentication is not enabled, allowing access",
+		)
+
+		return true
+	}
+
+	// Check if JWT auth is properly configured
+	if jwtAuth.GetSecretKey() == "" || len(jwtAuth.GetUsers()) == 0 {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "JWT authentication is not properly configured, allowing access",
+		)
+
 		return true
 	}
 
 	// Get the roles required for this hook
 	requiredRoles := GetHookRoles(location, method)
+	util.DebugModule(
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Required roles for hook %s %s: %v", location, method, requiredRoles),
+	)
 
 	// If no roles are configured, allow access
 	if len(requiredRoles) == 0 {
-		return true
+		// Try with a leading slash if no roles were found
+		if !strings.HasPrefix(location, "/") {
+			locationWithSlash := "/" + location
+			requiredRoles = GetHookRoles(locationWithSlash, method)
+			util.DebugModule(
+				definitions.DbgLua,
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required roles: %v", locationWithSlash, requiredRoles),
+			)
+		}
+
+		// If still no roles are configured, allow access
+		if len(requiredRoles) == 0 {
+			util.DebugModule(
+				definitions.DbgLua,
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "No roles configured for this hook, allowing access",
+			)
+
+			return true
+		}
 	}
 
 	// Check if the user has any of the required roles
 	for _, role := range requiredRoles {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Checking if user has role: %s", role),
+		)
+
 		if jwtutil.HasRole(ctx, role) {
+			util.DebugModule(
+				definitions.DbgLua,
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, fmt.Sprintf("User has required role: %s, allowing access", role),
+			)
+
 			return true
 		}
 	}
+
+	util.DebugModule(
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("User does not have any of the required roles: %v, denying access", requiredRoles),
+	)
 
 	return false
 }
@@ -382,11 +464,28 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	hook := ctx.Param("hook")
 
+	util.DebugModule(
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Looking for script for hook: %s, method: %s", hook, ctx.Request.Method),
+	)
+
 	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Script not found for hook: %s, method: %s", hook, ctx.Request.Method),
+		)
 		ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "lua script for location '" + hook + "' not found", "guid": guid})
 
 		return nil, nil
 	}
+
+	util.DebugModule(
+		definitions.DbgLua,
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, fmt.Sprintf("Script found for hook: %s, method: %s", hook, ctx.Request.Method),
+	)
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
@@ -402,7 +501,22 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 
 	logTable := setupLogging(L)
 
-	return executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
+	result, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),
+			"error", err,
+		)
+	} else {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, fmt.Sprintf("Script executed successfully for hook: %s, method: %s", hook, ctx.Request.Method),
+		)
+	}
+
+	return result, err
 }
 
 // registerDynamicLoaderGin registers a dynamic loader function in the Lua state (L)

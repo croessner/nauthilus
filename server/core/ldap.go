@@ -25,10 +25,8 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
-	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -249,7 +247,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			level.Debug(log.Logger).Log(definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, err)
+			util.DebugModule(
+				definitions.DbgLDAP,
+				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyMsg, err,
+			)
 
 			if stderrors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {

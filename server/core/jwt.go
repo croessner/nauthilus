@@ -25,21 +25,19 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
 
-// JWTClaims represents the claims in a JWT token
-type JWTClaims struct {
-	Username string   `json:"username"`
-	Roles    []string `json:"roles,omitempty"`
-	jwt.RegisteredClaims
-}
+// JWTClaims is an alias for jwtclaims.JWTClaims
+type JWTClaims = jwtclaims.JWTClaims
 
 // JWTRequest represents the request body for JWT token generation
 type JWTRequest struct {
@@ -259,7 +257,8 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		storedToken, err := GetTokenFromRedis(claims.Username)
 		if err != nil {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token not found in Redis",
 				"error", err,
 				"username", claims.Username,
@@ -270,7 +269,8 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 
 		// Verify that the token matches the one in Redis
 		if storedToken != tokenString {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token does not match the one in Redis",
 				"username", claims.Username,
 			)
@@ -284,6 +284,11 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 
 // ExtractJWTToken extracts the JWT token from the Authorization header
 func ExtractJWTToken(ctx *gin.Context) (string, error) {
+	// Check if JWT auth is enabled
+	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		return "", errors.New("JWT authentication is not enabled")
+	}
+
 	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
 		return "", errors.New("authorization header is required")
@@ -644,7 +649,8 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		storedRefreshToken, err := GetRefreshTokenFromRedis(claims.Subject)
 		if err != nil {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Refresh token not found in Redis",
 				"error", err,
 				"username", claims.Subject,
@@ -656,7 +662,8 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 		// Verify that the refresh token matches the one in Redis
 		if storedRefreshToken != refreshToken {
-			level.Debug(log.Logger).Log(
+			util.DebugModule(
+				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Refresh token does not match the one in Redis",
 				"username", claims.Subject,
 			)
