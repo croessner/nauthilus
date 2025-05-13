@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -40,7 +41,10 @@ var (
 	// LuaScripts is a map that stores precompiled Lua scripts, allowing safe concurrent access and manipulation.
 	LuaScripts = make(map[string]*PrecompiledLuaScript)
 
-	mu sync.Mutex
+	// hookRoles is a map that associates each Location and HTTP method with its corresponding roles.
+	hookRoles = make(map[string][]string)
+
+	mu sync.RWMutex
 )
 
 // customLocation is a map that associates each Location with its corresponding CustomHook.
@@ -166,6 +170,49 @@ func NewCustomLocation() CustomLocation {
 	return make(CustomLocation)
 }
 
+// getHookKey generates a unique key for a hook based on its location and method.
+func getHookKey(location, method string) string {
+	return strings.TrimLeft(location, "/") + ":" + method
+}
+
+// GetHookRoles returns the roles required for a specific hook.
+func GetHookRoles(location, method string) []string {
+	hookKey := getHookKey(location, method)
+
+	mu.RLock()
+	roles := hookRoles[hookKey]
+	mu.RUnlock()
+
+	return roles
+}
+
+// HasRequiredRoles checks if the user has any of the required roles for a hook.
+// If no roles are configured for the hook, it returns true (allowing access).
+// If JWT is not enabled, it returns true (allowing access).
+func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
+	// Check if JWT auth is enabled
+	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		return true
+	}
+
+	// Get the roles required for this hook
+	requiredRoles := GetHookRoles(location, method)
+
+	// If no roles are configured, allow access
+	if len(requiredRoles) == 0 {
+		return true
+	}
+
+	// Check if the user has any of the required roles
+	for _, role := range requiredRoles {
+		if jwtutil.HasRole(ctx, role) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
 // Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
 // Returns an error if the compilation fails or if the script cannot be managed properly.
@@ -199,6 +246,7 @@ func PreCompileLuaScript(filePath string) (err error) {
 }
 
 // PreCompileLuaHooks pre-compiles Lua hook scripts defined in the configuration and assigns them to specified locations and methods.
+// It also stores the roles associated with each hook for role-based access control.
 // Returns an error if the compilation or setup fails.
 func PreCompileLuaHooks() error {
 	if config.GetFile().HaveLuaHooks() {
@@ -206,14 +254,27 @@ func PreCompileLuaHooks() error {
 			customLocation = NewCustomLocation()
 		}
 
+		// Clear the hookRoles map before repopulating it
+		mu.Lock()
+		hookRoles = make(map[string][]string)
+		mu.Unlock()
+
 		for index := range config.GetFile().GetLua().Hooks {
-			script, err := NewLuaHook(config.GetFile().GetLua().Hooks[index].ScriptPath)
+			hook := config.GetFile().GetLua().Hooks[index]
+
+			script, err := NewLuaHook(hook.ScriptPath)
 			if err != nil {
 				return err
 			}
 
-			// Add compiled Lua hook.
-			customLocation.SetScript(config.GetFile().GetLua().Hooks[index].Location, config.GetFile().GetLua().Hooks[index].Method, script)
+			customLocation.SetScript(hook.Location, hook.Method, script)
+
+			// Store the roles for this hook
+			hookKey := getHookKey(hook.Location, hook.Method)
+
+			mu.Lock()
+			hookRoles[hookKey] = hook.GetRoles()
+			mu.Unlock()
 		}
 	}
 

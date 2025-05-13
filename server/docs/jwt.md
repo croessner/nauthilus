@@ -33,10 +33,12 @@ Configuration options:
 - `users`: Optional list of JWT-specific users with their roles.
   - `username`: The username for the JWT user.
   - `password`: The password for the JWT user.
-  - `roles`: List of roles assigned to the user. Available roles:
+  - `roles`: List of roles assigned to the user. Default roles include:
     - `authenticated`: Basic access role.
     - `user_info`: Access to user information.
     - `list_accounts`: Access to list accounts.
+
+    You can also define custom roles for your users and use them for custom hooks or other role-based access control mechanisms.
 
 You also need to ensure that the JWT endpoint is not disabled:
 
@@ -113,8 +115,34 @@ JWT tokens include roles that determine what actions the user can perform:
 - `authenticated`: All authenticated users have this role.
 - `user_info`: Users with NoAuth=true have this role. This role is required to access endpoints with `mode=no-auth`.
 - `list_accounts`: Users who can list accounts have this role. This role is required to access endpoints with `mode=list-accounts`.
+- Custom roles: You can define custom roles for your users and use them for custom hooks.
 
 The roles are enforced in the authentication process. If a user attempts to access an endpoint that requires a specific role, and the user doesn't have that role, the request will be rejected with an appropriate error message. This ensures that users can only perform actions that they are authorized to do.
+
+### Role-Based Access Control for Custom Hooks
+
+You can configure roles for custom hooks to restrict access to specific users. When JWT authentication is enabled, the roles specified for a hook are checked against the roles in the user's JWT token. If the user doesn't have any of the required roles, the request is rejected with a 403 Forbidden status.
+
+To configure roles for a custom hook, add a `roles` field to the hook configuration:
+
+```yaml
+lua:
+  custom_hooks:
+    - http_location: "status"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/status_check.lua"
+      roles: ["admin", "monitoring"]
+    - http_location: "user-info"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/user_info.lua"
+      roles: ["user_info"]
+```
+
+In this example:
+- The "status" hook requires the user to have either the "admin" or "monitoring" role.
+- The "user-info" hook requires the user to have the "user_info" role.
+
+If no roles are specified for a hook, any authenticated user can access it when JWT is enabled.
 
 ## Using JWT Authentication
 

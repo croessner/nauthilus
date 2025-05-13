@@ -37,6 +37,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -2348,41 +2349,8 @@ func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
 		return false
 	}
 
-	// Get JWT claims from context
-	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
-	if !exists {
-		return false
-	}
-
-	// Try direct type assertion for the most common case
-	if claims, ok := claimsValue.(*JWTClaims); ok {
-		// Check if the user has the required role
-		for _, r := range claims.Roles {
-			if r == role {
-				return true
-			}
-		}
-
-		return false
-	}
-
-	// Fallback to map[string]any for backward compatibility
-	if claims, ok := claimsValue.(map[string]any); ok {
-		if rolesValue, exists := claims["roles"]; exists {
-			if roles, ok := rolesValue.([]string); ok {
-				for _, r := range roles {
-					if r == role {
-						return true
-					}
-				}
-			}
-		}
-
-		return false
-	}
-
-	// If we get here, the claims are in an unexpected format
-	return false
+	// Use the jwtutil package to check if the user has the required role
+	return jwtutil.HasRole(ctx, role)
 }
 
 // SetOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.

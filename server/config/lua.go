@@ -193,9 +193,10 @@ func (l *LuaSearchProtocol) GetBackendName() string {
 }
 
 type LuaHooks struct {
-	Location   string `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
-	Method     string `mapstructure:"http_method" validate:"required,oneof=GET POST PUT DELETE PATCH"`
-	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
+	Location   string   `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
+	Method     string   `mapstructure:"http_method" validate:"required,oneof=GET POST PUT DELETE PATCH"`
+	ScriptPath string   `mapstructure:"script_path" validate:"required,file"`
+	Roles      []string `mapstructure:"roles"`
 }
 
 func (l *LuaHooks) String() string {
@@ -203,5 +204,14 @@ func (l *LuaHooks) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("{Location: %s}, {Method: %s}, {ScriptPath: %s}", l.Location, l.Method, l.ScriptPath)
+	return fmt.Sprintf("{Location: %s}, {Method: %s}, {ScriptPath: %s}, {Roles: %v}", l.Location, l.Method, l.ScriptPath, l.Roles)
+}
+
+// GetRoles returns the roles configured for the hook. If no roles are configured, it returns an empty slice.
+func (l *LuaHooks) GetRoles() []string {
+	if l == nil {
+		return []string{}
+	}
+
+	return l.Roles
 }

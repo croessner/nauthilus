@@ -165,33 +165,33 @@ type Endpoint struct {
 	CustomHooks   bool `mapstructure:"custom_hooks"`
 }
 
-// IsAuthHeaderEnabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthHeaderEnabled() bool {
+// IsAuthHeaderDisabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthHeaderDisabled() bool {
 	return e.AuthHeader
 }
 
-// IsAuthJSONEnabled checks if JSON-based authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthJSONEnabled() bool {
+// IsAuthJSONDisabled checks if JSON-based authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthJSONDisabled() bool {
 	return e.AuthJSON
 }
 
-// IsAuthBasicEnabled checks if Basic authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthBasicEnabled() bool {
+// IsAuthBasicDisabled checks if Basic authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthBasicDisabled() bool {
 	return e.AuthBasic
 }
 
-// IsAuthNginxEnabled checks if Nginx-based authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthNginxEnabled() bool {
+// IsAuthNginxDisabled checks if Nginx-based authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthNginxDisabled() bool {
 	return e.AuthNginx
 }
 
-// IsAuthSASLAuthdEnabled checks if SASL authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthSASLAuthdEnabled() bool {
+// IsAuthSASLAuthdDisabled checks if SASL authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthSASLAuthdDisabled() bool {
 	return e.AuthSASLAuthd
 }
 
-// IsAuthJWTEnabled checks if JWT authentication is enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsAuthJWTEnabled() bool {
+// IsAuthJWTDisabled checks if JWT authentication is enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsAuthJWTDisabled() bool {
 	return e.AuthJWT
 }
 
@@ -282,7 +282,7 @@ type JWTAuth struct {
 type JWTUser struct {
 	Username string   `mapstructure:"username" validate:"required,excludesall= "`
 	Password string   `mapstructure:"password" validate:"required,min=8,excludesall= "`
-	Roles    []string `mapstructure:"roles" validate:"omitempty,dive,oneof=authenticated user_info list_accounts"`
+	Roles    []string `mapstructure:"roles" validate:"omitempty,dive"`
 }
 
 // IsEnabled returns true if basic HTTP authentication is enabled, otherwise false.
