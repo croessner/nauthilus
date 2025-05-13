@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/golang-jwt/jwt/v5"
@@ -127,6 +128,8 @@ func GenerateRefreshToken(username string) (string, error) {
 
 // StoreTokenInRedis stores a JWT token in Redis for multi-instance compatibility
 func StoreTokenInRedis(username, token string, expiresAt int64) error {
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
 		return nil
 	}
@@ -149,6 +152,8 @@ func StoreTokenInRedis(username, token string, expiresAt int64) error {
 
 // StoreRefreshTokenInRedis stores a JWT refresh token in Redis for multi-instance compatibility
 func StoreRefreshTokenInRedis(username, refreshToken string) error {
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
 		return nil
 	}
@@ -165,6 +170,8 @@ func StoreRefreshTokenInRedis(username, refreshToken string) error {
 
 // GetTokenFromRedis retrieves a JWT token from Redis
 func GetTokenFromRedis(username string) (string, error) {
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
 		return "", errors.New("redis storage is not enabled for JWT tokens")
 	}
@@ -190,6 +197,8 @@ func GetTokenFromRedis(username string) (string, error) {
 
 // GetRefreshTokenFromRedis retrieves a JWT refresh token from Redis
 func GetRefreshTokenFromRedis(username string) (string, error) {
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
 		return "", errors.New("redis storage is not enabled for JWT tokens")
 	}
