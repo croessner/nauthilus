@@ -224,7 +224,7 @@ func RequestHandler(ctx *gin.Context) {
 // If JWT is enabled, it checks if the user has the required roles for the hook.
 func CustomRequestHandler(ctx *gin.Context) {
 	// Check if custom hooks are enabled
-	if !config.GetFile().GetServer().GetEndpoint().IsCustomHooksEnabled() {
+	if config.GetFile().GetServer().GetEndpoint().IsCustomHooksDisabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
