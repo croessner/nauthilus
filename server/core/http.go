@@ -173,11 +173,11 @@ func RequestHandler(ctx *gin.Context) {
 		switch ctx.Param("category") {
 		case definitions.CatAuth:
 			disabledEndpointMap := map[string]bool{
-				definitions.ServHeader:    config.GetFile().GetServer().GetEndpoint().IsAuthHeaderEnabled(),
-				definitions.ServJSON:      config.GetFile().GetServer().GetEndpoint().IsAuthJSONEnabled(),
-				definitions.ServBasic:     config.GetFile().GetServer().GetEndpoint().IsAuthBasicEnabled(),
-				definitions.ServNginx:     config.GetFile().GetServer().GetEndpoint().IsAuthNginxEnabled(),
-				definitions.ServSaslauthd: config.GetFile().GetServer().GetEndpoint().IsAuthSASLAuthdEnabled(),
+				definitions.ServHeader:    config.GetFile().GetServer().GetEndpoint().IsAuthHeaderDisabled(),
+				definitions.ServJSON:      config.GetFile().GetServer().GetEndpoint().IsAuthJSONDisabled(),
+				definitions.ServBasic:     config.GetFile().GetServer().GetEndpoint().IsAuthBasicDisabled(),
+				definitions.ServNginx:     config.GetFile().GetServer().GetEndpoint().IsAuthNginxDisabled(),
+				definitions.ServSaslauthd: config.GetFile().GetServer().GetEndpoint().IsAuthSASLAuthdDisabled(),
 			}
 
 			if disabledEndpointMap[ctx.Param("service")] {
@@ -221,13 +221,27 @@ func RequestHandler(ctx *gin.Context) {
 }
 
 // CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
+// If JWT is enabled, it checks if the user has the required roles for the hook.
 func CustomRequestHandler(ctx *gin.Context) {
-	if config.GetFile().GetServer().GetEndpoint().IsCustomHooksEnabled() {
+	// Check if custom hooks are enabled
+	if !config.GetFile().GetServer().GetEndpoint().IsCustomHooksEnabled() {
 		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
+	// Get the hook name and method from the request
+	hookName := ctx.Param("hook")
+	hookMethod := ctx.Request.Method
+
+	// Check if the user has the required roles for this hook
+	if !hook.HasRequiredRoles(ctx, hookName, hookMethod) {
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+
+		return
+	}
+
+	// Execute the hook
 	if result, err := hook.RunLuaHook(ctx); err != nil {
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 	} else if result != nil {
@@ -741,7 +755,7 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 // - A DELETE endpoint with the path "/:category/:service" that is handled by the CacheHandler function.
 func setupBackChannelEndpoints(router *gin.Engine) {
 	// Create public JWT endpoints first (for token generation and refresh)
-	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() && !config.GetFile().GetServer().GetEndpoint().IsAuthJWTDisabled() {
 		jwtGroup := router.Group("/api/v1/jwt")
 		jwtGroup.Use(LuaContextMiddleware())
 
