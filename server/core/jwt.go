@@ -284,6 +284,11 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 
 // ExtractJWTToken extracts the JWT token from the Authorization header
 func ExtractJWTToken(ctx *gin.Context) (string, error) {
+	// Check if JWT auth is enabled
+	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		return "", errors.New("JWT authentication is not enabled")
+	}
+
 	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
 		return "", errors.New("authorization header is required")

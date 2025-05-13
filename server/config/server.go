@@ -195,8 +195,8 @@ func (e *Endpoint) IsAuthJWTDisabled() bool {
 	return e.AuthJWT
 }
 
-// IsCustomHooksEnabled checks if custom hooks are enabled for the endpoint and returns the corresponding boolean value.
-func (e *Endpoint) IsCustomHooksEnabled() bool {
+// IsCustomHooksDisabled checks if custom hooks are enabled for the endpoint and returns the corresponding boolean value.
+func (e *Endpoint) IsCustomHooksDisabled() bool {
 	return e.CustomHooks
 }
 
