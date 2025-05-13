@@ -331,6 +331,32 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 
 		// Set claims in context
 		ctx.Set(definitions.CtxJWTClaimsKey, claims)
+
+		// Check if the user has the "authenticated" role when NoAuth is false
+		// NoAuth==false mode requires the "authenticated" role
+		if ctx.Query("mode") != "no-auth" {
+			hasAuthenticatedRole := false
+			for _, role := range claims.Roles {
+				if role == "authenticated" {
+					hasAuthenticatedRole = true
+
+					break
+				}
+			}
+
+			if !hasAuthenticatedRole {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
+					definitions.LogKeyUsername, claims.Username,
+					definitions.LogKeyClientIP, ctx.ClientIP(),
+					definitions.LogKeyMsg, "JWT user does not have the 'authenticated' role required for authentication",
+				)
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing required role: authenticated"})
+
+				return
+			}
+		}
+
 		ctx.Next()
 	}
 }
