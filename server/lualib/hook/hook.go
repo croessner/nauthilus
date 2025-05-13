@@ -188,10 +188,16 @@ func GetHookRoles(location, method string) []string {
 
 // HasRequiredRoles checks if the user has any of the required roles for a hook.
 // If no roles are configured for the hook, it returns true (allowing access).
-// If JWT is not enabled, it returns true (allowing access).
+// If JWT is not enabled or not properly configured, it returns true (allowing access).
 func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 	// Check if JWT auth is enabled
-	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+	jwtAuth := config.GetFile().GetServer().GetJWTAuth()
+	if !jwtAuth.IsEnabled() {
+		return true
+	}
+
+	// Check if JWT auth is properly configured
+	if jwtAuth.GetSecretKey() == "" || len(jwtAuth.GetUsers()) == 0 {
 		return true
 	}
 
