@@ -131,21 +131,31 @@ function nauthilus_call_neural_network(request)
 
         -- Add country code as a feature for non-authenticated users
         -- Using the actual country code retrieved from the GeoIP service
-        local additional_features = {
-            country_code = current_iso_code,
+        local additional_features_one_hot = {
             identifier = identifier,
         }
 
-        for k, v in pairs(additional_features) do
+        local additional_features_embedding = {
+            country_code = current_iso_code,
+        }
+
+        for k, v in pairs(additional_features_one_hot) do
             logs[k] = v
 
-            nauthilus_builtin.custom_log_add(N .. "_" .. k, v)
+            nauthilus_builtin.custom_log_add(N .. "_one_hot_" .. k, v)
+        end
+
+        for k, v in pairs(additional_features_embedding) do
+            logs[k] = v
+
+            nauthilus_builtin.custom_log_add(N .. "_embedding_" .. k, v)
         end
 
         nauthilus_util.print_result({ log_format = "json"}, logs)
 
         -- Add to neural network
-        nauthilus_neural.add_additional_features(additional_features)
+        nauthilus_neural.add_additional_features(additional_features_one_hot, "one-hot")
+        nauthilus_neural.add_additional_features(additional_features_embedding, "embedding")
     end
 
     return
