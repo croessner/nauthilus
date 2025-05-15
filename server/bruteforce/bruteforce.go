@@ -17,7 +17,6 @@ package bruteforce
 
 import (
 	"context"
-	"encoding/json"
 	errors2 "errors"
 	"fmt"
 	"net"
@@ -34,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/go-kit/log/level"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -955,7 +955,7 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 		return err
 	}
 
-	if err = json.Unmarshal(redisValue, bucketCounter); err != nil {
+	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, bucketCounter); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return
