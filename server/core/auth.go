@@ -2515,6 +2515,11 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 	}
 
 	setAuthenticationFields(auth, jsonRequest)
+
+	// Apply DNS resolution logic after setting client IP
+	if authState, ok := auth.(*AuthState); ok {
+		authState.postResolvDNS(ctx)
+	}
 }
 
 // setAuthenticationFields populates the fields of the AuthState struct with values from the JSONRequest.
@@ -2727,6 +2732,19 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 	return a
 }
 
+// postResolvDNS resolves the client IP to a host name if DNS client IP resolution is enabled in the configuration.
+func (a *AuthState) postResolvDNS(ctx *gin.Context) {
+	if config.GetFile().GetServer().GetDNS().GetResolveClientIP() {
+		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
+
+		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
+
+		if stopTimer != nil {
+			stopTimer()
+		}
+	}
+}
+
 // WithClientInfo adds the client IP, -port and -ID headers to the AuthState structure.
 func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	var err error
@@ -2751,15 +2769,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		}
 	}
 
-	if config.GetFile().GetServer().GetDNS().GetResolveClientIP() {
-		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
-
-		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
-
-		if stopTimer != nil {
-			stopTimer()
-		}
-	}
+	a.postResolvDNS(ctx)
 
 	if a.ClientHost == "" {
 		// Fallback to GetEnvironment() variable
