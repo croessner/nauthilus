@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -29,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 )
@@ -51,15 +53,15 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 	return
 }
 
-// LoadCacheFromRedis retrieves cache data from Redis based on a provided key and unmarshals it into the given structure.
+// LoadCacheFromRedis retrieves cache data from Redis Hash based on a provided key and populates the given structure.
 // It increments Redis read metrics and logs errors or debug information appropriately during the operation.
 // Returns whether the error originated from Redis and any encountered error during retrieval or unmarshaling.
 func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
-	var redisValue []byte
-
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
+	// Get all fields from the hash
+	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
+	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
 		}
@@ -69,10 +71,57 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 		return true, err
 	}
 
-	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, ucp); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+	// If the hash is empty, treat it as a Redis nil error
+	if len(hashValues) == 0 {
+		return true, nil
+	}
 
-		return
+	// Parse backend field
+	if backendStr, ok := hashValues["backend"]; ok {
+		backendInt, err := strconv.Atoi(backendStr)
+		if err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to parse backend value: %v", err))
+
+			return false, err
+		}
+
+		ucp.Backend = definitions.Backend(backendInt)
+	}
+
+	// Parse simple string fields
+	if password, ok := hashValues["password"]; ok {
+		ucp.Password = password
+	}
+
+	if accountField, ok := hashValues["account_field"]; ok {
+		ucp.AccountField = &accountField
+	}
+
+	if totpSecretField, ok := hashValues["totp_secret_field"]; ok {
+		ucp.TOTPSecretField = &totpSecretField
+	}
+
+	if uniqueUserIDField, ok := hashValues["webauth_userid_field"]; ok {
+		ucp.UniqueUserIDField = &uniqueUserIDField
+	}
+
+	if displayNameField, ok := hashValues["display_name_field"]; ok {
+		ucp.DisplayNameField = &displayNameField
+	}
+
+	// Parse attributes JSON
+	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
+		var attributes bktype.AttributeMapping
+		if err = jsoniter.ConfigFastest.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to unmarshal attributes: %v", err))
+
+			return false, err
+		}
+
+		ucp.Attributes = attributes
+	} else {
+		// Initialize empty attributes map if not present
+		ucp.Attributes = make(bktype.AttributeMapping)
 	}
 
 	util.DebugModule(
@@ -82,18 +131,64 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	return false, nil
 }
 
-// SaveUserDataToRedis is a generic routine to store a cache object on Redis. The type is a RedisCache, which is a
-// union.
+// SaveUserDataToRedis is a generic routine to store a cache object on Redis using Redis Hash for better memory efficiency.
+// It stores each field of the PositivePasswordCache structure as a separate hash field, with complex fields serialized as JSON.
 func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.Duration, cache *bktype.PositivePasswordCache) {
-	var result string
-
 	util.DebugModule(
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
 	)
 
-	redisValue, err := jsoniter.ConfigFastest.Marshal(cache)
+	// Create a map for the hash fields
+	hashFields := make(map[string]any)
+
+	// Add simple fields
+	hashFields["backend"] = int(cache.Backend)
+
+	if cache.Password != "" {
+		hashFields["password"] = cache.Password
+	}
+
+	if cache.AccountField != nil {
+		hashFields["account_field"] = *cache.AccountField
+	}
+
+	if cache.TOTPSecretField != nil {
+		hashFields["totp_secret_field"] = *cache.TOTPSecretField
+	}
+
+	if cache.UniqueUserIDField != nil {
+		hashFields["webauth_userid_field"] = *cache.UniqueUserIDField
+	}
+
+	if cache.DisplayNameField != nil {
+		hashFields["display_name_field"] = *cache.DisplayNameField
+	}
+
+	// Serialize the attributes map as JSON since it's complex
+	if len(cache.Attributes) > 0 {
+		attributesJSON, err := jsoniter.ConfigFastest.Marshal(cache.Attributes)
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, err,
+			)
+
+			return
+		}
+
+		hashFields["attributes"] = string(attributesJSON)
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Use HSet to store the hash fields
+	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe.HSet(ctx, key, hashFields)
+	pipe.Expire(ctx, key, ttl) // Set expiration on the hash
+
+	cmds, err := pipe.Exec(ctx)
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -103,15 +198,9 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 		return
 	}
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	//nolint:lll // Ignore
-	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {
-		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, err,
-		)
-	}
+	// Get the result of the HSet operation
+	hsetCmd := cmds[0].(*redis.IntCmd)
+	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
 	util.DebugModule(
 		definitions.DbgCache,
@@ -159,56 +248,111 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 	return
 }
 
-// GetWebAuthnFromRedis retrieves a User object from Redis using the provided unique user ID and unmarshals it from JSON.
+// GetWebAuthnFromRedis retrieves a User object from Redis Hash using the provided unique user ID.
 // Returns the User object or an error if retrieval or unmarshaling fails.
 func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
-	var redisValue []byte
-
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	if redisValue, err = rediscli.GetClient().GetReadHandle().Get(ctx, key).Bytes(); err != nil {
+	// Get all fields from the hash
+	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		return nil, err
+	}
+
+	// If the hash is empty, treat it as a Redis nil error
+	if len(hashValues) == 0 {
+		err = redis.Nil
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return nil, err
 	}
 
+	// Create a new user object
 	user = &User{}
 
-	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, user); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
-
-		return nil, err
+	// Set simple fields
+	if id, ok := hashValues["id"]; ok {
+		user.Id = id
+	} else {
+		// Use the uniqueUserId if id field is not present
+		user.Id = uniqueUserId
 	}
 
-	return
+	if name, ok := hashValues["name"]; ok {
+		user.Name = name
+	}
+
+	if displayName, ok := hashValues["display_name"]; ok {
+		user.DisplayName = displayName
+	}
+
+	// Parse credentials JSON
+	if credentialsJSON, ok := hashValues["credentials"]; ok && credentialsJSON != "" {
+		var credentials []webauthn.Credential
+		if err = jsoniter.ConfigFastest.Unmarshal([]byte(credentialsJSON), &credentials); err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to unmarshal credentials: %v", err))
+
+			return nil, err
+		}
+
+		user.Credentials = credentials
+	} else {
+		// Initialize empty credentials slice if not present
+		user.Credentials = []webauthn.Credential{}
+	}
+
+	return user, nil
 }
 
-// SaveWebAuthnToRedis saves a user's WebAuthn credentials to Redis with a specified TTL.
+// SaveWebAuthnToRedis saves a user's WebAuthn credentials to Redis with a specified TTL using Redis Hash.
 // Returns an error if serialization or Redis storage operation fails.
 func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) error {
-	var result string
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
 
-	redisValue, err := jsoniter.ConfigFastest.Marshal(user)
+	// Create a map for the hash fields
+	hashFields := make(map[string]any)
+
+	// Add simple fields
+	hashFields["id"] = user.Id
+	hashFields["name"] = user.Name
+	hashFields["display_name"] = user.DisplayName
+
+	// Serialize the credentials as JSON since it's a complex slice
+	if len(user.Credentials) > 0 {
+		credentialsJSON, err := jsoniter.ConfigFastest.Marshal(user.Credentials)
+		if err != nil {
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+
+			return err
+		}
+
+		hashFields["credentials"] = string(credentialsJSON)
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Use pipeline to set hash and expiration in a single operation
+	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe.HSet(ctx, key, hashFields)
+	pipe.Expire(ctx, key, ttl) // Set expiration on the hash
+
+	cmds, err := pipe.Exec(ctx)
 	if err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return err
 	}
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
-
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	//nolint:lll // Ignore
-	if result, err = rediscli.GetClient().GetWriteHandle().Set(ctx, key, redisValue, ttl).Result(); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
-	}
+	// Get the result of the HSet operation
+	hsetCmd := cmds[0].(*redis.IntCmd)
+	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
 	util.DebugModule(definitions.DbgCache, "redis", result)
 
-	return err
+	return nil
 }
 
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.

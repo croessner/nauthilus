@@ -475,7 +475,7 @@ const (
 	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
 
 	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
-	RedisUserPositiveCachePrefix = "ucp:"
+	RedisUserPositiveCachePrefix = "UCP:"
 )
 
 // ImageCopyright represents the copyright statement for a logo.
