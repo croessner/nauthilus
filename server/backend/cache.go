@@ -17,7 +17,6 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -69,7 +69,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 		return true, err
 	}
 
-	if err = json.Unmarshal(redisValue, ucp); err != nil {
+	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, ucp); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return
@@ -93,7 +93,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
 	)
 
-	redisValue, err := json.Marshal(cache)
+	redisValue, err := jsoniter.ConfigFastest.Marshal(cache)
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -176,7 +176,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 	user = &User{}
 
-	if err = json.Unmarshal(redisValue, user); err != nil {
+	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, user); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 		return nil, err
@@ -190,7 +190,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) error {
 	var result string
 
-	redisValue, err := json.Marshal(user)
+	redisValue, err := jsoniter.ConfigFastest.Marshal(user)
 	if err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 

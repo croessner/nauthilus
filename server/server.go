@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"flag"
 	"fmt"
@@ -48,12 +47,16 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/text/language"
 )
+
+// json is a package-level variable for jsoniter with standard configuration
+var json = jsoniter.ConfigFastest
 
 // contextTuple represents a tuple that contains a context and a cancel function.
 // This type is used for managing contexts and cancellations in various parts of the application.

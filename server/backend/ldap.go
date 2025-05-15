@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
+	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -30,6 +31,7 @@ import (
 )
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
+// It now uses a priority queue instead of channels for better request handling.
 func LDAPMainWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
@@ -40,6 +42,9 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 	ldapPool.SetIdleConnections(true)
 
+	// Add the pool name to the queue
+	priorityqueue.LDAPQueue.AddPoolName(poolName)
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {
 			for {
@@ -47,19 +52,20 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 				case <-ctx.Done():
 					ldapPool.Close()
 
-					GetChannel().GetLdapChannel().GetLookupEndChan(poolName) <- bktype.Done{}
-
 					return
+				default:
+					// Get the next request from the priority queue
+					ldapRequest := priorityqueue.LDAPQueue.Pop()
 
-				case ldapRequest := <-GetChannel().GetLdapChannel().GetLookupRequestChan(poolName):
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(true); err != nil {
 						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+
+						continue
 					}
 
 					if err := ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup); err != nil {
 						ldapWaitGroup.Done()
-
 						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
 				}
@@ -70,6 +76,7 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
+// It now uses a priority queue instead of channels for better request handling.
 func LDAPAuthWorker(ctx context.Context, poolName string) {
 	var ldapWaitGroup sync.WaitGroup
 
@@ -80,6 +87,9 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 	ldapPool.SetIdleConnections(false)
 
+	// Add the pool name to the queue
+	priorityqueue.LDAPAuthQueue.AddPoolName(poolName)
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {
 			for {
@@ -87,18 +97,20 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 				case <-ctx.Done():
 					ldapPool.Close()
 
-					GetChannel().GetLdapChannel().GetAuthEndChan(poolName) <- bktype.Done{}
-
 					return
-				case ldapAuthRequest := <-GetChannel().GetLdapChannel().GetAuthRequestChan(poolName):
+				default:
+					// Get the next request from the priority queue
+					ldapAuthRequest := priorityqueue.LDAPAuthQueue.Pop()
+
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(false); err != nil {
 						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
+
+						continue
 					}
 
 					if err := ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup); err != nil {
 						ldapWaitGroup.Done()
-
 						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
 				}
@@ -140,14 +152,18 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
 
-		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
+		// Determine priority (using low priority for Lua-initiated requests)
+		priority := priorityqueue.PriorityLow
+
+		// Use priority queue instead of channel
+		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
 		return processReply(L, ldapRequest.GetLDAPReplyChan())
 	}
 }
 
 // LuaLDAPModify is a function that modifies LDAP entries based on the given Lua table input.
-// It validates the input table, creates an LDAP modification request, and sends it via appropriate channels.
+// It validates the input table, creates an LDAP modification request, and sends it via priority queue.
 // The function returns results via Lua stack, "OK" on success, or an error message if the operation fails.
 func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -164,7 +180,11 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
 
-		GetChannel().GetLdapChannel().GetLookupRequestChan(fieldValues["pool_name"].String()) <- ldapRequest
+		// Determine priority (using low priority for Lua-initiated requests)
+		priority := priorityqueue.PriorityLow
+
+		// Use priority queue instead of channel
+		priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
 		ldapReply := <-ldapRequest.GetLDAPReplyChan()
 

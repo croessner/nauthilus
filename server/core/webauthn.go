@@ -16,7 +16,6 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -29,9 +28,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	jsoniter "github.com/json-iterator/go"
 )
 
 var webAuthn *webauthn.WebAuthn
+
+// json is a package-level variable for jsoniter with standard configuration
+var json = jsoniter.ConfigFastest
 
 // getUser retrieves a User object with all their current credentials. This is Database depended. Which backend was used
 // can be gotten from the session cookie.

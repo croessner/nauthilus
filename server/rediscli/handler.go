@@ -47,6 +47,12 @@ type Client interface {
 	// GetReadHandle retrieves a Redis client's read handle, supporting multiple read handles for load balancing.
 	GetReadHandle() redis.UniversalClient
 
+	// GetWritePipeline returns a Redis pipeline for batching write operations.
+	GetWritePipeline() redis.Pipeliner
+
+	// GetReadPipeline returns a Redis pipeline for batching read operations.
+	GetReadPipeline() redis.Pipeliner
+
 	// Close releases all resources associated with the client, including write and read handles, and closes any open connections.
 	Close()
 }
@@ -95,6 +101,21 @@ func (clt *redisClient) newRedisReplicaClient() {
 	redisCfg := config.GetFile().GetServer().GetRedis()
 
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
+		// For Redis Cluster, create a read-only client for read operations
+		clusterCfg := redisCfg.GetCluster()
+
+		// Only create a separate read client if ReadOnly is enabled in the configuration
+		if clusterCfg.GetReadOnly() {
+			// Create a virtual address to represent the cluster
+			clusterAddress := "cluster:" + clusterCfg.GetAddresses()[0]
+
+			// Create a new cluster client with ReadOnly set to true
+			readOnlyClient := newRedisClusterClientReadOnly(redisCfg)
+
+			// Add the read-only client as a read handle
+			clt.AddReadHandle(clusterAddress, readOnlyClient)
+		}
+
 		return
 	}
 
@@ -164,6 +185,25 @@ func (clt *redisClient) GetReadHandle() redis.UniversalClient {
 	return clt.readHandle[addresses[0]]
 }
 
+// GetWritePipeline returns a Redis pipeline for batching write operations.
+func (clt *redisClient) GetWritePipeline() redis.Pipeliner {
+	if clt.writeHandle != nil {
+		return clt.writeHandle.Pipeline()
+	}
+
+	return nil
+}
+
+// GetReadPipeline returns a Redis pipeline for batching read operations.
+func (clt *redisClient) GetReadPipeline() redis.Pipeliner {
+	readHandle := clt.GetReadHandle()
+	if readHandle != nil {
+		return readHandle.Pipeline()
+	}
+
+	return nil
+}
+
 // Close terminates all active connections held by the redisClient, including both write and read handles.
 func (clt *redisClient) Close() {
 	if clt.writeHandle != nil {
@@ -190,6 +230,24 @@ func (tc *testClient) GetWriteHandle() redis.UniversalClient {
 // GetReadHandle retrieves the Redis UniversalClient instance for read operations.
 func (tc *testClient) GetReadHandle() redis.UniversalClient {
 	return tc.client
+}
+
+// GetWritePipeline returns a Redis pipeline for batching write operations.
+func (tc *testClient) GetWritePipeline() redis.Pipeliner {
+	if tc.client != nil {
+		return tc.client.Pipeline()
+	}
+
+	return nil
+}
+
+// GetReadPipeline returns a Redis pipeline for batching read operations.
+func (tc *testClient) GetReadPipeline() redis.Pipeliner {
+	if tc.client != nil {
+		return tc.client.Pipeline()
+	}
+
+	return nil
 }
 
 // Close terminates the connection managed by the testClient's Redis UniversalClient.

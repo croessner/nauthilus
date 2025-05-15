@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -58,7 +59,7 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
-// It ensures graceful termination by signaling completion through the Done channel.
+// It now uses a priority queue instead of channels for better request handling.
 func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	var (
 		numberOfWorkers int
@@ -107,16 +108,19 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 		"script_path", scriptPath,
 	)
 
+	// Add the backend name to the queue
+	priorityqueue.LuaQueue.AddBackendName(backendName)
+
 	for i := 0; i < numberOfWorkers; i++ {
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
-					GetChannel().GetLuaChannel().GetLookupEndChan(backendName) <- bktype.Done{}
-
 					return
+				default:
+					// Get the next request from the priority queue
+					luaRequest := priorityqueue.LuaQueue.Pop()
 
-				case luaRequest := <-GetChannel().GetLuaChannel().GetLookupRequestChan(backendName):
 					handleLuaRequest(ctx, luaRequest, compiledScript)
 				}
 			}

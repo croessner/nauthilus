@@ -18,7 +18,6 @@ package ml
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -38,10 +37,20 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 )
 
 var httpClient *http.Client
+
+// json is a package-level variable for jsoniter with configuration for ML package (without decimal truncation)
+var json = jsoniter.Config{
+	EscapeHTML:                    true,
+	SortMapKeys:                   true,
+	ValidateJsonRawMessage:        true,
+	MarshalFloatWith6Digits:       false, // No decimal truncation for ML package
+	ObjectFieldMustBeSimpleString: true,
+}.Froze()
 
 // InitHTTPClient initializes and assigns a new HTTP client to the package-wide httpClient variable.
 func InitHTTPClient() {
@@ -831,6 +840,15 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		ActivationFunction string    `json:"activation_function"`
 	}
 
+	// Use jsoniter without decimal truncation for ML package
+	var json = jsoniter.Config{
+		EscapeHTML:                    true,
+		SortMapKeys:                   true,
+		ValidateJsonRawMessage:        true,
+		MarshalFloatWith6Digits:       false,
+		ObjectFieldMustBeSimpleString: true,
+	}.Froze()
+
 	if err := json.Unmarshal(jsonData, &modelData); err != nil {
 		return fmt.Errorf("failed to deserialize model: %w", err)
 	}
@@ -1029,6 +1047,15 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 	)
 
 	// Serialize the model to JSON
+	// Use jsoniter without decimal truncation for ML package
+	var json = jsoniter.Config{
+		EscapeHTML:                    true,
+		SortMapKeys:                   true,
+		ValidateJsonRawMessage:        true,
+		MarshalFloatWith6Digits:       false,
+		ObjectFieldMustBeSimpleString: true,
+	}.Froze()
+
 	jsonData, err := json.Marshal(modelData)
 	if err != nil {
 		return fmt.Errorf("failed to serialize model: %w", err)

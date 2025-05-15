@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-ldap/ldap/v3"
@@ -180,7 +181,18 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	}
 
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
 	ldapReply = <-ldapReplyChan
 
@@ -240,7 +252,18 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 			HTTPClientContext: auth.HTTPClientContext,
 		}
 
-		backend.GetChannel().GetLdapChannel().GetAuthRequestChan(lm.poolName) <- ldapUserBindRequest
+		// Determine priority based on NoAuth flag and whether the user is already authenticated
+		priority := priorityqueue.PriorityLow
+		if !auth.NoAuth {
+			priority = priorityqueue.PriorityMedium
+		}
+
+		if localcache.AuthCache.IsAuthenticated(auth.Username) {
+			priority = priorityqueue.PriorityHigh
+		}
+
+		// Use priority queue instead of channel
+		priorityqueue.LDAPAuthQueue.Push(ldapUserBindRequest, priority)
 
 		ldapReply = <-ldapReplyChan
 
@@ -265,6 +288,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	}
 
 	passDBResult.Authenticated = true
+
+	// Update the authentication cache
+	localcache.AuthCache.Set(auth.Username, true)
 
 	// We need to do a second user lookup, to retrieve correct data from LDAP.
 	if auth.MasterUserMode {
@@ -343,7 +369,17 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	// Find user with account status enabled
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
 	ldapReply = <-ldapReplyChan
 
@@ -435,7 +471,17 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
 	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
 
-	backend.GetChannel().GetLdapChannel().GetLookupRequestChan(lm.poolName) <- ldapRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
 	ldapReply = <-ldapReplyChan
 

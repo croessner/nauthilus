@@ -105,15 +105,77 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 
 // newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
 // The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
-// It also includes the TLS configuration obtained from the RedisTLSOptions function.
+// It also includes topology awareness features like RouteByLatency, RouteRandomly, and ReadOnly.
+// Additional options include MaxRedirects, ReadTimeout, and WriteTimeout for fine-tuning the cluster behavior.
+// The function includes the TLS configuration obtained from the RedisTLSOptions function.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
 func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
-	return redis.NewClusterClient(&redis.ClusterOptions{
-		Addrs:        redisCfg.GetCluster().GetAddresses(),
-		Username:     redisCfg.GetCluster().GetUsername(),
-		Password:     redisCfg.GetCluster().GetPassword(),
+	clusterCfg := redisCfg.GetCluster()
+
+	options := &redis.ClusterOptions{
+		Addrs:        clusterCfg.GetAddresses(),
+		Username:     clusterCfg.GetUsername(),
+		Password:     clusterCfg.GetPassword(),
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
-	})
+
+		// Topology awareness options
+		RouteByLatency: clusterCfg.GetRouteByLatency(),
+		RouteRandomly:  clusterCfg.GetRouteRandomly(),
+		ReadOnly:       clusterCfg.GetReadOnly(),
+	}
+
+	// Set optional parameters only if they have non-zero values
+	if maxRedirects := clusterCfg.GetMaxRedirects(); maxRedirects > 0 {
+		options.MaxRedirects = maxRedirects
+	}
+
+	if readTimeout := clusterCfg.GetReadTimeout(); readTimeout > 0 {
+		options.ReadTimeout = readTimeout
+	}
+
+	if writeTimeout := clusterCfg.GetWriteTimeout(); writeTimeout > 0 {
+		options.WriteTimeout = writeTimeout
+	}
+
+	return redis.NewClusterClient(options)
+}
+
+// newRedisClusterClientReadOnly creates a new Redis cluster client optimized for read operations.
+// It's similar to newRedisClusterClient but forces the ReadOnly flag to true, which directs
+// read commands to replica nodes in the cluster rather than masters.
+// This function is used to create a separate client for read operations to improve performance
+// and reduce load on master nodes.
+func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient {
+	clusterCfg := redisCfg.GetCluster()
+
+	options := &redis.ClusterOptions{
+		Addrs:        clusterCfg.GetAddresses(),
+		Username:     clusterCfg.GetUsername(),
+		Password:     clusterCfg.GetPassword(),
+		PoolSize:     redisCfg.GetPoolSize(),
+		MinIdleConns: redisCfg.GetIdlePoolSize(),
+		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+
+		// Topology awareness options - force ReadOnly to true
+		RouteByLatency: clusterCfg.GetRouteByLatency(),
+		RouteRandomly:  clusterCfg.GetRouteRandomly(),
+		ReadOnly:       true, // Always use replicas for read operations
+	}
+
+	// Set optional parameters only if they have non-zero values
+	if maxRedirects := clusterCfg.GetMaxRedirects(); maxRedirects > 0 {
+		options.MaxRedirects = maxRedirects
+	}
+
+	if readTimeout := clusterCfg.GetReadTimeout(); readTimeout > 0 {
+		options.ReadTimeout = readTimeout
+	}
+
+	if writeTimeout := clusterCfg.GetWriteTimeout(); writeTimeout > 0 {
+		options.WriteTimeout = writeTimeout
+	}
+
+	return redis.NewClusterClient(options)
 }

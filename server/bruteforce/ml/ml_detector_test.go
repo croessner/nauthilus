@@ -2,7 +2,6 @@ package ml
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -725,7 +724,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		}
 
 		// Serialize the model to JSON
-		jsonData, err := json.Marshal(modelData)
+		jsonData, err := json.Marshal(modelData) // Using standard json for tests
 		assert.NoError(t, err, "Failed to serialize model")
 
 		// Set up expectations for LoadModelFromRedis

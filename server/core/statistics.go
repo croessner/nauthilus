@@ -55,11 +55,6 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 
 // LoadStatsFromRedis loads the prometheus statistics at startup from a Redis server.
 func LoadStatsFromRedis(ctx context.Context) {
-	var (
-		redisValue float64
-		err        error
-	)
-
 	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Load counter statistics from redis")
 
 	stats.GetMetrics().GetLoginsCounter().Reset()
@@ -67,27 +62,52 @@ func LoadStatsFromRedis(ctx context.Context) {
 	// Prometheus redis variables
 	redisLoginsCounterKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.GetFile().GetServer().GetInstanceName())
 
-	for _, counterType := range []string{definitions.LabelSuccess, definitions.LabelFailure} {
-		if redisValue, err = rediscli.GetClient().GetReadHandle().HGet(ctx, redisLoginsCounterKey, counterType).Float64(); err != nil {
+	counterTypes := []string{definitions.LabelSuccess, definitions.LabelFailure}
+
+	// Use pipelining to batch Redis operations and reduce network round trips
+	var cmds []redis.Cmder
+	var err error
+
+	cmds, err = rediscli.ExecuteReadPipeline(ctx, func(pipe redis.Pipeliner) error {
+		for _, counterType := range counterTypes {
+			pipe.HGet(ctx, redisLoginsCounterKey, counterType)
+		}
+		return nil
+	})
+
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		return
+	}
+
+	// Count as multiple Redis operations for metrics
+	stats.GetMetrics().GetRedisReadCounter().Add(float64(len(counterTypes)))
+
+	// Process results
+	for i, cmd := range cmds {
+		hgetCmd, ok := cmd.(*redis.StringCmd)
+		if !ok {
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, "Unexpected command type in pipeline result")
+			continue
+		}
+
+		val, err := hgetCmd.Float64()
+		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				level.Info(log.Logger).Log(definitions.LogKeyMsg, "No statistics on Redis server")
-
 				return
 			}
 
 			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
-
 			return
 		}
 
-		stats.GetMetrics().GetLoginsCounter().WithLabelValues(counterType).Add(redisValue)
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(counterTypes[i]).Add(val)
 	}
 }
 
 // SaveStatsToRedis saves the prometheus statistics to a Redis server.
 func SaveStatsToRedis(ctx context.Context) {
-	var err error
-
 	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
@@ -98,15 +118,21 @@ func SaveStatsToRedis(ctx context.Context) {
 	// Prometheus redis variables
 	redisLoginsCounterKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisMetricsCounterHashKey + "_" + strings.ToUpper(config.GetFile().GetServer().GetInstanceName())
 
-	for index := range metrics {
-		if err = rediscli.GetClient().GetWriteHandle().HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value).Err(); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
-
-			return
+	// Use pipelining to batch Redis operations and reduce network round trips
+	_, err := rediscli.ExecuteWritePipeline(ctx, func(pipe redis.Pipeliner) error {
+		for index := range metrics {
+			pipe.HSet(ctx, redisLoginsCounterKey, metrics[index].Label, metrics[index].Value)
 		}
+		return nil
+	})
 
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		return
 	}
+
+	// Count as multiple Redis operations for metrics
+	stats.GetMetrics().GetRedisWriteCounter().Add(float64(len(metrics)))
 }
 
 // UpdateRedisPoolStats updates and tracks Redis pool statistics such as hits, misses, timeouts, and connection counts.
