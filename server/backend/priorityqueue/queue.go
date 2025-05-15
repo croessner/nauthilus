@@ -48,108 +48,127 @@ type LDAPAuthRequestPriorityQueue []*LDAPAuthRequestItem
 // LuaRequestPriorityQueue implements heap.Interface and holds LuaRequestItems
 type LuaRequestPriorityQueue []*LuaRequestItem
 
-// Implement heap.Interface for LDAPRequestPriorityQueue
-func (pq LDAPRequestPriorityQueue) Len() int { return len(pq) }
+// Len returns the number of items currently stored in the LDAPRequestPriorityQueue.
+func (pq *LDAPRequestPriorityQueue) Len() int { return len(*pq) }
 
-func (pq LDAPRequestPriorityQueue) Less(i, j int) bool {
+// Less determines the order of items in the priority queue by comparing their Priority and InsertTime fields.
+func (pq *LDAPRequestPriorityQueue) Less(i, j int) bool {
 	// Higher priority comes first
-	if pq[i].Priority != pq[j].Priority {
-		return pq[i].Priority > pq[j].Priority
+	if (*pq)[i].Priority != (*pq)[j].Priority {
+		return (*pq)[i].Priority > (*pq)[j].Priority
 	}
+
 	// If priorities are equal, older requests come first
-	return pq[i].InsertTime.Before(pq[j].InsertTime)
+	return (*pq)[i].InsertTime.Before((*pq)[j].InsertTime)
 }
 
-func (pq LDAPRequestPriorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].Index = i
-	pq[j].Index = j
+// Swap exchanges the elements at indices i and j in the LDAPRequestPriorityQueue, updating their Index fields accordingly.
+func (pq *LDAPRequestPriorityQueue) Swap(i, j int) {
+	(*pq)[i], (*pq)[j] = (*pq)[j], (*pq)[i]
+	(*pq)[i].Index = i
+	(*pq)[j].Index = j
 }
 
-func (pq *LDAPRequestPriorityQueue) Push(x interface{}) {
+// Push adds a new LDAPRequestItem to the LDAPRequestPriorityQueue and sets its index to the next available position.
+func (pq *LDAPRequestPriorityQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*LDAPRequestItem)
 	item.Index = n
 	*pq = append(*pq, item)
 }
 
-func (pq *LDAPRequestPriorityQueue) Pop() interface{} {
+// Pop removes and returns the highest-priority item from the LDAPRequestPriorityQueue, updating its Index field for safety.
+func (pq *LDAPRequestPriorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
 	old[n-1] = nil  // avoid memory leak
 	item.Index = -1 // for safety
 	*pq = old[0 : n-1]
+
 	return item
 }
 
-// Implement heap.Interface for LDAPAuthRequestPriorityQueue
-func (pq LDAPAuthRequestPriorityQueue) Len() int { return len(pq) }
+// Len returns the number of items in the LDAPAuthRequestPriorityQueue.
+func (pq *LDAPAuthRequestPriorityQueue) Len() int { return len(*pq) }
 
-func (pq LDAPAuthRequestPriorityQueue) Less(i, j int) bool {
+// Less determines the order of items in the LDAPAuthRequestPriorityQueue based on priority and insertion time.
+func (pq *LDAPAuthRequestPriorityQueue) Less(i, j int) bool {
 	// Higher priority comes first
-	if pq[i].Priority != pq[j].Priority {
-		return pq[i].Priority > pq[j].Priority
+	if (*pq)[i].Priority != (*pq)[j].Priority {
+		return (*pq)[i].Priority > (*pq)[j].Priority
 	}
+
 	// If priorities are equal, older requests come first
-	return pq[i].InsertTime.Before(pq[j].InsertTime)
+	return (*pq)[i].InsertTime.Before((*pq)[j].InsertTime)
 }
 
-func (pq LDAPAuthRequestPriorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].Index = i
-	pq[j].Index = j
+// Swap exchanges the elements at indices i and j in the LDAPAuthRequestPriorityQueue and updates their indices.
+func (pq *LDAPAuthRequestPriorityQueue) Swap(i, j int) {
+	(*pq)[i], (*pq)[j] = (*pq)[j], (*pq)[i]
+	(*pq)[i].Index = i
+	(*pq)[j].Index = j
 }
 
-func (pq *LDAPAuthRequestPriorityQueue) Push(x interface{}) {
+// Push adds a new LDAPAuthRequestItem to the LDAPAuthRequestPriorityQueue and assigns its index.
+func (pq *LDAPAuthRequestPriorityQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*LDAPAuthRequestItem)
 	item.Index = n
 	*pq = append(*pq, item)
 }
 
-func (pq *LDAPAuthRequestPriorityQueue) Pop() interface{} {
+// Pop removes and returns the last item from the LDAPAuthRequestPriorityQueue, adjusting indices to maintain consistency.
+func (pq *LDAPAuthRequestPriorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
 	old[n-1] = nil  // avoid memory leak
 	item.Index = -1 // for safety
 	*pq = old[0 : n-1]
+
 	return item
 }
 
-// Implement heap.Interface for LuaRequestPriorityQueue
-func (pq LuaRequestPriorityQueue) Len() int { return len(pq) }
+// Len returns the number of elements in the LuaRequestPriorityQueue.
+func (pq *LuaRequestPriorityQueue) Len() int { return len(*pq) }
 
-func (pq LuaRequestPriorityQueue) Less(i, j int) bool {
+// Less determines the order of elements in the LuaRequestPriorityQueue based on priority and insertion time.
+// Returns true if the element at index i should sort before the element at index j.
+func (pq *LuaRequestPriorityQueue) Less(i, j int) bool {
 	// Higher priority comes first
-	if pq[i].Priority != pq[j].Priority {
-		return pq[i].Priority > pq[j].Priority
+	if (*pq)[i].Priority != (*pq)[j].Priority {
+		return (*pq)[i].Priority > (*pq)[j].Priority
 	}
+
 	// If priorities are equal, older requests come first
-	return pq[i].InsertTime.Before(pq[j].InsertTime)
+	return (*pq)[i].InsertTime.Before((*pq)[j].InsertTime)
 }
 
-func (pq LuaRequestPriorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-	pq[i].Index = i
-	pq[j].Index = j
+// Swap swaps the elements with indexes i and j in the LuaRequestPriorityQueue and updates their respective Index fields.
+func (pq *LuaRequestPriorityQueue) Swap(i, j int) {
+	(*pq)[i], (*pq)[j] = (*pq)[j], (*pq)[i]
+	(*pq)[i].Index = i
+	(*pq)[j].Index = j
 }
 
-func (pq *LuaRequestPriorityQueue) Push(x interface{}) {
+// Push adds a new LuaRequestItem to the LuaRequestPriorityQueue and assigns its index based on the current queue size.
+func (pq *LuaRequestPriorityQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*LuaRequestItem)
 	item.Index = n
 	*pq = append(*pq, item)
 }
 
-func (pq *LuaRequestPriorityQueue) Pop() interface{} {
+// Pop removes and returns the last element from the priority queue. It also resets the item's Index field for safety.
+func (pq *LuaRequestPriorityQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]
 	old[n-1] = nil  // avoid memory leak
 	item.Index = -1 // for safety
 	*pq = old[0 : n-1]
+
 	return item
 }
 
@@ -183,8 +202,11 @@ func NewLDAPRequestQueue() *LDAPRequestQueue {
 		queue:     make(LDAPRequestPriorityQueue, 0),
 		poolNames: make(map[string]bool),
 	}
+
 	q.notEmpty = sync.NewCond(&q.mutex)
+
 	heap.Init(&q.queue)
+
 	return q
 }
 
@@ -194,8 +216,11 @@ func NewLDAPAuthRequestQueue() *LDAPAuthRequestQueue {
 		queue:     make(LDAPAuthRequestPriorityQueue, 0),
 		poolNames: make(map[string]bool),
 	}
+
 	q.notEmpty = sync.NewCond(&q.mutex)
+
 	heap.Init(&q.queue)
+
 	return q
 }
 
@@ -205,8 +230,11 @@ func NewLuaRequestQueue() *LuaRequestQueue {
 		queue:        make(LuaRequestPriorityQueue, 0),
 		backendNames: make(map[string]bool),
 	}
+
 	q.notEmpty = sync.NewCond(&q.mutex)
+
 	heap.Init(&q.queue)
+
 	return q
 }
 
@@ -214,6 +242,7 @@ func NewLuaRequestQueue() *LuaRequestQueue {
 func (q *LDAPRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	q.poolNames[poolName] = true
 }
 
@@ -221,10 +250,12 @@ func (q *LDAPRequestQueue) AddPoolName(poolName string) {
 func (q *LDAPRequestQueue) GetPoolNames() []string {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	var names []string
 	for name := range q.poolNames {
 		names = append(names, name)
 	}
+
 	return names
 }
 
@@ -232,6 +263,7 @@ func (q *LDAPRequestQueue) GetPoolNames() []string {
 func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	q.poolNames[poolName] = true
 }
 
@@ -239,10 +271,12 @@ func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
 func (q *LDAPAuthRequestQueue) GetPoolNames() []string {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	var names []string
 	for name := range q.poolNames {
 		names = append(names, name)
 	}
+
 	return names
 }
 
@@ -250,6 +284,7 @@ func (q *LDAPAuthRequestQueue) GetPoolNames() []string {
 func (q *LuaRequestQueue) AddBackendName(backendName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	q.backendNames[backendName] = true
 }
 
@@ -257,10 +292,12 @@ func (q *LuaRequestQueue) AddBackendName(backendName string) {
 func (q *LuaRequestQueue) GetBackendNames() []string {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
 	var names []string
 	for name := range q.backendNames {
 		names = append(names, name)
 	}
+
 	return names
 }
 
@@ -274,7 +311,9 @@ func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 		Priority:   priority,
 		InsertTime: time.Now(),
 	}
+
 	heap.Push(&q.queue, item)
+
 	q.notEmpty.Signal()
 }
 
@@ -289,6 +328,7 @@ func (q *LDAPRequestQueue) Pop() *bktype.LDAPRequest {
 	}
 
 	item := heap.Pop(&q.queue).(*LDAPRequestItem)
+
 	return item.Request
 }
 
@@ -302,7 +342,9 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 		Priority:   priority,
 		InsertTime: time.Now(),
 	}
+
 	heap.Push(&q.queue, item)
+
 	q.notEmpty.Signal()
 }
 
@@ -317,6 +359,7 @@ func (q *LDAPAuthRequestQueue) Pop() *bktype.LDAPAuthRequest {
 	}
 
 	item := heap.Pop(&q.queue).(*LDAPAuthRequestItem)
+
 	return item.Request
 }
 
@@ -330,7 +373,9 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 		Priority:   priority,
 		InsertTime: time.Now(),
 	}
+
 	heap.Push(&q.queue, item)
+
 	q.notEmpty.Signal()
 }
 
@@ -345,6 +390,7 @@ func (q *LuaRequestQueue) Pop() *bktype.LuaRequest {
 	}
 
 	item := heap.Pop(&q.queue).(*LuaRequestItem)
+
 	return item.Request
 }
 
