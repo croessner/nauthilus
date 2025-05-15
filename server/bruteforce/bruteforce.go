@@ -404,15 +404,17 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 		return
 	}
 
+	// Use pipelining for write operations to reduce network round trips
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	if err = rediscli.GetClient().GetWriteHandle().SAdd(bm.ctx, key, bm.clientIP).Err(); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-	}
+	_, err = rediscli.ExecuteWritePipeline(bm.ctx, func(pipe redis.Pipeliner) error {
+		pipe.SAdd(bm.ctx, key, bm.clientIP)
+		pipe.Expire(bm.ctx, key, config.GetFile().GetServer().Redis.NegCacheTTL)
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		return nil
+	})
 
-	if err = rediscli.GetClient().GetWriteHandle().Expire(bm.ctx, key, config.GetFile().GetServer().Redis.NegCacheTTL).Err(); err != nil {
+	if err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 	}
 
@@ -426,17 +428,22 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	if key := bm.GetBruteForceBucketRedisKey(rule); key != "" {
 		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", key)
 
-		if bm.bruteForceName != rule.Name {
-			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-			if err := rediscli.GetClient().GetWriteHandle().Incr(bm.ctx, key).Err(); err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-			}
-		}
-
+		// Use pipelining for write operations to reduce network round trips
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		if err := rediscli.GetClient().GetWriteHandle().Expire(bm.ctx, key, rule.Period).Err(); err != nil {
+		_, err := rediscli.ExecuteWritePipeline(bm.ctx, func(pipe redis.Pipeliner) error {
+			// Only increment the counter if this is not the rule that triggered
+			if bm.bruteForceName != rule.Name {
+				pipe.Incr(bm.ctx, key)
+			}
+
+			// Always set the expiration time
+			pipe.Expire(bm.ctx, key, rule.Period)
+
+			return nil
+		})
+
+		if err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 		}
 	}
@@ -464,6 +471,8 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	keys = append(keys, bm.getPasswordHistoryRedisHashKey(true))
 	keys = append(keys, bm.getPasswordHistoryRedisHashKey(false))
 
+	passwordHash := util.GetHash(util.PreparePassword(bm.password))
+
 	for index := range keys {
 		if bm.checkTooManyPasswordHashes(keys[index]) {
 			keysOverLimit = true
@@ -473,19 +482,21 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 
 		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "incr_key", keys[index])
 
-		// We can increment a key/value, even it never existed before.
-		if err := rediscli.GetClient().GetWriteHandle().HIncrBy(
-			bm.ctx,
-			keys[index],
-			util.GetHash(util.PreparePassword(bm.password)), 1,
-		).Err(); err != nil {
-			stats.GetMetrics().GetRedisWriteCounter().Inc()
+		// Use pipelining for write operations to reduce network round trips
+		_, err := rediscli.ExecuteWritePipeline(bm.ctx, func(pipe redis.Pipeliner) error {
+			// We can increment a key/value, even it never existed before.
+			pipe.HIncrBy(bm.ctx, keys[index], passwordHash, 1)
+			pipe.Expire(bm.ctx, keys[index], config.GetFile().GetServer().Redis.NegCacheTTL)
 
+			return nil
+		})
+
+		// Count as two Redis operations for metrics
+		stats.GetMetrics().GetRedisWriteCounter().Add(2)
+
+		if err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-
 			return
-		} else {
-			stats.GetMetrics().GetRedisWriteCounter().Inc()
 		}
 
 		util.DebugModule(
@@ -494,12 +505,6 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 			"key", keys[index],
 			definitions.LogKeyMsg, "Increased",
 		)
-
-		if err := rediscli.GetClient().GetWriteHandle().Expire(bm.ctx, keys[index], config.GetFile().GetServer().Redis.NegCacheTTL).Err(); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-		}
-
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
 	}
 
 	if keysOverLimit {
@@ -861,9 +866,11 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 
+	// First check if the account is already a member
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	if err := rediscli.GetClient().GetReadHandle().SIsMember(bm.ctx, key, bm.accountName).Err(); err != nil {
+	isMember, err := rediscli.GetClient().GetReadHandle().SIsMember(bm.ctx, key, bm.accountName).Result()
+	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
@@ -871,13 +878,17 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 		}
 	}
 
+	// If we already know it's a member, we can skip the write operation
+	if isMember {
+		return
+	}
+
+	// Add the account to the set
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	if err := rediscli.GetClient().GetWriteHandle().SAdd(bm.ctx, key, bm.accountName).Err(); err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 	}
-
-	return
 }
 
 // NewBucketManager creates and returns a new instance of BucketManager with the provided context, GUID, and client IP.
