@@ -16,10 +16,11 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
+	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/stats"
 )
@@ -104,7 +105,18 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
 
 	luaBackendResult = <-luaReplyChan
 
@@ -134,6 +146,11 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	passDBResult.Authenticated = luaBackendResult.Authenticated
 	passDBResult.UserFound = luaBackendResult.UserFound
 	passDBResult.AccountField = &accountField
+
+	// Update the authentication cache if the user is authenticated
+	if passDBResult.Authenticated {
+		localcache.AuthCache.Set(auth.Username, true)
+	}
 
 	if luaBackendResult.UserFound {
 		passDBResult.BackendName = lm.backendName
@@ -203,7 +220,17 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
 
 	luaBackendResult = <-luaReplyChan
 
@@ -263,7 +290,17 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 		},
 	}
 
-	backend.GetChannel().GetLuaChannel().GetLookupRequestChan(lm.backendName) <- luaRequest
+	// Determine priority based on NoAuth flag and whether the user is already authenticated
+	priority := priorityqueue.PriorityLow
+	if !auth.NoAuth {
+		priority = priorityqueue.PriorityMedium
+	}
+	if localcache.AuthCache.IsAuthenticated(auth.Username) {
+		priority = priorityqueue.PriorityHigh
+	}
+
+	// Use priority queue instead of channel
+	priorityqueue.LuaQueue.Push(luaRequest, priority)
 
 	luaBackendResult = <-luaReplyChan
 
