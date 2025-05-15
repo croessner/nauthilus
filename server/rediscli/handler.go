@@ -101,6 +101,21 @@ func (clt *redisClient) newRedisReplicaClient() {
 	redisCfg := config.GetFile().GetServer().GetRedis()
 
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
+		// For Redis Cluster, create a read-only client for read operations
+		clusterCfg := redisCfg.GetCluster()
+
+		// Only create a separate read client if ReadOnly is enabled in the configuration
+		if clusterCfg.GetReadOnly() {
+			// Create a virtual address to represent the cluster
+			clusterAddress := "cluster:" + clusterCfg.GetAddresses()[0]
+
+			// Create a new cluster client with ReadOnly set to true
+			readOnlyClient := newRedisClusterClientReadOnly(redisCfg)
+
+			// Add the read-only client as a read handle
+			clt.AddReadHandle(clusterAddress, readOnlyClient)
+		}
+
 		return
 	}
 

@@ -562,9 +562,15 @@ func (s *Sentinels) GetPassword() string {
 
 // Cluster represents the configuration for a Redis cluster setup.
 type Cluster struct {
-	Addresses []string `mapstructure:"addresses" validate:"required,dive,hostname_port"`
-	Username  string   `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password  string   `mapstructure:"password" validate:"omitempty,excludesall= "`
+	Addresses      []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username       string        `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password       string        `mapstructure:"password" validate:"omitempty,excludesall= "`
+	RouteByLatency bool          `mapstructure:"route_by_latency"`
+	RouteRandomly  bool          `mapstructure:"route_randomly"`
+	ReadOnly       bool          `mapstructure:"read_only"`
+	MaxRedirects   int           `mapstructure:"max_redirects" validate:"omitempty,gte=0"`
+	ReadTimeout    time.Duration `mapstructure:"read_timeout" validate:"omitempty"`
+	WriteTimeout   time.Duration `mapstructure:"write_timeout" validate:"omitempty"`
 }
 
 // GetAddresses retrieves the list of Redis cluster addresses configured in the Cluster instance.
@@ -580,6 +586,36 @@ func (c *Cluster) GetUsername() string {
 // GetPassword retrieves the password configured for the Redis cluster.
 func (c *Cluster) GetPassword() string {
 	return c.Password
+}
+
+// GetRouteByLatency returns whether commands should be routed to the closest node.
+func (c *Cluster) GetRouteByLatency() bool {
+	return c.RouteByLatency
+}
+
+// GetRouteRandomly returns whether commands should be routed randomly across nodes.
+func (c *Cluster) GetRouteRandomly() bool {
+	return c.RouteRandomly
+}
+
+// GetReadOnly returns whether read-only commands should be allowed from replicas.
+func (c *Cluster) GetReadOnly() bool {
+	return c.ReadOnly
+}
+
+// GetMaxRedirects returns the maximum number of redirects to follow.
+func (c *Cluster) GetMaxRedirects() int {
+	return c.MaxRedirects
+}
+
+// GetReadTimeout returns the timeout for read operations.
+func (c *Cluster) GetReadTimeout() time.Duration {
+	return c.ReadTimeout
+}
+
+// GetWriteTimeout returns the timeout for write operations.
+func (c *Cluster) GetWriteTimeout() time.Duration {
+	return c.WriteTimeout
 }
 
 // MasterUser represents a user configuration with flags for enabling and setting delimiters.
