@@ -270,12 +270,13 @@ type BasicAuth struct {
 
 // JWTAuth represents the configuration for JWT authentication.
 type JWTAuth struct {
-	Enabled      bool          `mapstructure:"enabled"`
-	SecretKey    string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumunicode,excludesall= "`
-	TokenExpiry  time.Duration `mapstructure:"token_expiry" validate:"omitempty,gt=0"`
-	RefreshToken bool          `mapstructure:"refresh_token"`
-	Users        []*JWTUser    `mapstructure:"users" validate:"omitempty,dive"`
-	StoreInRedis bool          `mapstructure:"store_in_redis"`
+	Enabled            bool          `mapstructure:"enabled"`
+	SecretKey          string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumunicode,excludesall= "`
+	TokenExpiry        time.Duration `mapstructure:"token_expiry" validate:"omitempty,gt=0"`
+	RefreshToken       bool          `mapstructure:"refresh_token"`
+	RefreshTokenExpiry time.Duration `mapstructure:"refresh_token_expiry" validate:"omitempty,gt=0"`
+	Users              []*JWTUser    `mapstructure:"users" validate:"omitempty,dive"`
+	StoreInRedis       bool          `mapstructure:"store_in_redis"`
 }
 
 // JWTUser represents a user configuration for JWT authentication.
@@ -308,6 +309,11 @@ func (j *JWTAuth) GetTokenExpiry() time.Duration {
 // IsRefreshTokenEnabled returns true if refresh tokens are enabled.
 func (j *JWTAuth) IsRefreshTokenEnabled() bool {
 	return j.RefreshToken
+}
+
+// GetRefreshTokenExpiry returns the refresh token expiry duration.
+func (j *JWTAuth) GetRefreshTokenExpiry() time.Duration {
+	return j.RefreshTokenExpiry
 }
 
 // GetUsers returns the list of JWT users.

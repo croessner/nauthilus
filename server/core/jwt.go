@@ -101,7 +101,11 @@ func GenerateRefreshToken(username string) (string, error) {
 	}
 
 	// Set token expiry time (refresh tokens typically last longer)
-	expiryTime := time.Now().Add(24 * time.Hour) // 24 hours
+	expiryTime := time.Now().Add(jwtConfig.GetRefreshTokenExpiry())
+	if jwtConfig.GetRefreshTokenExpiry() == 0 {
+		// Default to 24 hours if not specified
+		expiryTime = time.Now().Add(24 * time.Hour)
+	}
 
 	// Create claims
 	claims := jwt.RegisteredClaims{
@@ -152,18 +156,26 @@ func StoreTokenInRedis(username, token string, expiresAt int64) error {
 func StoreRefreshTokenInRedis(username, refreshToken string) error {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
+	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	if !jwtConfig.IsStoreInRedisEnabled() {
 		return nil
 	}
 
 	// Create Redis key
 	key := fmt.Sprintf("jwt:refresh:%s", username)
 
-	// Store refresh token in Redis with 24-hour expiry
+	// Determine expiry time
+	expiry := jwtConfig.GetRefreshTokenExpiry()
+	if expiry == 0 {
+		// Default to 24 hours if not specified
+		expiry = 24 * time.Hour
+	}
+
+	// Store refresh token in Redis with configured expiry
 	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetWriteHandle()
 
-	return redisClient.Set(ctx, key, refreshToken, 24*time.Hour).Err()
+	return redisClient.Set(ctx, key, refreshToken, expiry).Err()
 }
 
 // GetTokenFromRedis retrieves a JWT token from Redis
