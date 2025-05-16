@@ -65,10 +65,10 @@ func NewMLBucketManager(ctx context.Context, guid, clientIP string) bruteforce.B
 		return standardBM
 	}
 
-	// Default weights for static rules and ML
-	// These could be made configurable in the future
-	staticWeight := 0.4
-	mlWeight := 0.6
+	// Get weights and threshold from configuration
+	staticWeight := config.GetFile().GetBruteForce().GetNeuralNetwork().GetStaticWeight()
+	mlWeight := config.GetFile().GetBruteForce().GetNeuralNetwork().GetMLWeight()
+	threshold := config.GetFile().GetBruteForce().GetNeuralNetwork().GetThreshold()
 
 	// Create our ML-enhanced bucket manager
 	mlBM := &MLBucketManager{
@@ -76,7 +76,7 @@ func NewMLBucketManager(ctx context.Context, guid, clientIP string) bruteforce.B
 		ctx:           ctx,
 		guid:          guid,
 		clientIP:      clientIP,
-		threshold:     0.7,   // Default threshold, could be configurable
+		threshold:     threshold,
 		noAuth:        false, // Default to false, will be set by the caller if needed
 		staticWeight:  staticWeight,
 		mlWeight:      mlWeight,
