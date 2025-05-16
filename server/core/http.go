@@ -193,6 +193,8 @@ func RequestHandler(ctx *gin.Context) {
 				return
 			}
 
+			defer PutAuthState(auth)
+
 			if reject := auth.PreproccessAuthRequest(ctx); reject {
 				return
 			}

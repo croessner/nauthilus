@@ -13,6 +13,7 @@ server:
     secret_key: "your-secret-key-at-least-32-characters-long"
     token_expiry: 1h
     refresh_token: true
+    refresh_token_expiry: 24h
     store_in_redis: true  # For multi-instance compatibility
     users:                # Optional: Define JWT-specific users
       - username: "admin"
@@ -27,8 +28,9 @@ Configuration options:
 
 - `enabled`: Set to `true` to enable JWT authentication.
 - `secret_key`: A secret key used to sign JWT tokens. Should be at least 32 characters long.
-- `token_expiry`: The expiry time for JWT tokens. Accepts time duration format (e.g., "1h", "30m", "24h").
+- `token_expiry`: The expiry time for JWT tokens. Accepts time duration format (e.g., "1h", "30m", "24h"). Defaults to 1 hour if not specified.
 - `refresh_token`: Set to `true` to enable refresh tokens.
+- `refresh_token_expiry`: The expiry time for JWT refresh tokens. Accepts time duration format (e.g., "24h", "7d"). Defaults to 24 hours if not specified.
 - `store_in_redis`: Set to `true` to store tokens in Redis for multi-instance compatibility.
 - `users`: Optional list of JWT-specific users with their roles.
   - `username`: The username for the JWT user.
@@ -245,11 +247,13 @@ server:
     secret_key: "your-secret-key-at-least-32-characters-long"
     token_expiry: 1h
     refresh_token: true
+    refresh_token_expiry: 24h
     store_in_redis: true
 ```
 
 When Redis storage is enabled:
 - Tokens are stored in Redis with an expiry time matching the token's expiry time.
+- Refresh tokens are stored in Redis with an expiry time matching the refresh token's expiry time.
 - Token validation checks Redis to ensure the token exists and matches the one provided by the client.
 - This ensures that tokens can be validated across multiple instances of Nauthilus.
 

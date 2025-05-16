@@ -115,3 +115,126 @@ func TestJWTClaimsInContext(t *testing.T) {
 	assert.Equal(t, "testuser", retrievedClaims.Username)
 	assert.Equal(t, []string{"user", "admin"}, retrievedClaims.Roles)
 }
+
+// TestJWTTokenGenerationAndRefresh tests the generation of a JWT token and its refresh
+func TestJWTTokenGenerationAndRefresh(t *testing.T) {
+	// Create a secret key for testing
+	secretKey := "test-secret-key-for-jwt-token-testing"
+
+	// Step 1: Generate an initial JWT token
+	username := "testuser"
+	roles := []string{"user", "authenticated"}
+
+	// Create claims for the token
+	claims := JWTClaims{
+		Username: username,
+		Roles:    roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "nauthilus",
+			Subject:   username,
+		},
+	}
+
+	// Create and sign the token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(secretKey))
+	assert.NoError(t, err, "Failed to sign token")
+	assert.NotEmpty(t, tokenString, "Token string should not be empty")
+
+	// Step 2: Generate a refresh token
+	refreshClaims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		NotBefore: jwt.NewNumericDate(time.Now()),
+		Issuer:    "nauthilus",
+		Subject:   username,
+	}
+
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
+	refreshTokenString, err := refreshToken.SignedString([]byte(secretKey))
+	assert.NoError(t, err, "Failed to sign refresh token")
+	assert.NotEmpty(t, refreshTokenString, "Refresh token string should not be empty")
+
+	// Step 3: Validate the initial token
+	parsedToken, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(secretKey), nil
+	})
+	assert.NoError(t, err, "Failed to parse token")
+	assert.True(t, parsedToken.Valid, "Token should be valid")
+
+	parsedClaims, ok := parsedToken.Claims.(*JWTClaims)
+	assert.True(t, ok, "Claims should be of type JWTClaims")
+	assert.Equal(t, username, parsedClaims.Username, "Username in claims should match")
+	assert.Equal(t, roles, parsedClaims.Roles, "Roles in claims should match")
+
+	// Step 4: Validate the refresh token
+	parsedRefreshToken, err := jwt.ParseWithClaims(refreshTokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(secretKey), nil
+	})
+	assert.NoError(t, err, "Failed to parse refresh token")
+	assert.True(t, parsedRefreshToken.Valid, "Refresh token should be valid")
+
+	parsedRefreshClaims, ok := parsedRefreshToken.Claims.(*jwt.RegisteredClaims)
+	assert.True(t, ok, "Claims should be of type RegisteredClaims")
+	assert.Equal(t, username, parsedRefreshClaims.Subject, "Subject in refresh claims should match username")
+
+	// Step 5: Use the refresh token to generate a new token
+	// This simulates what happens in HandleJWTTokenRefresh
+	newRoles := []string{"user", "authenticated", "refreshed"}
+	newClaims := JWTClaims{
+		Username: username,
+		Roles:    newRoles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "nauthilus",
+			Subject:   username,
+		},
+	}
+
+	newToken := jwt.NewWithClaims(jwt.SigningMethodHS256, newClaims)
+	newTokenString, err := newToken.SignedString([]byte(secretKey))
+	assert.NoError(t, err, "Failed to sign new token")
+	assert.NotEmpty(t, newTokenString, "New token string should not be empty")
+
+	// Step 6: Generate a new refresh token
+	newRefreshClaims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		NotBefore: jwt.NewNumericDate(time.Now()),
+		Issuer:    "nauthilus",
+		Subject:   username,
+	}
+
+	newRefreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, newRefreshClaims)
+	newRefreshTokenString, err := newRefreshToken.SignedString([]byte(secretKey))
+	assert.NoError(t, err, "Failed to sign new refresh token")
+	assert.NotEmpty(t, newRefreshTokenString, "New refresh token string should not be empty")
+
+	// Step 7: Validate the new token
+	parsedNewToken, err := jwt.ParseWithClaims(newTokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(secretKey), nil
+	})
+	assert.NoError(t, err, "Failed to parse new token")
+	assert.True(t, parsedNewToken.Valid, "New token should be valid")
+
+	parsedNewClaims, ok := parsedNewToken.Claims.(*JWTClaims)
+	assert.True(t, ok, "Claims should be of type JWTClaims")
+	assert.Equal(t, username, parsedNewClaims.Username, "Username in new claims should match")
+	assert.Equal(t, newRoles, parsedNewClaims.Roles, "Roles in new claims should match")
+
+	// Step 8: Validate the new refresh token
+	parsedNewRefreshToken, err := jwt.ParseWithClaims(newRefreshTokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(secretKey), nil
+	})
+	assert.NoError(t, err, "Failed to parse new refresh token")
+	assert.True(t, parsedNewRefreshToken.Valid, "New refresh token should be valid")
+
+	parsedNewRefreshClaims, ok := parsedNewRefreshToken.Claims.(*jwt.RegisteredClaims)
+	assert.True(t, ok, "Claims should be of type RegisteredClaims")
+	assert.Equal(t, username, parsedNewRefreshClaims.Subject, "Subject in new refresh claims should match username")
+}

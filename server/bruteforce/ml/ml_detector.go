@@ -130,6 +130,9 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
+	// Get learning rate from configuration
+	learningRate := config.GetFile().GetBruteForce().GetNeuralNetwork().GetLearningRate()
+
 	// Create a new neural network with properly initialized weights and biases
 	nn := &NeuralNetwork{
 		inputSize:          inputSize,
@@ -138,7 +141,7 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 		weights:            make([]float64, inputSize*hiddenSize+hiddenSize*outputSize),
 		hiddenBias:         make([]float64, hiddenSize),
 		outputBias:         make([]float64, outputSize),
-		learningRate:       0.01, // Default learning rate
+		learningRate:       learningRate,
 		rng:                rng,
 		activationFunction: activationFunction,
 	}
@@ -2003,6 +2006,15 @@ type BruteForceMLDetector struct {
 	featureEncodingTypes map[string]string
 }
 
+// IsLearningMode returns true if the model is still in learning mode
+func (d *BruteForceMLDetector) IsLearningMode() bool {
+	modelTrainedMutex.RLock()
+	isModelTrained := modelTrained
+	modelTrainedMutex.RUnlock()
+
+	return !isModelTrained
+}
+
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
@@ -2872,8 +2884,8 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	isModelTrained := modelTrained
 	modelTrainedMutex.RUnlock()
 
-	// Determine if it's a brute force attack based on threshold
-	threshold := 0.7 // Threshold can be adjusted
+	// Get threshold from configuration
+	threshold := config.GetFile().GetBruteForce().GetNeuralNetwork().GetThreshold()
 	isBruteForce := probability > threshold
 
 	// If the model hasn't been trained yet, we're in learning mode

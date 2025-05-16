@@ -101,7 +101,11 @@ func GenerateRefreshToken(username string) (string, error) {
 	}
 
 	// Set token expiry time (refresh tokens typically last longer)
-	expiryTime := time.Now().Add(24 * time.Hour) // 24 hours
+	expiryTime := time.Now().Add(jwtConfig.GetRefreshTokenExpiry())
+	if jwtConfig.GetRefreshTokenExpiry() == 0 {
+		// Default to 24 hours if not specified
+		expiryTime = time.Now().Add(24 * time.Hour)
+	}
 
 	// Create claims
 	claims := jwt.RegisteredClaims{
@@ -152,18 +156,26 @@ func StoreTokenInRedis(username, token string, expiresAt int64) error {
 func StoreRefreshTokenInRedis(username, refreshToken string) error {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
+	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	if !jwtConfig.IsStoreInRedisEnabled() {
 		return nil
 	}
 
 	// Create Redis key
 	key := fmt.Sprintf("jwt:refresh:%s", username)
 
-	// Store refresh token in Redis with 24-hour expiry
+	// Determine expiry time
+	expiry := jwtConfig.GetRefreshTokenExpiry()
+	if expiry == 0 {
+		// Default to 24 hours if not specified
+		expiry = 24 * time.Hour
+	}
+
+	// Store refresh token in Redis with configured expiry
 	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetWriteHandle()
 
-	return redisClient.Set(ctx, key, refreshToken, 24*time.Hour).Err()
+	return redisClient.Set(ctx, key, refreshToken, expiry).Err()
 }
 
 // GetTokenFromRedis retrieves a JWT token from Redis
@@ -413,11 +425,6 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			return
 		}
 
-		// If no roles are specified, add the authenticated role
-		if len(userRoles) == 0 {
-			userRoles = []string{"authenticated"}
-		}
-
 		// Generate JWT token
 		token, expiresAt, err := GenerateJWTToken(request.Username, userRoles)
 		if err != nil {
@@ -519,8 +526,8 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	// Determine user roles
-	roles := []string{"authenticated"}
+	// Determine user roles - default is empty
+	var roles []string
 
 	// Add user info role if NoAuth is true
 	if auth.(*AuthState).NoAuth {
@@ -673,42 +680,42 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		}
 	}
 
-	// Create auth state for authentication
-	auth := NewAuthStateFromContext(ctx)
-	if auth == nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
-		return
-	}
-
-	// Set username
-	auth.SetUsername(claims.Subject)
+	// Get GUID for logging
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// Check if we have configured JWT users
 	var roles []string
 	if len(jwtConfig.GetUsers()) > 0 {
 		// Try to find the user in the configured JWT users
+		userFound := false
 		for _, user := range jwtConfig.GetUsers() {
 			if user.GetUsername() == claims.Subject {
 				roles = user.GetRoles()
-
+				userFound = true
 				break
 			}
 		}
-	}
 
-	// If no roles are found, use default roles
-	if len(roles) == 0 {
-		roles = []string{"authenticated"}
+		if !userFound {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
+				definitions.LogKeyMsg, "JWT token refresh failed: user not found in configuration",
+			)
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+
+			return
+		}
 	}
 
 	// Generate new JWT token
 	newToken, expiresAt, err := GenerateJWTToken(claims.Subject, roles)
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, auth.GetGUID(),
-			definitions.LogKeyUsername, auth.GetUsername(),
-			definitions.LogKeyClientIP, auth.GetClientIP(),
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyUsername, claims.Subject,
+			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT token refresh failed",
 			"error", err,
 		)
@@ -721,9 +728,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	newRefreshToken, err := GenerateRefreshToken(claims.Subject)
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, auth.GetGUID(),
-			definitions.LogKeyUsername, auth.GetUsername(),
-			definitions.LogKeyClientIP, auth.GetClientIP(),
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyUsername, claims.Subject,
+			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT refresh token generation failed",
 			"error", err,
 		)
@@ -736,9 +743,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		if err := StoreTokenInRedis(claims.Subject, newToken, expiresAt); err != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GetGUID(),
-				definitions.LogKeyUsername, auth.GetUsername(),
-				definitions.LogKeyClientIP, auth.GetClientIP(),
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT token in Redis",
 				"error", err,
 			)
@@ -746,9 +753,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 		if err := StoreRefreshTokenInRedis(claims.Subject, newRefreshToken); err != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GetGUID(),
-				definitions.LogKeyUsername, auth.GetUsername(),
-				definitions.LogKeyClientIP, auth.GetClientIP(),
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT refresh token in Redis",
 				"error", err,
 			)
@@ -756,9 +763,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	}
 
 	level.Info(log.Logger).Log(
-		definitions.LogKeyGUID, auth.GetGUID(),
-		definitions.LogKeyUsername, auth.GetUsername(),
-		definitions.LogKeyClientIP, auth.GetClientIP(),
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyUsername, claims.Subject,
+		definitions.LogKeyClientIP, ctx.ClientIP(),
 		definitions.LogKeyMsg, "JWT token refreshed successfully",
 	)
 

@@ -102,52 +102,55 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 
 	accountName := a.GetAccount()
 
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Repeating = false // unavailable
+	commonRequest.UserFound = func() bool { return accountName != "" }()
+	commonRequest.Authenticated = false // unavailable
+	commonRequest.NoAuth = a.NoAuth
+	commonRequest.BruteForceCounter = 0 // unavailable
+	commonRequest.Service = a.Service
+	commonRequest.Session = *a.GUID
+	commonRequest.ClientIP = a.ClientIP
+	commonRequest.ClientPort = a.XClientPort
+	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientHost = a.ClientHost
+	commonRequest.ClientID = a.XClientID
+	commonRequest.UserAgent = *a.UserAgent
+	commonRequest.LocalIP = a.XLocalIP
+	commonRequest.LocalPort = a.XPort
+	commonRequest.Username = a.Username
+	commonRequest.Account = accountName
+	commonRequest.AccountField = a.GetAccountField()
+	commonRequest.UniqueUserID = "" // unavailable
+	commonRequest.DisplayName = ""  // unavailable
+	commonRequest.Password = a.Password
+	commonRequest.Protocol = a.Protocol.String()
+	commonRequest.BruteForceName = "" // unavailable
+	commonRequest.FeatureName = ""    // unavailable
+	commonRequest.StatusMessage = &a.StatusMessage
+	commonRequest.XSSL = a.XSSL
+	commonRequest.XSSLSessionID = a.XSSLSessionID
+	commonRequest.XSSLClientVerify = a.XSSLClientVerify
+	commonRequest.XSSLClientDN = a.XSSLClientDN
+	commonRequest.XSSLClientCN = a.XSSLClientCN
+	commonRequest.XSSLIssuer = a.XSSLIssuer
+	commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
+	commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
+	commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
+	commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
+	commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
+	commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
+	commonRequest.XSSLProtocol = a.XSSLProtocol
+	commonRequest.XSSLCipher = a.XSSLCipher
+	commonRequest.SSLSerial = a.SSLSerial
+	commonRequest.SSLFingerprint = a.SSLFingerprint
+
 	featureRequest := feature.Request{
-		Context: a.Context,
-		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			Repeating:           false, // unavailable
-			UserFound:           func() bool { return accountName != "" }(),
-			Authenticated:       false, // unavailable
-			NoAuth:              a.NoAuth,
-			BruteForceCounter:   0, // unavailable
-			Service:             a.Service,
-			Session:             *a.GUID,
-			ClientIP:            a.ClientIP,
-			ClientPort:          a.XClientPort,
-			ClientNet:           "", // unavailable
-			ClientHost:          a.ClientHost,
-			ClientID:            a.XClientID,
-			UserAgent:           *a.UserAgent,
-			LocalIP:             a.XLocalIP,
-			LocalPort:           a.XPort,
-			Username:            a.Username,
-			Account:             accountName,
-			AccountField:        a.GetAccountField(),
-			UniqueUserID:        "", // unavailable
-			DisplayName:         "", // unavailable
-			Password:            a.Password,
-			Protocol:            a.Protocol.String(),
-			BruteForceName:      "", // unavailable
-			FeatureName:         "", // unavailable
-			StatusMessage:       &a.StatusMessage,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			SSLSerial:           a.SSLSerial,
-			SSLFingerprint:      a.SSLFingerprint,
-		},
+		Context:       a.Context,
+		CommonRequest: commonRequest,
 	}
 
 	triggered, abortFeatures, err = featureRequest.CallFeatureLua(ctx)
@@ -161,6 +164,9 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	if statusMessage := featureRequest.StatusMessage; *statusMessage != a.StatusMessage {
 		a.StatusMessage = *statusMessage
 	}
+
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
 
 	return
 }
@@ -549,51 +555,57 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		a.initializeAccountName()
 	}
 
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.UserFound = func() bool { return a.GetAccount() != "" }()
+	commonRequest.NoAuth = a.NoAuth
+	commonRequest.Service = a.Service
+	commonRequest.Session = *a.GUID
+	commonRequest.ClientIP = a.ClientIP
+	commonRequest.ClientPort = a.XClientPort
+	commonRequest.ClientHost = a.ClientHost
+	commonRequest.ClientID = a.XClientID
+	commonRequest.LocalIP = a.XLocalIP
+	commonRequest.LocalPort = a.XPort
+	commonRequest.UserAgent = *a.UserAgent
+	commonRequest.Username = a.Username
+	commonRequest.Account = a.GetAccount()
+	commonRequest.AccountField = a.GetAccountField()
+	commonRequest.Password = a.Password
+	commonRequest.Protocol = a.Protocol.Get()
+	commonRequest.FeatureName = a.FeatureName
+	commonRequest.StatusMessage = &a.StatusMessage
+	commonRequest.XSSL = a.XSSL
+	commonRequest.XSSLSessionID = a.XSSLSessionID
+	commonRequest.XSSLClientVerify = a.XSSLClientVerify
+	commonRequest.XSSLClientDN = a.XSSLClientDN
+	commonRequest.XSSLClientCN = a.XSSLClientCN
+	commonRequest.XSSLIssuer = a.XSSLIssuer
+	commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
+	commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
+	commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
+	commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
+	commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
+	commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
+	commonRequest.XSSLProtocol = a.XSSLProtocol
+	commonRequest.XSSLCipher = a.XSSLCipher
+	commonRequest.SSLSerial = a.SSLSerial
+	commonRequest.SSLFingerprint = a.SSLFingerprint
+
 	action.RequestChan <- &action.Action{
-		LuaAction:    luaAction,
-		Context:      a.Context,
-		FinishedChan: finished,
-		HTTPRequest:  a.HTTPClientContext.Request,
-		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			UserFound:           func() bool { return a.GetAccount() != "" }(),
-			NoAuth:              a.NoAuth,
-			Service:             a.Service,
-			Session:             *a.GUID,
-			ClientIP:            a.ClientIP,
-			ClientPort:          a.XClientPort,
-			ClientHost:          a.ClientHost,
-			ClientID:            a.XClientID,
-			LocalIP:             a.XLocalIP,
-			LocalPort:           a.XPort,
-			UserAgent:           *a.UserAgent,
-			Username:            a.Username,
-			Account:             a.GetAccount(),
-			AccountField:        a.GetAccountField(),
-			Password:            a.Password,
-			Protocol:            a.Protocol.Get(),
-			FeatureName:         a.FeatureName,
-			StatusMessage:       &a.StatusMessage,
-			XSSL:                a.XSSL,
-			XSSLSessionID:       a.XSSLSessionID,
-			XSSLClientVerify:    a.XSSLClientVerify,
-			XSSLClientDN:        a.XSSLClientDN,
-			XSSLClientCN:        a.XSSLClientCN,
-			XSSLIssuer:          a.XSSLIssuer,
-			XSSLClientNotBefore: a.XSSLClientNotBefore,
-			XSSLClientNotAfter:  a.XSSLClientNotAfter,
-			XSSLSubjectDN:       a.XSSLSubjectDN,
-			XSSLIssuerDN:        a.XSSLIssuerDN,
-			XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-			XSSLProtocol:        a.XSSLProtocol,
-			XSSLCipher:          a.XSSLCipher,
-			SSLSerial:           a.SSLSerial,
-			SSLFingerprint:      a.SSLFingerprint,
-		},
+		LuaAction:     luaAction,
+		Context:       a.Context,
+		FinishedChan:  finished,
+		HTTPRequest:   a.HTTPClientContext.Request,
+		CommonRequest: commonRequest,
 	}
 
 	<-finished
+
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
 }
 
 // HandleFeatures processes multiple security features associated with authentication requests and returns the result.

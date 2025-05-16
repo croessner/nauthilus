@@ -99,14 +99,43 @@ The neural network supports multiple activation functions:
    - Derivative: LeakyReLU'(x) = 1 if x > 0, else 0.01
 
 
-The activation function and number of hidden neurons can be configured in the configuration file:
+The neural network can be configured with several options in the configuration file:
 
 ```yaml
 brute_force:
   neural_network:
+    # Number of neurons in the hidden layer (default: 10)
     hidden_neurons: 10
+
+    # Activation function to use (default: "sigmoid")
+    # Options: "sigmoid", "tanh", "relu", "leaky_relu"
     activation_function: "sigmoid"
+
+    # Weight for static rules in the weighted decision (default: 0.4)
+    static_weight: 0.4
+
+    # Weight for ML in the weighted decision (default: 0.6)
+    ml_weight: 0.6
+
+    # Threshold for the weighted decision (default: 0.7)
+    threshold: 0.7
+
+    # Learning rate for the neural network (default: 0.01)
+    learning_rate: 0.01
+
+    # Maximum number of training records to keep (default: 10000)
+    max_training_records: 10000
 ```
+
+These configuration options allow you to fine-tune the behavior of the neural network:
+
+- **hidden_neurons**: Controls the complexity of the model. More neurons can capture more complex patterns but may lead to overfitting.
+- **activation_function**: Determines how neurons activate. Different functions have different properties and may work better for different datasets.
+- **static_weight**: The weight given to the traditional rule-based detection in the weighted decision.
+- **ml_weight**: The weight given to the ML prediction in the weighted decision.
+- **threshold**: The threshold above which a weighted score is considered a brute force attack.
+- **learning_rate**: Controls how quickly the model adapts to new data. Higher values may learn faster but can be unstable.
+- **max_training_records**: Limits the number of training samples to prevent excessive memory usage.
 
 #### Forward Propagation
 
@@ -366,8 +395,8 @@ The ML-based detection works alongside the existing rule-based system using a we
 3. A weighted decision is made combining both the static rule result and the ML prediction:
    - Static rule result is converted to a score (0.0 for not triggered, 1.0 for triggered)
    - ML prediction provides a probability between 0.0 and 1.0
-   - These scores are weighted (default: 40% static, 60% ML) and combined
-   - If the weighted score exceeds a threshold (default: 0.7), the attempt is blocked
+   - These scores are weighted and combined (configurable weights, defaults: 40% static, 60% ML)
+   - If the weighted score exceeds a threshold (configurable, default: 0.7), the attempt is blocked
 4. High-confidence overrides ensure ML has the final say in extreme cases:
    - If ML is very confident it's a brute force attack (probability > 0.9), always block
    - If ML is very confident it's NOT a brute force attack (probability < 0.1), never block
@@ -836,5 +865,4 @@ These features will be automatically encoded using the specified encoding type (
 5. **Explainability**: Add tools to explain why a particular login attempt was flagged as suspicious
 6. **Real-time Adaptation**: Implement online learning to adapt the model in real-time
 7. **Model Evaluation**: Add metrics and tools to evaluate model performance
-8. **Configurable Weights**: Make the static/ML weights and threshold configurable
 9. **Advanced Embedding Techniques**: Implement more sophisticated embedding techniques for categorical features

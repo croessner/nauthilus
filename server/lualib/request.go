@@ -16,10 +16,36 @@
 package lualib
 
 import (
+	"sync"
+
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
+
+// commonRequestPool is a sync.Pool for CommonRequest objects to reduce memory allocations.
+var commonRequestPool = sync.Pool{
+	New: func() interface{} {
+		util.DebugModule(
+			definitions.DbgLua,
+			definitions.LogKeyMsg, "Creating new CommonRequest object",
+		)
+
+		return &CommonRequest{}
+	},
+}
+
+// GetCommonRequest gets a CommonRequest from the pool or creates a new one if the pool is empty.
+func GetCommonRequest() *CommonRequest {
+	return commonRequestPool.Get().(*CommonRequest)
+}
+
+// PutCommonRequest returns a CommonRequest to the pool after resetting it.
+func PutCommonRequest(cr *CommonRequest) {
+	cr.Reset()
+	commonRequestPool.Put(cr)
+}
 
 // CommonRequest represents a common request object with various properties used in different functionalities.
 type CommonRequest struct {
@@ -148,6 +174,52 @@ type CommonRequest struct {
 
 	// SSLFingerprint represents the SSL certificate's fingerprint for the client in the request.
 	SSLFingerprint string
+}
+
+// Reset resets all fields of the CommonRequest to their zero values.
+func (c *CommonRequest) Reset() {
+	c.Debug = false
+	c.Repeating = false
+	c.UserFound = false
+	c.Authenticated = false
+	c.NoAuth = false
+	c.BruteForceCounter = 0
+	c.Service = ""
+	c.Session = ""
+	c.ClientIP = ""
+	c.ClientPort = ""
+	c.ClientNet = ""
+	c.ClientHost = ""
+	c.ClientID = ""
+	c.UserAgent = ""
+	c.LocalIP = ""
+	c.LocalPort = ""
+	c.Username = ""
+	c.Account = ""
+	c.AccountField = ""
+	c.UniqueUserID = ""
+	c.DisplayName = ""
+	c.Password = ""
+	c.Protocol = ""
+	c.BruteForceName = ""
+	c.FeatureName = ""
+	c.StatusMessage = nil
+	c.XSSL = ""
+	c.XSSLSessionID = ""
+	c.XSSLClientVerify = ""
+	c.XSSLClientDN = ""
+	c.XSSLClientCN = ""
+	c.XSSLIssuer = ""
+	c.XSSLClientNotBefore = ""
+	c.XSSLClientNotAfter = ""
+	c.XSSLSubjectDN = ""
+	c.XSSLIssuerDN = ""
+	c.XSSLClientSubjectDN = ""
+	c.XSSLClientIssuerDN = ""
+	c.XSSLProtocol = ""
+	c.XSSLCipher = ""
+	c.SSLSerial = ""
+	c.SSLFingerprint = ""
 }
 
 // SetupRequest sets up the request object with the common request properties
