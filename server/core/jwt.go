@@ -413,11 +413,6 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			return
 		}
 
-		// If no roles are specified, add the authenticated role
-		if len(userRoles) == 0 {
-			userRoles = []string{"authenticated"}
-		}
-
 		// Generate JWT token
 		token, expiresAt, err := GenerateJWTToken(request.Username, userRoles)
 		if err != nil {
@@ -519,8 +514,8 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	// Determine user roles
-	roles := []string{"authenticated"}
+	// Determine user roles - default is empty
+	var roles []string
 
 	// Add user info role if NoAuth is true
 	if auth.(*AuthState).NoAuth {
@@ -700,14 +695,6 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 			return
 		}
-
-		// If no roles are specified, add the authenticated role
-		if len(roles) == 0 {
-			roles = []string{"authenticated"}
-		}
-	} else {
-		// If no JWT users are configured, use default roles
-		roles = []string{"authenticated"}
 	}
 
 	// Generate new JWT token
