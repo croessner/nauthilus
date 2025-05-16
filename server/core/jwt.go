@@ -673,32 +673,40 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		}
 	}
 
-	// Create auth state for authentication
-	auth := NewAuthStateFromContext(ctx)
-	if auth == nil {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-
-		return
-	}
-
-	// Set username
-	auth.SetUsername(claims.Subject)
+	// Get GUID for logging
+	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// Check if we have configured JWT users
 	var roles []string
 	if len(jwtConfig.GetUsers()) > 0 {
 		// Try to find the user in the configured JWT users
+		userFound := false
 		for _, user := range jwtConfig.GetUsers() {
 			if user.GetUsername() == claims.Subject {
 				roles = user.GetRoles()
-
+				userFound = true
 				break
 			}
 		}
-	}
 
-	// If no roles are found, use default roles
-	if len(roles) == 0 {
+		if !userFound {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
+				definitions.LogKeyMsg, "JWT token refresh failed: user not found in configuration",
+			)
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+
+			return
+		}
+
+		// If no roles are specified, add the authenticated role
+		if len(roles) == 0 {
+			roles = []string{"authenticated"}
+		}
+	} else {
+		// If no JWT users are configured, use default roles
 		roles = []string{"authenticated"}
 	}
 
@@ -706,9 +714,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	newToken, expiresAt, err := GenerateJWTToken(claims.Subject, roles)
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, auth.GetGUID(),
-			definitions.LogKeyUsername, auth.GetUsername(),
-			definitions.LogKeyClientIP, auth.GetClientIP(),
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyUsername, claims.Subject,
+			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT token refresh failed",
 			"error", err,
 		)
@@ -721,9 +729,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	newRefreshToken, err := GenerateRefreshToken(claims.Subject)
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, auth.GetGUID(),
-			definitions.LogKeyUsername, auth.GetUsername(),
-			definitions.LogKeyClientIP, auth.GetClientIP(),
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyUsername, claims.Subject,
+			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT refresh token generation failed",
 			"error", err,
 		)
@@ -736,9 +744,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	if jwtConfig.IsStoreInRedisEnabled() {
 		if err := StoreTokenInRedis(claims.Subject, newToken, expiresAt); err != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GetGUID(),
-				definitions.LogKeyUsername, auth.GetUsername(),
-				definitions.LogKeyClientIP, auth.GetClientIP(),
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT token in Redis",
 				"error", err,
 			)
@@ -746,9 +754,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 		if err := StoreRefreshTokenInRedis(claims.Subject, newRefreshToken); err != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GetGUID(),
-				definitions.LogKeyUsername, auth.GetUsername(),
-				definitions.LogKeyClientIP, auth.GetClientIP(),
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyUsername, claims.Subject,
+				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT refresh token in Redis",
 				"error", err,
 			)
@@ -756,9 +764,9 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	}
 
 	level.Info(log.Logger).Log(
-		definitions.LogKeyGUID, auth.GetGUID(),
-		definitions.LogKeyUsername, auth.GetUsername(),
-		definitions.LogKeyClientIP, auth.GetClientIP(),
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyUsername, claims.Subject,
+		definitions.LogKeyClientIP, ctx.ClientIP(),
 		definitions.LogKeyMsg, "JWT token refreshed successfully",
 	)
 
