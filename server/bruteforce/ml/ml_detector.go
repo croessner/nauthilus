@@ -1379,48 +1379,43 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 						featureVector = append(featureVector, 0.0)
 					}
 				case string:
-					// Try to convert string to float first
-					if f, err := strconv.ParseFloat(v, 64); err == nil {
-						featureVector = append(featureVector, f)
+					// Check the encoding type for this feature
+					encodingType := t.GetFeatureEncodingType(key)
+
+					if encodingType == EmbeddingEncoding {
+						// Use embedding encoding for this feature
+						embedding := t.generateEmbedding(v)
+						featureVector = append(featureVector, embedding...)
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "prepare_training_data_embedding",
+							"key", key,
+							"value", v,
+							"embedding_size", len(embedding),
+							"sample_index", i,
+						)
 					} else {
-						// Check the encoding type for this feature
-						encodingType := t.GetFeatureEncodingType(key)
+						// For categorical string values, use one-hot encoding (default)
+						// Get or create the one-hot encoding for this feature
+						oneHotValues, oneHotIndex := t.getOrCreateOneHotEncoding(key, v)
 
-						if encodingType == EmbeddingEncoding {
-							// Use embedding encoding for this feature
-							embedding := t.generateEmbedding(v)
-							featureVector = append(featureVector, embedding...)
-
-							util.DebugModule(definitions.DbgNeural,
-								"action", "prepare_training_data_embedding",
-								"key", key,
-								"value", v,
-								"embedding_size", len(embedding),
-								"sample_index", i,
-							)
-						} else {
-							// For categorical string values, use one-hot encoding (default)
-							// Get or create the one-hot encoding for this feature
-							oneHotValues, oneHotIndex := t.getOrCreateOneHotEncoding(key, v)
-
-							// Add one-hot encoded values to the feature vector
-							for j := 0; j < oneHotValues; j++ {
-								if j == oneHotIndex {
-									featureVector = append(featureVector, 1.0)
-								} else {
-									featureVector = append(featureVector, 0.0)
-								}
+						// Add one-hot encoded values to the feature vector
+						for j := 0; j < oneHotValues; j++ {
+							if j == oneHotIndex {
+								featureVector = append(featureVector, 1.0)
+							} else {
+								featureVector = append(featureVector, 0.0)
 							}
-
-							util.DebugModule(definitions.DbgNeural,
-								"action", "one_hot_encoding",
-								"key", key,
-								"value", v,
-								"one_hot_values", oneHotValues,
-								"one_hot_index", oneHotIndex,
-								"sample_index", i,
-							)
 						}
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "one_hot_encoding",
+							"key", key,
+							"value", v,
+							"one_hot_values", oneHotValues,
+							"one_hot_index", oneHotIndex,
+							"sample_index", i,
+						)
 					}
 				default:
 					// For other types, use a default value
@@ -2629,122 +2624,117 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 					inputs = append(inputs, 0.0)
 				}
 			case string:
-				// Try to convert string to float first
-				if f, err := strconv.ParseFloat(v, 64); err == nil {
-					inputs = append(inputs, f)
-				} else {
-					// Get the global trainer to access encodings
-					globalTrainerMutex.RLock()
-					trainer := globalTrainer
-					globalTrainerMutex.RUnlock()
+				// Get the global trainer to access encodings
+				globalTrainerMutex.RLock()
+				trainer := globalTrainer
+				globalTrainerMutex.RUnlock()
 
-					if trainer != nil {
-						// Check the encoding type for this feature
-						encodingType := trainer.GetFeatureEncodingType(key)
+				if trainer != nil {
+					// Check the encoding type for this feature
+					encodingType := trainer.GetFeatureEncodingType(key)
 
-						if encodingType == EmbeddingEncoding {
-							// Use embedding encoding for this feature
-							embedding := trainer.generateEmbedding(v)
-							inputs = append(inputs, embedding...)
+					if encodingType == EmbeddingEncoding {
+						// Use embedding encoding for this feature
+						embedding := trainer.generateEmbedding(v)
+						inputs = append(inputs, embedding...)
 
-							util.DebugModule(definitions.DbgNeural,
-								"action", "predict_embedding",
-								"key", key,
-								"value", v,
-								"embedding_size", len(embedding),
-								definitions.LogKeyGUID, d.guid,
-							)
-						} else {
-							// Use one-hot encoding for this feature (default)
-							if trainer.oneHotEncodings != nil {
-								// Check if we've seen this feature before
-								if featureEncodings, exists := trainer.oneHotEncodings[key]; exists {
-									// Check if we've seen this value before
-									if index, exists := featureEncodings[v]; exists {
-										// Add one-hot encoded values to the feature vector
-										for j := 0; j < trainer.oneHotSizes[key]; j++ {
-											if j == index {
-												inputs = append(inputs, 1.0)
-											} else {
-												inputs = append(inputs, 0.0)
-											}
-										}
-
-										util.DebugModule(definitions.DbgNeural,
-											"action", "predict_one_hot_encoding",
-											"key", key,
-											"value", v,
-											"one_hot_values", trainer.oneHotSizes[key],
-											"one_hot_index", index,
-											definitions.LogKeyGUID, d.guid,
-										)
-									} else {
-										// Value not seen during training, use a default value
-										// Add zeros for all possible values of this feature
-										for j := 0; j < trainer.oneHotSizes[key]; j++ {
+						util.DebugModule(definitions.DbgNeural,
+							"action", "predict_embedding",
+							"key", key,
+							"value", v,
+							"embedding_size", len(embedding),
+							definitions.LogKeyGUID, d.guid,
+						)
+					} else {
+						// Use one-hot encoding for this feature (default)
+						if trainer.oneHotEncodings != nil {
+							// Check if we've seen this feature before
+							if featureEncodings, exists := trainer.oneHotEncodings[key]; exists {
+								// Check if we've seen this value before
+								if index, exists := featureEncodings[v]; exists {
+									// Add one-hot encoded values to the feature vector
+									for j := 0; j < trainer.oneHotSizes[key]; j++ {
+										if j == index {
+											inputs = append(inputs, 1.0)
+										} else {
 											inputs = append(inputs, 0.0)
 										}
-
-										util.DebugModule(definitions.DbgNeural,
-											"action", "predict_one_hot_encoding_unknown_value",
-											"key", key,
-											"value", v,
-											"one_hot_values", trainer.oneHotSizes[key],
-											definitions.LogKeyGUID, d.guid,
-										)
 									}
-								} else {
-									// Feature not seen during training, use a default value
-									inputs = append(inputs, 0.5)
 
 									util.DebugModule(definitions.DbgNeural,
-										"action", "predict_unknown_categorical_feature",
+										"action", "predict_one_hot_encoding",
 										"key", key,
 										"value", v,
+										"one_hot_values", trainer.oneHotSizes[key],
+										"one_hot_index", index,
+										definitions.LogKeyGUID, d.guid,
+									)
+								} else {
+									// Value not seen during training, use a default value
+									// Add zeros for all possible values of this feature
+									for j := 0; j < trainer.oneHotSizes[key]; j++ {
+										inputs = append(inputs, 0.0)
+									}
+
+									util.DebugModule(definitions.DbgNeural,
+										"action", "predict_one_hot_encoding_unknown_value",
+										"key", key,
+										"value", v,
+										"one_hot_values", trainer.oneHotSizes[key],
 										definitions.LogKeyGUID, d.guid,
 									)
 								}
 							} else {
-								// Fallback to old method if one-hot encoding is not available
-								hash := util.GetHash(v)
-								if len(hash) > 8 {
-									hash = hash[:8]
-								}
-
-								if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
-									inputs = append(inputs, float64(hashInt%1000)/1000.0)
-								} else {
-									inputs = append(inputs, 0.5)
-								}
+								// Feature not seen during training, use a default value
+								inputs = append(inputs, 0.5)
 
 								util.DebugModule(definitions.DbgNeural,
-									"action", "predict_fallback_hash",
+									"action", "predict_unknown_categorical_feature",
 									"key", key,
 									"value", v,
 									definitions.LogKeyGUID, d.guid,
 								)
 							}
-						}
-					} else {
-						// Fallback to old method if trainer is not available
-						hash := util.GetHash(v)
-						if len(hash) > 8 {
-							hash = hash[:8]
-						}
-
-						if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
-							inputs = append(inputs, float64(hashInt%1000)/1000.0)
 						} else {
-							inputs = append(inputs, 0.5)
-						}
+							// Fallback to old method if one-hot encoding is not available
+							hash := util.GetHash(v)
+							if len(hash) > 8 {
+								hash = hash[:8]
+							}
 
-						util.DebugModule(definitions.DbgNeural,
-							"action", "predict_fallback_hash",
-							"key", key,
-							"value", v,
-							definitions.LogKeyGUID, d.guid,
-						)
+							if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+								inputs = append(inputs, float64(hashInt%1000)/1000.0)
+							} else {
+								inputs = append(inputs, 0.5)
+							}
+
+							util.DebugModule(definitions.DbgNeural,
+								"action", "predict_fallback_hash",
+								"key", key,
+								"value", v,
+								definitions.LogKeyGUID, d.guid,
+							)
+						}
 					}
+				} else {
+					// Fallback to old method if trainer is not available
+					hash := util.GetHash(v)
+					if len(hash) > 8 {
+						hash = hash[:8]
+					}
+
+					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+						inputs = append(inputs, float64(hashInt%1000)/1000.0)
+					} else {
+						inputs = append(inputs, 0.5)
+					}
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "predict_fallback_hash",
+						"key", key,
+						"value", v,
+						definitions.LogKeyGUID, d.guid,
+					)
 				}
 			default:
 				// For other types, use a default value
