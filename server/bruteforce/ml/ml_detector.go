@@ -723,6 +723,9 @@ func (t *MLTrainer) generateEmbedding(value string) []float64 {
 		"action", "generate_embedding",
 		"value", value,
 		"embedding_size", t.embeddingSize,
+		"embedding_vector", embedding,
+		"vector_sum", sum,
+		"magnitude", math.Sqrt(sum),
 	)
 
 	return embedding
