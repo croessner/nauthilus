@@ -1684,82 +1684,180 @@ func (a *AuthState) GetAccountField() string {
 	return *a.AccountField
 }
 
+// executeLuaPostAction is a helper function that executes a Lua post action with the given parameters.
+// It is designed to be run in a goroutine and takes copies of all necessary values to avoid nil pointer dereferences.
+func executeLuaPostAction(
+	context *lualib.Context,
+	httpRequest *http.Request,
+	guid string,
+	noAuth bool,
+	service string,
+	clientIP string,
+	clientPort string,
+	clientHost string,
+	clientID string,
+	localIP string,
+	localPort string,
+	userAgent string,
+	username string,
+	accountName string,
+	accountField string,
+	uniqueUserID string,
+	displayName string,
+	password string,
+	protocol string,
+	bruteForceName string,
+	featureName string,
+	statusMessage string,
+	xSSL string,
+	xSSLSessionID string,
+	xSSLClientVerify string,
+	xSSLClientDN string,
+	xSSLClientCN string,
+	xSSLIssuer string,
+	xSSLClientNotBefore string,
+	xSSLClientNotAfter string,
+	xSSLSubjectDN string,
+	xSSLIssuerDN string,
+	xSSLClientSubjectDN string,
+	xSSLClientIssuerDN string,
+	xSSLProtocol string,
+	xSSLCipher string,
+	sSLSerial string,
+	sSLFingerprint string,
+	userFound bool,
+	authenticated bool,
+) {
+	stopTimer := stats.PrometheusTimer(definitions.PromPostAction, "lua_post_action_request_total")
+
+	if stopTimer != nil {
+		defer stopTimer()
+	}
+
+	finished := make(chan action.Done)
+
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Repeating = false
+	commonRequest.UserFound = userFound
+	commonRequest.Authenticated = authenticated
+	commonRequest.NoAuth = noAuth
+	commonRequest.BruteForceCounter = 0
+	commonRequest.Service = service
+	commonRequest.Session = guid
+	commonRequest.ClientIP = clientIP
+	commonRequest.ClientPort = clientPort
+	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientHost = clientHost
+	commonRequest.ClientID = clientID
+	commonRequest.LocalIP = localIP
+	commonRequest.LocalPort = localPort
+	commonRequest.UserAgent = userAgent
+	commonRequest.Username = username
+	commonRequest.Account = accountName
+	commonRequest.AccountField = accountField
+	commonRequest.UniqueUserID = uniqueUserID
+	commonRequest.DisplayName = displayName
+	commonRequest.Password = password
+	commonRequest.Protocol = protocol
+	commonRequest.BruteForceName = bruteForceName
+	commonRequest.FeatureName = featureName
+	commonRequest.StatusMessage = &statusMessage
+	commonRequest.XSSL = xSSL
+	commonRequest.XSSLSessionID = xSSLSessionID
+	commonRequest.XSSLClientVerify = xSSLClientVerify
+	commonRequest.XSSLClientDN = xSSLClientDN
+	commonRequest.XSSLClientCN = xSSLClientCN
+	commonRequest.XSSLIssuer = xSSLIssuer
+	commonRequest.XSSLClientNotBefore = xSSLClientNotBefore
+	commonRequest.XSSLClientNotAfter = xSSLClientNotAfter
+	commonRequest.XSSLSubjectDN = xSSLSubjectDN
+	commonRequest.XSSLIssuerDN = xSSLIssuerDN
+	commonRequest.XSSLClientSubjectDN = xSSLClientSubjectDN
+	commonRequest.XSSLClientIssuerDN = xSSLClientIssuerDN
+	commonRequest.XSSLProtocol = xSSLProtocol
+	commonRequest.XSSLCipher = xSSLCipher
+	commonRequest.SSLSerial = sSLSerial
+	commonRequest.SSLFingerprint = sSLFingerprint
+
+	action.RequestChan <- &action.Action{
+		LuaAction:     definitions.LuaActionPost,
+		Context:       context,
+		FinishedChan:  finished,
+		HTTPRequest:   httpRequest,
+		CommonRequest: commonRequest,
+	}
+
+	<-finished
+
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
+}
+
 // PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	if !config.GetFile().HaveLuaActions() {
 		return
 	}
 
-	go func() {
-		stopTimer := stats.PrometheusTimer(definitions.PromPostAction, "lua_post_action_request_total")
+	// Make sure we have all the required values and they're not nil
+	if a.GUID == nil || a.UserAgent == nil || a.Protocol == nil || a.HTTPClientContext == nil || a.Context == nil {
+		return
+	}
 
-		if stopTimer != nil {
-			defer stopTimer()
-		}
+	// Get account name and check if user was found
+	accountName := a.GetAccount()
+	userFound := passDBResult.UserFound || accountName != ""
 
-		finished := make(chan action.Done)
-		accountName := a.GetAccount()
+	// Make a copy of the status message
+	statusMessageCopy := a.StatusMessage
 
-		// Get a CommonRequest from the pool
-		commonRequest := lualib.GetCommonRequest()
-
-		// Set the fields
-		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-		commonRequest.Repeating = false
-		commonRequest.UserFound = func() bool { return passDBResult.UserFound || accountName != "" }()
-		commonRequest.Authenticated = passDBResult.Authenticated
-		commonRequest.NoAuth = a.NoAuth
-		commonRequest.BruteForceCounter = 0
-		commonRequest.Service = a.Service
-		commonRequest.Session = *a.GUID
-		commonRequest.ClientIP = a.ClientIP
-		commonRequest.ClientPort = a.XClientPort
-		commonRequest.ClientNet = "" // unavailable
-		commonRequest.ClientHost = a.ClientHost
-		commonRequest.ClientID = a.XClientID
-		commonRequest.LocalIP = a.XLocalIP
-		commonRequest.LocalPort = a.XPort
-		commonRequest.UserAgent = *a.UserAgent
-		commonRequest.Username = a.Username
-		commonRequest.Account = accountName
-		commonRequest.AccountField = a.GetAccountField()
-		commonRequest.UniqueUserID = a.GetUniqueUserID()
-		commonRequest.DisplayName = a.GetDisplayName()
-		commonRequest.Password = a.Password
-		commonRequest.Protocol = a.Protocol.Get()
-		commonRequest.BruteForceName = a.BruteForceName
-		commonRequest.FeatureName = a.FeatureName
-		commonRequest.StatusMessage = &a.StatusMessage
-		commonRequest.XSSL = a.XSSL
-		commonRequest.XSSLSessionID = a.XSSLSessionID
-		commonRequest.XSSLClientVerify = a.XSSLClientVerify
-		commonRequest.XSSLClientDN = a.XSSLClientDN
-		commonRequest.XSSLClientCN = a.XSSLClientCN
-		commonRequest.XSSLIssuer = a.XSSLIssuer
-		commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
-		commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
-		commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
-		commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
-		commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
-		commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
-		commonRequest.XSSLProtocol = a.XSSLProtocol
-		commonRequest.XSSLCipher = a.XSSLCipher
-		commonRequest.SSLSerial = a.SSLSerial
-		commonRequest.SSLFingerprint = a.SSLFingerprint
-
-		action.RequestChan <- &action.Action{
-			LuaAction:     definitions.LuaActionPost,
-			Context:       a.Context,
-			FinishedChan:  finished,
-			HTTPRequest:   a.HTTPClientContext.Request,
-			CommonRequest: commonRequest,
-		}
-
-		<-finished
-
-		// Return the CommonRequest to the pool
-		lualib.PutCommonRequest(commonRequest)
-	}()
+	// Start a goroutine with copies of all necessary values
+	go executeLuaPostAction(
+		a.Context,
+		a.HTTPClientContext.Request,
+		*a.GUID,
+		a.NoAuth,
+		a.Service,
+		a.ClientIP,
+		a.XClientPort,
+		a.ClientHost,
+		a.XClientID,
+		a.XLocalIP,
+		a.XPort,
+		*a.UserAgent,
+		a.Username,
+		accountName,
+		a.GetAccountField(),
+		a.GetUniqueUserID(),
+		a.GetDisplayName(),
+		a.Password,
+		a.Protocol.Get(),
+		a.BruteForceName,
+		a.FeatureName,
+		statusMessageCopy,
+		a.XSSL,
+		a.XSSLSessionID,
+		a.XSSLClientVerify,
+		a.XSSLClientDN,
+		a.XSSLClientCN,
+		a.XSSLIssuer,
+		a.XSSLClientNotBefore,
+		a.XSSLClientNotAfter,
+		a.XSSLSubjectDN,
+		a.XSSLIssuerDN,
+		a.XSSLClientSubjectDN,
+		a.XSSLClientIssuerDN,
+		a.XSSLProtocol,
+		a.XSSLCipher,
+		a.SSLSerial,
+		a.SSLFingerprint,
+		userFound,
+		passDBResult.Authenticated,
+	)
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
