@@ -2756,6 +2756,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	a.ClientIP = ctx.GetHeader(config.GetFile().GetClientIP())
 	a.XClientPort = ctx.GetHeader(config.GetFile().GetClientPort())
 	a.XClientID = ctx.GetHeader(config.GetFile().GetClientID())
+	a.ClientHost = ctx.GetHeader(config.GetFile().GetClientHost())
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
@@ -2770,11 +2771,6 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 	}
 
 	a.postResolvDNS(ctx)
-
-	if a.ClientHost == "" {
-		// Fallback to GetEnvironment() variable
-		a.ClientHost = ctx.GetHeader(config.GetFile().GetClientHost())
-	}
 
 	return a
 }
