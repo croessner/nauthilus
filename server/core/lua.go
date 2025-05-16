@@ -52,6 +52,53 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Repeating = false     // unavailable
+	commonRequest.UserFound = false     // set by backend_result
+	commonRequest.Authenticated = false // set by backend_result
+	commonRequest.NoAuth = auth.NoAuth
+	commonRequest.BruteForceCounter = 0 // unavailable
+	commonRequest.Service = auth.Service
+	commonRequest.Session = *auth.GUID
+	commonRequest.ClientIP = auth.ClientIP
+	commonRequest.ClientPort = auth.XClientPort
+	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientHost = auth.ClientHost
+	commonRequest.ClientID = auth.XClientID
+	commonRequest.UserAgent = *auth.UserAgent
+	commonRequest.LocalIP = auth.XLocalIP
+	commonRequest.LocalPort = auth.XPort
+	commonRequest.Username = auth.Username
+	commonRequest.Account = ""      // set by nauthilus_backend_result
+	commonRequest.AccountField = "" // set by nauthilus_backend_result
+	commonRequest.UniqueUserID = "" // set by nauthilus_backend_result
+	commonRequest.DisplayName = ""  // set by nauthilus_backend_result
+	commonRequest.Password = auth.Password
+	commonRequest.Protocol = auth.Protocol.Get()
+	commonRequest.BruteForceName = "" // unavailable
+	commonRequest.FeatureName = ""    // unavailable
+	commonRequest.StatusMessage = &auth.StatusMessage
+	commonRequest.XSSL = auth.XSSL
+	commonRequest.XSSLSessionID = auth.XSSLSessionID
+	commonRequest.XSSLClientVerify = auth.XSSLClientVerify
+	commonRequest.XSSLClientDN = auth.XSSLClientDN
+	commonRequest.XSSLClientCN = auth.XSSLClientCN
+	commonRequest.XSSLIssuer = auth.XSSLIssuer
+	commonRequest.XSSLClientNotBefore = auth.XSSLClientNotBefore
+	commonRequest.XSSLClientNotAfter = auth.XSSLClientNotAfter
+	commonRequest.XSSLSubjectDN = auth.XSSLSubjectDN
+	commonRequest.XSSLIssuerDN = auth.XSSLIssuerDN
+	commonRequest.XSSLClientSubjectDN = auth.XSSLClientSubjectDN
+	commonRequest.XSSLClientIssuerDN = auth.XSSLClientIssuerDN
+	commonRequest.XSSLProtocol = auth.XSSLProtocol
+	commonRequest.XSSLCipher = auth.XSSLCipher
+	commonRequest.SSLSerial = auth.SSLSerial
+	commonRequest.SSLFingerprint = auth.SSLFingerprint
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandPassDB,
 		Service:           auth.Service,
@@ -59,50 +106,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		Context:           auth.Context,
 		LuaReplyChan:      luaReplyChan,
 		HTTPClientContext: auth.HTTPClientContext,
-		CommonRequest: &lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			Repeating:           false, // unavailable
-			UserFound:           false, // set by backend_result
-			Authenticated:       false, // set by backend_result
-			NoAuth:              auth.NoAuth,
-			BruteForceCounter:   0, // unavailable
-			Service:             auth.Service,
-			Session:             *auth.GUID,
-			ClientIP:            auth.ClientIP,
-			ClientPort:          auth.XClientPort,
-			ClientNet:           "", // unavailable
-			ClientHost:          auth.ClientHost,
-			ClientID:            auth.XClientID,
-			UserAgent:           *auth.UserAgent,
-			LocalIP:             auth.XLocalIP,
-			LocalPort:           auth.XPort,
-			Username:            auth.Username,
-			Account:             "", // set by nauthilus_backend_result
-			AccountField:        "", // set by nauthilus_backend_result
-			UniqueUserID:        "", // set by nauthilus_backend_result
-			DisplayName:         "", // set by nauthilus_backend_result
-			Password:            auth.Password,
-			Protocol:            auth.Protocol.Get(),
-			BruteForceName:      "", // unavailable
-			FeatureName:         "", // unavailable
-			StatusMessage:       &auth.StatusMessage,
-			XSSL:                auth.XSSL,
-			XSSLSessionID:       auth.XSSLSessionID,
-			XSSLClientVerify:    auth.XSSLClientVerify,
-			XSSLClientDN:        auth.XSSLClientDN,
-			XSSLClientCN:        auth.XSSLClientCN,
-			XSSLIssuer:          auth.XSSLIssuer,
-			XSSLClientNotBefore: auth.XSSLClientNotBefore,
-			XSSLClientNotAfter:  auth.XSSLClientNotAfter,
-			XSSLSubjectDN:       auth.XSSLSubjectDN,
-			XSSLIssuerDN:        auth.XSSLIssuerDN,
-			XSSLClientSubjectDN: auth.XSSLClientSubjectDN,
-			XSSLClientIssuerDN:  auth.XSSLClientIssuerDN,
-			XSSLProtocol:        auth.XSSLProtocol,
-			XSSLCipher:          auth.XSSLCipher,
-			SSLSerial:           auth.SSLSerial,
-			SSLFingerprint:      auth.SSLFingerprint,
-		},
+		CommonRequest:     commonRequest,
 	}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
@@ -182,6 +186,9 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		}
 	}
 
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
+
 	return
 }
 
@@ -204,20 +211,24 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Service = auth.Service
+	commonRequest.Session = *auth.GUID
+	commonRequest.ClientIP = auth.ClientIP
+	commonRequest.ClientPort = auth.XClientPort
+	commonRequest.LocalIP = auth.XLocalIP
+	commonRequest.LocalPort = auth.XPort
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandListAccounts,
 		Protocol:          auth.Protocol,
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
-		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			Service:    auth.Service,
-			Session:    *auth.GUID,
-			ClientIP:   auth.ClientIP,
-			ClientPort: auth.XClientPort,
-			LocalIP:    auth.XLocalIP,
-			LocalPort:  auth.XPort,
-		},
+		CommonRequest:     commonRequest,
 	}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
@@ -250,6 +261,9 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		}
 	}
 
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
+
 	return accountSet.GetStringSlice(), nil
 }
 
@@ -272,22 +286,26 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
+	// Get a CommonRequest from the pool
+	commonRequest := lualib.GetCommonRequest()
+
+	// Set the fields
+	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Service = auth.Service
+	commonRequest.Session = *auth.GUID
+	commonRequest.Username = auth.Username
+	commonRequest.ClientIP = auth.ClientIP
+	commonRequest.ClientPort = auth.XClientPort
+	commonRequest.LocalIP = auth.XLocalIP
+	commonRequest.LocalPort = auth.XPort
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandAddMFAValue,
 		Protocol:          auth.Protocol,
 		TOTPSecret:        totp.getValue(),
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
-		CommonRequest: &lualib.CommonRequest{
-			Debug:      config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-			Service:    auth.Service,
-			Session:    *auth.GUID,
-			Username:   auth.Username,
-			ClientIP:   auth.ClientIP,
-			ClientPort: auth.XClientPort,
-			LocalIP:    auth.XLocalIP,
-			LocalPort:  auth.XPort,
-		},
+		CommonRequest:     commonRequest,
 	}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
@@ -307,8 +325,14 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 
+		// Return the CommonRequest to the pool even if there's an error
+		lualib.PutCommonRequest(commonRequest)
+
 		return
 	}
+
+	// Return the CommonRequest to the pool
+	lualib.PutCommonRequest(commonRequest)
 
 	return
 }

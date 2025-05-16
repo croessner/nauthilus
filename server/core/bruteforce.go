@@ -40,58 +40,65 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 		finished := make(chan action.Done)
 		accountName := a.GetAccount()
 
+		// Get a CommonRequest from the pool
+		commonRequest := lualib.GetCommonRequest()
+
+		// Set the fields
+		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+		commonRequest.Repeating = alreadyTriggered
+		commonRequest.UserFound = func() bool { return accountName != "" }()
+		commonRequest.Authenticated = false // unavailable
+		commonRequest.NoAuth = a.NoAuth
+		commonRequest.BruteForceCounter = a.BruteForceCounter[rule.Name]
+		commonRequest.Service = a.Service
+		commonRequest.Session = *a.GUID
+		commonRequest.ClientIP = a.ClientIP
+		commonRequest.ClientPort = a.XClientPort
+		commonRequest.ClientNet = network.String()
+		commonRequest.ClientHost = a.ClientHost
+		commonRequest.ClientID = a.XClientID
+		commonRequest.LocalIP = a.XLocalIP
+		commonRequest.LocalPort = a.XPort
+		commonRequest.UserAgent = *a.UserAgent
+		commonRequest.Username = a.Username
+		commonRequest.Account = accountName
+		commonRequest.AccountField = a.GetAccountField()
+		commonRequest.UniqueUserID = "" // unavailable
+		commonRequest.DisplayName = ""  // unavailable
+		commonRequest.Password = a.Password
+		commonRequest.Protocol = a.Protocol.Get()
+		commonRequest.BruteForceName = rule.Name
+		commonRequest.FeatureName = a.FeatureName
+		commonRequest.StatusMessage = &a.StatusMessage
+		commonRequest.XSSL = a.XSSL
+		commonRequest.XSSLSessionID = a.XSSLSessionID
+		commonRequest.XSSLClientVerify = a.XSSLClientVerify
+		commonRequest.XSSLClientDN = a.XSSLClientDN
+		commonRequest.XSSLClientCN = a.XSSLClientCN
+		commonRequest.XSSLIssuer = a.XSSLIssuer
+		commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
+		commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
+		commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
+		commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
+		commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
+		commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
+		commonRequest.XSSLProtocol = a.XSSLProtocol
+		commonRequest.XSSLCipher = a.XSSLCipher
+		commonRequest.SSLSerial = a.SSLSerial
+		commonRequest.SSLFingerprint = a.SSLFingerprint
+
 		action.RequestChan <- &action.Action{
-			LuaAction:    definitions.LuaActionBruteForce,
-			Context:      a.Context,
-			FinishedChan: finished,
-			HTTPRequest:  a.HTTPClientContext.Request,
-			CommonRequest: &lualib.CommonRequest{
-				Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-				Repeating:           alreadyTriggered,
-				UserFound:           func() bool { return accountName != "" }(),
-				Authenticated:       false, // unavailable
-				NoAuth:              a.NoAuth,
-				BruteForceCounter:   a.BruteForceCounter[rule.Name],
-				Service:             a.Service,
-				Session:             *a.GUID,
-				ClientIP:            a.ClientIP,
-				ClientPort:          a.XClientPort,
-				ClientNet:           network.String(),
-				ClientHost:          a.ClientHost,
-				ClientID:            a.XClientID,
-				LocalIP:             a.XLocalIP,
-				LocalPort:           a.XPort,
-				UserAgent:           *a.UserAgent,
-				Username:            a.Username,
-				Account:             accountName,
-				AccountField:        a.GetAccountField(),
-				UniqueUserID:        "", // unavailable
-				DisplayName:         "", // unavailable
-				Password:            a.Password,
-				Protocol:            a.Protocol.Get(),
-				BruteForceName:      rule.Name,
-				FeatureName:         a.FeatureName,
-				StatusMessage:       &a.StatusMessage,
-				XSSL:                a.XSSL,
-				XSSLSessionID:       a.XSSLSessionID,
-				XSSLClientVerify:    a.XSSLClientVerify,
-				XSSLClientDN:        a.XSSLClientDN,
-				XSSLClientCN:        a.XSSLClientCN,
-				XSSLIssuer:          a.XSSLIssuer,
-				XSSLClientNotBefore: a.XSSLClientNotBefore,
-				XSSLClientNotAfter:  a.XSSLClientNotAfter,
-				XSSLSubjectDN:       a.XSSLSubjectDN,
-				XSSLIssuerDN:        a.XSSLIssuerDN,
-				XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-				XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-				XSSLProtocol:        a.XSSLProtocol,
-				XSSLCipher:          a.XSSLCipher,
-				SSLSerial:           a.SSLSerial,
-				SSLFingerprint:      a.SSLFingerprint,
-			},
+			LuaAction:     definitions.LuaActionBruteForce,
+			Context:       a.Context,
+			FinishedChan:  finished,
+			HTTPRequest:   a.HTTPClientContext.Request,
+			CommonRequest: commonRequest,
 		}
 
 		<-finished
+
+		// Return the CommonRequest to the pool
+		lualib.PutCommonRequest(commonRequest)
 	}
 }
 
@@ -194,52 +201,56 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	if config.GetEnvironment().GetExperimentalML() {
 		// Collect additional features from Lua scripts before creating the ML bucket manager
 		if config.GetFile().HaveLuaFeatures() {
+			// Get a CommonRequest from the pool
+			commonRequest := lualib.GetCommonRequest()
+
+			// Set the fields
+			commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+			commonRequest.Repeating = false     // unavailable
+			commonRequest.UserFound = false     // unavailable,
+			commonRequest.Authenticated = false // unavailable
+			commonRequest.NoAuth = a.NoAuth
+			commonRequest.BruteForceCounter = 0 // unavailable
+			commonRequest.Service = a.Service
+			commonRequest.Session = *a.GUID
+			commonRequest.ClientIP = a.ClientIP
+			commonRequest.ClientPort = a.XClientPort
+			commonRequest.ClientNet = "" // unavailable
+			commonRequest.ClientHost = a.ClientHost
+			commonRequest.ClientID = a.XClientID
+			commonRequest.UserAgent = *a.UserAgent
+			commonRequest.LocalIP = a.XLocalIP
+			commonRequest.LocalPort = a.XPort
+			commonRequest.Username = a.Username
+			commonRequest.Account = ""      // unavailable
+			commonRequest.AccountField = "" // unavailable
+			commonRequest.UniqueUserID = "" // unavailable
+			commonRequest.DisplayName = ""  // unavailable
+			commonRequest.Password = a.Password
+			commonRequest.Protocol = a.Protocol.String()
+			commonRequest.BruteForceName = "" // unavailable
+			commonRequest.FeatureName = "brute_force"
+			commonRequest.StatusMessage = &a.StatusMessage
+			commonRequest.XSSL = a.XSSL
+			commonRequest.XSSLSessionID = a.XSSLSessionID
+			commonRequest.XSSLClientVerify = a.XSSLClientVerify
+			commonRequest.XSSLClientDN = a.XSSLClientDN
+			commonRequest.XSSLClientCN = a.XSSLClientCN
+			commonRequest.XSSLIssuer = a.XSSLIssuer
+			commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
+			commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
+			commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
+			commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
+			commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
+			commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
+			commonRequest.XSSLProtocol = a.XSSLProtocol
+			commonRequest.XSSLCipher = a.XSSLCipher
+			commonRequest.SSLSerial = a.SSLSerial
+			commonRequest.SSLFingerprint = a.SSLFingerprint
+
 			featureRequest := feature.Request{
-				Context: a.Context,
-				CommonRequest: &lualib.CommonRequest{
-					Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
-					Repeating:           false, // unavailable
-					UserFound:           false, // unavailable,
-					Authenticated:       false, // unavailable
-					NoAuth:              a.NoAuth,
-					BruteForceCounter:   0, // unavailable
-					Service:             a.Service,
-					Session:             *a.GUID,
-					ClientIP:            a.ClientIP,
-					ClientPort:          a.XClientPort,
-					ClientNet:           "", // unavailable
-					ClientHost:          a.ClientHost,
-					ClientID:            a.XClientID,
-					UserAgent:           *a.UserAgent,
-					LocalIP:             a.XLocalIP,
-					LocalPort:           a.XPort,
-					Username:            a.Username,
-					Account:             "", // unavailable
-					AccountField:        "", // unavailable
-					UniqueUserID:        "", // unavailable
-					DisplayName:         "", // unavailable
-					Password:            a.Password,
-					Protocol:            a.Protocol.String(),
-					BruteForceName:      "", // unavailable
-					FeatureName:         "brute_force",
-					StatusMessage:       &a.StatusMessage,
-					XSSL:                a.XSSL,
-					XSSLSessionID:       a.XSSLSessionID,
-					XSSLClientVerify:    a.XSSLClientVerify,
-					XSSLClientDN:        a.XSSLClientDN,
-					XSSLClientCN:        a.XSSLClientCN,
-					XSSLIssuer:          a.XSSLIssuer,
-					XSSLClientNotBefore: a.XSSLClientNotBefore,
-					XSSLClientNotAfter:  a.XSSLClientNotAfter,
-					XSSLSubjectDN:       a.XSSLSubjectDN,
-					XSSLIssuerDN:        a.XSSLIssuerDN,
-					XSSLClientSubjectDN: a.XSSLClientSubjectDN,
-					XSSLClientIssuerDN:  a.XSSLClientIssuerDN,
-					XSSLProtocol:        a.XSSLProtocol,
-					XSSLCipher:          a.XSSLCipher,
-					SSLSerial:           a.SSLSerial,
-					SSLFingerprint:      a.SSLFingerprint,
-				},
+				Context:       a.Context,
+				CommonRequest: commonRequest,
 			}
 
 			// Collect additional features
@@ -256,6 +267,9 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 					a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
 				}
 			}
+
+			// Return the CommonRequest to the pool
+			lualib.PutCommonRequest(commonRequest)
 		}
 
 		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
