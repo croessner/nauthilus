@@ -2003,6 +2003,15 @@ type BruteForceMLDetector struct {
 	featureEncodingTypes map[string]string
 }
 
+// IsLearningMode returns true if the model is still in learning mode
+func (d *BruteForceMLDetector) IsLearningMode() bool {
+	modelTrainedMutex.RLock()
+	isModelTrained := modelTrained
+	modelTrainedMutex.RUnlock()
+
+	return !isModelTrained
+}
+
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()

@@ -143,13 +143,43 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 
 	// Only proceed with ML if experimental_ml is enabled and we have a detector
 	if !withError && m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
+		// Check if the model is in learning mode
+		isLearningMode := m.mlDetector.IsLearningMode()
+
 		// Log the state of static bucket system before ML prediction
 		util.DebugModule(definitions.DbgNeural,
 			definitions.LogKeyGUID, m.guid,
 			"action", "pre_ml_prediction",
 			"static_rule_triggered", staticRuleTriggered,
 			"static_error", withError,
+			"learning_mode", isLearningMode,
 		)
+
+		// If the model is in learning mode, use only static rules
+		if isLearningMode {
+			ruleTriggered = staticRuleTriggered
+
+			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
+				"action", "learning_mode_static_only",
+				"static_rule_triggered", staticRuleTriggered,
+				"final_rule_triggered", ruleTriggered,
+			)
+
+			if ruleTriggered && message != nil {
+				*message = "Static brute force detection triggered (neural network in learning mode)"
+			}
+
+			// Store the ML prediction result for later use in ProcessBruteForce
+			// We still need to make the prediction to collect data for training
+			isBruteForce, probability, err := m.mlDetector.Predict()
+			m.mlPredictionDone = true
+			m.mlIsBruteForce = isBruteForce
+			m.mlProbability = probability
+			m.mlPredictionError = err
+
+			return withError, ruleTriggered, ruleNumber
+		}
 
 		// Store the ML prediction result for later use in ProcessBruteForce
 		// to avoid duplicate predictions
@@ -394,6 +424,17 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 
 	// Process with ML if available
 	if m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
+		// Check if the model is in learning mode
+		isLearningMode := m.mlDetector.IsLearningMode()
+
+		// Log the state before ML processing
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "process_brute_force_ml",
+			"rule_triggered", ruleTriggered,
+			"learning_mode", isLearningMode,
+		)
+
 		// First, collect features for ML processing
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
@@ -447,6 +488,24 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 				)
 
 				_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
+			}
+
+			// If the model is in learning mode, use only static rules
+			if isLearningMode {
+				// In learning mode, we don't modify the ruleTriggered flag
+				// We just log that we're using static rules only
+				util.DebugModule(definitions.DbgNeural,
+					definitions.LogKeyGUID, m.guid,
+					"action", "process_learning_mode_static_only",
+					"rule_triggered", ruleTriggered,
+				)
+
+				// If rule is triggered, update the message to indicate we're using static rules
+				if ruleTriggered && message == "" {
+					message = "Static brute force detection triggered (neural network in learning mode)"
+				}
+
+				return m.BucketManager.ProcessBruteForce(ruleTriggered, alreadyTriggered, rule, network, message, setter)
 			}
 
 			if predErr == nil {
@@ -550,7 +609,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 					}
 				}
 
-				// For backward compatibility and to ensure ML still has the final say in extreme cases,
+				// For backward compatibility and to ensure ML still has the final say in some cases,
 				// we'll override the weighted decision in extreme cases
 
 				// If ML is very confident (probability > 0.9) it's a brute force attack, always trigger
