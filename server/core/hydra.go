@@ -871,6 +871,8 @@ func (a *ApiConfig) handleLoginSkip() {
 
 	auth := NewAuthStateFromContext(a.ctx)
 
+	defer PutAuthState(auth)
+
 	auth.SetNoAuth(true)
 	auth.SetProtocol(config.NewProtocol(definitions.ProtoOryHydra))
 	auth.WithDefaults(a.ctx).WithClientInfo(a.ctx).WithLocalInfo(a.ctx).WithUserAgent(a.ctx).WithXSSL(a.ctx).InitMethodAndUserAgent()
