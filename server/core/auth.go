@@ -634,6 +634,38 @@ type PassDBResult struct {
 	AdditionalFeatures map[string]any
 }
 
+// Reset resets all fields of the PassDBResult to their zero values
+// This is used when returning a PassDBResult to the pool
+// It implements the Resettable interface
+func (p *PassDBResult) Reset() {
+	// Reset bool fields
+	p.Authenticated = false
+	p.UserFound = false
+
+	// Reset string field
+	p.BackendName = ""
+
+	// Reset pointer fields to nil
+	p.AccountField = nil
+	p.TOTPSecretField = nil
+	p.TOTPRecoveryField = nil
+	p.UniqueUserIDField = nil
+	p.DisplayNameField = nil
+
+	// Reset Backend field
+	p.Backend = 0
+
+	// Reset map fields to nil
+	p.Attributes = nil
+	p.AdditionalFeatures = nil
+}
+
+// IsPassDBResult returns true to identify this as a PassDBResult
+// This implements the PoolablePassDBResult interface from the localcache package
+func (p *PassDBResult) IsPassDBResult() bool {
+	return true
+}
+
 type (
 	// PassDBOption
 	// This type specifies the signature of a password database.
@@ -1956,17 +1988,19 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 // UniqueUserIDField, DisplayNameField, Backend, and Attributes from the AuthState object.
 // The initialized PassDBResult instance is returned.
 func (a *AuthState) initializePassDBResult() *PassDBResult {
-	return &PassDBResult{
-		Authenticated:     true,
-		UserFound:         true,
-		AccountField:      a.AccountField,
-		TOTPSecretField:   a.TOTPSecretField,
-		TOTPRecoveryField: a.TOTPRecoveryField,
-		UniqueUserIDField: a.UniqueUserIDField,
-		DisplayNameField:  a.DisplayNameField,
-		Backend:           a.UsedPassDBBackend,
-		Attributes:        a.Attributes,
-	}
+	result := GetPassDBResultFromPool()
+
+	result.Authenticated = true
+	result.UserFound = true
+	result.AccountField = a.AccountField
+	result.TOTPSecretField = a.TOTPSecretField
+	result.TOTPRecoveryField = a.TOTPRecoveryField
+	result.UniqueUserIDField = a.UniqueUserIDField
+	result.DisplayNameField = a.DisplayNameField
+	result.Backend = a.UsedPassDBBackend
+	result.Attributes = a.Attributes
+
+	return result
 }
 
 // handleBackendTypes initializes and populates variables related to backend types.
@@ -2493,10 +2527,10 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 }
 
 // String returns the string for a PassDBResult object.
-func (p PassDBResult) String() string {
+func (p *PassDBResult) String() string {
 	var result string
 
-	value := reflect.ValueOf(p)
+	value := reflect.ValueOf(*p)
 	typeOfValue := value.Type()
 
 	for index := range value.NumField() {
@@ -3469,7 +3503,9 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 
 		if a.CheckBruteForce() {
 			a.UpdateBruteForceBucketsCounter()
-			a.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			a.AuthFail(ctx)
 
 			return true

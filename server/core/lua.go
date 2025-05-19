@@ -48,7 +48,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		return
 	}
 
-	passDBResult = &PassDBResult{}
+	passDBResult = GetPassDBResultFromPool()
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 

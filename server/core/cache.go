@@ -37,7 +37,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		defer stopTimer()
 	}
 
-	passDBResult = &PassDBResult{}
+	passDBResult = GetPassDBResultFromPool()
 
 	accountName, err = auth.updateUserAccountInRedis()
 	if err != nil {

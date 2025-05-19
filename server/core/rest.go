@@ -156,13 +156,17 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 			//nolint:exhaustive // Ignore some results
 			switch a.HandleFeatures(ctx) {
 			case definitions.AuthResultFeatureTLS:
-				a.PostLuaAction(&PassDBResult{})
+				result := GetPassDBResultFromPool()
+				a.PostLuaAction(result)
+				PutPassDBResultToPool(result)
 				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
 				ctx.Abort()
 
 				return
 			case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-				a.PostLuaAction(&PassDBResult{})
+				result := GetPassDBResultFromPool()
+				a.PostLuaAction(result)
+				PutPassDBResultToPool(result)
 				a.AuthFail(ctx)
 				ctx.Abort()
 

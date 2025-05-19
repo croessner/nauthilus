@@ -1656,27 +1656,29 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 	uniqueUserIDField := auth.GetUniqueUserIDField()
 	displayNameField := auth.GetDisplayNameField()
 
-	passDBResult := &PassDBResult{
-		Authenticated: func() bool {
-			if authResult == definitions.AuthResultOK {
-				return true
-			}
+	passDBResult := GetPassDBResultFromPool()
 
-			return false
-		}(),
-		UserFound:         userFound,
-		AccountField:      &accountField,
-		TOTPSecretField:   &totpSecretField,
-		TOTPRecoveryField: &totpRecoveryField,
-		UniqueUserIDField: &uniqueUserIDField,
-		DisplayNameField:  &displayNameField,
-		Backend:           auth.GetUsedPassDBBackend(),
-		Attributes:        auth.GetAttributes(),
-	}
+	passDBResult.Authenticated = func() bool {
+		if authResult == definitions.AuthResultOK {
+			return true
+		}
+
+		return false
+	}()
+
+	passDBResult.UserFound = userFound
+	passDBResult.AccountField = &accountField
+	passDBResult.TOTPSecretField = &totpSecretField
+	passDBResult.TOTPRecoveryField = &totpRecoveryField
+	passDBResult.UniqueUserIDField = &uniqueUserIDField
+	passDBResult.DisplayNameField = &displayNameField
+	passDBResult.Backend = auth.GetUsedPassDBBackend()
+	passDBResult.Attributes = auth.GetAttributes()
 
 	authResult = auth.FilterLua(passDBResult, ctx)
 
 	auth.PostLuaAction(passDBResult)
+	PutPassDBResultToPool(passDBResult)
 
 	return authResult
 }
@@ -1974,11 +1976,11 @@ func handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session s
 // Parameters:
 // ctx : Pointer to gin.Context: A context of gin framework for handling HTTP requests
 // requestedScope: String: Type of OAuth scope requested.
-// cookieValue: interface{}: Data to be used for custom scope requests.
+// cookieValue: any: Data to be used for custom scope requests.
 //
 // Returns:
 // String: A string corresponding to the type of OAuth scope requested
-func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue interface{}) string {
+func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	switch requestedScope {
 	case definitions.ScopeOpenId:
 		return getLocalized(ctx, "Allow access to identity information")
