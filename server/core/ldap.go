@@ -394,6 +394,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	if result, okay := ldapReply.Result[accountField]; okay {
+		// Pre-allocate the accounts slice to avoid continuous reallocation
+		accounts = make([]string, 0, len(result))
 		for index := range result {
 			if account, okay := result[index].(string); okay {
 				accounts = append(accounts, account)

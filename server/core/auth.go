@@ -1005,11 +1005,15 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Now().Sub(a.StartTime)),
 	}
 
-	if len(a.AdditionalLogs) > 0 {
-		if len(a.AdditionalLogs)%2 == 0 {
-			for index := range a.AdditionalLogs {
-				keyvals = append(keyvals, a.AdditionalLogs[index])
-			}
+	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
+		// Pre-allocate the keyvals slice to avoid continuous reallocation
+		keyvalsLen := len(keyvals)
+		newKeyvals := make([]any, keyvalsLen+len(a.AdditionalLogs))
+		copy(newKeyvals, keyvals)
+		keyvals = newKeyvals[:keyvalsLen]
+
+		for index := range a.AdditionalLogs {
+			keyvals = append(keyvals, a.AdditionalLogs[index])
 		}
 	}
 
@@ -2429,8 +2433,16 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			return definitions.AuthResultTempFail
 		}
 	} else {
-		for index := range *filterRequest.Logs {
-			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+		if filterRequest.Logs != nil && len(*filterRequest.Logs) > 0 {
+			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
+			additionalLogsLen := len(a.AdditionalLogs)
+			newAdditionalLogs := make([]any, additionalLogsLen+len(*filterRequest.Logs))
+			copy(newAdditionalLogs, a.AdditionalLogs)
+			a.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+
+			for index := range *filterRequest.Logs {
+				a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+			}
 		}
 
 		if statusMessage := filterRequest.StatusMessage; *statusMessage != a.StatusMessage {
@@ -2478,6 +2490,10 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
+
+	// Pre-allocate the accounts slice to avoid continuous reallocation
+	// This is a conservative estimate, we'll allocate based on the number of backends
+	accountList = make(AccountList, 0, 100)
 
 	a.Protocol.Set("account-provider")
 
@@ -2561,6 +2577,8 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 			return "", errors.ErrNoAccount
 		}
 
+		// Pre-allocate the accounts slice to avoid continuous reallocation
+		accounts = make([]string, 0, len(values))
 		for index := range values {
 			accounts = append(accounts, values[index].(string))
 		}
