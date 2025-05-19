@@ -16,6 +16,7 @@
 package core
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -657,10 +658,17 @@ func setupSessionStore() sessions.Store {
 // server := setupHTTPServer(router)
 // err := server.ListenAndServe()
 func setupHTTPServer(router *gin.Engine) *http.Server {
+	keepAliveConfig := config.GetFile().GetServer().GetKeepAlive()
+
+	idleTimeout := time.Minute
+	if keepAliveConfig.IsEnabled() && keepAliveConfig.GetTimeout() > 0 {
+		idleTimeout = keepAliveConfig.GetTimeout()
+	}
+
 	return &http.Server{
 		Addr:              config.GetFile().GetServer().Address,
 		Handler:           router,
-		IdleTimeout:       time.Minute,
+		IdleTimeout:       idleTimeout,
 		ReadTimeout:       10 * time.Second, //nolint:gomnd // Ignore
 		ReadHeaderTimeout: 10 * time.Second, //nolint:gomnd // Ignore
 		WriteTimeout:      30 * time.Second, //nolint:gomnd // Ignore
@@ -1076,6 +1084,117 @@ func configureTLS() *tls.Config {
 	}
 }
 
+// gzipWriter is a custom ResponseWriter that compresses the response using gzip.
+type gzipWriter struct {
+	gin.ResponseWriter
+	writer *gzip.Writer
+}
+
+// Write compresses the data and writes it to the underlying ResponseWriter.
+func (g *gzipWriter) Write(data []byte) (int, error) {
+	return g.writer.Write(data)
+}
+
+// WriteString compresses the string and writes it to the underlying ResponseWriter.
+func (g *gzipWriter) WriteString(s string) (int, error) {
+	return g.writer.Write([]byte(s))
+}
+
+// Close closes the gzip.Writer.
+func (g *gzipWriter) Close() error {
+	return g.writer.Close()
+}
+
+// CompressionMiddleware returns a middleware that compresses HTTP responses based on the configuration settings.
+// It uses the gzip compression algorithm with the configured level and only compresses responses with the configured content types
+// and minimum length.
+func CompressionMiddleware() gin.HandlerFunc {
+	compressionConfig := config.GetFile().GetServer().GetCompression()
+
+	if !compressionConfig.IsEnabled() {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
+	level := compressionConfig.GetLevel()
+	if level == 0 {
+		level = gzip.DefaultCompression
+	}
+
+	minLength := compressionConfig.GetMinLength()
+	if minLength == 0 {
+		minLength = 1024 // Default to 1KB if not specified
+	}
+
+	contentTypes := compressionConfig.GetContentTypes()
+	if len(contentTypes) == 0 {
+		contentTypes = []string{
+			"application/json",
+			"application/javascript",
+			"text/css",
+			"text/html",
+			"text/plain",
+			"text/xml",
+		}
+	}
+
+	return func(c *gin.Context) {
+		// Check if client accepts gzip encoding
+		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
+			c.Next()
+
+			return
+		}
+
+		// Check if content type should be compressed
+		contentType := c.Writer.Header().Get("Content-Type")
+		shouldCompress := false
+
+		for _, ct := range contentTypes {
+			if strings.Contains(contentType, ct) {
+				shouldCompress = true
+
+				break
+			}
+		}
+
+		if !shouldCompress {
+			c.Next()
+
+			return
+		}
+
+		// Only add Vary header for proper handling of compressed responses
+		c.Header("Vary", "Accept-Encoding")
+
+		// Create gzip writer
+		gz, err := gzip.NewWriterLevel(c.Writer, level)
+		if err != nil {
+			c.Next()
+
+			return
+		}
+
+		// Replace writer with gzip writer
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Transfer-Encoding", "chunked")
+
+		gzWriter := &gzipWriter{
+			ResponseWriter: c.Writer,
+			writer:         gz,
+		}
+
+		c.Writer = gzWriter
+
+		// Process request
+		c.Next()
+
+		// Close gzip writer
+		gzWriter.Close()
+	}
+}
+
 // setupRouter sets up the router for the HTTP server.
 //
 // It takes in one parameter:
@@ -1089,6 +1208,9 @@ func setupRouter(router *gin.Engine) {
 
 	// Add trusted proxies
 	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
+
+	// Add compression middleware if enabled
+	router.Use(CompressionMiddleware())
 
 	// Add Prometheus middleware
 	router.Use(PrometheusMiddleware())

@@ -47,6 +47,8 @@ type ServerSection struct {
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
+	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
+	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
 }
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
@@ -152,6 +154,16 @@ func (s *ServerSection) GetPrometheusTimer() *PrometheusTimer {
 // GetDefaultHTTPRequestHeader retrieves a pointer to the DefaultHTTPRequestHeader configuration from the ServerSection instance.
 func (s *ServerSection) GetDefaultHTTPRequestHeader() *DefaultHTTPRequestHeader {
 	return &s.DefaultHTTPRequestHeader
+}
+
+// GetCompression retrieves a pointer to the Compression configuration from the ServerSection instance.
+func (s *ServerSection) GetCompression() *Compression {
+	return &s.Compression
+}
+
+// GetKeepAlive retrieves a pointer to the KeepAlive configuration from the ServerSection instance.
+func (s *ServerSection) GetKeepAlive() *KeepAlive {
+	return &s.KeepAlive
 }
 
 // Endpoint defines a structure for configuring various types of authentication and custom hooks.
@@ -841,4 +853,66 @@ func (d *DefaultHTTPRequestHeader) GetSSLSerial() string {
 // GetSSLFingerprint retrieves the SSL fingerprint value from the DefaultHTTPRequestHeader struct.
 func (d *DefaultHTTPRequestHeader) GetSSLFingerprint() string {
 	return d.SSLFingerprint
+}
+
+// Compression represents the configuration for HTTP response compression.
+type Compression struct {
+	Enabled      bool     `mapstructure:"enabled"`
+	Level        int      `mapstructure:"level" validate:"omitempty,gte=1,lte=9"`
+	ContentTypes []string `mapstructure:"content_types" validate:"omitempty,dive,printascii"`
+	MinLength    int      `mapstructure:"min_length" validate:"omitempty,gte=0"`
+}
+
+// IsEnabled returns true if compression is enabled, otherwise false.
+func (c *Compression) IsEnabled() bool {
+	return c.Enabled
+}
+
+// GetLevel returns the compression level (1-9, where 1 is fastest and 9 is best compression).
+func (c *Compression) GetLevel() int {
+	return c.Level
+}
+
+// GetContentTypes returns the list of content types that should be compressed.
+func (c *Compression) GetContentTypes() []string {
+	return c.ContentTypes
+}
+
+// GetMinLength returns the minimum content length required for compression.
+func (c *Compression) GetMinLength() int {
+	return c.MinLength
+}
+
+// KeepAlive represents the configuration for HTTP connection keep-alive optimization.
+type KeepAlive struct {
+	Enabled             bool          `mapstructure:"enabled"`
+	Timeout             time.Duration `mapstructure:"timeout" validate:"omitempty,gt=0"`
+	MaxIdleConns        int           `mapstructure:"max_idle_connections" validate:"omitempty,gte=1"`
+	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host" validate:"omitempty,gte=0"`
+	MonitorConnections  bool          `mapstructure:"monitor_connections"`
+}
+
+// IsEnabled returns true if keep-alive optimization is enabled, otherwise false.
+func (k *KeepAlive) IsEnabled() bool {
+	return k.Enabled
+}
+
+// GetTimeout returns the keep-alive timeout duration.
+func (k *KeepAlive) GetTimeout() time.Duration {
+	return k.Timeout
+}
+
+// GetMaxIdleConns returns the maximum number of idle connections.
+func (k *KeepAlive) GetMaxIdleConns() int {
+	return k.MaxIdleConns
+}
+
+// GetMaxIdleConnsPerHost returns the maximum number of idle connections per host.
+func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
+	return k.MaxIdleConnsPerHost
+}
+
+// IsMonitorConnectionsEnabled returns true if connection monitoring is enabled.
+func (k *KeepAlive) IsMonitorConnectionsEnabled() bool {
+	return k.MonitorConnections
 }
