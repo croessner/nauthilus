@@ -468,8 +468,8 @@ type ApiConfig struct {
 func HandleErr(ctx *gin.Context, err error) {
 	processErrorLogging(ctx, err)
 	sessionCleaner(ctx)
-	ctx.Set("failure", true)
-	ctx.Set("message", err)
+	ctx.Set(definitions.CtxFailureKey, true)
+	ctx.Set(definitions.CtxMessageKey, err)
 	NotifyGETHandler(ctx)
 }
 
@@ -485,8 +485,8 @@ func HandleErr(ctx *gin.Context, err error) {
 //
 //	HandleErr(ctx, err)
 //	sessionCleaner(ctx)
-//	ctx.Set("failure", true)
-//	ctx.Set("message", err)
+//	ctx.Set(definitions.CtxFailureKey, true)
+//	ctx.Set(definitions.CtxMessageKey, err)
 //	notifyGETHandler(ctx)
 //
 // See logError, definitions.CtxGUIDKey, and runtime.Stack for additional information.
@@ -543,14 +543,14 @@ func NotifyGETHandler(ctx *gin.Context) {
 
 	statusTitle := getLocalized(ctx, "Information")
 
-	if value, found = ctx.Get("failure"); found {
+	if value, found = ctx.Get(definitions.CtxFailureKey); found {
 		if value.(bool) {
 			httpStatusCode = http.StatusBadRequest
 			statusTitle = getLocalized(ctx, "Bad Request")
 		}
 	}
 
-	if value, found = ctx.Get("message"); found {
+	if value, found = ctx.Get(definitions.CtxMessageKey); found {
 		switch what := value.(type) {
 		case error:
 			msg = getLocalized(ctx, "An error occurred:") + " " + what.Error()
@@ -2613,7 +2613,7 @@ func LogoutGETHandler(ctx *gin.Context) {
 		if redirectTo != "" {
 			ctx.Redirect(http.StatusFound, redirectTo)
 		} else {
-			ctx.Set("message", "No active session for user found")
+			ctx.Set(definitions.CtxMessageKey, "No active session for user found")
 			NotifyGETHandler(ctx)
 		}
 

@@ -679,6 +679,24 @@ const (
 
 	// CtxJWTClaimsKey is used as a key to store JWT claims in the context.
 	CtxJWTClaimsKey = "jwt_claims"
+
+	// CtxRequestStartTimeKey is used as a key to store the request start time in the context.
+	CtxRequestStartTimeKey = "request_start_time"
+
+	// CtxCurrentConnectionsKey is used as a key to store the current number of connections in the context.
+	CtxCurrentConnectionsKey = "current_connections"
+
+	// CtxMaxConnectionsKey is used as a key to store the maximum number of connections in the context.
+	CtxMaxConnectionsKey = "max_connections"
+
+	// CtxRequestDurationKey is used as a key to store the request duration in the context.
+	CtxRequestDurationKey = "request_duration"
+
+	// CtxFailureKey is used as a key to store failure status in the context.
+	CtxFailureKey = "failure"
+
+	// CtxMessageKey is used as a key to store message information in the context.
+	CtxMessageKey = "message"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

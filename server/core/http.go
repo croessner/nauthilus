@@ -57,6 +57,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
+	"golang.org/x/net/http2"
 )
 
 var (
@@ -105,21 +106,67 @@ func NewLimitCounter(maxConnections int32) *LimitCounter {
 }
 
 // Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
+// It is context-aware and prioritizes certain types of requests.
 func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if atomic.LoadInt32(&lc.CurrentConnections) >= lc.MaxConnections {
-			ctx.JSON(http.StatusTooManyRequests, gin.H{definitions.LogKeyMsg: "Too many requests"})
+		// Always allow health check and metrics endpoints regardless of connection limits
+		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+			ctx.Next()
+
+			return
+		}
+
+		// Check if we're at the connection limit
+		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
+		if currentConnections >= lc.MaxConnections {
+			// For API requests, return 429 status code
+			ctx.JSON(http.StatusTooManyRequests, gin.H{
+				definitions.LogKeyMsg: "Too many requests",
+				"current":             currentConnections,
+				"max":                 lc.MaxConnections,
+			})
 
 			ctx.Abort()
 
 			return
 		}
 
+		// Store the request start time in the context for performance tracking
+		startTime := time.Now()
+		ctx.Set(definitions.CtxRequestStartTimeKey, startTime)
+
+		// Increment the connection counter
 		atomic.AddInt32(&lc.CurrentConnections, 1)
+		currentConnections = atomic.LoadInt32(&lc.CurrentConnections)
 
-		stats.GetMetrics().GetCurrentRequests().Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
+		// Update metrics
+		stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
 
-		defer atomic.AddInt32(&lc.CurrentConnections, -1)
+		// Add connection info to the context
+		ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
+		ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
+
+		// Process the request and decrement the counter when done
+		defer func() {
+			atomic.AddInt32(&lc.CurrentConnections, -1)
+
+			// Calculate and log request duration for performance monitoring
+			if startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey); exists {
+				if startTime, ok := startTimeValue.(time.Time); ok {
+					duration := time.Since(startTime)
+					ctx.Set(definitions.CtxRequestDurationKey, duration)
+
+					// Log long-running requests for further optimization
+					if duration > 500*time.Millisecond {
+						level.Warn(log.Logger).Log(
+							definitions.LogKeyMsg, "Long-running request detected",
+							"path", ctx.FullPath(),
+							"duration_ms", duration.Milliseconds(),
+						)
+					}
+				}
+			}
+		}()
 
 		ctx.Next()
 	}
@@ -652,6 +699,7 @@ func setupSessionStore() sessions.Store {
 // setupHTTPServer is a function that configures and returns an http.Server instance.
 // It takes a *gin.Engine router as input and sets the router as the HTTP handler for the server.
 // The function sets the server's address, idle timeout, read timeout, read header timeout, and write timeout based on the values from the config.environment struct.
+// It also configures HTTP/2 settings for improved performance.
 //
 // Usage:
 // router := gin.New()
@@ -665,7 +713,19 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 		idleTimeout = keepAliveConfig.GetTimeout()
 	}
 
-	return &http.Server{
+	// Create a custom HTTP/2 server with optimized settings
+	h2Server := &http2.Server{
+		// MaxConcurrentStreams limits the number of concurrent streams per connection
+		MaxConcurrentStreams: 250,
+
+		// MaxReadFrameSize increases the maximum frame size
+		MaxReadFrameSize: 1 << 20, // 1MB
+
+		// IdleTimeout sets how long until idle clients should be closed
+		IdleTimeout: idleTimeout,
+	}
+
+	server := &http.Server{
 		Addr:              config.GetFile().GetServer().Address,
 		Handler:           router,
 		IdleTimeout:       idleTimeout,
@@ -673,6 +733,20 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 		ReadHeaderTimeout: 10 * time.Second, //nolint:gomnd // Ignore
 		WriteTimeout:      30 * time.Second, //nolint:gomnd // Ignore
 	}
+
+	// Configure HTTP/2 server
+	if err := http2.ConfigureServer(server, h2Server); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to configure HTTP/2 server",
+			"error", err,
+		)
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "HTTP/2 server configured successfully",
+		)
+	}
+
+	return server
 }
 
 // PrometheusMiddleware is a middleware function for Gin Web Framework that collects metrics using Prometheus.
@@ -1245,41 +1319,53 @@ func CompressionMiddleware() gin.HandlerFunc {
 //
 // This function initializes the necessary middlewares and adds various endpoints to the router for handling different requests.
 // The function also sets up session store, Hydra endpoints, static content, and back channel endpoints based on the configuration.
+// The middleware order is optimized for performance and concurrency.
 func setupRouter(router *gin.Engine) {
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
+	// This should be first in the chain to catch panics in other middleware
 	router.Use(gin.Recovery())
 
 	// Add trusted proxies
 	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
 
-	// Add request decompression middleware if enabled
+	// Critical path middleware - these should be executed first for all requests
+	// as they handle basic request processing and metrics
+
+	// Add request decompression middleware if enabled - should be early in the chain
 	router.Use(DecompressRequestMiddleware())
 
-	// Add response compression middleware if enabled
+	// Add response compression middleware if enabled - should be early to compress all responses
 	router.Use(CompressionMiddleware())
 
-	// Add Prometheus middleware
+	// Add Prometheus middleware for metrics collection
 	router.Use(PrometheusMiddleware())
+
+	// Define high-priority endpoints that should be fast and always available
 
 	// Prometheus endpoint
 	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
 
-	// Healthcheck
+	// Healthcheck - keep this simple and fast
 	router.GET("/ping", RequestHandler)
 
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
+	// Setup static content early as it's often cached and doesn't require complex processing
+	setupStaticContent(router)
+
+	// Setup frontend endpoints if enabled
 	if config.GetFile().GetServer().Frontend.Enabled {
 		store := setupSessionStore()
 
+		// Group related endpoint setup functions for better organization and potential parallel initialization
 		setupHydraEndpoints(router, store)
 		setup2FAEndpoints(router, store)
 		setupWebAuthnEndpoints(router, store)
 		setupNotifyEndpoint(router, store)
 	}
 
-	setupStaticContent(router)
+	// Setup back channel endpoints last as they may depend on other components
 	setupBackChannelEndpoints(router)
 }
 
