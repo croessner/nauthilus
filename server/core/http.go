@@ -1105,6 +1105,49 @@ func (g *gzipWriter) Close() error {
 	return g.writer.Close()
 }
 
+// DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
+// It checks if the request has a Content-Encoding header with value "gzip" and if so, replaces the request body
+// with a decompressed version.
+func DecompressRequestMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		compressionConfig := config.GetFile().GetServer().GetCompression()
+
+		// Skip if compression is disabled
+		if !compressionConfig.IsEnabled() {
+			c.Next()
+
+			return
+		}
+
+		// Check if request is gzip compressed
+		if c.Request.Header.Get("Content-Encoding") == "gzip" {
+			// Get the compressed body
+			compressedBody := c.Request.Body
+			defer compressedBody.Close()
+
+			// Create a gzip reader
+			gzipReader, err := gzip.NewReader(compressedBody)
+			if err != nil {
+				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress request body: %w", err))
+
+				return
+			}
+			defer gzipReader.Close()
+
+			// Replace the request body with the decompressed content
+			c.Request.Body = gzipReader
+
+			// Remove Content-Encoding header since we've decompressed the body
+			c.Request.Header.Del("Content-Encoding")
+
+			// Update Content-Length if it exists
+			c.Request.Header.Del("Content-Length")
+		}
+
+		c.Next()
+	}
+}
+
 // CompressionMiddleware returns a middleware that compresses HTTP responses based on the configuration settings.
 // It uses the gzip compression algorithm with the configured level and only compresses responses with the configured content types
 // and minimum length.
@@ -1117,9 +1160,9 @@ func CompressionMiddleware() gin.HandlerFunc {
 		}
 	}
 
-	level := compressionConfig.GetLevel()
-	if level == 0 {
-		level = gzip.DefaultCompression
+	compressionLevel := compressionConfig.GetLevel()
+	if compressionLevel == 0 {
+		compressionLevel = gzip.DefaultCompression
 	}
 
 	minLength := compressionConfig.GetMinLength()
@@ -1169,7 +1212,7 @@ func CompressionMiddleware() gin.HandlerFunc {
 		c.Header("Vary", "Accept-Encoding")
 
 		// Create gzip writer
-		gz, err := gzip.NewWriterLevel(c.Writer, level)
+		gz, err := gzip.NewWriterLevel(c.Writer, compressionLevel)
 		if err != nil {
 			c.Next()
 
@@ -1209,7 +1252,10 @@ func setupRouter(router *gin.Engine) {
 	// Add trusted proxies
 	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
 
-	// Add compression middleware if enabled
+	// Add request decompression middleware if enabled
+	router.Use(DecompressRequestMiddleware())
+
+	// Add response compression middleware if enabled
 	router.Use(CompressionMiddleware())
 
 	// Add Prometheus middleware
