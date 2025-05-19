@@ -114,7 +114,7 @@ The following endpoints are public and do not require authentication:
 
 JWT tokens include roles that determine what actions the user can perform:
 
-- `authenticated`: All authenticated users have this role.
+- `authenticated`: This role is needed to make authentication requests.
 - `user_info`: Users with NoAuth=true have this role. This role is required to access endpoints with `mode=no-auth`.
 - `list_accounts`: Users who can list accounts have this role. This role is required to access endpoints with `mode=list-accounts`.
 - Custom roles: You can define custom roles for your users and use them for custom hooks.

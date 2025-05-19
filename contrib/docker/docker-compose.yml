@@ -3,7 +3,7 @@ version: "3.8"
 services:
 
   nauthilus:
-    image: gitlab.roessner-net.de:5050/croessner/nauthilus:features
+    image: ghcr.io/croessner/nauthilus:features
     container_name: nauthilus
     restart: always
     logging:
