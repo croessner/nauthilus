@@ -16,6 +16,7 @@
 package localcache
 
 import (
+	"hash/fnv"
 	"sync"
 	"time"
 
@@ -28,13 +29,24 @@ type Item struct {
 	Expiration int64
 }
 
-// Cache is a custom in-memory cache implementation
-type Cache struct {
-	items             map[string]Item
-	mu                sync.RWMutex
+// MemoryCacheShard represents a single shard of the memory cache
+type MemoryCacheShard struct {
+	items map[string]Item
+	mu    sync.RWMutex
+}
+
+// MemoryShardedCache is a cache that is split into multiple shards to reduce mutex contention
+type MemoryShardedCache struct {
+	shards            []*MemoryCacheShard
+	numShards         int
 	defaultExpiration time.Duration
 	cleanupInterval   time.Duration
 	janitor           *janitor
+}
+
+// Cache is a custom in-memory cache implementation (kept for backward compatibility)
+type Cache struct {
+	*MemoryShardedCache
 }
 
 // janitor cleans up expired items from the cache
@@ -43,10 +55,18 @@ type janitor struct {
 	stop     chan bool
 }
 
-// NewCache creates a new cache with the given default expiration and cleanup interval
-func NewCache(defaultExpiration, cleanupInterval time.Duration) *Cache {
-	cache := &Cache{
-		items:             make(map[string]Item),
+// NewMemoryShardedCache creates a new sharded cache with the specified number of shards
+func NewMemoryShardedCache(numShards int, defaultExpiration, cleanupInterval time.Duration) *MemoryShardedCache {
+	shards := make([]*MemoryCacheShard, numShards)
+	for i := 0; i < numShards; i++ {
+		shards[i] = &MemoryCacheShard{
+			items: make(map[string]Item),
+		}
+	}
+
+	cache := &MemoryShardedCache{
+		shards:            shards,
+		numShards:         numShards,
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
 	}
@@ -65,46 +85,68 @@ func NewCache(defaultExpiration, cleanupInterval time.Duration) *Cache {
 	return cache
 }
 
-// startJanitor starts the cleanup process
-func (c *Cache) startJanitor() {
-	ticker := time.NewTicker(c.janitor.Interval)
+// getShard returns the shard for the given key
+func (sc *MemoryShardedCache) getShard(key string) *MemoryCacheShard {
+	// Use FNV hash to determine the shard
+	h := fnv.New32a()
+	h.Write([]byte(key))
+
+	return sc.shards[h.Sum32()%uint32(sc.numShards)]
+}
+
+// NewCache creates a new cache with the given default expiration and cleanup interval
+// For backward compatibility, it now returns a MemoryShardedCache wrapped in a Cache struct
+func NewCache(defaultExpiration, cleanupInterval time.Duration) *Cache {
+	// Use 32 shards as a reasonable default for most systems
+	return &Cache{
+		MemoryShardedCache: NewMemoryShardedCache(32, defaultExpiration, cleanupInterval),
+	}
+}
+
+// startJanitor starts the cleanup process for MemoryShardedCache
+func (sc *MemoryShardedCache) startJanitor() {
+	ticker := time.NewTicker(sc.janitor.Interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.DeleteExpired()
-		case <-c.janitor.stop:
+			sc.DeleteExpired()
+		case <-sc.janitor.stop:
 			return
 		}
 	}
 }
 
-// Set adds an item to the cache with the given expiration duration
-func (c *Cache) Set(k string, x any, d time.Duration) {
+// Set adds an item to the MemoryShardedCache with the given expiration duration
+func (sc *MemoryShardedCache) Set(k string, x any, d time.Duration) {
 	var exp int64
 
 	if d == 0 {
-		d = c.defaultExpiration
+		d = sc.defaultExpiration
 	}
 
 	if d > 0 {
 		exp = time.Now().Add(d).UnixNano()
 	}
 
-	c.mu.Lock()
-	c.items[k] = Item{
+	shard := sc.getShard(k)
+
+	shard.mu.Lock()
+	shard.items[k] = Item{
 		Object:     x,
 		Expiration: exp,
 	}
-	c.mu.Unlock()
+	shard.mu.Unlock()
 }
 
-// Get retrieves an item from the cache
-func (c *Cache) Get(k string) (any, bool) {
-	c.mu.RLock()
-	item, found := c.items[k]
-	c.mu.RUnlock()
+// Get retrieves an item from the MemoryShardedCache
+func (sc *MemoryShardedCache) Get(k string) (any, bool) {
+	shard := sc.getShard(k)
+
+	shard.mu.RLock()
+	item, found := shard.items[k]
+	shard.mu.RUnlock()
 
 	if !found {
 		return nil, false
@@ -118,37 +160,44 @@ func (c *Cache) Get(k string) (any, bool) {
 	return item.Object, true
 }
 
-// Delete removes an item from the cache
-func (c *Cache) Delete(k string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Delete removes an item from the MemoryShardedCache
+func (sc *MemoryShardedCache) Delete(k string) {
+	shard := sc.getShard(k)
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
 	// Check if the item is a PassDBResult before deleting
-	if item, found := c.items[k]; found {
-		c.resetAndReturnToPoolIfPassDBResult(item.Object)
+	if item, found := shard.items[k]; found {
+		sc.resetAndReturnToPoolIfPassDBResult(item.Object)
 	}
 
-	delete(c.items, k)
+	delete(shard.items, k)
 }
 
-// DeleteExpired removes all expired items from the cache
-func (c *Cache) DeleteExpired() {
+// DeleteExpired removes all expired items from the MemoryShardedCache
+func (sc *MemoryShardedCache) DeleteExpired() {
 	now := time.Now().UnixNano()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Iterate through all shards
+	for _, shard := range sc.shards {
+		shard.mu.Lock()
 
-	for k, item := range c.items {
-		if item.Expiration > 0 && now > item.Expiration {
-			c.resetAndReturnToPoolIfPassDBResult(item.Object)
-			delete(c.items, k)
+		// Iterate through all items in the shard
+		for k, item := range shard.items {
+			if item.Expiration > 0 && now > item.Expiration {
+				sc.resetAndReturnToPoolIfPassDBResult(item.Object)
+				delete(shard.items, k)
+			}
 		}
+
+		shard.mu.Unlock()
 	}
 }
 
 // resetAndReturnToPoolIfPassDBResult checks if an object has a Reset method
 // and if so, calls it and returns the object to the pool if it's a PassDBResult
-func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
+func (sc *MemoryShardedCache) resetAndReturnToPoolIfPassDBResult(obj any) {
 	if obj == nil {
 		return
 	}
@@ -167,6 +216,36 @@ func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
 		// Return the object to the pool using the global PassDBResultPool instance
 		objpool.GetPassDBResultPool().Put(obj)
 	}
+}
+
+// startJanitor delegates to MemoryShardedCache.startJanitor
+func (c *Cache) startJanitor() {
+	c.MemoryShardedCache.startJanitor()
+}
+
+// Set delegates to MemoryShardedCache.Set
+func (c *Cache) Set(k string, x any, d time.Duration) {
+	c.MemoryShardedCache.Set(k, x, d)
+}
+
+// Get delegates to MemoryShardedCache.Get
+func (c *Cache) Get(k string) (any, bool) {
+	return c.MemoryShardedCache.Get(k)
+}
+
+// Delete delegates to MemoryShardedCache.Delete
+func (c *Cache) Delete(k string) {
+	c.MemoryShardedCache.Delete(k)
+}
+
+// DeleteExpired delegates to MemoryShardedCache.DeleteExpired
+func (c *Cache) DeleteExpired() {
+	c.MemoryShardedCache.DeleteExpired()
+}
+
+// resetAndReturnToPoolIfPassDBResult delegates to MemoryShardedCache.resetAndReturnToPoolIfPassDBResult
+func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
+	c.MemoryShardedCache.resetAndReturnToPoolIfPassDBResult(obj)
 }
 
 // LocalCache is a cache object with a default expiration duration of 5 minutes
