@@ -707,16 +707,17 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 // logBackendServerError logs an error when a backend server is down, with the server details and error message as context.
 func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
-		definitions.LogKeyMsg, fmt.Sprintf("Server down: %v", err),
+		definitions.LogKeyMsg, fmt.Sprintf("Backend server failed: %s:%d (%s) - Error: %v",
+			server.Host, server.Port, server.Protocol, err),
 		definitions.LogKeyBackendServer, server,
 	)
 }
 
 // logBackendServerDebug logs debug information about a backend server, primarily its availability status.
 func logBackendServerDebug(server *config.BackendServer) {
-	util.DebugModule(
-		definitions.DbgFeature,
-		definitions.LogKeyMsg, "Server alive",
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Backend server alive: %s:%d (%s)",
+			server.Host, server.Port, server.Protocol),
 		definitions.LogKeyBackendServer, server,
 	)
 }
@@ -955,7 +956,6 @@ func runConnectionManager(ctx context.Context) {
 
 	go manager.StartTicker(5 * time.Second)
 	go stats.UpdateGenericConnections()
-	go adjustGCBasedOnLoad(ctx)
 
 	manager.StartMonitoring(ctx)
 }

@@ -69,7 +69,8 @@ func main() {
 	core.LoadStatsFromRedis(ctx)
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)
-	adjustGCBasedOnLoad(ctx)
+
+	go adjustGCBasedOnLoad(ctx)
 
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)
