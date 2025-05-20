@@ -166,7 +166,7 @@ func HasRole(ctx *gin.Context, role string) bool {
 		util.DebugModule(
 			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched map[string]interface{}, keys: %v", getMapKeys(claims)),
+			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched map[string]any, keys: %v", getMapKeys(claims)),
 		)
 
 		if rolesValue, exists := claims["roles"]; exists {
@@ -196,7 +196,7 @@ func HasRole(ctx *gin.Context, role string) bool {
 				util.DebugModule(
 					definitions.DbgJWT,
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, fmt.Sprintf("JWT roles as []interface{}: %v", roles),
+					definitions.LogKeyMsg, fmt.Sprintf("JWT roles as []any: %v", roles),
 				)
 
 				for _, r := range roles {
@@ -234,7 +234,7 @@ func HasRole(ctx *gin.Context, role string) bool {
 
 // getMapKeys returns the keys of a map as a slice of strings
 // This is a helper function to avoid using reflection for getting map keys
-func getMapKeys(m map[string]interface{}) []string {
+func getMapKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 
 	for k := range m {

@@ -13,19 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !linux
+package localcache
 
-package stats
-
-import (
-	"github.com/mackerelio/go-osstat/cpu"
-)
-
-func setNewStats(oldCpu, newCpu *cpu.Stats, total float64) {
-	cpuUserUsage.Set(float64(newCpu.User-oldCpu.User) / total * 100)
-	cpuSystemUsage.Set(float64(newCpu.System-oldCpu.System) / total * 100)
-
-	idlePercent := float64(newCpu.Idle-oldCpu.Idle) / total * 100
-	cpuIdleUsage.Set(idlePercent)
-	currentCPUIdleUsage = idlePercent
+// Resettable is an interface for objects that can be reset
+// Objects implementing this interface can be reset to their zero values
+// This is useful for objects that are stored in a sync.Pool
+type Resettable interface {
+	// Reset resets all fields of the object to their zero values
+	Reset()
 }

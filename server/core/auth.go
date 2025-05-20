@@ -634,6 +634,38 @@ type PassDBResult struct {
 	AdditionalFeatures map[string]any
 }
 
+// Reset resets all fields of the PassDBResult to their zero values
+// This is used when returning a PassDBResult to the pool
+// It implements the Resettable interface
+func (p *PassDBResult) Reset() {
+	// Reset bool fields
+	p.Authenticated = false
+	p.UserFound = false
+
+	// Reset string field
+	p.BackendName = ""
+
+	// Reset pointer fields to nil
+	p.AccountField = nil
+	p.TOTPSecretField = nil
+	p.TOTPRecoveryField = nil
+	p.UniqueUserIDField = nil
+	p.DisplayNameField = nil
+
+	// Reset Backend field
+	p.Backend = 0
+
+	// Reset map fields to nil
+	p.Attributes = nil
+	p.AdditionalFeatures = nil
+}
+
+// IsPassDBResult returns true to identify this as a PassDBResult
+// This implements the PoolablePassDBResult interface from the localcache package
+func (p *PassDBResult) IsPassDBResult() bool {
+	return true
+}
+
 type (
 	// PassDBOption
 	// This type specifies the signature of a password database.
@@ -973,11 +1005,15 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Now().Sub(a.StartTime)),
 	}
 
-	if len(a.AdditionalLogs) > 0 {
-		if len(a.AdditionalLogs)%2 == 0 {
-			for index := range a.AdditionalLogs {
-				keyvals = append(keyvals, a.AdditionalLogs[index])
-			}
+	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
+		// Pre-allocate the keyvals slice to avoid continuous reallocation
+		keyvalsLen := len(keyvals)
+		newKeyvals := make([]any, keyvalsLen+len(a.AdditionalLogs))
+		copy(newKeyvals, keyvals)
+		keyvals = newKeyvals[:keyvalsLen]
+
+		for index := range a.AdditionalLogs {
+			keyvals = append(keyvals, a.AdditionalLogs[index])
 		}
 	}
 
@@ -1956,17 +1992,19 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 // UniqueUserIDField, DisplayNameField, Backend, and Attributes from the AuthState object.
 // The initialized PassDBResult instance is returned.
 func (a *AuthState) initializePassDBResult() *PassDBResult {
-	return &PassDBResult{
-		Authenticated:     true,
-		UserFound:         true,
-		AccountField:      a.AccountField,
-		TOTPSecretField:   a.TOTPSecretField,
-		TOTPRecoveryField: a.TOTPRecoveryField,
-		UniqueUserIDField: a.UniqueUserIDField,
-		DisplayNameField:  a.DisplayNameField,
-		Backend:           a.UsedPassDBBackend,
-		Attributes:        a.Attributes,
-	}
+	result := GetPassDBResultFromPool()
+
+	result.Authenticated = true
+	result.UserFound = true
+	result.AccountField = a.AccountField
+	result.TOTPSecretField = a.TOTPSecretField
+	result.TOTPRecoveryField = a.TOTPRecoveryField
+	result.UniqueUserIDField = a.UniqueUserIDField
+	result.DisplayNameField = a.DisplayNameField
+	result.Backend = a.UsedPassDBBackend
+	result.Attributes = a.Attributes
+
+	return result
 }
 
 // handleBackendTypes initializes and populates variables related to backend types.
@@ -2395,8 +2433,16 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			return definitions.AuthResultTempFail
 		}
 	} else {
-		for index := range *filterRequest.Logs {
-			a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+		if filterRequest.Logs != nil && len(*filterRequest.Logs) > 0 {
+			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
+			additionalLogsLen := len(a.AdditionalLogs)
+			newAdditionalLogs := make([]any, additionalLogsLen+len(*filterRequest.Logs))
+			copy(newAdditionalLogs, a.AdditionalLogs)
+			a.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+
+			for index := range *filterRequest.Logs {
+				a.AdditionalLogs = append(a.AdditionalLogs, (*filterRequest.Logs)[index])
+			}
 		}
 
 		if statusMessage := filterRequest.StatusMessage; *statusMessage != a.StatusMessage {
@@ -2444,6 +2490,10 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 // ListUserAccounts returns the list of all known users from the account databases.
 func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	var accounts []*AccountListMap
+
+	// Pre-allocate the accounts slice to avoid continuous reallocation
+	// This is a conservative estimate, we'll allocate based on the number of backends
+	accountList = make(AccountList, 0, 100)
 
 	a.Protocol.Set("account-provider")
 
@@ -2493,10 +2543,10 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 }
 
 // String returns the string for a PassDBResult object.
-func (p PassDBResult) String() string {
+func (p *PassDBResult) String() string {
 	var result string
 
-	value := reflect.ValueOf(p)
+	value := reflect.ValueOf(*p)
 	typeOfValue := value.Type()
 
 	for index := range value.NumField() {
@@ -2527,6 +2577,8 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 			return "", errors.ErrNoAccount
 		}
 
+		// Pre-allocate the accounts slice to avoid continuous reallocation
+		accounts = make([]string, 0, len(values))
 		for index := range values {
 			accounts = append(accounts, values[index].(string))
 		}
@@ -3469,7 +3521,9 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 
 		if a.CheckBruteForce() {
 			a.UpdateBruteForceBucketsCounter()
-			a.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			a.AuthFail(ctx)
 
 			return true

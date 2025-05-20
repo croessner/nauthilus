@@ -82,7 +82,7 @@ func handleMasterUserMode(auth *AuthState) string {
 // - totpSecretField: a string indicating the field in which the TOTP secret is stored in the LDAPReply.
 //
 // Returns:
-// - totpSecretPre: a slice of interface{} containing the TOTP secret if present, nil otherwise.
+// - totpSecretPre: a slice of any containing the TOTP secret if present, nil otherwise.
 func saveMasterUserTOTPSecret(masterUserMode bool, ldapReply *bktype.LDAPReply, totpSecretField string) (totpSecretPre []any) {
 	if masterUserMode {
 		// Check if the master user does have a TOTP secret.
@@ -130,7 +130,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		protocol           *config.LDAPSearchProtocol
 	)
 
-	passDBResult = &PassDBResult{}
+	passDBResult = GetPassDBResultFromPool()
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
@@ -394,6 +394,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	if result, okay := ldapReply.Result[accountField]; okay {
+		// Pre-allocate the accounts slice to avoid continuous reallocation
+		accounts = make([]string, 0, len(result))
 		for index := range result {
 			if account, okay := result[index].(string); okay {
 				accounts = append(accounts, account)

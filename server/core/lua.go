@@ -48,7 +48,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		return
 	}
 
-	passDBResult = &PassDBResult{}
+	passDBResult = GetPassDBResultFromPool()
 
 	luaReplyChan := make(chan *lualib.LuaBackendResult)
 
@@ -124,8 +124,16 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	luaBackendResult = <-luaReplyChan
 
-	for index := range *luaBackendResult.Logs {
-		auth.AdditionalLogs = append(auth.AdditionalLogs, (*luaBackendResult.Logs)[index])
+	if luaBackendResult.Logs != nil && len(*luaBackendResult.Logs) > 0 {
+		// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
+		additionalLogsLen := len(auth.AdditionalLogs)
+		newAdditionalLogs := make([]any, additionalLogsLen+len(*luaBackendResult.Logs))
+		copy(newAdditionalLogs, auth.AdditionalLogs)
+		auth.AdditionalLogs = newAdditionalLogs[:additionalLogsLen]
+
+		for index := range *luaBackendResult.Logs {
+			auth.AdditionalLogs = append(auth.AdditionalLogs, (*luaBackendResult.Logs)[index])
+		}
 	}
 
 	if luaBackendResult.Err != nil {

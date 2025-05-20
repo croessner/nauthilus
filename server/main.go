@@ -60,6 +60,7 @@ func main() {
 	inititalizeBruteForceTolerate(ctx)
 	initializeHTTPClients()
 	initializeMLMetrics(ctx)
+	core.InitPassDBResultPool()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis(ctx)
@@ -68,6 +69,7 @@ func main() {
 	core.LoadStatsFromRedis(ctx)
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)
+	adjustGCBasedOnLoad(ctx)
 
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)

@@ -2064,7 +2064,7 @@ func (f *FileSettings) HandleFile() (err error) {
 }
 
 func dumpConfig(f *FileSettings) {
-	var intermediateMap map[string]interface{}
+	var intermediateMap map[string]any
 
 	if f == nil {
 		fmt.Println("Config is nil")

@@ -468,8 +468,8 @@ type ApiConfig struct {
 func HandleErr(ctx *gin.Context, err error) {
 	processErrorLogging(ctx, err)
 	sessionCleaner(ctx)
-	ctx.Set("failure", true)
-	ctx.Set("message", err)
+	ctx.Set(definitions.CtxFailureKey, true)
+	ctx.Set(definitions.CtxMessageKey, err)
 	NotifyGETHandler(ctx)
 }
 
@@ -485,8 +485,8 @@ func HandleErr(ctx *gin.Context, err error) {
 //
 //	HandleErr(ctx, err)
 //	sessionCleaner(ctx)
-//	ctx.Set("failure", true)
-//	ctx.Set("message", err)
+//	ctx.Set(definitions.CtxFailureKey, true)
+//	ctx.Set(definitions.CtxMessageKey, err)
 //	notifyGETHandler(ctx)
 //
 // See logError, definitions.CtxGUIDKey, and runtime.Stack for additional information.
@@ -543,14 +543,14 @@ func NotifyGETHandler(ctx *gin.Context) {
 
 	statusTitle := getLocalized(ctx, "Information")
 
-	if value, found = ctx.Get("failure"); found {
+	if value, found = ctx.Get(definitions.CtxFailureKey); found {
 		if value.(bool) {
 			httpStatusCode = http.StatusBadRequest
 			statusTitle = getLocalized(ctx, "Bad Request")
 		}
 	}
 
-	if value, found = ctx.Get("message"); found {
+	if value, found = ctx.Get(definitions.CtxMessageKey); found {
 		switch what := value.(type) {
 		case error:
 			msg = getLocalized(ctx, "An error occurred:") + " " + what.Error()
@@ -1656,27 +1656,29 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 	uniqueUserIDField := auth.GetUniqueUserIDField()
 	displayNameField := auth.GetDisplayNameField()
 
-	passDBResult := &PassDBResult{
-		Authenticated: func() bool {
-			if authResult == definitions.AuthResultOK {
-				return true
-			}
+	passDBResult := GetPassDBResultFromPool()
 
-			return false
-		}(),
-		UserFound:         userFound,
-		AccountField:      &accountField,
-		TOTPSecretField:   &totpSecretField,
-		TOTPRecoveryField: &totpRecoveryField,
-		UniqueUserIDField: &uniqueUserIDField,
-		DisplayNameField:  &displayNameField,
-		Backend:           auth.GetUsedPassDBBackend(),
-		Attributes:        auth.GetAttributes(),
-	}
+	passDBResult.Authenticated = func() bool {
+		if authResult == definitions.AuthResultOK {
+			return true
+		}
+
+		return false
+	}()
+
+	passDBResult.UserFound = userFound
+	passDBResult.AccountField = &accountField
+	passDBResult.TOTPSecretField = &totpSecretField
+	passDBResult.TOTPRecoveryField = &totpRecoveryField
+	passDBResult.UniqueUserIDField = &uniqueUserIDField
+	passDBResult.DisplayNameField = &displayNameField
+	passDBResult.Backend = auth.GetUsedPassDBBackend()
+	passDBResult.Attributes = auth.GetAttributes()
 
 	authResult = auth.FilterLua(passDBResult, ctx)
 
 	auth.PostLuaAction(passDBResult)
+	PutPassDBResultToPool(passDBResult)
 
 	return authResult
 }
@@ -1974,11 +1976,11 @@ func handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session s
 // Parameters:
 // ctx : Pointer to gin.Context: A context of gin framework for handling HTTP requests
 // requestedScope: String: Type of OAuth scope requested.
-// cookieValue: interface{}: Data to be used for custom scope requests.
+// cookieValue: any: Data to be used for custom scope requests.
 //
 // Returns:
 // String: A string corresponding to the type of OAuth scope requested
-func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue interface{}) string {
+func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	switch requestedScope {
 	case definitions.ScopeOpenId:
 		return getLocalized(ctx, "Allow access to identity information")
@@ -2611,7 +2613,7 @@ func LogoutGETHandler(ctx *gin.Context) {
 		if redirectTo != "" {
 			ctx.Redirect(http.StatusFound, redirectTo)
 		} else {
-			ctx.Set("message", "No active session for user found")
+			ctx.Set(definitions.CtxMessageKey, "No active session for user found")
 			NotifyGETHandler(ctx)
 		}
 

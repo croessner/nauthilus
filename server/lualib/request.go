@@ -26,7 +26,7 @@ import (
 
 // commonRequestPool is a sync.Pool for CommonRequest objects to reduce memory allocations.
 var commonRequestPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		util.DebugModule(
 			definitions.DbgLua,
 			definitions.LogKeyMsg, "Creating new CommonRequest object",

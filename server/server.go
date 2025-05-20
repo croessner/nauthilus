@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -954,6 +955,7 @@ func runConnectionManager(ctx context.Context) {
 
 	go manager.StartTicker(5 * time.Second)
 	go stats.UpdateGenericConnections()
+	go adjustGCBasedOnLoad(ctx)
 
 	manager.StartMonitoring(ctx)
 }
@@ -968,4 +970,50 @@ func runLuaaInitScript(ctx context.Context) {
 // inititalizeBruteForceTolerate initializes brute force tolerance by setting the provided context to the Tolerate instance.
 func inititalizeBruteForceTolerate(ctx context.Context) {
 	go tolerate.GetTolerate().StartHouseKeeping(ctx)
+}
+
+// getCurrentLoadFactor calculates and returns the current system load factor as a value between 0 and 1.
+// It is computed as 1 minus the CPU idle percentage (normalized).
+// Ensures the result is clamped within the range [0, 1].
+func getCurrentLoadFactor() float64 {
+	// Get the CPU idle usage percentage
+	idlePercent := stats.GetCPUIdleUsage()
+
+	// Calculate load factor as 1 - (idle percentage / 100)
+	// This gives a value between 0 and 1, where 0 is completely idle and 1 is completely busy
+	loadFactor := 1.0 - (idlePercent / 100.0)
+
+	// Ensure the load factor is between 0 and 1
+	if loadFactor < 0 {
+		loadFactor = 0
+	} else if loadFactor > 1 {
+		loadFactor = 1
+	}
+
+	return loadFactor
+}
+
+// adjustGCBasedOnLoad adjusts the garbage collection behavior based on the current system load.
+// It runs in a loop, checking the load factor every minute and adjusting the GC percentage accordingly.
+// The function stops when the provided context is cancelled.
+func adjustGCBasedOnLoad(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			currentLoad := getCurrentLoadFactor()
+
+			if currentLoad > 0.8 { // High load
+				debug.SetGCPercent(300) // Less frequent GC
+			} else if currentLoad < 0.3 { // Low load
+				debug.SetGCPercent(100) // Default GC frequency
+			} else {
+				debug.SetGCPercent(200) // Moderate GC frequency
+			}
+		}
+	}
 }

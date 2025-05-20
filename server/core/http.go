@@ -16,6 +16,7 @@
 package core
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -56,6 +57,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
+	"golang.org/x/net/http2"
 )
 
 var (
@@ -104,21 +106,67 @@ func NewLimitCounter(maxConnections int32) *LimitCounter {
 }
 
 // Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
+// It is context-aware and prioritizes certain types of requests.
 func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if atomic.LoadInt32(&lc.CurrentConnections) >= lc.MaxConnections {
-			ctx.JSON(http.StatusTooManyRequests, gin.H{definitions.LogKeyMsg: "Too many requests"})
+		// Always allow health check and metrics endpoints regardless of connection limits
+		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
+			ctx.Next()
+
+			return
+		}
+
+		// Check if we're at the connection limit
+		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
+		if currentConnections >= lc.MaxConnections {
+			// For API requests, return 429 status code
+			ctx.JSON(http.StatusTooManyRequests, gin.H{
+				definitions.LogKeyMsg: "Too many requests",
+				"current":             currentConnections,
+				"max":                 lc.MaxConnections,
+			})
 
 			ctx.Abort()
 
 			return
 		}
 
+		// Store the request start time in the context for performance tracking
+		startTime := time.Now()
+		ctx.Set(definitions.CtxRequestStartTimeKey, startTime)
+
+		// Increment the connection counter
 		atomic.AddInt32(&lc.CurrentConnections, 1)
+		currentConnections = atomic.LoadInt32(&lc.CurrentConnections)
 
-		stats.GetMetrics().GetCurrentRequests().Set(float64(atomic.LoadInt32(&lc.CurrentConnections)))
+		// Update metrics
+		stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
 
-		defer atomic.AddInt32(&lc.CurrentConnections, -1)
+		// Add connection info to the context
+		ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
+		ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
+
+		// Process the request and decrement the counter when done
+		defer func() {
+			atomic.AddInt32(&lc.CurrentConnections, -1)
+
+			// Calculate and log request duration for performance monitoring
+			if startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey); exists {
+				if startTime, ok := startTimeValue.(time.Time); ok {
+					duration := time.Since(startTime)
+					ctx.Set(definitions.CtxRequestDurationKey, duration)
+
+					// Log long-running requests for further optimization
+					if duration > 500*time.Millisecond {
+						level.Warn(log.Logger).Log(
+							definitions.LogKeyMsg, "Long-running request detected",
+							"path", ctx.FullPath(),
+							"duration_ms", duration.Milliseconds(),
+						)
+					}
+				}
+			}
+		}()
 
 		ctx.Next()
 	}
@@ -384,7 +432,9 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 
 		if auth.CheckBruteForce() {
 			auth.UpdateBruteForceBucketsCounter()
-			auth.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			auth.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
 
@@ -394,13 +444,17 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		//nolint:exhaustive // Ignore some results
 		switch auth.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
-			auth.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			auth.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			HandleErr(ctx, errors.ErrNoTLS)
 			ctx.Abort()
 
 			return
 		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-			auth.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			auth.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			auth.AuthFail(ctx)
 			ctx.Abort()
 
@@ -409,7 +463,9 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		case definitions.AuthResultOK:
 		case definitions.AuthResultFail:
 		case definitions.AuthResultTempFail:
-			auth.PostLuaAction(&PassDBResult{})
+			result := GetPassDBResultFromPool()
+			auth.PostLuaAction(result)
+			PutPassDBResultToPool(result)
 			auth.AuthTempFail(ctx, definitions.TempFailDefault)
 			ctx.Abort()
 
@@ -643,20 +699,54 @@ func setupSessionStore() sessions.Store {
 // setupHTTPServer is a function that configures and returns an http.Server instance.
 // It takes a *gin.Engine router as input and sets the router as the HTTP handler for the server.
 // The function sets the server's address, idle timeout, read timeout, read header timeout, and write timeout based on the values from the config.environment struct.
+// It also configures HTTP/2 settings for improved performance.
 //
 // Usage:
 // router := gin.New()
 // server := setupHTTPServer(router)
 // err := server.ListenAndServe()
 func setupHTTPServer(router *gin.Engine) *http.Server {
-	return &http.Server{
+	keepAliveConfig := config.GetFile().GetServer().GetKeepAlive()
+
+	idleTimeout := time.Minute
+	if keepAliveConfig.IsEnabled() && keepAliveConfig.GetTimeout() > 0 {
+		idleTimeout = keepAliveConfig.GetTimeout()
+	}
+
+	// Create a custom HTTP/2 server with optimized settings
+	h2Server := &http2.Server{
+		// MaxConcurrentStreams limits the number of concurrent streams per connection
+		MaxConcurrentStreams: 250,
+
+		// MaxReadFrameSize increases the maximum frame size
+		MaxReadFrameSize: 1 << 20, // 1MB
+
+		// IdleTimeout sets how long until idle clients should be closed
+		IdleTimeout: idleTimeout,
+	}
+
+	server := &http.Server{
 		Addr:              config.GetFile().GetServer().Address,
 		Handler:           router,
-		IdleTimeout:       time.Minute,
+		IdleTimeout:       idleTimeout,
 		ReadTimeout:       10 * time.Second, //nolint:gomnd // Ignore
 		ReadHeaderTimeout: 10 * time.Second, //nolint:gomnd // Ignore
 		WriteTimeout:      30 * time.Second, //nolint:gomnd // Ignore
 	}
+
+	// Configure HTTP/2 server
+	if err := http2.ConfigureServer(server, h2Server); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to configure HTTP/2 server",
+			"error", err,
+		)
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "HTTP/2 server configured successfully",
+		)
+	}
+
+	return server
 }
 
 // PrometheusMiddleware is a middleware function for Gin Web Framework that collects metrics using Prometheus.
@@ -1068,6 +1158,160 @@ func configureTLS() *tls.Config {
 	}
 }
 
+// gzipWriter is a custom ResponseWriter that compresses the response using gzip.
+type gzipWriter struct {
+	gin.ResponseWriter
+	writer *gzip.Writer
+}
+
+// Write compresses the data and writes it to the underlying ResponseWriter.
+func (g *gzipWriter) Write(data []byte) (int, error) {
+	return g.writer.Write(data)
+}
+
+// WriteString compresses the string and writes it to the underlying ResponseWriter.
+func (g *gzipWriter) WriteString(s string) (int, error) {
+	return g.writer.Write([]byte(s))
+}
+
+// Close closes the gzip.Writer.
+func (g *gzipWriter) Close() error {
+	return g.writer.Close()
+}
+
+// DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
+// It checks if the request has a Content-Encoding header with value "gzip" and if so, replaces the request body
+// with a decompressed version.
+func DecompressRequestMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		compressionConfig := config.GetFile().GetServer().GetCompression()
+
+		// Skip if compression is disabled
+		if !compressionConfig.IsEnabled() {
+			c.Next()
+
+			return
+		}
+
+		// Check if request is gzip compressed
+		if c.Request.Header.Get("Content-Encoding") == "gzip" {
+			// Get the compressed body
+			compressedBody := c.Request.Body
+			defer compressedBody.Close()
+
+			// Create a gzip reader
+			gzipReader, err := gzip.NewReader(compressedBody)
+			if err != nil {
+				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress request body: %w", err))
+
+				return
+			}
+			defer gzipReader.Close()
+
+			// Replace the request body with the decompressed content
+			c.Request.Body = gzipReader
+
+			// Remove Content-Encoding header since we've decompressed the body
+			c.Request.Header.Del("Content-Encoding")
+
+			// Update Content-Length if it exists
+			c.Request.Header.Del("Content-Length")
+		}
+
+		c.Next()
+	}
+}
+
+// CompressionMiddleware returns a middleware that compresses HTTP responses based on the configuration settings.
+// It uses the gzip compression algorithm with the configured level and only compresses responses with the configured content types
+// and minimum length.
+func CompressionMiddleware() gin.HandlerFunc {
+	compressionConfig := config.GetFile().GetServer().GetCompression()
+
+	if !compressionConfig.IsEnabled() {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
+	compressionLevel := compressionConfig.GetLevel()
+	if compressionLevel == 0 {
+		compressionLevel = gzip.DefaultCompression
+	}
+
+	minLength := compressionConfig.GetMinLength()
+	if minLength == 0 {
+		minLength = 1024 // Default to 1KB if not specified
+	}
+
+	contentTypes := compressionConfig.GetContentTypes()
+	if len(contentTypes) == 0 {
+		contentTypes = []string{
+			"application/json",
+			"application/javascript",
+			"text/css",
+			"text/html",
+			"text/plain",
+			"text/xml",
+		}
+	}
+
+	return func(c *gin.Context) {
+		// Check if client accepts gzip encoding
+		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
+			c.Next()
+
+			return
+		}
+
+		// Check if content type should be compressed
+		contentType := c.Writer.Header().Get("Content-Type")
+		shouldCompress := false
+
+		for _, ct := range contentTypes {
+			if strings.Contains(contentType, ct) {
+				shouldCompress = true
+
+				break
+			}
+		}
+
+		if !shouldCompress {
+			c.Next()
+
+			return
+		}
+
+		// Only add Vary header for proper handling of compressed responses
+		c.Header("Vary", "Accept-Encoding")
+
+		// Create gzip writer
+		gz, err := gzip.NewWriterLevel(c.Writer, compressionLevel)
+		if err != nil {
+			c.Next()
+
+			return
+		}
+
+		// Replace writer with gzip writer
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Transfer-Encoding", "chunked")
+
+		gzWriter := &gzipWriter{
+			ResponseWriter: c.Writer,
+			writer:         gz,
+		}
+
+		c.Writer = gzWriter
+
+		// Process request
+		c.Next()
+
+		// Close gzip writer
+		gzWriter.Close()
+	}
+}
+
 // setupRouter sets up the router for the HTTP server.
 //
 // It takes in one parameter:
@@ -1075,35 +1319,53 @@ func configureTLS() *tls.Config {
 //
 // This function initializes the necessary middlewares and adds various endpoints to the router for handling different requests.
 // The function also sets up session store, Hydra endpoints, static content, and back channel endpoints based on the configuration.
+// The middleware order is optimized for performance and concurrency.
 func setupRouter(router *gin.Engine) {
 	// Recovery middleware recovers from any panics and writes a 500 if there was one.
+	// This should be first in the chain to catch panics in other middleware
 	router.Use(gin.Recovery())
 
 	// Add trusted proxies
 	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
 
-	// Add Prometheus middleware
+	// Critical path middleware - these should be executed first for all requests
+	// as they handle basic request processing and metrics
+
+	// Add request decompression middleware if enabled - should be early in the chain
+	router.Use(DecompressRequestMiddleware())
+
+	// Add response compression middleware if enabled - should be early to compress all responses
+	router.Use(CompressionMiddleware())
+
+	// Add Prometheus middleware for metrics collection
 	router.Use(PrometheusMiddleware())
+
+	// Define high-priority endpoints that should be fast and always available
 
 	// Prometheus endpoint
 	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
 
-	// Healthcheck
+	// Healthcheck - keep this simple and fast
 	router.GET("/ping", RequestHandler)
 
 	// Parse static folder for template files
 	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
+	// Setup static content early as it's often cached and doesn't require complex processing
+	setupStaticContent(router)
+
+	// Setup frontend endpoints if enabled
 	if config.GetFile().GetServer().Frontend.Enabled {
 		store := setupSessionStore()
 
+		// Group related endpoint setup functions for better organization and potential parallel initialization
 		setupHydraEndpoints(router, store)
 		setup2FAEndpoints(router, store)
 		setupWebAuthnEndpoints(router, store)
 		setupNotifyEndpoint(router, store)
 	}
 
-	setupStaticContent(router)
+	// Setup back channel endpoints last as they may depend on other components
 	setupBackChannelEndpoints(router)
 }
 
