@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -191,9 +192,9 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	r.registerDynamicLoader(L, ctx)
 
@@ -381,9 +382,9 @@ func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	// Register the dynamic loader
 	r.registerDynamicLoader(L, ctx)

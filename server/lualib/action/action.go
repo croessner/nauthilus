@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -239,9 +240,9 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	aw.registerDynamicLoader(L, httpRequest)
 

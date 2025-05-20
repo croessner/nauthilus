@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -441,9 +442,9 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 
 	defer luaCancel()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	registerDynamicLoader(L, ctx)
 
@@ -491,9 +492,9 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 
 	defer luaCancel()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	registerDynamicLoader(L, ctx)
 
