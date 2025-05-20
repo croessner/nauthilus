@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -188,9 +189,9 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	defer luaCancel()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	L.SetContext(luaCtx)
 

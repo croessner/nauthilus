@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -497,9 +498,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	defer LuaFilters.Mu.RUnlock()
 
-	L := lua.NewState()
+	L := luapool.Get()
 
-	defer L.Close()
+	defer luapool.Put(L)
 
 	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
 
