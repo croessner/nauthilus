@@ -1196,6 +1196,10 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 	if config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "No backend servers found for backend_server_monitoring feature",
+				definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
+			)
 		} else {
 			if auth.UsedBackendIP != "" && auth.UsedBackendPort > 0 {
 				ctx.Header("Auth-Server", auth.UsedBackendIP)
