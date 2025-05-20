@@ -647,6 +647,7 @@ func setupRedis(ctx context.Context) {
 	for retries := 0; retries < maxRetries; retries++ {
 		if checkRedisConnections(ctx) {
 			go core.UpdateRedisPoolStats()
+			go rediscli.UpdateRedisServerMetrics(ctx)
 
 			return
 		}
