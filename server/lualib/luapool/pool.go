@@ -60,6 +60,16 @@ func resetLuaState(L *lua.LState) {
 	// Clear the backend result type metatable which is recreated for each request
 	L.SetGlobal(definitions.LuaBackendResultTypeName, lua.LNil)
 
+	// Clear the nauthilus_backend module from the package.loaded table
+	// This ensures that the module will be reloaded with fresh data on the next request
+	packageTable := L.GetGlobal("package")
+	if packageTable.Type() == lua.LTTable {
+		loadedTable := L.GetField(packageTable, "loaded")
+		if loadedTable.Type() == lua.LTTable {
+			L.SetField(loadedTable, definitions.LuaModBackend, lua.LNil)
+		}
+	}
+
 	// Note: We don't clear the dynamic_loader function or any modules loaded by it
 	// as they need to persist between uses of the Lua state from the pool
 }
