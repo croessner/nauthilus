@@ -1,53 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_PROMETHEUS",
-      "label": "Prometheus",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "prometheus",
-      "pluginName": "Prometheus"
-    }
-  ],
-  "__elements": {},
-  "__requires": [
-    {
-      "type": "panel",
-      "id": "gauge",
-      "name": "Gauge",
-      "version": ""
-    },
-    {
-      "type": "grafana",
-      "id": "grafana",
-      "name": "Grafana",
-      "version": "11.0.0"
-    },
-    {
-      "type": "panel",
-      "id": "piechart",
-      "name": "Pie chart",
-      "version": ""
-    },
-    {
-      "type": "datasource",
-      "id": "prometheus",
-      "name": "Prometheus",
-      "version": "1.0.0"
-    },
-    {
-      "type": "panel",
-      "id": "stat",
-      "name": "Stat",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "timeseries",
-      "name": "Time series",
-      "version": ""
-    }
-  ],
   "annotations": {
     "list": [
       {
@@ -71,10 +22,10 @@
     ]
   },
   "description": "Nginx authserv IMAP and SMTP authentication service",
-  "editable": false,
+  "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
+  "id": 46,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -88,88 +39,14 @@
       },
       "id": 35,
       "panels": [],
-      "repeat": "instance",
-      "repeatDirection": "h",
-      "title": "Misc $instance",
+      "title": "Misc",
       "type": "row"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 4,
-        "x": 0,
-        "y": 1
-      },
-      "id": 20,
-      "options": {
-        "displayLabels": [
-          "percent"
-        ],
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "last"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": true,
-          "expr": "logins_total{job=\"nauthilus\", instance=~\"$instance\"}",
-          "interval": "",
-          "legendFormat": "{{logins}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Logins",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -193,16 +70,47 @@
           },
           "unit": "percent"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Idle"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 25
+                    },
+                    {
+                      "color": "green",
+                      "value": 50
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 7,
-        "w": 9,
-        "x": 4,
+        "h": 6,
+        "w": 8,
+        "x": 0,
         "y": 1
       },
       "id": 45,
       "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -212,17 +120,21 @@
           "values": false
         },
         "showThresholdLabels": true,
-        "showThresholdMarkers": true
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "valueSize": 14
+        }
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "cpu_user_usage_percent{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(cpu_user_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
           "instant": false,
           "legendFormat": "User",
           "range": true,
@@ -231,70 +143,50 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "cpu_system_usage_percent{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(cpu_system_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
           "hide": false,
           "instant": false,
           "legendFormat": "System",
           "range": true,
           "refId": "CPU system"
-        }
-      ],
-      "title": "CPU usage",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "displayName": "Idle",
-          "mappings": [],
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 4,
-        "x": 13,
-        "y": 1
-      },
-      "id": 62,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": false
-      },
-      "pluginVersion": "10.0.4",
-      "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "cpu_idle_usage_percent{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(cpu_iowait_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "IOWait",
+          "range": true,
+          "refId": "CPU iowait"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(cpu_nice_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Nice",
+          "range": true,
+          "refId": "CPU nice"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(cpu_idle_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
+          "hide": false,
           "instant": false,
           "legendFormat": "Idle",
           "range": true,
@@ -306,14 +198,476 @@
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "max": 50,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ldap_pool_size"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "max",
+                "value": 50
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ldap_idle_pool_size"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "max",
+                "value": 50
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 14,
+        "x": 8,
+        "y": 1
+      },
+      "id": 84,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 14
+        }
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (ldap_pool_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "legendFormat": "active {{pool}}",
+          "range": true,
+          "refId": "LDAP active"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (ldap_pool_open_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "open {{pool}}",
+          "range": true,
+          "refId": "LDAP open conns"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (ldap_pool_stale_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "stale {{pool}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (ldap_idle_pool_size{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "size idle {{pool}}",
+          "range": true,
+          "refId": "LDAP idle pool size"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pool) (ldap_pool_size{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "size {{pool}}",
+          "range": true,
+          "refId": "LDAP pool size"
+        }
+      ],
+      "title": "LDAP pools",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 2,
+        "x": 0,
+        "y": 7
+      },
+      "id": 88,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(generic_connections{job=\"nauthilus\",instance=~\"$instance\",direction=\"local\"})",
+          "instant": false,
+          "legendFormat": "Connections",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP server connections",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 2,
+        "y": 7
+      },
+      "id": 89,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (target,direction,description) (generic_connections{job=\"nauthilus\",instance=~\"$instance\",direction=\"remote\"})",
+          "instant": false,
+          "legendFormat": "{{description}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP client established connections",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 2,
+        "x": 8,
+        "y": 7
+      },
+      "id": 68,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(server_concurrent_requests{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP server concurrent requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 7,
+        "x": 10,
+        "y": 7
+      },
+      "id": 87,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (service) (http_client_concurrent_requests_total{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "legendFormat": "{{service}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP client concourrent requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
           "displayName": "Threads",
           "mappings": [],
-          "max": 25,
+          "max": 70,
           "min": 0,
           "thresholds": {
             "mode": "absolute",
@@ -324,11 +678,11 @@
               },
               {
                 "color": "orange",
-                "value": 15
+                "value": 50
               },
               {
                 "color": "red",
-                "value": 20
+                "value": 60
               }
             ]
           },
@@ -337,13 +691,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 4,
+        "h": 6,
+        "w": 2,
         "x": 17,
-        "y": 1
+        "y": 7
       },
       "id": 47,
       "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -353,17 +709,21 @@
           "values": false
         },
         "showThresholdLabels": true,
-        "showThresholdMarkers": true
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 14
+        }
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "avg_over_time(go_threads{job=\"nauthilus\", instance=~\"$instance\"}[1m])",
+          "expr": "sum(avg_over_time(go_threads{job=\"nauthilus\", instance=~\"$instance\"}[1m]))",
           "instant": false,
           "legendFormat": "Threads",
           "range": true,
@@ -372,6 +732,1256 @@
       ],
       "title": "OS threads",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "max": 5,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 3,
+        "x": 19,
+        "y": 7
+      },
+      "id": 75,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 14
+        }
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (server_status) (backend_servers_status{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "legendFormat": "{{server_status}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Backend servers",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 3,
+        "x": 0,
+        "y": 13
+      },
+      "id": 65,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^version$/",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "topk(1, nauthilus_version_info{job=\"nauthilus\"})",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Version",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "keepLabels": [
+              "instance",
+              "version",
+              "job"
+            ],
+            "mode": "columns",
+            "valueLabel": "instance"
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "dateTimeFromNow"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 3,
+        "x": 3,
+        "y": 13
+      },
+      "id": 66,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(start_timestamp{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "dateTimeFromNow"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 3,
+        "x": 6,
+        "y": 13
+      },
+      "id": 67,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(last_reload_timestamp{job=\"nauthilus\",instance=~\"$instance\"})",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Last reloaded",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 94,
+      "panels": [],
+      "title": "Account status",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 0,
+        "y": 17
+      },
+      "id": 95,
+      "options": {
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(\n    logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"success\"}\n    - logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"success\"} offset $__range\n)",
+          "legendFormat": "success",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(\n    logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"failure\"}\n    - logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"failure\"} offset $__range\n)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "failure",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Login stats",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "default": false,
+        "type": "loki",
+        "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 6,
+        "y": 17
+      },
+      "id": 93,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
+          },
+          "editorMode": "builder",
+          "expr": "{app_kubernetes_io_name=\"nauthilus\"} |= `` | json | authenticated = `fail`",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Live logs",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 71,
+      "panels": [],
+      "title": "Security $instance",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 22,
+        "x": 0,
+        "y": 27
+      },
+      "id": 73,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Max",
+          "sortDesc": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (protocol) (rate(accepted_protocols_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "{{protocol}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Accepted protocols",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 22,
+        "x": 0,
+        "y": 34
+      },
+      "id": 72,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (protocol) (rate(rejected_protocols_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "{{protocol}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Rejected protocols",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 22,
+        "x": 0,
+        "y": 41
+      },
+      "id": 76,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (country) (rate(geoippolicyd_count{job=\"nauthilus\",instance=~\"$instance\",country!=\"\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "{{country}} {{status}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GeoIP country overview",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 22,
+        "x": 0,
+        "y": 48
+      },
+      "id": 77,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Max",
+          "sortDesc": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (feature) (rate(analytics_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "{{feature}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Feature efficiency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "noValue": "No policy violations",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 22,
+        "x": 0,
+        "y": 55
+      },
+      "id": 74,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason,protocol) (rate(ldap_filter_reject_reason_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "{{reason}}: {{protocol}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Reject reasons",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 0,
+        "y": 62
+      },
+      "id": 85,
+      "options": {
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": []
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (rbl) (increase(rbl_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__range]))",
+          "instant": false,
+          "legendFormat": "{{rbl}}",
+          "range": true,
+          "refId": "RBL list"
+        }
+      ],
+      "title": "RBL rejects",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 5,
+        "y": 62
+      },
+      "id": 86,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (rbl) (rate(rbl_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{rbl}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "RBL hits over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 3,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "noValue": "No buckets requested",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 9,
+        "x": 13,
+        "y": 62
+      },
+      "id": 70,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 400
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (bucket) (rate(bruteforce_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "instant": false,
+          "legendFormat": "Reject {{bucket}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum by (bucket) (rate(bruteforce_hits_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Hits {{bucket}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Bruteforce bucket counters",
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -383,19 +1993,18 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 69
       },
       "id": 26,
       "panels": [],
-      "repeat": "instance",
-      "repeatDirection": "h",
-      "title": "Activity $instance",
+      "title": "Activity",
       "type": "row"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -404,12 +2013,14 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "axisSoftMin": 0,
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -418,6 +2029,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -448,27 +2060,30 @@
               }
             ]
           },
-          "unit": "reqpm"
+          "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 9
+        "y": 70
       },
       "id": 22,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
+            "mean",
             "max"
           ],
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 400
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 500
         },
         "tooltip": {
           "mode": "single",
@@ -480,11 +2095,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "rate(http_requests_total{job=\"nauthilus\", instance=~\"$instance\",path!=\"\"}[$__rate_interval])",
+          "expr": "sum by (path) (irate(http_requests_total{job=\"nauthilus\", instance=~\"$instance\",path!=\"\"}[1m]))",
           "instant": false,
           "interval": "",
           "legendFormat": "{{path}}",
@@ -492,13 +2107,34 @@
           "refId": "A"
         }
       ],
-      "title": "HTTP Requests History",
+      "title": "HTTP server requests History",
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "degree": 5,
+            "modelType": "polynomial",
+            "xFieldName": "Time",
+            "yFieldName": "/api/v1/:category/:service"
+          }
+        },
+        {
+          "id": "regression",
+          "options": {
+            "degree": 5,
+            "modelType": "polynomial",
+            "xFieldName": "Time",
+            "yFieldName": "/login/:languageTag"
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -506,11 +2142,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -519,6 +2157,143 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 22,
+        "x": 0,
+        "y": 76
+      },
+      "id": 69,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 500
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(irate(process_network_receive_bytes_total{job=~\"nauthilus\", instance=~\"$instance\"}[1m]))",
+          "instant": false,
+          "legendFormat": "Received",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "sum(irate(process_network_transmit_bytes_total{job=\"nauthilus\", instance=~\"$instance\"}[1m]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Transmitted",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Network traffic",
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "degree": 5,
+            "modelType": "polynomial",
+            "xFieldName": "Time",
+            "yFieldName": "Received"
+          }
+        },
+        {
+          "id": "regression",
+          "options": {
+            "degree": 5,
+            "modelType": "polynomial",
+            "xFieldName": "Time",
+            "yFieldName": "Transmitted"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -554,10 +2329,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 18
+        "y": 82
       },
       "id": 52,
       "options": {
@@ -571,7 +2346,9 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 400
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 500
         },
         "tooltip": {
           "mode": "single",
@@ -582,10 +2359,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "  rate(cache_hits_total{job=\"nauthilus\",instance=~\"$instance\"}[5m])",
+          "expr": "avg(irate(cache_hits_total{job=\"nauthilus\",instance=~\"$instance\"}[1m]))",
           "instant": false,
           "legendFormat": "Hits",
           "range": true,
@@ -594,10 +2371,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "  rate(cache_misses_total{job=\"nauthilus\",instance=~\"$instance\"}[5m])",
+          "expr": "avg(irate(cache_misses_total{job=\"nauthilus\",instance=~\"$instance\"}[1m]))",
           "hide": false,
           "instant": false,
           "legendFormat": "Misses",
@@ -610,8 +2387,9 @@
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -619,11 +2397,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -632,6 +2412,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -662,15 +2443,15 @@
               }
             ]
           },
-          "unit": "opm"
+          "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 26
+        "y": 88
       },
       "id": 48,
       "options": {
@@ -684,7 +2465,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 400
+          "width": 500
         },
         "tooltip": {
           "mode": "single",
@@ -696,10 +2477,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "increase(redis_read_total{job=\"nauthilus\",instance=~\"$instance\"}[1m])",
+          "expr": "avg(rate(redis_read_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
+          "hide": false,
           "instant": false,
           "legendFormat": "Reads",
           "range": true,
@@ -708,10 +2490,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "increase(redis_write_total{job=\"nauthilus\",instance=~\"$instance\"}[1m])",
+          "expr": "avg(rate(redis_write_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
           "hide": false,
           "instant": false,
           "legendFormat": "Writes",
@@ -723,24 +2505,10 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 34
-      },
-      "id": 50,
-      "panels": [],
-      "repeat": "instance",
-      "repeatDirection": "h",
-      "title": "Latency $instance",
-      "type": "row"
-    },
-    {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -749,11 +2517,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -762,6 +2532,1877 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "conns/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 22,
+        "x": 0,
+        "y": 94
+      },
+      "id": 63,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 600
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (rate(redis_connection_hits_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "Hits {{pool_name}}",
+          "range": true,
+          "refId": "Hits"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (rate(redis_connection_misses_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Misses {{pool_name}}",
+          "range": true,
+          "refId": "Misses"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (rate(redis_connection_timeouts_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Timeouts {{pool_name}}",
+          "range": true,
+          "refId": "Timeouts"
+        }
+      ],
+      "title": "Redis connections stats",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 90,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "conns"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 22,
+        "x": 0,
+        "y": 102
+      },
+      "id": 64,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 12
+        }
+      },
+      "pluginVersion": "11.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (redis_pool_total_connections{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Open {{pool_name}}",
+          "range": true,
+          "refId": "Total"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (redis_pool_idle_connections{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Idle {{pool_name}}",
+          "range": true,
+          "refId": "Idle"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (pool_name) (redis_pool_stale_connections{job=\"nauthilus\",instance=~\"$instance\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Stale {{pool_name}}",
+          "range": true,
+          "refId": "Stale"
+        }
+      ],
+      "title": "Redis pool stats",
+      "type": "gauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 111
+      },
+      "id": 98,
+      "panels": [],
+      "title": "Redis Server",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 0,
+        "y": 112
+      },
+      "id": 99,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 300
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_latency_milliseconds{job=\"nauthilus\", instance=~\"$instance\"}",
+          "legendFormat": "{{command}} ({{instance}})",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Redis Command Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*Commands.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*KB.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "KBs"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 11,
+        "y": 112
+      },
+      "id": 101,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 300
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_instantaneous_ops_per_sec{job=\"nauthilus\", instance=~\"$instance\"}",
+          "legendFormat": "Commands/sec ({{instance}})",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_instantaneous_input_kbps{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Network In KB/s ({{instance}})",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_instantaneous_output_kbps{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Network Out KB/s ({{instance}})",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_connected_clients{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Connected Clients ({{instance}})",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Redis Operations and Network",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fragmentation Ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 5
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 0,
+        "y": 120
+      },
+      "id": 100,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 300
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_used_memory_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "legendFormat": "Used Memory ({{instance}})",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_used_memory_rss_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Used Memory RSS ({{instance}})",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_mem_fragmentation_ratio{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Fragmentation Ratio ({{instance}})",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Redis Memory Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hit Rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 11,
+        "y": 120
+      },
+      "id": 102,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 300
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_keyspace_hits_total{job=\"nauthilus\", instance=~\"$instance\"}",
+          "legendFormat": "Keyspace Hits ({{instance}})",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_keyspace_misses_total{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Keyspace Misses ({{instance}})",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_keyspace_hit_rate{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Hit Rate ({{instance}})",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_expired_keys_total{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Expired Keys ({{instance}})",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_evicted_keys_total{job=\"nauthilus\", instance=~\"$instance\"}",
+          "hide": false,
+          "legendFormat": "Evicted Keys ({{instance}})",
+          "range": true,
+          "refId": "E"
+        }
+      ],
+      "title": "Redis Keyspace Stats",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 22,
+        "x": 0,
+        "y": 128
+      },
+      "id": 103,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 300
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "redis_rejected_connections_total{job=\"nauthilus\", instance=~\"$instance\"}",
+          "legendFormat": "Rejected Connections ({{instance}})",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Redis Error Metrics",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 136
+      },
+      "id": 50,
+      "panels": [],
+      "title": "Latency",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 22,
+        "x": 0,
+        "y": 137
+      },
+      "id": 92,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 600
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (search) (irate(ldap_filter_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(ldap_filter_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ldap filter {{search}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (http) (irate(blocklist_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(blocklist_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "blocklist http {{http}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (http) (irate(geoippolicyd_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(geoippolicyd_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "geoippolicyd http {{http}}",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (http) (irate(haveibeenpwnd_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(haveibeenpwnd_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "haveibeenpwnd http {{http}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (bot) (irate(telegram_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(telegram_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "telegram bot {{bot}}",
+          "range": true,
+          "refId": "F"
+        }
+      ],
+      "title": "Request timings custom Lua",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 0,
+        "y": 146
+      },
+      "id": 79,
+      "options": {
+        "bucketOffset": 0,
+        "combine": false,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(ldap_filter_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])) by (le)) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Filter",
+          "range": true,
+          "refId": "LDAP filter"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"ldap_backend_lookup_request_total\"}[$__rate_interval])) by (le)) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Lookup",
+          "range": true,
+          "refId": "LDAP lookup"
+        }
+      ],
+      "title": "LDAP searches",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 11,
+        "y": 146
+      },
+      "id": 80,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"ldap_backend_auth_request_total\"}[$__rate_interval])) by (le)) > 0)",
+          "instant": false,
+          "legendFormat": "Auth",
+          "range": true,
+          "refId": "LDAP auth"
+        }
+      ],
+      "title": "LDAP binds",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 0,
+        "y": 152
+      },
+      "id": 78,
+      "options": {
+        "bucketOffset": 0,
+        "combine": false,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(http_response_time_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])) by (le)))",
+          "instant": false,
+          "legendFormat": "Responses",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP response times",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 11,
+        "y": 152
+      },
+      "id": 81,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"post:Check haveibeenpwnd network\"}[$__rate_interval])) by (le)) > 0)",
+          "instant": false,
+          "legendFormat": "haveibeenpwnd",
+          "range": true,
+          "refId": "haveibeenpwnd"
+        }
+      ],
+      "title": "External HTTP requests",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 0,
+        "y": 158
+      },
+      "id": 82,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"dns\",task=\"ptr\"}[$__rate_interval])) by (le)) > 0)",
+          "instant": false,
+          "legendFormat": "PTR",
+          "range": true,
+          "refId": "DNS PTR lookup"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"dns\",task=\"rbl\"}[$__rate_interval])) by (le)) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "RBL",
+          "range": true,
+          "refId": "DNS RBL lookup"
+        }
+      ],
+      "title": "DNS lookups",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 11,
+        "y": 158
+      },
+      "id": 83,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"feature\",task=\"Check blocklist.de\"}[$__rate_interval])) by (le)) > 0)",
+          "instant": false,
+          "legendFormat": "blocklist",
+          "range": true,
+          "refId": "Blocklist"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"filter\",task=\"Check GeoIP policy\"}[$__rate_interval])) by (le)) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "geoip-policyd",
+          "range": true,
+          "refId": "GeoIP-Policyd"
+        }
+      ],
+      "title": "HTTP mesh services",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 11,
+        "x": 0,
+        "y": 164
+      },
+      "id": 97,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 350
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(rbl_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",rbl=\"AbusiX AuthBL\"}[$__rate_interval])) by (le)) > 0)",
+          "instant": false,
+          "legendFormat": "AbusiX",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg(histogram_quantile(0.95, sum(rate(rbl_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",rbl=\"SpamRats AuthBL\"}[$__rate_interval])) by (le)) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "SpamRats",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "RBL DNS lookup timings",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 22,
+        "x": 0,
+        "y": 170
+      },
+      "id": 51,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 600
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",service!=\"action\",service!=\"post_action\",task!=\"request_no_auth_total\",task!=\"request_list_accounts_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",service!=\"action\",service!=\"post_action\",task!=\"request_no_auth_total\",task!=\"request_list_accounts_total\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{service}} {{task}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Request timings auth (builtin)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineStyle": {
               "fill": "solid"
@@ -802,11 +4443,11 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 21,
+        "w": 22,
         "x": 0,
-        "y": 35
+        "y": 181
       },
-      "id": 51,
+      "id": 90,
       "options": {
         "legend": {
           "calcs": [
@@ -818,7 +4459,9 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 650
+          "sortBy": "Mean",
+          "sortDesc": true,
+          "width": 600
         },
         "tooltip": {
           "mode": "single",
@@ -829,17 +4472,143 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"} / function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",task=\"request_list_accounts_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",task=\"request_list_accounts_total\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{service}} {{task}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",task=\"request_no_auth_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",task=\"request_no_auth_total\"}[1m]) > 0)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{service}} {{task}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Request timings no-auth/list-accounts (builtin)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "prometheus",
+        "uid": "-r2GKo_7k"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "log": 10,
+              "type": "log"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 22,
+        "x": 0,
+        "y": 189
+      },
+      "id": 91,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Max",
+          "sortDesc": true,
+          "width": 600
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "-r2GKo_7k"
+          },
+          "editorMode": "code",
+          "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) > 0)",
+          "hide": false,
           "instant": false,
           "legendFormat": "{{service}} {{task}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Request timeings",
+      "title": "Request timings actions, post actions Lua (builtin)",
       "type": "timeseries"
     },
     {
@@ -848,19 +4617,18 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 198
       },
       "id": 53,
       "panels": [],
-      "repeat": "instance",
-      "repeatDirection": "h",
-      "title": "Debugging $instance",
+      "title": "Debugging",
       "type": "row"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -886,13 +4654,15 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
-        "w": 3,
+        "h": 4,
+        "w": 4,
         "x": 0,
-        "y": 44
+        "y": 199
       },
       "id": 54,
       "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -902,30 +4672,34 @@
           "values": false
         },
         "showThresholdLabels": false,
-        "showThresholdMarkers": false
+        "showThresholdMarkers": false,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 14
+        }
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "go_goroutines{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg(go_goroutines{job=\"nauthilus\",instance=~\"$instance\"})",
           "instant": false,
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Goroutines",
-      "transformations": [],
       "type": "gauge"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -949,10 +4723,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
-        "x": 3,
-        "y": 44
+        "x": 4,
+        "y": 199
       },
       "id": 56,
       "options": {
@@ -960,6 +4734,7 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -967,31 +4742,35 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showPercentChange": true,
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "go_memstats_buck_hash_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg(delta(go_memstats_buck_hash_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "Hash map",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Number of bytes used by the profiling bucket hash table",
+      "title": "Profiling bucket hash table (changes)",
       "type": "stat"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
+      "description": "",
       "fieldConfig": {
         "defaults": {
           "mappings": [],
@@ -1013,10 +4792,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
-        "x": 9,
-        "y": 44
+        "x": 10,
+        "y": 199
       },
       "id": 58,
       "options": {
@@ -1024,6 +4803,7 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -1031,30 +4811,33 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showPercentChange": true,
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "go_memstats_gc_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_gc_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"})",
           "instant": false,
           "legendFormat": "Bytes GC",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Number of bytes used for garbage collection system metadata",
+      "title": "Garbage collection system metadata",
       "type": "stat"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -1077,10 +4860,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
-        "x": 15,
-        "y": 44
+        "x": 16,
+        "y": 199
       },
       "id": 61,
       "options": {
@@ -1088,6 +4871,7 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -1095,17 +4879,19 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showPercentChange": true,
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "10.0.4",
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "rate(go_memstats_mallocs_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "sum(rate(go_memstats_mallocs_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -1116,8 +4902,9 @@
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -1126,11 +4913,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1139,12 +4928,12 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
-              "log": 10,
-              "type": "log"
+              "type": "linear"
             },
             "showPoints": "auto",
             "spanNulls": false,
@@ -1157,6 +4946,7 @@
             }
           },
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1175,10 +4965,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 49
+        "y": 203
       },
       "id": 6,
       "options": {
@@ -1193,7 +4983,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 400
+          "width": 550
         },
         "tooltip": {
           "mode": "single",
@@ -1204,11 +4994,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "go_memstats_sys_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_sys_bytes{job=\"nauthilus\", instance=~\"$instance\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "Sys",
@@ -1217,12 +5007,22 @@
         }
       ],
       "title": "Number of bytes obtained from system",
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Sys"
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -1231,11 +5031,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1244,6 +5046,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1261,6 +5064,7 @@
             }
           },
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1276,13 +5080,40 @@
           },
           "unit": "bytes"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "linear regression Heap alloc predicted",
+                  "linear regression Heap in use predicted",
+                  "linear regression Heap idle predicted"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 57
+        "y": 209
       },
       "id": 8,
       "options": {
@@ -1297,7 +5128,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 400
+          "width": 550
         },
         "tooltip": {
           "mode": "single",
@@ -1308,11 +5139,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "go_memstats_heap_alloc_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_heap_alloc_bytes{job=\"nauthilus\", instance=~\"$instance\"})",
           "interval": "",
           "legendFormat": "Heap alloc",
           "range": true,
@@ -1321,11 +5152,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "go_memstats_heap_inuse_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_heap_inuse_bytes{job=\"nauthilus\", instance=~\"$instance\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "Heap in use",
@@ -1335,11 +5166,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "go_memstats_heap_idle_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_heap_idle_bytes{job=\"nauthilus\", instance=~\"$instance\"})",
           "hide": false,
           "interval": "",
           "legendFormat": "Heap idle",
@@ -1348,12 +5179,36 @@
         }
       ],
       "title": "Number of heap bytes",
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Heap alloc"
+          }
+        },
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Heap in use"
+          }
+        },
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Heap idle"
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -1362,11 +5217,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1375,6 +5232,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1392,12 +5250,12 @@
             }
           },
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1410,10 +5268,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 65
+        "y": 215
       },
       "id": 16,
       "options": {
@@ -1427,7 +5285,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 350
+          "width": 550
         },
         "tooltip": {
           "mode": "single",
@@ -1438,11 +5296,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "go_memstats_stack_sys_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_stack_sys_bytes{job=\"nauthilus\", instance=~\"$instance\"})",
           "interval": "",
           "legendFormat": "Bytes",
           "range": true,
@@ -1450,13 +5308,22 @@
         }
       ],
       "title": "Number of bytes obtained from system for stack allocator",
-      "transformations": [],
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Bytes"
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "description": "",
       "fieldConfig": {
@@ -1465,11 +5332,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1478,6 +5347,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1495,12 +5365,12 @@
             }
           },
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1513,10 +5383,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 73
+        "y": 221
       },
       "id": 55,
       "options": {
@@ -1530,7 +5400,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 350
+          "width": 550
         },
         "tooltip": {
           "mode": "single",
@@ -1541,10 +5411,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "rate(go_memstats_alloc_bytes_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "avg(rate(go_memstats_alloc_bytes_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "Bytes",
           "range": true,
@@ -1552,12 +5422,22 @@
         }
       ],
       "title": "Total number of bytes allocated, even if freed",
+      "transformations": [
+        {
+          "id": "regression",
+          "options": {
+            "xFieldName": "Time",
+            "yFieldName": "Bytes"
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -1565,11 +5445,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1578,6 +5460,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1600,8 +5483,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1614,10 +5496,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 81
+        "y": 227
       },
       "id": 60,
       "options": {
@@ -1642,10 +5524,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "go_memstats_heap_released_bytes{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_heap_released_bytes{job=\"nauthilus\",instance=~\"$instance\"})",
           "instant": false,
           "legendFormat": "Bytes",
           "range": true,
@@ -1657,8 +5539,9 @@
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -1666,11 +5549,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1679,6 +5564,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1700,8 +5586,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1714,10 +5599,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 89
+        "y": 233
       },
       "id": 57,
       "options": {
@@ -1742,10 +5627,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "rate(go_memstats_frees_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "avg(rate(go_memstats_frees_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "Frees",
           "range": true,
@@ -1757,8 +5642,9 @@
     },
     {
       "datasource": {
+        "default": true,
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "-r2GKo_7k"
       },
       "fieldConfig": {
         "defaults": {
@@ -1766,11 +5652,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "none",
@@ -1779,6 +5667,7 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -1801,8 +5690,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1815,10 +5703,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 21,
+        "h": 6,
+        "w": 22,
         "x": 0,
-        "y": 97
+        "y": 239
       },
       "id": 59,
       "options": {
@@ -1843,10 +5731,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "-r2GKo_7k"
           },
           "editorMode": "code",
-          "expr": "go_memstats_heap_objects{job=\"nauthilus\",instance=~\"$instance\"}",
+          "expr": "avg(go_memstats_heap_objects{job=\"nauthilus\",instance=~\"$instance\"})",
           "instant": false,
           "legendFormat": "Objects",
           "range": true,
@@ -1857,28 +5745,69 @@
       "type": "timeseries"
     }
   ],
-  "refresh": "5s",
-  "schemaVersion": 40,
-  "style": "dark",
+  "refresh": "30s",
+  "schemaVersion": 39,
   "tags": [],
   "templating": {
     "list": [
       {
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": [
+            "kn1.roessner-net.de:30010"
+          ],
+          "value": [
+            "kn1.roessner-net.de:30010"
+          ]
+        },
         "datasource": {
           "type": "prometheus",
-          "uid": "${DS_PROMETHEUS}"
+          "uid": "-r2GKo_7k"
         },
-        "definition": "label_values(logins_total,instance)",
+        "definition": "label_values(up{job=\"nauthilus\"},instance)",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "instance",
-        "multi": false,
+        "multi": true,
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(logins_total,instance)",
+          "qryType": 1,
+          "query": "label_values(up{job=\"nauthilus\"},instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/^kn[0-9]\\.roessner-net\\.de:30010$/",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
+        },
+        "definition": "",
+        "hide": 0,
+        "includeAll": true,
+        "label": "nauthilus_account",
+        "multi": true,
+        "name": "nauthilus_account",
+        "options": [],
+        "query": {
+          "label": "nauthilus_account",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "",
+          "type": 1
         },
         "refresh": 1,
         "regex": "",
@@ -1894,8 +5823,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Nauthilus",
-  "uid": "ut-C6ghnk",
-  "version": 47,
+  "title": "Nauthilus 2",
+  "uid": "e4491148-50c2-485d-8eb3-c594dd7a4099",
+  "version": 97,
   "weekStart": ""
 }
