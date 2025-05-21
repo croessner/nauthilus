@@ -289,6 +289,11 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
 	}
 
+	// Set the protocol on the bucket manager
+	if a.Protocol != nil && a.Protocol.Get() != "" {
+		bm = bm.WithProtocol(a.Protocol.Get())
+	}
+
 	defer func() {
 		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
 			mlBM.Close()
@@ -406,6 +411,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 			mlManager.SetNoAuth(a.NoAuth)
 		}
 
+		// Set the protocol if available
+		if a.Protocol != nil && a.Protocol.Get() != "" {
+			mlBM = mlBM.WithProtocol(a.Protocol.Get())
+		}
+
 		// Check if additional features are available from the Context
 		if a.Context != nil {
 			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
@@ -421,6 +431,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		bm = mlBM
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+
+		// Set the protocol if available
+		if a.Protocol != nil && a.Protocol.Get() != "" {
+			bm = bm.WithProtocol(a.Protocol.Get())
+		}
 	}
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
