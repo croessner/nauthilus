@@ -277,7 +277,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
-		logs.Set(fmt.Sprintf("latency_execute_%s", luaCommand), fmt.Sprintf("%v", latency))
+		logs.Set(fmt.Sprintf("backend_execute_%s_latency", luaCommand), fmt.Sprintf("%v", latency))
 	}()
 
 	if err = lualib.PackagePath(L); err != nil {
@@ -312,7 +312,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, l
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
-		logs.Set("latency_handle_return_types", fmt.Sprintf("%v", latency))
+		logs.Set("process_backend_result_latency", fmt.Sprintf("%v", latency))
 	}()
 
 	ret := L.ToInt(-nret)
