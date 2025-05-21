@@ -184,6 +184,15 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 // It triggers actions or aborts features based on script results.
 // Returns whether a feature was triggered, if features should be aborted, and any execution error.
 func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		if r.Logs == nil {
+			r.Logs = new(lualib.CustomLogKeyValue)
+		}
+		r.Logs.Set(definitions.LogKeyFeatureLatency, fmt.Sprintf("%v", latency))
+	}()
+
 	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
 		return
 	}
@@ -372,6 +381,15 @@ func (r *Request) formatResult(ret int) string {
 // The additional features are stored in the context for later use by the neural network.
 // Returns an error if any occur during script execution.
 func (r *Request) CollectAdditionalFeatures(ctx *gin.Context) error {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		if r.Logs == nil {
+			r.Logs = new(lualib.CustomLogKeyValue)
+		}
+		r.Logs.Set(definitions.LogKeyFeatureLatency, fmt.Sprintf("%v", latency))
+	}()
+
 	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {
 		return errors.ErrNoFeatureDefined
 	}

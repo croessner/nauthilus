@@ -158,7 +158,14 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 
 					// Log long-running requests for further optimization
 					if duration > 500*time.Millisecond {
+						// Get GUID from context if available, otherwise generate a new one
+						guid, exists := ctx.Get(definitions.CtxGUIDKey)
+						if !exists {
+							guid = ksuid.New().String()
+						}
+
 						level.Warn(log.Logger).Log(
+							definitions.LogKeyGUID, guid,
 							definitions.LogKeyMsg, "Long-running request detected",
 							"path", ctx.FullPath(),
 							"duration_ms", duration.Milliseconds(),

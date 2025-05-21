@@ -607,9 +607,6 @@ var (
 		Name: "cpu_idle_usage_percent",
 		Help: "CPU idle usage in percent",
 	})
-
-	// currentCPUIdleUsage stores the current CPU idle usage percentage for internal use
-	currentCPUIdleUsage float64
 )
 
 // MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
@@ -756,9 +753,4 @@ func UpdateGenericConnections() {
 
 		GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
 	}
-}
-
-// GetCPUIdleUsage returns the current CPU idle usage percentage.
-func GetCPUIdleUsage() float64 {
-	return currentCPUIdleUsage
 }

@@ -48,7 +48,6 @@ RUN echo 'hosts: files dns' > /etc/nsswitch.conf
 
 ENV ZONEINFO=/zoneinfo.zip
 ENV TERM=xterm-256color
-ENV GOGC=200
 
 EXPOSE 8180
 

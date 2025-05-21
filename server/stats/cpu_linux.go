@@ -44,7 +44,6 @@ func setNewStats(oldCpu, newCpu *cpu.Stats, total float64) {
 
 	idlePercent := float64(newCpu.Idle-oldCpu.Idle) / total * 100
 	cpuIdleUsage.Set(idlePercent)
-	currentCPUIdleUsage = idlePercent
 
 	cpuNiceUsage.Set(float64(newCpu.Nice-oldCpu.Nice) / total * 100)
 	cpuIowaitUsage.Set(float64(newCpu.Iowait-oldCpu.Iowait) / total * 100)

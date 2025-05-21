@@ -184,6 +184,16 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 		luaCommand string
 	)
 
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		level.Info(log.Logger).Log(
+			definitions.LogKeyGUID, luaRequest.Session,
+			definitions.LogKeyMsg, "Lua backend handler latency",
+			definitions.LogKeyLatency, fmt.Sprintf("%v", latency),
+		)
+	}()
+
 	logs := new(lualib.CustomLogKeyValue)
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 
@@ -264,6 +274,12 @@ func setLuaRequestParameters(luaRequest *bktype.LuaRequest, request *lua.LTable)
 
 // executeAndHandleError executes a Lua script, handles errors, and logs details. It runs initialization, execution, and cleanup steps.
 func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		logs.Set(fmt.Sprintf("backend_execute_%s_latency", luaCommand), fmt.Sprintf("%v", latency))
+	}()
+
 	if err = lualib.PackagePath(L); err != nil {
 		processError(err, luaRequest, logs)
 	}
@@ -293,6 +309,12 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 // logs specifies the custom log key-value pairs. Validates the script output and dispatches appropriate Lua results.
 // An error is sent if the Lua script fails or returns invalid data for specified commands.
 func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		logs.Set("process_backend_result_latency", fmt.Sprintf("%v", latency))
+	}()
+
 	ret := L.ToInt(-nret)
 	if ret != 0 {
 		luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{

@@ -18,6 +18,7 @@ package filter
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -487,6 +488,15 @@ func mapsEqual(m1, m2 map[any]any) bool {
 // It evaluates each script sequentially, merging backend results and attributes for successful executions.
 // Returns a boolean indicating action, the merged backend result, a list of remove attributes, and an error if any occur.
 func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		if r.Logs == nil {
+			r.Logs = new(lualib.CustomLogKeyValue)
+		}
+		r.Logs.Set(definitions.LogKeyFilterLatency, fmt.Sprintf("%v", latency))
+	}()
+
 	if LuaFilters == nil || len(LuaFilters.LuaScripts) == 0 {
 		return false, nil, nil, errors.ErrNoFiltersDefined
 	}
