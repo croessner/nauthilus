@@ -16,10 +16,14 @@
 package rediscli
 
 import (
+	"context"
 	"math/rand"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -75,6 +79,22 @@ func NewClient() Client {
 
 	newClient.newRedisClient()
 	newClient.newRedisReplicaClient()
+
+	// Enable Redis latency monitoring by setting latency-monitor-threshold
+	// This is required for the LATENCY LATEST command to return meaningful data
+	if writeHandle := newClient.GetWriteHandle(); writeHandle != nil {
+		// Set a reasonable threshold (100ms) to capture slow commands
+		// Context is not available here, so we use a background context
+		err := writeHandle.Do(context.Background(), "CONFIG", "SET", "latency-monitor-threshold", "100").Err()
+		if err != nil {
+			// Log the error but continue - the command might not be supported in all Redis versions
+			// or the user might not have permission to run CONFIG commands
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to enable Redis latency monitoring",
+				"error", err,
+			)
+		}
+	}
 
 	return newClient
 }

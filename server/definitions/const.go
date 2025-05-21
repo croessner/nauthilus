@@ -750,35 +750,7 @@ const (
 	LDAPPoolAuth
 )
 
-// LDAPPoolExhausted represents the constant value used to indicate that the LDAP connection pool is exhausted and there are no available connections.
-// When the connection pool is exhausted, the application needs to wait for a free connection before continuing.
-// Example usage:
-// In the `waitForFreeConnection` function:
-//
-//	if ldapConnIndex == global.LDAPPoolExhausted {
-//	    // Pool exhausted. Waiting for a free connection.
-//	    ldapWaitGroup.Wait()
-//	    // Pool got free connections.
-//	}
-//
-// In the `getConnection` function:
-//
-//	for {
-//	    // ...
-//	    connNumber = l.processConnection(index, guid)
-//	    if connNumber != global.LDAPPoolExhausted {
-//	        break
-//	    }
-//	    l.waitForFreeConnection(guid, connNumber, ldapWaitGroup)
-//	}
-//
-// In the `processConnection` function:
-//
-//	if l.conn[index].state == global.LDAPPoolExhausted {
-//	    // Connection is already in use. Skip to the next.
-//	    return global.LDAPPoolExhausted
-//	}
-//	// ... (additional code omitted for brevity)
+// LDAPPoolExhausted represents the state where no LDAP connections are available in the connection pool.
 const LDAPPoolExhausted = -1
 
 // InvalidCode represents the error message for an invalid TOTP code.
