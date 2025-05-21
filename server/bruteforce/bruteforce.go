@@ -78,6 +78,9 @@ type BucketManager interface {
 	// WithAccountName sets the account name for the BucketManager instance and returns the updated BucketManager.
 	WithAccountName(accountName string) BucketManager
 
+	// WithProtocol sets the protocol for the BucketManager instance and returns the updated BucketManager.
+	WithProtocol(protocol string) BucketManager
+
 	// WithAdditionalFeatures sets additional features for the BucketManager instance and returns the updated BucketManager.
 	// These features can be used by ML-based detection systems to enhance their prediction capabilities.
 	WithAdditionalFeatures(features map[string]any) BucketManager
@@ -130,6 +133,7 @@ type bucketManagerImpl struct {
 	accountName        string
 	bruteForceName     string
 	featureName        string
+	protocol           string
 	additionalFeatures map[string]any
 }
 
@@ -171,6 +175,7 @@ func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
 // GetBruteForceBucketRedisKey generates a Redis key for brute force protection based on the given rule configuration.
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	var ipProto string
+	var protocolPart string
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
@@ -189,8 +194,30 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		ipProto = "6"
 	}
 
+	// Add protocol information to the key if the rule has OnlyProtocols specified
+	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
+		// Check if the current protocol is in the OnlyProtocols list
+		protocolMatched := false
+		for _, p := range rule.OnlyProtocols {
+			if p == bm.protocol {
+				protocolMatched = true
+
+				break
+			}
+		}
+
+		if protocolMatched {
+			protocolPart = bm.protocol
+		}
+	}
+
 	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
 		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
+
+	// Append protocol part with a separator if it exists
+	if protocolPart != "" {
+		key += ":" + protocolPart
+	}
 
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
 
@@ -222,6 +249,13 @@ func (bm *bucketManagerImpl) WithAccountName(accountName string) BucketManager {
 // These features can be used by ML-based detection systems to enhance their prediction capabilities.
 func (bm *bucketManagerImpl) WithAdditionalFeatures(features map[string]any) BucketManager {
 	bm.additionalFeatures = features
+
+	return bm
+}
+
+// WithProtocol sets the protocol for the bucket manager and returns the modified BucketManager instance.
+func (bm *bucketManagerImpl) WithProtocol(protocol string) BucketManager {
+	bm.protocol = protocol
 
 	return bm
 }
@@ -263,8 +297,25 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		ruleName string
 		err      error
 	)
+	matchedAnyRule := false
 
 	for ruleNumber = range rules {
+		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
+		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+			protocolMatched := false
+			for _, p := range rules[ruleNumber].OnlyProtocols {
+				if p == bm.protocol {
+					protocolMatched = true
+
+					break
+				}
+			}
+
+			if !protocolMatched {
+				continue
+			}
+		}
+
 		if *network, err = bm.getNetwork(&rules[ruleNumber]); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
@@ -272,6 +323,9 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		} else if network == nil {
 			continue
 		}
+
+		// At this point, we've found at least one rule that matches our criteria
+		matchedAnyRule = true
 
 		if ruleName, err = bm.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
 			alreadyTriggered = true
@@ -283,6 +337,15 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		}
 	}
 
+	// Log a warning if no rules matched
+	if !matchedAnyRule {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyBruteForce, "No matching brute force buckets found",
+			"protocol", bm.protocol,
+			"client_ip", bm.clientIP)
+	}
+
 	return withError, alreadyTriggered, ruleNumber
 }
 
@@ -290,8 +353,25 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	var err error
+	matchedAnyRule := false
 
 	for ruleNumber = range rules {
+		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
+		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+			protocolMatched := false
+			for _, p := range rules[ruleNumber].OnlyProtocols {
+				if p == bm.protocol {
+					protocolMatched = true
+
+					break
+				}
+			}
+
+			if !protocolMatched {
+				continue
+			}
+		}
+
 		// Skip, where the current IP address does not match the current rule
 		if *network, err = bm.getNetwork(&rules[ruleNumber]); err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
@@ -300,6 +380,9 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		} else if network == nil {
 			continue
 		}
+
+		// At this point, we've found at least one rule that matches our criteria
+		matchedAnyRule = true
 
 		bm.loadBruteForceBucketCounter(&rules[ruleNumber])
 
@@ -311,6 +394,15 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 
 			break
 		}
+	}
+
+	// Log a warning if no rules matched
+	if !matchedAnyRule {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyBruteForce, "No matching brute force buckets found",
+			"protocol", bm.protocol,
+			"client_ip", bm.clientIP)
 	}
 
 	return withError, ruleTriggered, ruleNumber
@@ -522,6 +614,23 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
+	// If the rule has OnlyProtocols specified, we need to check if the current protocol matches
+	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
+		protocolMatched := false
+		for _, p := range rule.OnlyProtocols {
+			if p == bm.protocol {
+				protocolMatched = true
+
+				break
+			}
+		}
+
+		if !protocolMatched {
+			// Skip this rule if the protocol doesn't match
+			return "", nil
+		}
+	}
+
 	result, err := bm.getPreResultBruteForceRedis(rule)
 	if result == "" {
 		return "", err
@@ -533,6 +642,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 		} else {
 			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
+			// For protocol-specific rules, we need to delete the entry with the network string as the key
 			if removed, err := rediscli.GetClient().GetWriteHandle().HDel(bm.ctx, key, network.String()).Result(); err != nil {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 			} else {

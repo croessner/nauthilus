@@ -110,7 +110,8 @@ type BruteForceRule struct {
 	CIDR           uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
 	IPv4           bool
 	IPv6           bool
-	FailedRequests uint `mapstructure:"failed_requests" validate:"required,min=1"`
+	FailedRequests uint     `mapstructure:"failed_requests" validate:"required,min=1"`
+	OnlyProtocols  []string `mapstructure:"only_protocols" validate:"omitempty"`
 }
 
 func (b *BruteForceRule) String() string {
