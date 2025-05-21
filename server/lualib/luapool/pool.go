@@ -47,6 +47,9 @@ func resetLuaState(L *lua.LState) {
 	// Clear the context
 	L.SetContext(nil)
 
+	// Clear the metatable for nil
+	L.SetMetatable(lua.LNil, lua.LNil)
+
 	// Clear specific global functions that are defined in Lua scripts
 	// These functions need to be reset because they might be redefined in different scripts
 	L.SetGlobal(definitions.LuaFnCallFilter, lua.LNil)
@@ -60,17 +63,77 @@ func resetLuaState(L *lua.LState) {
 	// Clear the backend result type metatable which is recreated for each request
 	L.SetGlobal(definitions.LuaBackendResultTypeName, lua.LNil)
 
-	// Clear the nauthilus_backend and nauthilus_context modules from the package.loaded table
-	// This ensures that the modules will be reloaded with fresh data on the next request
+	// Clear the dynamic_loader function to ensure it's recreated for each request
+	L.SetGlobal("dynamic_loader", lua.LNil)
+
+	// Reset the global environment
+	newEnv := L.NewTable()
+	L.SetGlobal("_G", newEnv)
+
+	// Clear all modules from the package.loaded table
+	// This ensures that all modules will be reloaded with fresh data on the next request
 	packageTable := L.GetGlobal("package")
 	if packageTable.Type() == lua.LTTable {
 		loadedTable := L.GetField(packageTable, "loaded")
 		if loadedTable.Type() == lua.LTTable {
+			// Clear all Nauthilus modules
 			L.SetField(loadedTable, definitions.LuaModBackend, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModContext, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModMail, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModPassword, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModRedis, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModMisc, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModLDAP, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModHTTPRequest, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModPrometheus, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModSoftWhitelist, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModBruteForce, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModDNS, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModNeural, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModPsnet, lua.LNil)
+
+			// Clear GLua modules
+			L.SetField(loadedTable, definitions.LuaModGLuaCrypto, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLuaHTTP, lua.LNil)
+
+			// Clear GLL modules
+			L.SetField(loadedTable, definitions.LuaModGLLPlugin, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLArgParse, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLBase64, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLCertUtil, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLChef, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLCloudWatch, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLCmd, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLCrypto, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLDB, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLFilePath, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLGOOS, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLHTTP, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLHumanize, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLInspect, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLIOUtil, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLJSON, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLLog, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLPb, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLPProf, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLPrometheus, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLRegExp, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLRuntime, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLShellEscape, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLStats, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLStorage, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLStrings, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLTAC, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLTCP, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLTelegram, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLTemplate, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLTime, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLXMLPath, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLYAML, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLZabbix, lua.LNil)
+
+			// Clear non-constant modules that are directly required in Lua scripts
+			L.SetField(loadedTable, "nauthilus_util", lua.LNil)
 		}
 	}
-
-	// Note: We don't clear the dynamic_loader function or any modules loaded by it
-	// as they need to persist between uses of the Lua state from the pool
 }
