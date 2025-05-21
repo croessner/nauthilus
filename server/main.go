@@ -70,8 +70,6 @@ func main() {
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)
 
-	go adjustGCBasedOnLoad(ctx)
-
 	// Backend server monitoring feature
 	go runBackendServerMonitoring(ctx, store, monitoringTicker)
 
