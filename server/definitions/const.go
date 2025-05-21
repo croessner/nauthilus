@@ -129,6 +129,12 @@ const (
 	// LogKeyLatency represents the latency of a network operation for performance logging.
 	LogKeyLatency = "latency"
 
+	// LogKeyFilterLatency represents the latency of filter operations for performance logging.
+	LogKeyFilterLatency = "filter_latency"
+
+	// LogKeyFeatureLatency represents the latency of feature operations for performance logging.
+	LogKeyFeatureLatency = "feature_latency"
+
 	// LogKeyStatsAlloc represents the stats for allocations logged.
 	LogKeyStatsAlloc = "stats_alloc"
 

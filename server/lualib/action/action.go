@@ -234,6 +234,19 @@ func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 
 // handleRequest processes an HTTP request using Lua scripts and logs execution results for each script.
 func (aw *Worker) handleRequest(httpRequest *http.Request) {
+	startTime := time.Now()
+	defer func() {
+		latency := time.Since(startTime)
+		logs := new(lualib.CustomLogKeyValue)
+		logs.Set(definitions.LogKeyLatency, fmt.Sprintf("%v", latency))
+		level.Info(log.Logger).Log(
+			append([]any{
+				definitions.LogKeyGUID, aw.luaActionRequest.Session,
+				definitions.LogKeyMsg, "Lua action handler latency",
+			}, toLoggable(logs)...)...,
+		)
+	}()
+
 	if len(aw.actionScripts) == 0 {
 		aw.luaActionRequest.FinishedChan <- Done{}
 
@@ -311,6 +324,13 @@ func getTaskName(action *LuaScriptAction) string {
 // Returns the result of the Lua script execution as an integer.
 func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs *lualib.CustomLogKeyValue) (result int) {
 	var err error
+
+	scriptStartTime := time.Now()
+	defer func() {
+		scriptLatency := time.Since(scriptStartTime)
+		scriptName := getTaskName(aw.actionScripts[index])
+		logs.Set(fmt.Sprintf("latency_%s", scriptName), fmt.Sprintf("%v", scriptLatency))
+	}()
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAction, getTaskName(aw.actionScripts[index]))
 
