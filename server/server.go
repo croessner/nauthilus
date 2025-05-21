@@ -951,6 +951,15 @@ func initializeMLMetrics(ctx context.Context) {
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
 func runConnectionManager(ctx context.Context) {
+	// Only run connection monitoring if it's enabled in the configuration
+	if !config.GetFile().GetServer().GetKeepAlive().IsMonitorConnectionsEnabled() {
+		level.Info(log.Logger).Log(definitions.LogKeyMsg, "Connection monitoring is disabled")
+
+		return
+	}
+
+	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Starting connection monitoring")
+
 	manager := connmgr.GetConnectionManager()
 
 	manager.Register(ctx, config.GetFile().GetServer().Address, "local", "HTTP server")
@@ -1001,6 +1010,9 @@ func adjustGCBasedOnLoad(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
+	// Set initial GC percent to default
+	debug.SetGCPercent(100)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1009,11 +1021,11 @@ func adjustGCBasedOnLoad(ctx context.Context) {
 			currentLoad := getCurrentLoadFactor()
 
 			if currentLoad > 0.8 { // High load
-				debug.SetGCPercent(300) // Less frequent GC
+				debug.SetGCPercent(150) // Slightly less frequent GC, but still regular enough to prevent memory buildup
 			} else if currentLoad < 0.3 { // Low load
 				debug.SetGCPercent(100) // Default GC frequency
 			} else {
-				debug.SetGCPercent(200) // Moderate GC frequency
+				debug.SetGCPercent(125) // Moderate GC frequency
 			}
 		}
 	}
