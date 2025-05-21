@@ -396,10 +396,11 @@ func (l *Log) IsLogUsesColor() bool {
 	return l.Color
 }
 
-// Insights is a configuration structure for enabling profiling and block profiling capabilities.
+// Insights is a configuration structure for enabling profiling, block profiling, and connection monitoring capabilities.
 type Insights struct {
 	EnablePprof        bool `mapstructure:"enable_pprof"`
 	EnableBlockProfile bool `mapstructure:"enable_block_profile"`
+	MonitorConnections bool `mapstructure:"monitor_connections"`
 }
 
 // IsPprofEnabled checks if pprof profiling is enabled in the Insights configuration.
@@ -410,6 +411,11 @@ func (i *Insights) IsPprofEnabled() bool {
 // IsBlockProfileEnabled checks if block profiling is enabled in the Insights configuration.
 func (i *Insights) IsBlockProfileEnabled() bool {
 	return i.EnableBlockProfile
+}
+
+// IsMonitorConnectionsEnabled returns true if connection monitoring is enabled.
+func (i *Insights) IsMonitorConnectionsEnabled() bool {
+	return i.MonitorConnections
 }
 
 // DNS represents the Domain Name System configuration settings, including resolver, timeout, and client IP resolution options.
@@ -889,7 +895,6 @@ type KeepAlive struct {
 	Timeout             time.Duration `mapstructure:"timeout" validate:"omitempty,gt=0"`
 	MaxIdleConns        int           `mapstructure:"max_idle_connections" validate:"omitempty,gte=1"`
 	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host" validate:"omitempty,gte=0"`
-	MonitorConnections  bool          `mapstructure:"monitor_connections"`
 }
 
 // IsEnabled returns true if keep-alive optimization is enabled, otherwise false.
@@ -910,9 +915,4 @@ func (k *KeepAlive) GetMaxIdleConns() int {
 // GetMaxIdleConnsPerHost returns the maximum number of idle connections per host.
 func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 	return k.MaxIdleConnsPerHost
-}
-
-// IsMonitorConnectionsEnabled returns true if connection monitoring is enabled.
-func (k *KeepAlive) IsMonitorConnectionsEnabled() bool {
-	return k.MonitorConnections
 }

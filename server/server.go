@@ -951,7 +951,7 @@ func initializeMLMetrics(ctx context.Context) {
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
 func runConnectionManager(ctx context.Context) {
 	// Only run connection monitoring if it's enabled in the configuration
-	if !config.GetFile().GetServer().GetKeepAlive().IsMonitorConnectionsEnabled() {
+	if !config.GetFile().GetServer().GetInsights().IsMonitorConnectionsEnabled() {
 		level.Info(log.Logger).Log(definitions.LogKeyMsg, "Connection monitoring is disabled")
 
 		return
