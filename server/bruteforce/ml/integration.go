@@ -839,6 +839,11 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 // GetBruteForceName returns the name of the brute force detection mechanism, using ML if detected, or fallback otherwise.
 func (m *MLBucketManager) GetBruteForceName() string {
 	if m.mlDetected {
+		bucketName := m.BucketManager.GetBruteForceName()
+		if bucketName != "" {
+			return bucketName + ",neural_network"
+		}
+
 		return "neural_network"
 	}
 
