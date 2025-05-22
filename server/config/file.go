@@ -203,6 +203,9 @@ type File interface {
 	// GetClientHost returns the client's hostname.
 	GetClientHost() string
 
+	// GetOIDCCID returns the OpenID Connect Client ID as a string.
+	GetOIDCCID() string
+
 	// GetClientIP retrieves the client's IP address.
 	GetClientIP() string
 
@@ -1244,6 +1247,15 @@ func (f *FileSettings) GetLocalPort() string {
 	return f.Server.DefaultHTTPRequestHeader.LocalPort
 }
 
+// GetOIDCCID retrieves the OIDC Client ID from the FileSettings' DefaultHTTPRequestHeader. Returns an empty string if nil.
+func (f *FileSettings) GetOIDCCID() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Server.DefaultHTTPRequestHeader.GetOIDCCID()
+}
+
 // GetClientIP returns the HTTP request header that holds the client IP of the request
 func (f *FileSettings) GetClientIP() string {
 	if f == nil {
@@ -1678,6 +1690,7 @@ func (f *FileSettings) setDefaultHeaders() error {
 		"X-Auth-Port":             &f.Server.DefaultHTTPRequestHeader.LocalPort,
 		"X-Client-Port":           &f.Server.DefaultHTTPRequestHeader.ClientPort,
 		"X-Client-ID":             &f.Server.DefaultHTTPRequestHeader.ClientID,
+		"X-OIDC-CID":              &f.Server.DefaultHTTPRequestHeader.OIDCCID,
 
 		"X-SSL":                   &f.Server.DefaultHTTPRequestHeader.SSL,
 		"X-SSL-Session-ID":        &f.Server.DefaultHTTPRequestHeader.SSLSessionID,

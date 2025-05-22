@@ -152,6 +152,9 @@ type JSONRequest struct {
 
 	// SSLFingerprint represents the fingerprint of an SSL certificate.
 	SSLFingerprint string `json:"ssl_fingerprint,omitempty"`
+
+	// OIDCCID represents the OIDC Client ID used for authentication.
+	OIDCCID string `json:"oidc_cid,omitempty"`
 }
 
 // State is implemented by AuthState and defines the methods to interact with the authentication process.
@@ -257,6 +260,9 @@ type State interface {
 
 	// SetSSLFingerprint sets the SSL fingerprint value for the current state.
 	SetSSLFingerprint(sslFingerprint string)
+
+	// SetOIDCCID sets the OIDC Client ID for the authentication state.
+	SetOIDCCID(oidcCID string)
 
 	// GetAccountOk returns the account field value and a boolean indicating if the account field is present and valid.
 	GetAccountOk() (string, bool)
@@ -455,6 +461,9 @@ type AuthState struct {
 
 	BackendName string
 
+	// OIDCCID is the OIDC Client ID used for authentication.
+	OIDCCID string
+
 	// TOTPSecret is used to store a TOTP secret in an SQL Database.
 	TOTPSecret *string
 
@@ -568,6 +577,7 @@ func (a *AuthState) reset() {
 	a.BruteForceName = ""
 	a.FeatureName = ""
 	a.BackendName = ""
+	a.OIDCCID = ""
 	a.UsedBackendIP = ""
 	a.UsedBackendPort = 0
 	a.SourcePassDBBackend = definitions.BackendUnknown
@@ -828,6 +838,11 @@ func (a *AuthState) SetSSLSerial(sslSerial string) {
 // SetSSLFingerprint sets the SSL fingerprint for the AuthState instance. It updates the SSLFingerprint field with the provided value.
 func (a *AuthState) SetSSLFingerprint(sslFingerprint string) {
 	a.SSLFingerprint = sslFingerprint
+}
+
+// SetOIDCCID sets the OIDC Client ID for the AuthState instance. It updates the OIDCCID field with the provided value.
+func (a *AuthState) SetOIDCCID(oidcCID string) {
+	a.OIDCCID = oidcCID
 }
 
 // SetNoAuth configures the authentication state to enable or disable "NoAuth" mode based on the provided boolean value.
@@ -2835,6 +2850,7 @@ func setAuthenticationFields(auth State, request *JSONRequest) {
 	auth.SetSSLCipher(request.XSSLCipher)
 	auth.SetSSLSerial(request.SSLSerial)
 	auth.SetSSLFingerprint(request.SSLFingerprint)
+	auth.SetOIDCCID(request.OIDCCID)
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
@@ -3026,6 +3042,7 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		return nil
 	}
 
+	a.OIDCCID = ctx.GetHeader(config.GetFile().GetOIDCCID())
 	a.ClientIP = ctx.GetHeader(config.GetFile().GetClientIP())
 	a.XClientPort = ctx.GetHeader(config.GetFile().GetClientPort())
 	a.XClientID = ctx.GetHeader(config.GetFile().GetClientID())

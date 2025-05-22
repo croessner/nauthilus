@@ -69,6 +69,9 @@ type FlushRuleCmdStatus struct {
 	// Protocol is the protocol associated with the rule that was flushed
 	Protocol string `json:"protocol,omitempty"`
 
+	// OIDCCID is the OIDC Client ID associated with the rule that was flushed
+	OIDCCID string `json:"oidc_cid,omitempty"`
+
 	// RemovedKeys contains a list of Redis keys that were successfully removed during the flush operation.
 	RemovedKeys []string `json:"removed_keys"`
 
@@ -90,6 +93,10 @@ type FlushRuleCmd struct {
 	// Protocol is the optional protocol associated with the rule to be flushed.
 	// If specified, only rules with matching protocol will be flushed.
 	Protocol string `json:"protocol,omitempty"`
+
+	// OIDCCID is the optional OIDC Client ID associated with the rule to be flushed.
+	// If specified, only rules with matching OIDC Client ID will be flushed.
+	OIDCCID string `json:"oidc_cid,omitempty"`
 }
 
 // BlockedIPAddresses represents a structure to hold blocked IP addresses retrieved from Redis.
@@ -725,6 +732,7 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 			IPAddress:   ipCmd.IPAddress,
 			RuleName:    ipCmd.RuleName,
 			Protocol:    ipCmd.Protocol,
+			OIDCCID:     ipCmd.OIDCCID,
 			RemovedKeys: removedKeys,
 			Status:      statusMsg,
 		},
@@ -768,6 +776,11 @@ func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) 
 			// Set the protocol if specified
 			if ipCmd.Protocol != "" {
 				bm = bm.WithProtocol(ipCmd.Protocol)
+			}
+
+			// Set the OIDC Client ID if specified
+			if ipCmd.OIDCCID != "" {
+				bm = bm.WithOIDCCID(ipCmd.OIDCCID)
 			}
 
 			if removedKey, err := bm.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {

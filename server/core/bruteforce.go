@@ -294,6 +294,11 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		bm = bm.WithProtocol(a.Protocol.Get())
 	}
 
+	// Set the OIDC Client ID on the bucket manager
+	if a.OIDCCID != "" {
+		bm = bm.WithOIDCCID(a.OIDCCID)
+	}
+
 	defer func() {
 		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
 			mlBM.Close()
