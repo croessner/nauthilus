@@ -194,11 +194,11 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		ipProto = "6"
 	}
 
-	// Add protocol information to the key if the rule has OnlyProtocols specified
-	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
-		// Check if the current protocol is in the OnlyProtocols list
+	// Add protocol information to the key if the rule has FilterByProtocol specified
+	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
+		// Check if the current protocol is in the FilterByProtocol list
 		protocolMatched := false
-		for _, p := range rule.OnlyProtocols {
+		for _, p := range rule.FilterByProtocol {
 			if p == bm.protocol {
 				protocolMatched = true
 
@@ -300,10 +300,10 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
-		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
-		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
+		if len(rules[ruleNumber].FilterByProtocol) > 0 && bm.protocol != "" {
 			protocolMatched := false
-			for _, p := range rules[ruleNumber].OnlyProtocols {
+			for _, p := range rules[ruleNumber].FilterByProtocol {
 				if p == bm.protocol {
 					protocolMatched = true
 
@@ -356,10 +356,10 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
-		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
-		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
+		if len(rules[ruleNumber].FilterByProtocol) > 0 && bm.protocol != "" {
 			protocolMatched := false
-			for _, p := range rules[ruleNumber].OnlyProtocols {
+			for _, p := range rules[ruleNumber].FilterByProtocol {
 				if p == bm.protocol {
 					protocolMatched = true
 
@@ -614,10 +614,10 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
-	// If the rule has OnlyProtocols specified, we need to check if the current protocol matches
-	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
+	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
+	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
 		protocolMatched := false
-		for _, p := range rule.OnlyProtocols {
+		for _, p := range rule.FilterByProtocol {
 			if p == bm.protocol {
 				protocolMatched = true
 
