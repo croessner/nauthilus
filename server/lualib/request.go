@@ -118,6 +118,9 @@ type CommonRequest struct {
 	// Protocol stores the protocol that the user used to authenticate.
 	Protocol string
 
+	// OIDCCID represents the OpenID Connect Client ID used for authentication.
+	OIDCCID string
+
 	// BruteForceName stores the name of the brute force protection mechanism.
 	BruteForceName string
 
@@ -201,6 +204,7 @@ func (c *CommonRequest) Reset() {
 	c.DisplayName = ""
 	c.Password = ""
 	c.Protocol = ""
+	c.OIDCCID = ""
 	c.BruteForceName = ""
 	c.FeatureName = ""
 	c.StatusMessage = nil
@@ -256,6 +260,7 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(definitions.LuaRequestDisplayName, lua.LString(c.DisplayName))
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(c.Password))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))
+	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
 	request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))

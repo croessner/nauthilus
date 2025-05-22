@@ -1162,6 +1162,16 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 				mlManager.SetNoAuth(a.NoAuth)
 			}
 
+			// Set the protocol if available
+			if a.Protocol != nil && a.Protocol.Get() != "" {
+				mlBM = mlBM.WithProtocol(a.Protocol.Get())
+			}
+
+			// Set the OIDC Client ID if available
+			if a.OIDCCID != "" {
+				mlBM = mlBM.WithOIDCCID(a.OIDCCID)
+			}
+
 			// Check if additional features are available from the Context
 			if a.Context != nil {
 				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
@@ -1761,6 +1771,7 @@ func executeLuaPostAction(
 	displayName string,
 	password string,
 	protocol string,
+	oidccid string,
 	bruteForceName string,
 	featureName string,
 	statusMessage string,
@@ -1818,6 +1829,7 @@ func executeLuaPostAction(
 	commonRequest.DisplayName = displayName
 	commonRequest.Password = password
 	commonRequest.Protocol = protocol
+	commonRequest.OIDCCID = oidccid
 	commonRequest.BruteForceName = bruteForceName
 	commonRequest.FeatureName = featureName
 	commonRequest.StatusMessage = &statusMessage
@@ -1891,6 +1903,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 		a.GetDisplayName(),
 		a.Password,
 		a.Protocol.Get(),
+		a.OIDCCID,
 		a.BruteForceName,
 		a.FeatureName,
 		statusMessageCopy,
@@ -2116,18 +2129,38 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 			if config.GetEnvironment().GetExperimentalML() {
 				bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 					WithUsername(a.Username).
-					WithAccountName(accountName).
+					WithPassword(a.Password).
 					WithAccountName(accountName)
 
 				// Set NoAuth flag
 				if mlManager, ok := bm.(*ml.MLBucketManager); ok {
 					mlManager.SetNoAuth(a.NoAuth)
 				}
+
+				// Set the protocol if available
+				if a.Protocol != nil && a.Protocol.Get() != "" {
+					bm = bm.WithProtocol(a.Protocol.Get())
+				}
+
+				// Set the OIDC Client ID if available
+				if a.OIDCCID != "" {
+					bm = bm.WithOIDCCID(a.OIDCCID)
+				}
 			} else {
 				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 					WithUsername(a.Username).
-					WithAccountName(accountName).
+					WithPassword(a.Password).
 					WithAccountName(accountName)
+
+				// Set the protocol if available
+				if a.Protocol != nil && a.Protocol.Get() != "" {
+					bm = bm.WithProtocol(a.Protocol.Get())
+				}
+
+				// Set the OIDC Client ID if available
+				if a.OIDCCID != "" {
+					bm = bm.WithOIDCCID(a.OIDCCID)
+				}
 			}
 
 			bm.ProcessPWHist()
@@ -2247,18 +2280,38 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	if config.GetEnvironment().GetExperimentalML() {
 		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
-			WithAccountName(accountName).
+			WithPassword(a.Password).
 			WithAccountName(accountName)
 
 		// Set NoAuth flag
 		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
 			mlManager.SetNoAuth(a.NoAuth)
 		}
+
+		// Set the protocol if available
+		if a.Protocol != nil && a.Protocol.Get() != "" {
+			bm = bm.WithProtocol(a.Protocol.Get())
+		}
+
+		// Set the OIDC Client ID if available
+		if a.OIDCCID != "" {
+			bm = bm.WithOIDCCID(a.OIDCCID)
+		}
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
-			WithAccountName(accountName).
+			WithPassword(a.Password).
 			WithAccountName(accountName)
+
+		// Set the protocol if available
+		if a.Protocol != nil && a.Protocol.Get() != "" {
+			bm = bm.WithProtocol(a.Protocol.Get())
+		}
+
+		// Set the OIDC Client ID if available
+		if a.OIDCCID != "" {
+			bm = bm.WithOIDCCID(a.OIDCCID)
+		}
 	}
 
 	bm.SaveFailedPasswordCounterInRedis()
@@ -2281,18 +2334,38 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 		if config.GetEnvironment().GetExperimentalML() {
 			bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).
-				WithAccountName(accountName).
+				WithPassword(a.Password).
 				WithAccountName(accountName)
 
 			// Set NoAuth flag
 			if mlManager, ok := bm.(*ml.MLBucketManager); ok {
 				mlManager.SetNoAuth(a.NoAuth)
 			}
+
+			// Set the protocol if available
+			if a.Protocol != nil && a.Protocol.Get() != "" {
+				bm = bm.WithProtocol(a.Protocol.Get())
+			}
+
+			// Set the OIDC Client ID if available
+			if a.OIDCCID != "" {
+				bm = bm.WithOIDCCID(a.OIDCCID)
+			}
 		} else {
 			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).
-				WithAccountName(accountName).
+				WithPassword(a.Password).
 				WithAccountName(accountName)
+
+			// Set the protocol if available
+			if a.Protocol != nil && a.Protocol.Get() != "" {
+				bm = bm.WithProtocol(a.Protocol.Get())
+			}
+
+			// Set the OIDC Client ID if available
+			if a.OIDCCID != "" {
+				bm = bm.WithOIDCCID(a.OIDCCID)
+			}
 		}
 
 		bm.LoadAllPasswordHistories()
@@ -2412,6 +2485,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 	commonRequest.DisplayName = a.GetDisplayName()
 	commonRequest.Password = a.Password
 	commonRequest.Protocol = a.Protocol.String()
+	commonRequest.OIDCCID = a.OIDCCID
 	commonRequest.BruteForceName = "" // unavailable
 	commonRequest.FeatureName = ""    // unavailable
 	commonRequest.StatusMessage = &a.StatusMessage

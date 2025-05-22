@@ -623,7 +623,13 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	}
 
 	if bm.password == "" {
-		panic("password is empty")
+		// Skip processing if password is empty
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping SaveFailedPasswordCounterInRedis: password is empty",
+		)
+
+		return
 	}
 
 	keys = append(keys, bm.getPasswordHistoryRedisHashKey(true))
@@ -775,7 +781,13 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	if bm.password == "" {
-		panic("password is empty")
+		// Skip processing if password is empty
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
+		)
+
+		return false, nil
 	}
 
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
@@ -898,7 +910,13 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
 		if bm.username == "" {
-			panic("username is empty")
+			// Skip processing if username is empty
+			level.Debug(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Skipping getPasswordHistoryRedisHashKey: username is empty",
+			)
+
+			return ""
 		}
 
 		accountName := bm.accountName

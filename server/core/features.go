@@ -128,6 +128,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	commonRequest.DisplayName = ""  // unavailable
 	commonRequest.Password = a.Password
 	commonRequest.Protocol = a.Protocol.String()
+	commonRequest.OIDCCID = a.OIDCCID
 	commonRequest.BruteForceName = "" // unavailable
 	commonRequest.FeatureName = ""    // unavailable
 	commonRequest.StatusMessage = &a.StatusMessage
@@ -575,6 +576,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	commonRequest.AccountField = a.GetAccountField()
 	commonRequest.Password = a.Password
 	commonRequest.Protocol = a.Protocol.Get()
+	commonRequest.OIDCCID = a.OIDCCID
 	commonRequest.FeatureName = a.FeatureName
 	commonRequest.StatusMessage = &a.StatusMessage
 	commonRequest.XSSL = a.XSSL
