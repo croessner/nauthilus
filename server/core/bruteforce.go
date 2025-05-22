@@ -228,6 +228,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 			commonRequest.DisplayName = ""  // unavailable
 			commonRequest.Password = a.Password
 			commonRequest.Protocol = a.Protocol.String()
+			commonRequest.OIDCCID = a.OIDCCID
 			commonRequest.BruteForceName = "" // unavailable
 			commonRequest.FeatureName = "brute_force"
 			commonRequest.StatusMessage = &a.StatusMessage
@@ -292,6 +293,11 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	// Set the protocol on the bucket manager
 	if a.Protocol != nil && a.Protocol.Get() != "" {
 		bm = bm.WithProtocol(a.Protocol.Get())
+	}
+
+	// Set the OIDC Client ID on the bucket manager
+	if a.OIDCCID != "" {
+		bm = bm.WithOIDCCID(a.OIDCCID)
 	}
 
 	defer func() {
@@ -416,6 +422,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 			mlBM = mlBM.WithProtocol(a.Protocol.Get())
 		}
 
+		// Set the OIDC Client ID if available
+		if a.OIDCCID != "" {
+			mlBM = mlBM.WithOIDCCID(a.OIDCCID)
+		}
+
 		// Check if additional features are available from the Context
 		if a.Context != nil {
 			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
@@ -436,9 +447,46 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		if a.Protocol != nil && a.Protocol.Get() != "" {
 			bm = bm.WithProtocol(a.Protocol.Get())
 		}
+
+		// Set the OIDC Client ID if available
+		if a.OIDCCID != "" {
+			bm = bm.WithOIDCCID(a.OIDCCID)
+		}
 	}
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
+		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
+		if len(rule.FilterByProtocol) > 0 && a.Protocol != nil && a.Protocol.Get() != "" {
+			protocolMatched := false
+			for _, p := range rule.FilterByProtocol {
+				if p == a.Protocol.Get() {
+					protocolMatched = true
+
+					break
+				}
+			}
+
+			if !protocolMatched {
+				continue
+			}
+		}
+
+		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
+		if len(rule.FilterByOIDCCID) > 0 && a.OIDCCID != "" {
+			oidcCIDMatched := false
+			for _, cid := range rule.FilterByOIDCCID {
+				if cid == a.OIDCCID {
+					oidcCIDMatched = true
+
+					break
+				}
+			}
+
+			if !oidcCIDMatched {
+				continue
+			}
+		}
+
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
 			bm.SaveBruteForceBucketCounterToRedis(&rule)
 		}

@@ -31,6 +31,7 @@ function nauthilus_call_action(request)
     local pwnd_info = "n/a"
     local headline = "Information"
     local log_prefix = ""
+    local brute_force_bucket = "n/a"
     local ts
 
     -- Get result table
@@ -45,6 +46,9 @@ function nauthilus_call_action(request)
             send_message = true
             headline = "Brute force"
             log_prefix = "brute_force_"
+            if request.brute_force_bucket and request.brute_force_bucket ~= "" then
+                brute_force_bucket = request.brute_force_bucket
+            end
         end
 
         -- feature_haproxy (not part of demo plugins)
@@ -152,13 +156,14 @@ function nauthilus_call_action(request)
         values.unique_user_id = unique_user_id
         values.username = username
         values.pwnd_info = pwnd_info
+        values.brute_force_bucket = brute_force_bucket
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })
         local _, err_bat = bot:sendMessage({
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
-            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}", values)
+            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_prometheus.decrement_gauge(HCCR, { service = N })

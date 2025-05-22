@@ -719,6 +719,7 @@ type DefaultHTTPRequestHeader struct {
 	SSLProtocol        string `mapstructure:"ssl_protocol" validate:"omitempty,printascii,excludesall= "`
 	SSLSerial          string `mapstructure:"ssl_serial" validate:"omitempty,printascii,excludesall= "`
 	SSLFingerprint     string `mapstructure:"ssl_fingerprint" validate:"omitempty,printascii,excludesall= "`
+	OIDCCID            string `mapstructure:"oidc_cid" validate:"omitempty,printascii,excludesall= "`
 }
 
 // GetUsername retrieves the username value from the DefaultHTTPRequestHeader struct.
@@ -859,6 +860,11 @@ func (d *DefaultHTTPRequestHeader) GetSSLSerial() string {
 // GetSSLFingerprint retrieves the SSL fingerprint value from the DefaultHTTPRequestHeader struct.
 func (d *DefaultHTTPRequestHeader) GetSSLFingerprint() string {
 	return d.SSLFingerprint
+}
+
+// GetOIDCCID retrieves the OIDC Client ID value from the DefaultHTTPRequestHeader struct.
+func (d *DefaultHTTPRequestHeader) GetOIDCCID() string {
+	return d.OIDCCID
 }
 
 // Compression represents the configuration for HTTP response compression.

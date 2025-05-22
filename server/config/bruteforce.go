@@ -105,13 +105,14 @@ type Tolerate struct {
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown
 // documentation for a description of the field names.
 type BruteForceRule struct {
-	Name           string        `mapstructure:"name" validate:"required"`
-	Period         time.Duration `mapstructure:"period" validate:"required,gt=0,max=8760h"`
-	CIDR           uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
-	IPv4           bool
-	IPv6           bool
-	FailedRequests uint     `mapstructure:"failed_requests" validate:"required,min=1"`
-	OnlyProtocols  []string `mapstructure:"only_protocols" validate:"omitempty"`
+	Name             string        `mapstructure:"name" validate:"required"`
+	Period           time.Duration `mapstructure:"period" validate:"required,gt=0,max=8760h"`
+	CIDR             uint          `mapstructure:"cidr" validate:"required,min=1,max=128"`
+	IPv4             bool
+	IPv6             bool
+	FailedRequests   uint     `mapstructure:"failed_requests" validate:"required,min=1"`
+	FilterByProtocol []string `mapstructure:"filter_by_protocol" validate:"omitempty"`
+	FilterByOIDCCID  []string `mapstructure:"filter_by_oidc_cid" validate:"omitempty"`
 }
 
 func (b *BruteForceRule) String() string {

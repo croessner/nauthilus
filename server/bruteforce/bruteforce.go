@@ -81,6 +81,9 @@ type BucketManager interface {
 	// WithProtocol sets the protocol for the BucketManager instance and returns the updated BucketManager.
 	WithProtocol(protocol string) BucketManager
 
+	// WithOIDCCID sets the OIDC Client ID for the BucketManager instance and returns the updated BucketManager.
+	WithOIDCCID(oidcCID string) BucketManager
+
 	// WithAdditionalFeatures sets additional features for the BucketManager instance and returns the updated BucketManager.
 	// These features can be used by ML-based detection systems to enhance their prediction capabilities.
 	WithAdditionalFeatures(features map[string]any) BucketManager
@@ -134,6 +137,7 @@ type bucketManagerImpl struct {
 	bruteForceName     string
 	featureName        string
 	protocol           string
+	oidcCID            string
 	additionalFeatures map[string]any
 }
 
@@ -176,6 +180,7 @@ func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	var ipProto string
 	var protocolPart string
+	var oidcCIDPart string
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
@@ -194,11 +199,11 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		ipProto = "6"
 	}
 
-	// Add protocol information to the key if the rule has OnlyProtocols specified
-	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
-		// Check if the current protocol is in the OnlyProtocols list
+	// Add protocol information to the key if the rule has FilterByProtocol specified
+	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
+		// Check if the current protocol is in the FilterByProtocol list
 		protocolMatched := false
-		for _, p := range rule.OnlyProtocols {
+		for _, p := range rule.FilterByProtocol {
 			if p == bm.protocol {
 				protocolMatched = true
 
@@ -211,12 +216,34 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		}
 	}
 
+	// Add OIDC Client ID information to the key if the rule has FilterByOIDCCID specified
+	if len(rule.FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+		// Check if the current OIDC Client ID is in the FilterByOIDCCID list
+		oidcCIDMatched := false
+		for _, cid := range rule.FilterByOIDCCID {
+			if cid == bm.oidcCID {
+				oidcCIDMatched = true
+
+				break
+			}
+		}
+
+		if oidcCIDMatched {
+			oidcCIDPart = bm.oidcCID
+		}
+	}
+
 	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
 		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
 	// Append protocol part with a separator if it exists
 	if protocolPart != "" {
 		key += ":" + protocolPart
+	}
+
+	// Append OIDC Client ID part with a separator if it exists
+	if oidcCIDPart != "" {
+		key += ":oidc:" + oidcCIDPart
 	}
 
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
@@ -256,6 +283,13 @@ func (bm *bucketManagerImpl) WithAdditionalFeatures(features map[string]any) Buc
 // WithProtocol sets the protocol for the bucket manager and returns the modified BucketManager instance.
 func (bm *bucketManagerImpl) WithProtocol(protocol string) BucketManager {
 	bm.protocol = protocol
+
+	return bm
+}
+
+// WithOIDCCID sets the OIDC Client ID for the bucket manager and returns the modified BucketManager instance.
+func (bm *bucketManagerImpl) WithOIDCCID(oidcCID string) BucketManager {
+	bm.oidcCID = oidcCID
 
 	return bm
 }
@@ -300,10 +334,10 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
-		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
-		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
+		if len(rules[ruleNumber].FilterByProtocol) > 0 && bm.protocol != "" {
 			protocolMatched := false
-			for _, p := range rules[ruleNumber].OnlyProtocols {
+			for _, p := range rules[ruleNumber].FilterByProtocol {
 				if p == bm.protocol {
 					protocolMatched = true
 
@@ -312,6 +346,22 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			}
 
 			if !protocolMatched {
+				continue
+			}
+		}
+
+		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
+		if len(rules[ruleNumber].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+			oidcCIDMatched := false
+			for _, cid := range rules[ruleNumber].FilterByOIDCCID {
+				if cid == bm.oidcCID {
+					oidcCIDMatched = true
+
+					break
+				}
+			}
+
+			if !oidcCIDMatched {
 				continue
 			}
 		}
@@ -356,10 +406,10 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
-		// Skip if the rule has OnlyProtocols specified and the current protocol is not in the list
-		if len(rules[ruleNumber].OnlyProtocols) > 0 && bm.protocol != "" {
+		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
+		if len(rules[ruleNumber].FilterByProtocol) > 0 && bm.protocol != "" {
 			protocolMatched := false
-			for _, p := range rules[ruleNumber].OnlyProtocols {
+			for _, p := range rules[ruleNumber].FilterByProtocol {
 				if p == bm.protocol {
 					protocolMatched = true
 
@@ -368,6 +418,22 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			}
 
 			if !protocolMatched {
+				continue
+			}
+		}
+
+		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
+		if len(rules[ruleNumber].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+			oidcCIDMatched := false
+			for _, cid := range rules[ruleNumber].FilterByOIDCCID {
+				if cid == bm.oidcCID {
+					oidcCIDMatched = true
+
+					break
+				}
+			}
+
+			if !oidcCIDMatched {
 				continue
 			}
 		}
@@ -557,7 +623,13 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	}
 
 	if bm.password == "" {
-		panic("password is empty")
+		// Skip processing if password is empty
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping SaveFailedPasswordCounterInRedis: password is empty",
+		)
+
+		return
 	}
 
 	keys = append(keys, bm.getPasswordHistoryRedisHashKey(true))
@@ -614,10 +686,10 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
-	// If the rule has OnlyProtocols specified, we need to check if the current protocol matches
-	if len(rule.OnlyProtocols) > 0 && bm.protocol != "" {
+	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
+	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
 		protocolMatched := false
-		for _, p := range rule.OnlyProtocols {
+		for _, p := range rule.FilterByProtocol {
 			if p == bm.protocol {
 				protocolMatched = true
 
@@ -627,6 +699,23 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 		if !protocolMatched {
 			// Skip this rule if the protocol doesn't match
+			return "", nil
+		}
+	}
+
+	// If the rule has FilterByOIDCCID specified, we need to check if the current OIDC Client ID matches
+	if len(rule.FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+		oidcCIDMatched := false
+		for _, cid := range rule.FilterByOIDCCID {
+			if cid == bm.oidcCID {
+				oidcCIDMatched = true
+
+				break
+			}
+		}
+
+		if !oidcCIDMatched {
+			// Skip this rule if the OIDC Client ID doesn't match
 			return "", nil
 		}
 	}
@@ -692,7 +781,13 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	if bm.password == "" {
-		panic("password is empty")
+		// Skip processing if password is empty
+		level.Debug(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
+		)
+
+		return false, nil
 	}
 
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
@@ -815,7 +910,13 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
 		if bm.username == "" {
-			panic("username is empty")
+			// Skip processing if username is empty
+			level.Debug(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Skipping getPasswordHistoryRedisHashKey: username is empty",
+			)
+
+			return ""
 		}
 
 		accountName := bm.accountName

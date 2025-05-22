@@ -1612,6 +1612,9 @@ const (
 
 	// LuaRequestStatusMessage represents the status message of a request.
 	LuaRequestStatusMessage = "status_message"
+
+	// LuaRequestOIDCCID represents the OpenID Connect Client ID used for authentication.
+	LuaRequestOIDCCID = "oidc_cid"
 )
 
 const (

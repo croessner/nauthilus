@@ -79,6 +79,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.DisplayName = ""  // set by nauthilus_backend_result
 	commonRequest.Password = auth.Password
 	commonRequest.Protocol = auth.Protocol.Get()
+	commonRequest.OIDCCID = auth.OIDCCID
 	commonRequest.BruteForceName = "" // unavailable
 	commonRequest.FeatureName = ""    // unavailable
 	commonRequest.StatusMessage = &auth.StatusMessage
@@ -230,6 +231,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest.ClientPort = auth.XClientPort
 	commonRequest.LocalIP = auth.XLocalIP
 	commonRequest.LocalPort = auth.XPort
+	commonRequest.OIDCCID = auth.OIDCCID
 
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandListAccounts,
@@ -306,6 +308,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 	commonRequest.ClientPort = auth.XClientPort
 	commonRequest.LocalIP = auth.XLocalIP
 	commonRequest.LocalPort = auth.XPort
+	commonRequest.OIDCCID = auth.OIDCCID
 
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandAddMFAValue,
