@@ -112,6 +112,27 @@ func (m *MLBucketManager) WithPassword(password string) bruteforce.BucketManager
 	return m
 }
 
+// WithAccountName sets the account name for the bucket manager and returns the updated bucket manager instance.
+func (m *MLBucketManager) WithAccountName(accountName string) bruteforce.BucketManager {
+	m.BucketManager = m.BucketManager.WithAccountName(accountName)
+
+	return m
+}
+
+// WithProtocol sets the protocol for the bucket manager and returns the modified BucketManager instance.
+func (m *MLBucketManager) WithProtocol(protocol string) bruteforce.BucketManager {
+	m.BucketManager = m.BucketManager.WithProtocol(protocol)
+
+	return m
+}
+
+// WithOIDCCID sets the OIDC Client ID for the bucket manager and returns the modified BucketManager instance.
+func (m *MLBucketManager) WithOIDCCID(oidcCID string) bruteforce.BucketManager {
+	m.BucketManager = m.BucketManager.WithOIDCCID(oidcCID)
+
+	return m
+}
+
 // WithAdditionalFeatures sets additional features for the bucket manager
 func (m *MLBucketManager) WithAdditionalFeatures(features map[string]any) bruteforce.BucketManager {
 	m.additionalFeatures = features
