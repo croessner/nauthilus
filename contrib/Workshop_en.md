@@ -201,14 +201,14 @@ server:
   backends: [ cache, ldap, lua ]
   features: [ brute_force, tls_encryption, rbl, relay_domains, lua ]
 
-redis:
-  master:
-    address: "localhost:6379"
-  database_number: 0
-  prefix: nt_
-  pool_size: 10
-  positive_cache_ttl: 3600
-  negative_cache_ttl: 7200
+  redis:
+    master:
+      address: "localhost:6379"
+    database_number: 0
+    prefix: nt_
+    pool_size: 10
+    positive_cache_ttl: 3600
+    negative_cache_ttl: 7200
 
 ldap:
   config:

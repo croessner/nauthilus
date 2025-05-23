@@ -91,7 +91,12 @@ func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
 }
 
 // GetNeuralNetwork retrieves a pointer to the NeuralNetwork configuration from the ServerSection instance.
+// Returns nil if the BruteForceSection is nil.
 func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
+	if s == nil {
+		return nil
+	}
+
 	return &s.NeuralNetwork
 }
 

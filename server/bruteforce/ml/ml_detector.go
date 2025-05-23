@@ -102,18 +102,23 @@ func NewNeuralNetwork(inputSize, outputSize int) *NeuralNetwork {
 // NewNeuralNetworkWithSeed creates a new neural network with the specified layer sizes and a fixed seed for reproducibility
 func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetwork {
 	var hiddenSize int
+	var activationFunction string
 
-	hiddenSizeConf := config.GetFile().GetBruteForce().GetNeuralNetwork().HiddenNeurons
-	if hiddenSizeConf == 0 {
+	// Get neural network configuration, handling nil case
+	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+
+	// Set default hidden size if config is nil or hiddenNeurons is 0
+	if nnConfig == nil || nnConfig.HiddenNeurons == 0 {
 		hiddenSize = 10
 	} else {
-		hiddenSize = hiddenSizeConf
+		hiddenSize = nnConfig.HiddenNeurons
 	}
 
 	// Get activation function from config or use default
-	activationFunction := config.GetFile().GetBruteForce().GetNeuralNetwork().ActivationFunction
-	if activationFunction == "" {
+	if nnConfig == nil || nnConfig.ActivationFunction == "" {
 		activationFunction = "sigmoid" // Default to sigmoid if not specified
+	} else {
+		activationFunction = nnConfig.ActivationFunction
 	}
 
 	// Debug: Log neural network creation
@@ -130,8 +135,11 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
-	// Get learning rate from configuration
-	learningRate := config.GetFile().GetBruteForce().GetNeuralNetwork().GetLearningRate()
+	// Get learning rate from configuration, handling nil case
+	var learningRate = 0.01 // Default learning rate
+	if nnConfig != nil {
+		learningRate = nnConfig.GetLearningRate()
+	}
 
 	// Create a new neural network with properly initialized weights and biases
 	nn := &NeuralNetwork{
@@ -863,7 +871,11 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	activationFunction := modelData.ActivationFunction
 	if activationFunction == "" {
 		// For backward compatibility with models saved before this change
-		activationFunction = config.GetFile().GetBruteForce().GetNeuralNetwork().ActivationFunction
+		nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+		if nnConfig != nil {
+			activationFunction = nnConfig.ActivationFunction
+		}
+
 		if activationFunction == "" {
 			activationFunction = "sigmoid" // Default to sigmoid if not specified
 		}
@@ -1773,9 +1785,12 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 
 	// Get the maximum number of training records from config or use default
 	maxRecords := int64(10000) // Default value for backward compatibility
-	configMaxRecords := config.GetFile().GetBruteForce().GetNeuralNetwork().GetMaxTrainingRecords()
-	if configMaxRecords > 0 {
-		maxRecords = int64(configMaxRecords)
+	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+	if nnConfig != nil {
+		configMaxRecords := nnConfig.GetMaxTrainingRecords()
+		if configMaxRecords > 0 {
+			maxRecords = int64(configMaxRecords)
+		}
 	}
 
 	// Trim the list to keep only the last maxRecords entries
@@ -2884,8 +2899,13 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	isModelTrained := modelTrained
 	modelTrainedMutex.RUnlock()
 
-	// Get threshold from configuration
-	threshold := config.GetFile().GetBruteForce().GetNeuralNetwork().GetThreshold()
+	// Get threshold from configuration, handling nil case
+	threshold := 0.7 // Default threshold
+	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+	if nnConfig != nil {
+		threshold = nnConfig.GetThreshold()
+	}
+
 	isBruteForce := probability > threshold
 
 	// If the model hasn't been trained yet, we're in learning mode

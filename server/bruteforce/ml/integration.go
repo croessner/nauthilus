@@ -65,10 +65,17 @@ func NewMLBucketManager(ctx context.Context, guid, clientIP string) bruteforce.B
 		return standardBM
 	}
 
-	// Get weights and threshold from configuration
-	staticWeight := config.GetFile().GetBruteForce().GetNeuralNetwork().GetStaticWeight()
-	mlWeight := config.GetFile().GetBruteForce().GetNeuralNetwork().GetMLWeight()
-	threshold := config.GetFile().GetBruteForce().GetNeuralNetwork().GetThreshold()
+	// Get weights and threshold from configuration, handling nil case
+	staticWeight := 0.4 // Default static weight
+	mlWeight := 0.6     // Default ML weight
+	threshold := 0.7    // Default threshold
+
+	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+	if nnConfig != nil {
+		staticWeight = nnConfig.GetStaticWeight()
+		mlWeight = nnConfig.GetMLWeight()
+		threshold = nnConfig.GetThreshold()
+	}
 
 	// Create our ML-enhanced bucket manager
 	mlBM := &MLBucketManager{
