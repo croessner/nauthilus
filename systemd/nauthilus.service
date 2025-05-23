@@ -7,10 +7,10 @@ Type=simple
 Restart=always
 DynamicUser=1
 EnvironmentFile=-/etc/default/nauthilus
-ExecStart=/usr/sbin/nauthilus
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=geoip-policyd
+ExecStart=/usr/local/sbin/nauthilus
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nauthilus
 MemoryMax=150M
 CPUQuota=50%
 
