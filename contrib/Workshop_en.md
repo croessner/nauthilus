@@ -163,7 +163,7 @@ volumes:
 Save this configuration in a file named `docker-compose.yml` and start the services with:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 #### Manual Installation
@@ -582,7 +582,7 @@ server:
 
 ```bash
 # If you're using Docker Compose:
-docker-compose restart nauthilus
+docker compose restart nauthilus
 
 # If you're using Docker directly:
 docker restart nauthilus
@@ -779,7 +779,7 @@ vim /etc/nauthilus/lua-plugins.d/filters/ip_filter.lua
 lua:
   filters:
     - name: "ip_filter"
-      path: "/etc/nauthilus/lua-plugins.d/filters/ip_filter.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/filters/ip_filter.lua"
 ```
 
 ### Exercise: Create a Simple IP Filter
@@ -823,14 +823,14 @@ end
 lua:
   filters:
     - name: "ip_blocklist"
-      path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
 ```
 
 3. Restart Nauthilus:
 
 ```bash
 # If you're using Docker Compose:
-docker-compose restart nauthilus
+docker compose restart nauthilus
 
 # If you're using Docker directly:
 docker restart nauthilus
@@ -876,7 +876,7 @@ vim /etc/nauthilus/lua-plugins.d/features/blocklist.lua
 lua:
   features:
     - name: "blocklist"
-      path: "/etc/nauthilus/lua-plugins.d/features/blocklist.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/features/blocklist.lua"
 ```
 
 ### Example: Blocklist Feature
@@ -1182,7 +1182,7 @@ end
 lua:
   features:
     - name: "logging"
-      path: "/etc/nauthilus/lua-plugins.d/features/logging.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/features/logging.lua"
 ```
 
 3. Restart Nauthilus:
@@ -1213,10 +1213,9 @@ Enable Prometheus metrics in your configuration:
 
 ```yaml
 server:
-  monitoring:
-    prometheus:
-      enabled: true
-      endpoint: "/metrics"
+   prometheus_timer:
+     enabled: true
+     labels: [ backend, filter, action, post_action, request, feature, brute_force, dns ]
 ```
 
 #### Important Metrics
@@ -1257,8 +1256,8 @@ Nauthilus supports various log levels and formats:
 server:
   log:
     level: "debug"  # Options: debug, info, warn, error
-    format: "json"  # Options: json, text
-    use_color: true
+    json: true
+    color: true
 ```
 
 #### Log Levels
@@ -1270,8 +1269,8 @@ server:
 
 #### Log Formats
 
-- `json`: Structured logs in JSON format
-- `text`: Human-readable logs in text format
+- `true`: **json**: Structured logs in JSON format
+- `false`: **text**: Human-readable logs in text format
 
 ### Debugging Lua Scripts
 
@@ -1330,6 +1329,10 @@ services:
 
   grafana:
     image: grafana/grafana
+    environment:
+       # GF_INSTALL_PLUGINS: "grafana-piechart-panel,grafana-worldmap-panel,grafana-clickhouse-datasource,alexanderzobnin-zabbix-app"
+       GF_FEATURE_TOGGLES_ENABLE: "featureToggleAdminPage,regressionTransformation"
+       GF_FEATURE_MANAGEMENT_ALLOW_EDITING: "true"
     ports:
       - "3000:3000"
     volumes:
@@ -1360,7 +1363,7 @@ scrape_configs:
 3. Start the services:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 4. Open Grafana at http://localhost:3000 (default credentials: admin/admin).
@@ -1529,8 +1532,8 @@ Use TLS for communication:
 server:
   tls:
     enabled: true
-    cert_file: "/etc/nauthilus/cert.pem"
-    key_file: "/etc/nauthilus/key.pem"
+    cert: "/etc/nauthilus/cert.pem"
+    key: "/etc/nauthilus/key.pem"
 ```
 
 #### Secure Redis Configuration
@@ -1676,16 +1679,30 @@ server:
     - ldap
 
 ldap:
-  pools:
-    - name: "default"
-      servers:
-        - host: "ldap.example.com"
-          port: 389
+   config:
+      number_of_workers: 100
+
+      lookup_pool_size: 8
+      lookup_idle_pool_size: 4
+
+      auth_pool_size: 16
+      auth_idle_pool_size: 5
+
+      server_uri:
+         - "ldap.example.com:389"
       bind_dn: "cn=nauthilus,ou=services,dc=example,dc=com"
-      bind_password: "secret"
-      base_dn: "dc=example,dc=com"
-      user_filter: "(&(objectClass=person)(uid=%s))"
-      account_attribute: "uid"
+      bind_pw: "geheim"
+
+   search:
+      - protocol: http
+        cache_name: http
+        base_dn: "dc=example,dc=com"
+        filter:
+           user: "(&(objectClass=person)(uid=%L{user}))"
+        mapping:
+           account_field: "uid"
+        attributes:
+           - uid
 ```
 
 2. Configure Postfix for authentication via Nauthilus:
@@ -2207,13 +2224,13 @@ server:
   backends:
     - lua
 
-redis:
-  # If Redis runs on 127.0.0.1:6379, no configuration is necessary
-  # For other targets, master: and replica: must be configured
-  master:
-    address: "redis:6379"
-  replica:
-    addresses:
+  redis:
+    # If Redis runs on 127.0.0.1:6379, no configuration is necessary
+    # For other targets, master: and replica: must be configured
+    master:
+      address: "redis:6379"
+    replica:
+      addresses:
       - "redis:6379"
 ```
 
@@ -2251,13 +2268,20 @@ function nauthilus_backend_verify_password(request)
 end
 ```
 
-6. Start the services:
+6. Update your Nauthilus configuration in `config/nauthilus.yml`:
+
+```yaml
+   lua:
+     config:
+       backend_script_path: "/etc/nauthilus/lua-plugins.d/backend/simple.lua"
+```
+7. Start the services:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-7. Test the authentication:
+8. Test the authentication:
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{"username":"user1","password":"password1","client_ip":"127.0.0.1","service":"http"}' http://localhost:8080/api/v1/auth/json
@@ -2304,13 +2328,13 @@ end
 lua:
   filters:
     - name: "ip_blocklist"
-      path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
 ```
 
 3. Restart Nauthilus:
 
 ```bash
-docker-compose restart nauthilus
+docker compose restart nauthilus
 ```
 
 4. Test the filter:
@@ -2353,16 +2377,16 @@ end
 lua:
   features:
     - name: "logging"
-      path: "/etc/nauthilus/lua-plugins.d/features/logging.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/features/logging.lua"
   filters:
     - name: "ip_blocklist"
-      path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
+      script_path: "/etc/nauthilus/lua-plugins.d/filters/ip_blocklist.lua"
 ```
 
 3. Restart Nauthilus:
 
 ```bash
-docker-compose restart nauthilus
+docker compose restart nauthilus
 ```
 
 4. Test the feature:
@@ -2454,7 +2478,7 @@ server:
       - auth
       - lua
 
-  backends: [ cache, ldap, lua ]
+  backends: [ cache, ldap  ]
   features: [ brute_force, tls_encryption, rbl, relay_domains, lua ]
   brute_force_protocols: [ imap, imaps, submission, smtp, smtps ]
 
@@ -2469,35 +2493,34 @@ server:
 
   tls:
     enabled: true
-    cert_file: "/etc/nauthilus/cert.pem"
-    key_file: "/etc/nauthilus/key.pem"
+    cert: "/etc/nauthilus/cert.pem"
+    key: "/etc/nauthilus/key.pem"
     http_client_skip_verify: true
 
-  monitoring:
-    prometheus:
-      enabled: true
-      endpoint: "/metrics"
-
+  prometheus_timer:
+    enabled: true
+    labels: [ backend, filter, action, post_action, request, feature, brute_force, dns ]
+    
   master_user:
     enabled: true
     delimiter: "*"
 
-redis:
-  # If Redis runs on 127.0.0.1:6379, no configuration is necessary
-  # For other targets, master: and replica: must be configured
-  master:
-    address: "127.0.0.1:6379"
-
-  replica:
-    addresses:
-      - "127.0.0.1:6379"
-
-  database_number: 0
-  prefix: nt_
-  pool_size: 10
-  idle_pool_size: 5
-  positive_cache_ttl: 3600
-  negative_cache_ttl: 7200
+  redis:
+    # If Redis runs on 127.0.0.1:6379, no configuration is necessary
+    # For other targets, master: and replica: must be configured
+    master:
+      address: "127.0.0.1:6379"
+   
+    replica:
+      addresses:
+        - "127.0.0.1:6379"
+   
+    database_number: 0
+    prefix: nt_
+    pool_size: 10
+    idle_pool_size: 5
+    positive_cache_ttl: 3600
+    negative_cache_ttl: 7200
 
 realtime_blackhole_lists:
   threshold: 10
