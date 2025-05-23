@@ -3,7 +3,7 @@ PKG_LIST := $(shell go list ./... | grep -v /vendor/)
 GIT_TAG=$(shell git describe --tags --abbrev=0)
 GIT_COMMIT=$(shell git rev-parse --short HEAD)
 
-.PHONY: all test race msan dep build clean
+.PHONY: all test race msan build clean
 
 all: build
 
@@ -13,17 +13,14 @@ $(OUTPUT):
 test:
 	go test -short ${PKG_LIST}
 
-race: dep
+race:
 	go test -race -short ${PKG_LIST}
 
-msan: dep
+msan:
 	go test -msan -short ${PKG_LIST}
 
-dep:
-	go get -v -d ./...
-
-build: dep
-	go build -v -ldflags "-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) .
+build:
+	go build -mod=vendor -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
 
 clean: ## Remove previous build
 	[ -x $(OUTPUT) ] && rm -f $(OUTPUT)

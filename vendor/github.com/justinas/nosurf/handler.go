@@ -28,10 +28,14 @@ var safeMethods = []string{"GET", "HEAD", "OPTIONS", "TRACE"}
 // reasons for CSRF check failures
 var (
 	ErrNoReferer  = errors.New("A secure request contained no Referer or its value was malformed")
-	ErrBadReferer = errors.New("A secure request's Referer comes from a different Origin" +
+	ErrBadReferer = errors.New("A secure request's Referer comes from a different origin" +
 		" from the request's URL")
-	ErrBadToken = errors.New("The CSRF token in the cookie doesn't match the one" +
+	ErrBadOrigin = errors.New("Request was made with a disallowed origin specified in the Origin header")
+	ErrBadToken  = errors.New("The CSRF token in the cookie doesn't match the one" +
 		" received in a form/header.")
+
+	// Internal error. When this is raised, and the request is secure, we additionally check for Referer.
+	errNoOrigin = errors.New("Origin header was not present")
 )
 
 type CSRFHandler struct {
@@ -45,7 +49,9 @@ type CSRFHandler struct {
 	baseCookie http.Cookie
 
 	// Slices of paths that are exempt from CSRF checks.
-	// They can be specified by...
+	// All of those will be matched against Request.URL.Path,
+	// So they should take the leading slash into account
+	// Paths can be specified by...
 	// ...an exact path,
 	exemptPaths []string
 	// ...a regexp,
@@ -55,8 +61,8 @@ type CSRFHandler struct {
 	// ...or a custom matcher function
 	exemptFunc func(r *http.Request) bool
 
-	// All of those will be matched against Request.URL.Path,
-	// So they should take the leading slash into account
+	isTLS           func(r *http.Request) bool
+	isAllowedOrigin func(r *url.URL) bool
 }
 
 func defaultFailureHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +101,7 @@ func New(handler http.Handler) *CSRFHandler {
 	csrf := &CSRFHandler{successHandler: handler,
 		failureHandler: http.HandlerFunc(defaultFailureHandler),
 		baseCookie:     baseCookie,
+		isTLS:          func(r *http.Request) bool { return true },
 	}
 
 	return csrf
@@ -145,26 +152,10 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// if the request is secure, we enforce origin check
-	// for referer to prevent MITM of http->https requests
-	if r.URL.Scheme == "https" {
-		referer, err := url.Parse(r.Header.Get("Referer"))
-
-		// if we can't parse the referer or it's empty,
-		// we assume it's not specified
-		if err != nil || referer.String() == "" {
-			ctxSetReason(r, ErrNoReferer)
-			h.handleFailure(w, r)
-			return
-		}
-
-		// if the referer doesn't share origin with the request URL,
-		// we have another error for that
-		if !sameOrigin(referer, r.URL) {
-			ctxSetReason(r, ErrBadReferer)
-			h.handleFailure(w, r)
-			return
-		}
+	if err := h.ensureSameOrigin(r); err != nil {
+		ctxSetReason(r, err)
+		h.handleFailure(w, r)
+		return
 	}
 
 	// Finally, we check the token itself.
@@ -191,6 +182,75 @@ func (h *CSRFHandler) handleSuccess(w http.ResponseWriter, r *http.Request) {
 // and only then calls handleFailure()
 func (h *CSRFHandler) handleFailure(w http.ResponseWriter, r *http.Request) {
 	h.failureHandler.ServeHTTP(w, r)
+}
+
+func (h *CSRFHandler) ensureSameOrigin(r *http.Request) error {
+	selfOrigin := &url.URL{
+		Scheme: "http",
+		Host:   r.Host,
+	}
+	isTLS := h.isTLS(r)
+	if isTLS {
+		selfOrigin.Scheme = "https"
+	}
+
+	secFetchSite := r.Header.Get("Sec-Fetch-Site")
+	if secFetchSite == "same-origin" {
+		return nil
+	}
+
+	// If no `Sec-Fetch-Site: same-origin` is present, fallback to Origin or Referer,
+	// including considering custom allowed origins.
+	err := h.checkOrigin(selfOrigin, r)
+	if err == nil {
+		return nil
+	} else if !errors.Is(err, errNoOrigin) {
+		return err
+	}
+
+	// If Origin header was not present, fall back on Referer check for both secure and insecure requests.
+	// This is opposite of Django's behavior, but should be fine, as neither of the three headers existing is an edge case.
+	// https://github.com/django/django/blob/8be0c0d6901669661fca578f474cd51cd284d35a/django/middleware/csrf.py#L460
+	return h.checkReferer(selfOrigin, r)
+}
+
+func (h *CSRFHandler) checkReferer(selfOrigin *url.URL, r *http.Request) error {
+	referer, err := url.Parse(r.Referer())
+	if err != nil || referer.String() == "" {
+		return ErrNoReferer
+	}
+
+	if sameOrigin(selfOrigin, referer) {
+		return nil
+	}
+
+	if h.isAllowedOrigin != nil && h.isAllowedOrigin(referer) {
+		return nil
+	}
+
+	return ErrBadReferer
+}
+
+func (h *CSRFHandler) checkOrigin(selfOrigin *url.URL, r *http.Request) error {
+	originStr := r.Header.Get("Origin")
+	if originStr == "" || originStr == "null" {
+		return errNoOrigin
+	}
+
+	origin, err := url.Parse(originStr)
+	if err != nil {
+		return err
+	}
+
+	if sameOrigin(selfOrigin, origin) {
+		return nil
+	}
+
+	if h.isAllowedOrigin != nil && h.isAllowedOrigin(origin) {
+		return nil
+	}
+
+	return ErrBadOrigin
 }
 
 // Generates a new token, sets it on the given request and returns it
@@ -223,4 +283,74 @@ func (h *CSRFHandler) SetFailureHandler(handler http.Handler) {
 // This way you can specify the Domain, Path, HttpOnly, Secure, etc.
 func (h *CSRFHandler) SetBaseCookie(cookie http.Cookie) {
 	h.baseCookie = cookie
+}
+
+// SetIsTLSFunc sets a delegate function which determines, on a per-request basis, whether the request is made over a secure connection.
+// This should return `true` iff the URL that the user uses to access the application begins with https://.
+// For example, if the Go web application is served via plain-text HTTP,
+// but the user is accessing it through HTTPS via a TLS-terminating reverse-proxy, this should return `true`.
+//
+// Examples:
+//
+// 1. If you're using the Go TLS stack (no TLS-terminating proxies in between the user and the app), you may use:
+//
+//	h.SetIsTLSFunc(func(r *http.Request) bool { return r.TLS != nil })
+//
+// 2. If your application is behind a reverse proxy that terminates TLS, you should configure the reverse proxy
+// to report the protocol that the request was made over via an HTTP header,
+// e.g. `X-Forwarded-Proto`.
+// You should also validate that the request is coming in from an IP of a trusted reverse proxy
+// to ensure that this header has not been spoofed by an attacker. For example:
+//
+//	var trustedProxies = []string{"198.51.100.1", "198.51.100.2"}
+//	h.SetIsTLSFunc(func(r *http.Request) bool {
+//		ip, _, _ := strings.Cut(r.RemoteAddr, ":")
+//		proto := r.Header.Get("X-Forwarded-Proto")
+//		return slices.Contains(trustedProxies, ip) && proto == "https"
+//	})
+func (h *CSRFHandler) SetIsTLSFunc(f func(*http.Request) bool) {
+	h.isTLS = f
+}
+
+// SetAllowedOrigins defines a function that checks whether the request comes from an allowed origin.
+// This function will be invoked when the request is not considered a same-origin request.
+// If this function returns `false`, request will be disallowed.
+//
+// In most cases, this will be used with [StaticOrigins].
+func (h *CSRFHandler) SetIsAllowedOriginFunc(f func(*url.URL) bool) {
+	h.isAllowedOrigin = f
+}
+
+// StaticOrigins returns a delegate, suitable for passing to [CSRFHandler.SetIsAllowedOriginFunc],
+// that validates the request origin against a static list of allowed origins.
+// This function expects each element to be of form `scheme://host`, e.g.: `https://example.com`, `http://example.org`.
+// If any element of the slice is an invalid URL, this function will return an error.
+// If an element includes additional URL parts (e.g. a path), these parts will be ignored,
+// as origin checks only take the scheme and host into account.
+//
+// Example:
+//
+//	h := nosurf.New()
+//	origins, err := nosurf.StaticOrigins("https://api.example.com", "http://insecure.example.com")
+//	if err != nil {
+//		panic(err)
+//	}
+//	h.SetIsAllowedOriginFunc(origins)
+func StaticOrigins(origins ...string) (func(r *url.URL) bool, error) {
+	var allowedOrigins []*url.URL
+	for _, o := range origins {
+		url, err := url.Parse(o)
+		if err != nil {
+			return nil, err
+		}
+		allowedOrigins = append(allowedOrigins, url)
+	}
+	return func(u *url.URL) bool {
+		for _, candidate := range allowedOrigins {
+			if sameOrigin(candidate, u) {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
