@@ -33,6 +33,9 @@ const (
 	// LogKeyProtocol represents the network protocol used, logged in log entries.
 	LogKeyProtocol = "protocol"
 
+	// LogKeyOIDCCID represents the log key for OpenID Connect Client ID.
+	LogKeyOIDCCID = "oidc_cid"
+
 	// LogKeyLocalIP represents the local IP address, logged in log entries.
 	LogKeyLocalIP = "local_ip"
 

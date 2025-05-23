@@ -997,6 +997,7 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyBackendName, backendName,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
+		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.OIDCCID),
 		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
 		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
 		definitions.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
