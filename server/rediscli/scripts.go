@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -38,7 +40,77 @@ var (
 
 	// ErrScriptNotFound is returned when a script is not found in the scripts map
 	ErrScriptNotFound = errors.New("script not found")
+
+	// defaultHashTag is the default hash tag used for Redis Cluster keys
+	defaultHashTag = "{nauthilus}"
 )
+
+// isClusterClient checks if the Redis client is a cluster client
+func isClusterClient(client redis.UniversalClient) bool {
+	_, isCluster := client.(*redis.ClusterClient)
+
+	return isCluster
+}
+
+// ensureKeysInSameSlot ensures that all keys hash to the same slot in Redis Cluster
+// by adding a common hash tag if needed
+func ensureKeysInSameSlot(keys []string) []string {
+	if len(keys) <= 1 {
+		return keys
+	}
+
+	// Check if all keys already have the same hash tag
+	hasCommonTag := true
+	var commonTag string
+
+	for i, key := range keys {
+		startIdx := strings.Index(key, "{")
+		endIdx := strings.Index(key, "}")
+
+		// If a key has a hash tag
+		if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
+			tag := key[startIdx : endIdx+1]
+			if i == 0 {
+				commonTag = tag
+			} else if tag != commonTag {
+				hasCommonTag = false
+
+				break
+			}
+		} else {
+			hasCommonTag = false
+
+			break
+		}
+	}
+
+	// If all keys already have the same hash tag, return the original keys
+	if hasCommonTag {
+		return keys
+	}
+
+	// Add the default hash tag to all keys
+	modifiedKeys := make([]string, len(keys))
+
+	for i, key := range keys {
+		// Check if the key already has a hash tag
+		if strings.Contains(key, "{") && strings.Contains(key, "}") {
+			// Replace existing hash tag with the default one
+			startIdx := strings.Index(key, "{")
+			endIdx := strings.Index(key, "}")
+			if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
+				modifiedKeys[i] = key[:startIdx] + defaultHashTag + key[endIdx+1:]
+			} else {
+				modifiedKeys[i] = defaultHashTag + ":" + key
+			}
+		} else {
+			// Add the default hash tag as a prefix
+			modifiedKeys[i] = defaultHashTag + ":" + key
+		}
+	}
+
+	return modifiedKeys
+}
 
 // UploadScript uploads a Lua script to Redis and stores its SHA1 hash.
 // If the script is already uploaded, it returns the existing SHA1 hash.
@@ -90,6 +162,9 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 //
 // If scriptContent is empty and the script is not found in the local cache, ErrScriptNotFound is returned.
 // This allows callers to handle the case where a script needs to be uploaded first.
+//
+// In Redis Cluster mode, this function ensures that all keys hash to the same slot by adding
+// a common hash tag if needed.
 func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys []string, args ...interface{}) (interface{}, error) {
 	// Get the SHA1 hash for the script
 	scriptsMutex.RLock()
@@ -110,9 +185,18 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 		}
 	}
 
+	// Get the Redis client
+	client := GetClient().GetWriteHandle()
+
+	// Check if we're using Redis Cluster and ensure keys hash to the same slot if needed
+	if isClusterClient(client) && len(keys) > 1 {
+		keys = ensureKeysInSameSlot(keys)
+	}
+
 	// Execute the script
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	result, err := GetClient().GetWriteHandle().EvalSha(ctx, sha1, keys, args...).Result()
+
+	result, err := client.EvalSha(ctx, sha1, keys, args...).Result()
 	if err != nil {
 		// Check if the error is NOSCRIPT
 		if err.Error() == "NOSCRIPT No matching script. Please use EVAL." {
@@ -129,10 +213,32 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			// Try executing again
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = GetClient().GetWriteHandle().EvalSha(ctx, sha1, keys, args...).Result()
+			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload: %v", scriptName, err),
+				)
+
+				return nil, err
+			}
+		} else if strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
+			// If we get a CROSSSLOT error, log it with more details
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("CROSSSLOT error executing script '%s' with keys %v, attempting to fix", scriptName, keys),
+				"caller", "scripts.go:ExecuteScript",
+			)
+
+			// Force keys to use the same hash tag
+			keys = ensureKeysInSameSlot(keys)
+
+			// Try executing again with modified keys
+			stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
+			if err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys: %v", scriptName, err),
+					"keys", fmt.Sprintf("%v", keys),
 				)
 
 				return nil, err
