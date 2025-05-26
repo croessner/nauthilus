@@ -1,9 +1,12 @@
 package lualib
 
 import (
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/gin-gonic/gin"
+	"github.com/go-kit/log/level"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -146,11 +149,91 @@ func GetAdditionalFeatures(ctx *gin.Context) map[string]any {
 	return nil
 }
 
+// TrainNeuralNetwork returns a Lua function that allows manual training of the neural network.
+// The function accepts two optional parameters:
+// - maxSamples (number): Maximum number of samples to use for training (default: 5000)
+// - epochs (number): Number of epochs to train for (default: 50)
+// Returns a boolean indicating success and an error message if training failed.
+func TrainNeuralNetwork(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Default values
+		maxSamples := 5000
+		epochs := 50
+
+		// Check if we have a maxSamples parameter
+		if L.GetTop() >= 1 {
+			if L.Get(1).Type() == lua.LTNumber {
+				maxSamples = int(L.ToNumber(1))
+				if maxSamples <= 0 {
+					L.RaiseError("maxSamples must be a positive number")
+
+					return 0
+				}
+			}
+		}
+
+		// Check if we have an epochs parameter
+		if L.GetTop() >= 2 {
+			if L.Get(2).Type() == lua.LTNumber {
+				epochs = int(L.ToNumber(2))
+				if epochs <= 0 {
+					L.RaiseError("epochs must be a positive number")
+
+					return 0
+				}
+			}
+		}
+
+		// Log the training request
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Manual neural network training requested via Lua",
+			"maxSamples", maxSamples,
+			"epochs", epochs,
+		)
+
+		// Create a bucket manager with ML capabilities
+		// Use a dummy GUID and client IP since they're only used for logging
+		guid := "lua-manual-training"
+		clientIP := "127.0.0.1"
+
+		// Create an ML bucket manager
+		mlBucketManager, ok := ml.NewMLBucketManager(ctx, guid, clientIP).(*ml.MLBucketManager)
+		if !ok {
+			errMsg := "Failed to create ML bucket manager, experimental_ml might be disabled"
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, errMsg,
+			)
+
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(errMsg))
+
+			return 2
+		}
+
+		// Train the model
+		err := mlBucketManager.TrainModel(maxSamples, epochs)
+		if err != nil {
+			// Push false and error message
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		// Push true and nil error
+		L.Push(lua.LBool(true))
+		L.Push(lua.LNil)
+
+		return 2
+	}
+}
+
 // LoaderModNeural loads Lua functions for neural network integration and returns them as a Lua module.
 func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
+			definitions.LuaFnTrainNeuralNetwork:    TrainNeuralNetwork(ctx),
 		})
 
 		L.Push(mod)

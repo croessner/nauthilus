@@ -1407,6 +1407,9 @@ const (
 	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
 	LuaFnAddAdditionalFeatures = "add_additional_features"
 
+	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
+	LuaFnTrainNeuralNetwork = "train_neural_network"
+
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"
 )
