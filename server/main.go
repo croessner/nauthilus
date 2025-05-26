@@ -65,7 +65,7 @@ func main() {
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
 	setupRedis(ctx)
 
-	runLuaaInitScript(ctx)
+	runLuaInitScript(ctx)
 	core.LoadStatsFromRedis(ctx)
 	startHTTPServer(ctx, store)
 	runConnectionManager(ctx)

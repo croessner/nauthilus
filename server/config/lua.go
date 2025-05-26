@@ -140,10 +140,11 @@ func (l *LuaFilter) String() string {
 }
 
 type LuaConf struct {
-	NumberOfWorkers   int    `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
-	PackagePath       string `mapstructure:"package_path"`
-	BackendScriptPath string `mapstructure:"backend_script_path" validate:"omitempty,file"`
-	InitScriptPath    string `mapstructure:"init_script_path" validate:"omitempty,file"`
+	NumberOfWorkers   int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	PackagePath       string   `mapstructure:"package_path"`
+	BackendScriptPath string   `mapstructure:"backend_script_path" validate:"omitempty,file"`
+	InitScriptPath    string   `mapstructure:"init_script_path" validate:"omitempty,file"`
+	InitScriptPaths   []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
 }
 
 func (l *LuaConf) String() string {

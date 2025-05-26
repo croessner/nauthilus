@@ -78,7 +78,7 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 	evalArgs := make([]any, len(args))
 
 	for i, arg := range args {
-		evalArgs[len(keys)+i] = arg
+		evalArgs[i] = arg
 	}
 
 	// Check if we're using Redis Cluster and ensure keys hash to the same slot if needed

@@ -103,6 +103,9 @@ type File interface {
 	// GetLuaInitScriptPath returns the path to the Lua initialization script.
 	GetLuaInitScriptPath() string
 
+	// GetLuaInitScriptPaths returns all paths to Lua initialization scripts.
+	GetLuaInitScriptPaths() []string
+
 	// GetLuaPackagePath retrieves the Lua package path from the configuration.
 	GetLuaPackagePath() string
 
@@ -787,6 +790,8 @@ func (f *FileSettings) GetLuaScriptPath() string {
 
 // GetLuaInitScriptPath returns the path to the Lua init script specified in the configuration.
 // If the configuration or LuaConf is nil, it returns an empty string.
+// If InitScriptPaths is set, it returns the first path from that list.
+// Otherwise, it returns the value of InitScriptPath.
 func (f *FileSettings) GetLuaInitScriptPath() string {
 	if f == nil {
 		return ""
@@ -798,10 +803,46 @@ func (f *FileSettings) GetLuaInitScriptPath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if len(luaConf.InitScriptPaths) > 0 {
+			return luaConf.InitScriptPaths[0]
+		}
+
 		return luaConf.InitScriptPath
 	}
 
 	return ""
+}
+
+// GetLuaInitScriptPaths returns all paths to Lua init scripts specified in the configuration.
+// It combines both the single InitScriptPath and the list in InitScriptPaths.
+// If the configuration or LuaConf is nil, it returns an empty slice.
+func (f *FileSettings) GetLuaInitScriptPaths() []string {
+	if f == nil {
+		return nil
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return nil
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		var paths []string
+
+		// Add the single init script path if it's set
+		if luaConf.InitScriptPath != "" {
+			paths = append(paths, luaConf.InitScriptPath)
+		}
+
+		// Add all paths from the list
+		if len(luaConf.InitScriptPaths) > 0 {
+			paths = append(paths, luaConf.InitScriptPaths...)
+		}
+
+		return paths
+	}
+
+	return nil
 }
 
 // GetLuaPackagePath returns the Lua package path based on the file configuration or a default path if not specified.
@@ -927,10 +968,11 @@ func (f *FileSettings) HaveLuaActions() bool {
 	return false
 }
 
-// HaveLuaInit checks if the Lua initialization script path is set in the configuration.
+// HaveLuaInit checks if any Lua initialization script paths are set in the configuration.
 // It first confirms that the FileSettings instance supports Lua by invoking HaveLua method.
 // Then, it retrieves the Lua configuration using GetConfig with the definitions.BackendLua constant.
-// If the retrieved configuration is of type *LuaConf and the InitScriptPath is not empty, it returns true.
+// If the retrieved configuration is of type *LuaConf and either InitScriptPath is not empty
+// or InitScriptPaths contains at least one entry, it returns true.
 // Otherwise, it returns false.
 func (f *FileSettings) HaveLuaInit() bool {
 	if f == nil {
@@ -943,7 +985,8 @@ func (f *FileSettings) HaveLuaInit() bool {
 			return false
 		}
 
-		return getConfig.(*LuaConf).InitScriptPath != ""
+		luaConf := getConfig.(*LuaConf)
+		return luaConf.InitScriptPath != "" || len(luaConf.InitScriptPaths) > 0
 	}
 
 	return false

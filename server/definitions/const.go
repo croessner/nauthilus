@@ -1295,6 +1295,12 @@ const (
 	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
 	LuaFnRedisZRank = "redis_zrank"
 
+	// LuaFnRedisZCount is a constant defining the Redis command "ZCount" for counting the number of members in a sorted set with scores between min and max.
+	LuaFnRedisZCount = "redis_zcount"
+
+	// LuaFnRedisZScore is a constant defining the Redis command "ZScore" for retrieving the score of a member in a sorted set.
+	LuaFnRedisZScore = "redis_zscore"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
