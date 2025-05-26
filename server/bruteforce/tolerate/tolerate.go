@@ -1,7 +1,23 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package tolerate
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -15,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
-	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -247,47 +262,31 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		label = "negative"
 	}
 
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	_, err := rediscli.GetClient().GetWriteHandle().ZAdd(
+	// Use Lua script to add to sorted set, count elements, and set expirations atomically
+	result, err := rediscli.ExecuteScript(
 		ctx,
-		redisKey+flag,
-		redis.Z{
-			Score: float64(now), Member: strings.ToLower(username),
-		}).Result()
+		"ZAddCountAndExpire",
+		rediscli.LuaScripts["ZAddCountAndExpire"],
+		[]string{redisKey + flag, t.getRedisKey(ipAddress)},
+		float64(now),
+		strings.ToLower(username),
+		label,
+		int(tolerateTTL.Seconds()),
+	)
+
 	if err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
 	}
 
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-	positive, err := rediscli.GetClient().GetReadHandle().ZCount(ctx, redisKey+flag, "-inf", "+inf").Uint64()
-	if err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(ctx, redisKey+flag, tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().HSet(ctx, t.getRedisKey(ipAddress), label, strconv.FormatUint(positive, 10)).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(ctx, t.getRedisKey(ipAddress), tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
+	// Log the result for debugging if needed
+	util.DebugModule(definitions.DbgTolerate,
+		definitions.LogKeyMsg, fmt.Sprintf("ZAddCountAndExpire result: %v", result),
+		"ip", ipAddress,
+		"username", username,
+		"authenticated", authenticated,
+	)
 }
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.

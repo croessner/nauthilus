@@ -3014,16 +3014,15 @@ func (d *BruteForceMLDetector) getFailedAttemptsLastHour() (uint, error) {
 func (d *BruteForceMLDetector) incrementFailedAttempts() error {
 	key := d.getFailedAttemptsKey()
 
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+	// Use Lua script to increment counter and set expiration atomically
+	_, err := rediscli.ExecuteScript(
+		d.ctx,
+		"IncrementAndExpire",
+		rediscli.LuaScripts["IncrementAndExpire"],
+		[]string{key},
+		3600, // 1 hour in seconds
+	)
 
-	// Increment the counter
-	err := rediscli.GetClient().GetWriteHandle().Incr(d.ctx, key).Err()
-	if err != nil {
-		return err
-	}
-
-	// Set expiration to 1 hour if not already set
-	err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, time.Hour).Err()
 	if err != nil {
 		return err
 	}
@@ -3040,26 +3039,20 @@ func (d *BruteForceMLDetector) getDifferentUsernames() (uint, error) {
 
 	// Add the current username to the set if it's not empty
 	if d.username != "" {
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+		// Use Lua script to add username to set and set expiration atomically
+		_, err := rediscli.ExecuteScript(
+			d.ctx,
+			"AddToSetAndExpire",
+			rediscli.LuaScripts["AddToSetAndExpire"],
+			[]string{key},
+			d.username,
+			3600, // 1 hour in seconds
+		)
 
-		err := rediscli.GetClient().GetWriteHandle().SAdd(d.ctx, key, d.username).Err()
 		if err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, d.guid,
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to add username to set: %v", err),
-			)
-
-			return 0, err
-		}
-
-		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		// Set expiration to 1 hour if not already set
-		err = rediscli.GetClient().GetWriteHandle().Expire(d.ctx, key, time.Hour).Err()
-		if err != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, d.guid,
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to set expiration on username set: %v", err),
 			)
 
 			return 0, err
