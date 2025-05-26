@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -155,14 +156,28 @@ func UploadAllScripts(ctx context.Context) error {
 		definitions.LogKeyMsg, "Uploading all Redis Lua scripts",
 	)
 
+	// Create a context with timeout to prevent hanging indefinitely
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	for scriptName, scriptContent := range LuaScripts {
-		_, err := UploadScript(ctx, scriptName, scriptContent)
+		// Use the context with timeout for each script upload
+		_, err := UploadScript(ctxWithTimeout, scriptName, scriptContent)
 		if err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s': %v", scriptName, err),
 			)
 
 			return err
+		}
+
+		// Check if the context has been canceled or timed out
+		if ctxWithTimeout.Err() != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Timeout or cancellation while uploading Redis Lua scripts: %v", ctxWithTimeout.Err()),
+			)
+
+			return ctxWithTimeout.Err()
 		}
 	}
 

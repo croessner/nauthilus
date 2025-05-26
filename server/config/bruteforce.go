@@ -21,14 +21,18 @@ import (
 )
 
 type BruteForceSection struct {
-	SoftWhitelist     `mapstructure:"soft_whitelist"`
-	IPWhitelist       []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
-	Buckets           []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
-	Learning          []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
-	ToleratePercent   uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
-	CustomTolerations []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
-	TolerateTTL       time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
-	NeuralNetwork     NeuralNetwork    `mapstructure:"neural_network" validate:"omitempty"`
+	SoftWhitelist      `mapstructure:"soft_whitelist"`
+	IPWhitelist        []string         `mapstructure:"ip_whitelist" validate:"omitempty,dive,ip_addr|cidr"`
+	Buckets            []BruteForceRule `mapstructure:"buckets" validate:"required,dive"`
+	Learning           []*Feature       `mapstructure:"learning" validate:"omitempty,dive"`
+	ToleratePercent    uint8            `mapstructure:"tolerate_percent" validate:"omitempty,min=0,max=100"`
+	CustomTolerations  []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
+	TolerateTTL        time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
+	AdaptiveToleration bool             `mapstructure:"adaptive_toleration"`
+	MinToleratePercent uint8            `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MaxToleratePercent uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	ScaleFactor        float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+	NeuralNetwork      NeuralNetwork    `mapstructure:"neural_network" validate:"omitempty"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -90,6 +94,58 @@ func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
 	return b.CustomTolerations
 }
 
+// GetAdaptiveToleration retrieves the AdaptiveToleration value from the BruteForceSection instance.
+// Returns false if the receiver is nil.
+func (b *BruteForceSection) GetAdaptiveToleration() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.AdaptiveToleration
+}
+
+// GetMinToleratePercent retrieves the MinToleratePercent value from the BruteForceSection instance.
+// Returns 10 as default if not set or if the receiver is nil.
+func (b *BruteForceSection) GetMinToleratePercent() uint8 {
+	if b == nil {
+		return 10
+	}
+
+	if b.MinToleratePercent == 0 {
+		return 10 // Default value
+	}
+
+	return b.MinToleratePercent
+}
+
+// GetMaxToleratePercent retrieves the MaxToleratePercent value from the BruteForceSection instance.
+// Returns 50 as default if not set or if the receiver is nil.
+func (b *BruteForceSection) GetMaxToleratePercent() uint8 {
+	if b == nil {
+		return 50
+	}
+
+	if b.MaxToleratePercent == 0 {
+		return 50 // Default value
+	}
+
+	return b.MaxToleratePercent
+}
+
+// GetScaleFactor retrieves the ScaleFactor value from the BruteForceSection instance.
+// Returns 1.0 as default if not set or if the receiver is nil.
+func (b *BruteForceSection) GetScaleFactor() float64 {
+	if b == nil {
+		return 1.0
+	}
+
+	if b.ScaleFactor == 0 {
+		return 1.0 // Default value
+	}
+
+	return b.ScaleFactor
+}
+
 // GetNeuralNetwork retrieves a pointer to the NeuralNetwork configuration from the ServerSection instance.
 // Returns nil if the BruteForceSection is nil.
 func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
@@ -102,9 +158,13 @@ func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
 
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
 type Tolerate struct {
-	IPAddress       string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
-	ToleratePercent uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
-	TolerateTTL     time.Duration `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
+	IPAddress          string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
+	ToleratePercent    uint8         `mapstructure:"tolerate_percent" validate:"required,min=0,max=100"`
+	TolerateTTL        time.Duration `mapstructure:"tolerate_ttl" validate:"required,gt=0,max=8760h"`
+	AdaptiveToleration bool          `mapstructure:"adaptive_toleration"`
+	MinToleratePercent uint8         `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	MaxToleratePercent uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
+	ScaleFactor        float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
 }
 
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown

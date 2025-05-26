@@ -51,4 +51,44 @@ redis.call("HSET", KEYS[2], ARGV[3], count)
 redis.call("EXPIRE", KEYS[2], ARGV[4])
 return count
 `,
+
+	// CalculateAdaptiveToleration calculates the adaptive toleration percentage based on positive authentication attempts
+	// KEYS[1] - The hash key containing the counts
+	// ARGV[1] - The minimum toleration percentage
+	// ARGV[2] - The maximum toleration percentage
+	// ARGV[3] - The scale factor
+	// ARGV[4] - The static toleration percentage (fallback if adaptive is disabled)
+	// ARGV[5] - Whether adaptive toleration is enabled (1 for true, 0 for false)
+	"CalculateAdaptiveToleration": `
+local positive = tonumber(redis.call("HGET", KEYS[1], "positive") or "0")
+local negative = tonumber(redis.call("HGET", KEYS[1], "negative") or "0")
+local min_percent = tonumber(ARGV[1])
+local max_percent = tonumber(ARGV[2])
+local scale_factor = tonumber(ARGV[3])
+local static_percent = tonumber(ARGV[4])
+local adaptive_enabled = tonumber(ARGV[5]) == 1
+
+-- If adaptive toleration is disabled or there are no positive attempts, use static percentage
+if not adaptive_enabled or positive == 0 then
+    local max_negative = math.floor((static_percent * positive) / 100)
+    return {static_percent, max_negative, positive, negative, 0}
+end
+
+-- Calculate adaptive percentage based on positive attempts and scale factor
+local percent = min_percent
+if positive > 0 then
+    -- Calculate percentage between min and max based on positive attempts and scale factor
+    local factor = math.min(1, math.log(positive + 1) / math.log(100) * scale_factor)
+    percent = math.floor(min_percent + (max_percent - min_percent) * factor)
+
+    -- Ensure percent is within bounds
+    percent = math.max(min_percent, math.min(max_percent, percent))
+end
+
+-- Calculate maximum allowed negative attempts
+local max_negative = math.floor((percent * positive) / 100)
+
+-- Return the calculated percentage, max negative attempts, positive count, negative count, and factor
+return {percent, max_negative, positive, negative, 1}
+`,
 }
