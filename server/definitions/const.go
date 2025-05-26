@@ -1410,6 +1410,9 @@ const (
 	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
 	LuaFnTrainNeuralNetwork = "train_neural_network"
 
+	// LuaFnSetLearningMode represents the function name for "set_learning_mode" in Lua
+	LuaFnSetLearningMode = "set_learning_mode"
+
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"
 )

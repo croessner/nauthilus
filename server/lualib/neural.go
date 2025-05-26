@@ -149,6 +149,47 @@ func GetAdditionalFeatures(ctx *gin.Context) map[string]any {
 	return nil
 }
 
+// SetLearningMode returns a Lua function that allows toggling the learning mode on and off.
+// The function accepts one parameter:
+// - enabled (boolean): Whether to enable learning mode (true) or disable it (false)
+// Returns a boolean indicating the new learning mode state (true if in learning mode, false otherwise)
+// and an error message if the operation failed.
+func SetLearningMode(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Check if we have an enabled parameter
+		if L.GetTop() < 1 {
+			L.RaiseError("missing required parameter: enabled")
+
+			return 0
+		}
+
+		// Get the enabled parameter
+		enabled := L.ToBool(1)
+
+		// Log the learning mode change request
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Learning mode change requested via Lua",
+			"enabled", enabled,
+		)
+
+		// Set the learning mode
+		newMode, err := ml.SetLearningMode(ctx, enabled)
+		if err != nil {
+			// Push false and error message
+			L.Push(lua.LBool(newMode))
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		// Push the new mode and nil error
+		L.Push(lua.LBool(newMode))
+		L.Push(lua.LNil)
+
+		return 2
+	}
+}
+
 // TrainNeuralNetwork returns a Lua function that allows manual training of the neural network.
 // The function accepts two optional parameters:
 // - maxSamples (number): Maximum number of samples to use for training (default: 5000)
@@ -234,6 +275,7 @@ func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
 			definitions.LuaFnTrainNeuralNetwork:    TrainNeuralNetwork(ctx),
+			definitions.LuaFnSetLearningMode:       SetLearningMode(ctx),
 		})
 
 		L.Push(mod)

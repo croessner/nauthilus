@@ -2030,6 +2030,29 @@ func (d *BruteForceMLDetector) IsLearningMode() bool {
 	return !isModelTrained
 }
 
+// SetLearningMode sets the learning mode state
+// If enabled is true, the system will be in learning mode (modelTrained = false)
+// If enabled is false, the system will not be in learning mode (modelTrained = true)
+// Returns the new learning mode state (true if in learning mode, false otherwise)
+func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
+	modelTrainedMutex.Lock()
+	modelTrained = !enabled
+	modelTrainedMutex.Unlock()
+
+	// Save the updated flag to Redis
+	err := SaveModelTrainedFlagToRedis(ctx)
+	if err != nil {
+		return enabled, err
+	}
+
+	util.DebugModule(definitions.DbgNeural,
+		"action", "set_learning_mode",
+		"learning_mode", enabled,
+	)
+
+	return enabled, nil
+}
+
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
