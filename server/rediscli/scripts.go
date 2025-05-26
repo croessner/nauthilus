@@ -45,16 +45,28 @@ var (
 	defaultHashTag = "{nauthilus}"
 )
 
-// isClusterClient checks if the Redis client is a cluster client
+// isClusterClient checks if the Redis client is a cluster client (unexported version)
 func isClusterClient(client redis.UniversalClient) bool {
+	return IsClusterClient(client)
+}
+
+// IsClusterClient checks if the Redis client is a cluster client (exported version)
+func IsClusterClient(client redis.UniversalClient) bool {
 	_, isCluster := client.(*redis.ClusterClient)
 
 	return isCluster
 }
 
 // ensureKeysInSameSlot ensures that all keys hash to the same slot in Redis Cluster
-// by adding a common hash tag if needed
+// by adding a common hash tag if needed (unexported version)
 func ensureKeysInSameSlot(keys []string) []string {
+	return EnsureKeysInSameSlot(keys, defaultHashTag)
+}
+
+// EnsureKeysInSameSlot ensures that all keys hash to the same slot in Redis Cluster
+// by adding a common hash tag if needed (exported version)
+// The hashTag parameter allows specifying a custom hash tag to use
+func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 	if len(keys) <= 1 {
 		return keys
 	}
@@ -89,23 +101,23 @@ func ensureKeysInSameSlot(keys []string) []string {
 		return keys
 	}
 
-	// Add the default hash tag to all keys
+	// Add the specified hash tag to all keys
 	modifiedKeys := make([]string, len(keys))
 
 	for i, key := range keys {
 		// Check if the key already has a hash tag
 		if strings.Contains(key, "{") && strings.Contains(key, "}") {
-			// Replace existing hash tag with the default one
+			// Replace existing hash tag with the specified one
 			startIdx := strings.Index(key, "{")
 			endIdx := strings.Index(key, "}")
 			if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
-				modifiedKeys[i] = key[:startIdx] + defaultHashTag + key[endIdx+1:]
+				modifiedKeys[i] = key[:startIdx] + hashTag + key[endIdx+1:]
 			} else {
-				modifiedKeys[i] = defaultHashTag + ":" + key
+				modifiedKeys[i] = hashTag + ":" + key
 			}
 		} else {
-			// Add the default hash tag as a prefix
-			modifiedKeys[i] = defaultHashTag + ":" + key
+			// Add the specified hash tag as a prefix
+			modifiedKeys[i] = hashTag + ":" + key
 		}
 	}
 
