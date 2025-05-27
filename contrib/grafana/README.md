@@ -66,6 +66,19 @@ The distributed brute force dashboard provides visualization for metrics related
 4. Select the appropriate Prometheus data source when prompted
 5. Click "Import"
 
+### Installing Multiple Instances
+
+If you want to have multiple instances of the same dashboard (e.g., to compare configurations or test changes):
+
+1. Before importing, open the JSON file in a text editor
+2. Find the line containing `"uid": "e4491148-50c2-485d-8eb3-c594dd7a4099"` (near the end of the file)
+3. Either:
+   - Remove this line completely (Grafana will generate a new UID)
+   - Replace the UID with a different value
+   - Leave it as is if you want to replace an existing dashboard
+4. Change the dashboard title to something distinctive
+5. Save the file and import it as described above
+
 ## Machine Learning Dashboard
 
 The Machine Learning dashboard (`nauthilus-ml.json`) provides comprehensive visualizations for monitoring the neural network used in Nauthilus's brute force detection system.

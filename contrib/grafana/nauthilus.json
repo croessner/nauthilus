@@ -46,7 +46,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -131,7 +131,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(cpu_user_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
@@ -143,7 +143,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(cpu_system_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
@@ -156,7 +156,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(cpu_iowait_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
@@ -169,7 +169,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(cpu_nice_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
@@ -182,7 +182,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(cpu_idle_usage_percent{job=\"nauthilus\", instance=~\"$instance\"})",
@@ -200,7 +200,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -305,7 +305,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (pool) (ldap_pool_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -317,7 +317,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (pool) (ldap_pool_open_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -330,7 +330,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (pool) (ldap_pool_stale_connections_total{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -343,7 +343,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (pool) (ldap_idle_pool_size{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -356,7 +356,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (pool) (ldap_pool_size{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -374,7 +374,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -432,7 +432,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(generic_connections{job=\"nauthilus\",instance=~\"$instance\",direction=\"local\"})",
@@ -449,7 +449,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -503,7 +503,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (target,direction,description) (generic_connections{job=\"nauthilus\",instance=~\"$instance\",direction=\"remote\"})",
@@ -520,7 +520,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -574,7 +574,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(server_concurrent_requests{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -590,7 +590,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -644,7 +644,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (service) (http_client_concurrent_requests_total{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -661,7 +661,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -720,7 +720,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(avg_over_time(go_threads{job=\"nauthilus\", instance=~\"$instance\"}[1m]))",
@@ -737,7 +737,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -790,7 +790,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (server_status) (backend_servers_status{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -807,7 +807,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -860,7 +860,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": false,
@@ -892,7 +892,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -943,7 +943,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(start_timestamp{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -959,7 +959,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -1010,7 +1010,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(last_reload_timestamp{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -1039,7 +1039,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -1095,7 +1095,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(\n    logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"success\"}\n    - logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"success\"} offset $__range\n)",
@@ -1106,7 +1106,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(\n    logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"failure\"}\n    - logins_total{job=\"nauthilus\", instance=~\"$instance\", logins=\"failure\"} offset $__range\n)",
@@ -1119,45 +1119,6 @@
       ],
       "title": "Login stats",
       "type": "piechart"
-    },
-    {
-      "datasource": {
-        "default": false,
-        "type": "loki",
-        "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 16,
-        "x": 6,
-        "y": 17
-      },
-      "id": 93,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
-          },
-          "editorMode": "builder",
-          "expr": "{app_kubernetes_io_name=\"nauthilus\"} |= `` | json | authenticated = `fail`",
-          "legendFormat": "",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Live logs",
-      "type": "logs"
     },
     {
       "collapsed": false,
@@ -1176,7 +1137,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1264,7 +1225,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (protocol) (rate(accepted_protocols_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1281,7 +1242,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1367,7 +1328,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (protocol) (rate(rejected_protocols_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1384,7 +1345,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1471,7 +1432,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (country) (rate(geoippolicyd_count{job=\"nauthilus\",instance=~\"$instance\",country!=\"\"}[$__rate_interval]) > 0)",
@@ -1488,7 +1449,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1576,7 +1537,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (feature) (rate(analytics_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1593,7 +1554,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1680,7 +1641,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (reason,protocol) (rate(ldap_filter_reject_reason_count{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1697,7 +1658,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1750,7 +1711,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (rbl) (increase(rbl_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__range]))",
@@ -1767,7 +1728,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1853,7 +1814,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (rbl) (rate(rbl_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -1870,7 +1831,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1957,7 +1918,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (bucket) (rate(bruteforce_rejected_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1969,7 +1930,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum by (bucket) (rate(bruteforce_hits_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]) > 0)",
@@ -1987,7 +1948,7 @@
       "collapsed": false,
       "datasource": {
         "type": "prometheus",
-        "uid": "tyEvlR27k"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 1,
@@ -2004,7 +1965,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -2095,7 +2056,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": false,
@@ -2134,7 +2095,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2220,7 +2181,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(irate(process_network_receive_bytes_total{job=~\"nauthilus\", instance=~\"$instance\"}[1m]))",
@@ -2232,7 +2193,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(irate(process_network_transmit_bytes_total{job=\"nauthilus\", instance=~\"$instance\"}[1m]))",
@@ -2270,7 +2231,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2359,7 +2320,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(irate(cache_hits_total{job=\"nauthilus\",instance=~\"$instance\"}[1m]))",
@@ -2371,7 +2332,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(irate(cache_misses_total{job=\"nauthilus\",instance=~\"$instance\"}[1m]))",
@@ -2389,7 +2350,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2477,7 +2438,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(rate(redis_read_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -2490,7 +2451,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(rate(redis_write_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -2508,7 +2469,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -2595,7 +2556,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (rate(redis_connection_hits_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
@@ -2607,7 +2568,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (rate(redis_connection_misses_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
@@ -2620,7 +2581,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (rate(redis_connection_timeouts_total{job=\"nauthilus\", instance=~\"$instance\"}[$__rate_interval]))",
@@ -2638,7 +2599,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2690,7 +2651,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (redis_pool_total_connections{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -2703,7 +2664,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (redis_pool_idle_connections{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -2716,7 +2677,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (pool_name) (redis_pool_stale_connections{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -2746,7 +2707,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2833,7 +2794,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_latency_milliseconds{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -2848,7 +2809,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -2959,7 +2920,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_instantaneous_ops_per_sec{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -2970,7 +2931,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_instantaneous_input_kbps{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -2982,7 +2943,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_instantaneous_output_kbps{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -2994,7 +2955,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_connected_clients{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3010,7 +2971,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -3118,7 +3079,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_used_memory_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3129,7 +3090,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_used_memory_rss_bytes{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3141,7 +3102,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_mem_fragmentation_ratio{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3157,7 +3118,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -3264,7 +3225,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_keyspace_hits_total{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3275,7 +3236,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_keyspace_misses_total{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3287,7 +3248,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_keyspace_hit_rate{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3299,7 +3260,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_expired_keys_total{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3311,7 +3272,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_evicted_keys_total{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3327,7 +3288,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -3413,7 +3374,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "redis_rejected_connections_total{job=\"nauthilus\", instance=~\"$instance\"}",
@@ -3442,7 +3403,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -3536,7 +3497,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (search) (irate(ldap_filter_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(ldap_filter_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
@@ -3549,7 +3510,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (http) (irate(blocklist_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(blocklist_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
@@ -3562,7 +3523,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (http) (irate(geoippolicyd_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(geoippolicyd_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
@@ -3575,7 +3536,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (http) (irate(haveibeenpwnd_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(haveibeenpwnd_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
@@ -3588,7 +3549,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (bot) (irate(telegram_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\"}[1m]) / irate(telegram_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\"}[1m]) > 0)",
@@ -3606,7 +3567,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -3677,7 +3638,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(ldap_filter_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])) by (le)) > 0)",
@@ -3690,7 +3651,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"ldap_backend_lookup_request_total\"}[$__rate_interval])) by (le)) > 0)",
@@ -3708,7 +3669,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -3777,7 +3738,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"ldap_backend_auth_request_total\"}[$__rate_interval])) by (le)) > 0)",
@@ -3794,7 +3755,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -3864,7 +3825,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(http_response_time_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval])) by (le)))",
@@ -3881,7 +3842,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -3951,7 +3912,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",task=\"post:Check haveibeenpwnd network\"}[$__rate_interval])) by (le)) > 0)",
@@ -3968,7 +3929,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4038,7 +3999,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"dns\",task=\"ptr\"}[$__rate_interval])) by (le)) > 0)",
@@ -4050,7 +4011,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"dns\",task=\"rbl\"}[$__rate_interval])) by (le)) > 0)",
@@ -4068,7 +4029,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -4137,7 +4098,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"feature\",task=\"Check blocklist.de\"}[$__rate_interval])) by (le)) > 0)",
@@ -4149,7 +4110,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(function_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",service=\"filter\",task=\"Check GeoIP policy\"}[$__rate_interval])) by (le)) > 0)",
@@ -4167,7 +4128,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -4236,7 +4197,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(rbl_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",rbl=\"AbusiX AuthBL\"}[$__rate_interval])) by (le)) > 0)",
@@ -4248,7 +4209,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(histogram_quantile(0.95, sum(rate(rbl_duration_seconds_bucket{job=\"nauthilus\",instance=~\"$instance\",rbl=\"SpamRats AuthBL\"}[$__rate_interval])) by (le)) > 0)",
@@ -4266,7 +4227,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4360,7 +4321,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",service!=\"action\",service!=\"post_action\",task!=\"request_no_auth_total\",task!=\"request_list_accounts_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",service!=\"action\",service!=\"post_action\",task!=\"request_no_auth_total\",task!=\"request_list_accounts_total\"}[1m]) > 0)",
@@ -4378,7 +4339,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4472,7 +4433,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",task=\"request_list_accounts_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",task=\"request_list_accounts_total\"}[1m]) > 0)",
@@ -4485,7 +4446,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",task=\"request_no_auth_total\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",task=\"request_no_auth_total\"}[1m]) > 0)",
@@ -4503,7 +4464,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4597,7 +4558,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg by (service,task) (irate(function_duration_seconds_sum{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) / irate(function_duration_seconds_count{job=\"nauthilus\",instance=~\"$instance\",service=\"action\"}[1m]) > 0)",
@@ -4628,7 +4589,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -4683,7 +4644,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(go_goroutines{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -4699,7 +4660,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4751,7 +4712,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(delta(go_memstats_buck_hash_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -4768,7 +4729,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4820,7 +4781,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(go_memstats_gc_sys_bytes{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -4837,7 +4798,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -4888,7 +4849,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "sum(rate(go_memstats_mallocs_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -4904,7 +4865,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -4994,7 +4955,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": true,
@@ -5022,7 +4983,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -5139,7 +5100,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": true,
@@ -5152,7 +5113,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": true,
@@ -5166,7 +5127,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": true,
@@ -5208,7 +5169,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -5296,7 +5257,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "exemplar": true,
@@ -5323,7 +5284,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "description": "",
       "fieldConfig": {
@@ -5411,7 +5372,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(rate(go_memstats_alloc_bytes_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -5437,7 +5398,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -5524,7 +5485,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(go_memstats_heap_released_bytes{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -5541,7 +5502,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -5627,7 +5588,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(rate(go_memstats_frees_total{job=\"nauthilus\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -5644,7 +5605,7 @@
       "datasource": {
         "default": true,
         "type": "prometheus",
-        "uid": "-r2GKo_7k"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -5731,7 +5692,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "-r2GKo_7k"
+            "uid": "${datasource}"
           },
           "editorMode": "code",
           "expr": "avg(go_memstats_heap_objects{job=\"nauthilus\",instance=~\"$instance\"})",
@@ -5752,17 +5713,35 @@
     "list": [
       {
         "current": {
+          "selected": false,
+          "text": "default",
+          "value": "default"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
           "selected": true,
           "text": [
-            "kn1.roessner-net.de:30010"
+            "All"
           ],
           "value": [
-            "kn1.roessner-net.de:30010"
+            "$__all"
           ]
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "-r2GKo_7k"
+          "uid": "${datasource}"
         },
         "definition": "label_values(up{job=\"nauthilus\"},instance)",
         "hide": 0,
@@ -5777,42 +5756,9 @@
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "/^kn[0-9]\\.roessner-net\\.de:30010$/",
-        "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
-        },
-        "datasource": {
-          "type": "loki",
-          "uid": "fcacecd1-e147-437f-9642-d17d59cd1413"
-        },
-        "definition": "",
-        "hide": 0,
-        "includeAll": true,
-        "label": "nauthilus_account",
-        "multi": true,
-        "name": "nauthilus_account",
-        "options": [],
-        "query": {
-          "label": "nauthilus_account",
-          "refId": "LokiVariableQueryEditor-VariableQuery",
-          "stream": "",
-          "type": 1
-        },
-        "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
         "type": "query"
       }
     ]
@@ -5823,7 +5769,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Nauthilus 2",
+  "title": "Nauthilus",
   "uid": "e4491148-50c2-485d-8eb3-c594dd7a4099",
   "version": 97,
   "weekStart": ""
