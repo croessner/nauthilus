@@ -760,7 +760,7 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -811,7 +811,7 @@
           "reverse": false,
           "scale": "exponential",
           "scheme": "Oranges",
-          "steps": 64
+          "steps": 16
         },
         "exemplars": {
           "color": "rgba(255,0,255,0.7)"
@@ -890,7 +890,7 @@
           "reverse": false,
           "scale": "exponential",
           "scheme": "Blues",
-          "steps": 64
+          "steps": 16
         },
         "exemplars": {
           "color": "rgba(255,0,255,0.7)"
@@ -1045,7 +1045,7 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1491,7 +1491,7 @@
       "type": "timeseries"
     }
   ],
-  "refresh": "5s",
+  "refresh": "30s",
   "schemaVersion": 40,
   "style": "dark",
   "tags": [
@@ -1531,13 +1531,11 @@
     ]
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {
     "refresh_intervals": [
-      "5s",
-      "10s",
       "30s",
       "1m",
       "5m",
@@ -1545,6 +1543,8 @@
       "30m",
       "1h",
       "2h",
+      "6h",
+      "12h",
       "1d"
     ]
   },
