@@ -32,7 +32,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-kit/log/level"
@@ -411,50 +410,34 @@ func (r *DistributedBruteForceReports) GetReport(period string) (*SecurityReport
 	return report, nil
 }
 
-// RegisterHTTPHandlers registers HTTP handlers for security reports
-func (r *DistributedBruteForceReports) RegisterHTTPHandlers(router *gin.Engine) {
-	router.GET("/api/security/reports", func(c *gin.Context) {
-		// Check if JWT auth is enabled
-		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-			// Check if user has the "security" role
-			if !jwtutil.HasRole(c, "security") {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error": "Access denied: missing required role 'security'",
-				})
+// HandleReportsRequest handles requests for security reports
+func (r *DistributedBruteForceReports) HandleReportsRequest(c *gin.Context) {
+	// Get period from query parameter, default to daily
+	period := c.DefaultQuery("period", "daily")
 
-				return
-			}
-		}
+	// Validate period
+	if period != "daily" && period != "weekly" && period != "monthly" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid period. Must be one of: daily, weekly, monthly",
+		})
+		return
+	}
 
-		// Get period from query parameter, default to daily
-		period := c.DefaultQuery("period", "daily")
+	// Get report
+	report, err := r.GetReport(period)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
 
-		// Validate period
-		if period != "daily" && period != "weekly" && period != "monthly" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Invalid period. Must be one of: daily, weekly, monthly",
-			})
-
-			return
-		}
-
-		// Get report
-		report, err := r.GetReport(period)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": err.Error(),
-			})
-
-			return
-		}
-
-		// Return report as JSON
-		c.JSON(http.StatusOK, report)
-	})
+	// Return report as JSON
+	c.JSON(http.StatusOK, report)
 }
 
 // InitDistributedBruteForceReports initializes the distributed brute force reports
-func InitDistributedBruteForceReports(router *gin.Engine) {
+func InitDistributedBruteForceReports() {
 	// Check if experimental ML is enabled
 	if !config.GetEnvironment().GetExperimentalML() {
 		level.Info(log.Logger).Log(
@@ -466,11 +449,6 @@ func InitDistributedBruteForceReports(router *gin.Engine) {
 
 	reports := GetDistributedBruteForceReports()
 	reports.StartReportGenerator(context.Background())
-
-	// Register HTTP handlers if router is provided
-	if router != nil {
-		reports.RegisterHTTPHandlers(router)
-	}
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Distributed brute force reports initialized")
 }
