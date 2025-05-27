@@ -4,8 +4,49 @@ This directory contains Grafana dashboard configurations for monitoring Nauthilu
 
 ## Available Dashboards
 
-1. **nauthilus.json** - General Nauthilus metrics dashboard
-2. **nauthilus-ml.json** - Machine Learning metrics dashboard for neural network monitoring
+### 1. nauthilus.json
+
+General Nauthilus metrics dashboard.
+
+### 2. nauthilus-ml.json
+
+Machine Learning metrics dashboard for monitoring the neural network used for brute force detection.
+
+### 3. nauthilus-distributed-brute-force.json
+
+Dashboard for monitoring distributed brute force attack detection metrics. This dashboard visualizes metrics collected by the global pattern monitoring system, which is designed to detect distributed brute force attacks that use many unique IP addresses with few attempts per IP.
+
+## Distributed Brute Force Dashboard
+
+The distributed brute force dashboard provides visualization for metrics related to detecting distributed brute force attacks. It includes:
+
+### Current Metrics
+- Authentication attempts in different time windows (1m, 5m, 15m, 1h)
+- Unique IPs in different time windows
+- Unique users in different time windows
+- Key indicators for distributed brute force attacks (1h window)
+
+### Derived Metrics
+- Attempts per IP: A low value combined with a high number of unique IPs can indicate a distributed brute force attack
+- Attempts per user: A high value can indicate a targeted brute force attack
+- IPs per user: A high value can indicate a distributed brute force attack targeting specific users
+
+### Historical Metrics
+- Historical authentication attempts per hour
+- Historical unique IPs per hour
+- Historical derived metrics (attempts per IP, attempts per user, IPs per user)
+
+## Installation
+
+1. Import the dashboard JSON files into your Grafana instance.
+2. Configure the Prometheus data source to point to your Nauthilus Prometheus endpoint.
+3. Ensure that the experimental_ml environment variable is set to enable the ML metrics collection.
+
+## Requirements
+
+- Nauthilus with Redis for storing metrics
+- Prometheus for scraping metrics
+- Grafana for visualization
 
 ## Importing Dashboards into Grafana
 

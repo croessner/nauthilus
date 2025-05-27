@@ -247,8 +247,11 @@ end
 2. ✅ Collect baseline data for normal authentication patterns
    - Historical metrics are stored in Redis with hourly granularity
    - Metrics include attempts, unique IPs, unique users, and derived ratios
-3. ⏳ Develop visualization tools for monitoring global authentication metrics
-   - Metrics are available in Redis for integration with monitoring tools
+3. ✅ Develop visualization tools for monitoring global authentication metrics
+   - Implemented in `server/bruteforce/ml/distributed_brute_force_metrics.go`
+   - Exposes Redis metrics as Prometheus metrics
+   - Created Grafana dashboard in `contrib/grafana/nauthilus-distributed-brute-force.json`
+   - Metrics include authentication attempts, unique IPs, unique users, and derived ratios
 
 ### Phase 2: Detection Mechanisms
 

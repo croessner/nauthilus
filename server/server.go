@@ -952,6 +952,9 @@ func initializeMLMetrics(ctx context.Context) {
 			definitions.LogKeyMsg, err,
 		)
 	}
+
+	// Initialize distributed brute force metrics
+	ml.InitDistributedBruteForceMetrics()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
