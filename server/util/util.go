@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -66,36 +67,46 @@ type CryptPassword struct {
 }
 
 // Generate creates the encrypted form of a plain text password.
+// It sets the Algorithm, PasswordOption, Salt, and Password fields of the CryptPassword struct
+// and returns the generated password string.
 func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption) (
 	string, error,
 ) {
-	var (
-		hashSalt  []byte
-		hashValue hash.Hash
-	)
+	var hashValue hash.Hash
 
-	c.Salt = salt
-	hashSalt = append([]byte(plainPassword), salt...)
-
+	// Validate algorithm
 	switch alg {
 	case definitions.SSHA512:
 		hashValue = sha512.New()
-		c.Algorithm = definitions.SSHA512
 	case definitions.SSHA256:
 		hashValue = sha256.New()
-		c.Algorithm = definitions.SSHA256
 	default:
 		return "", errors.ErrUnsupportedAlgorithm
 	}
 
-	hashValue.Write(hashSalt)
+	// Store algorithm and salt in the struct
+	c.Algorithm = alg
+	c.Salt = salt
 
+	// Write plainPassword and salt to hash
+	hashValue.Write([]byte(plainPassword))
+	hashValue.Write(salt)
+
+	// Get hash sum
+	hashSum := hashValue.Sum(nil)
+
+	// Prepare buffer for hash+salt
+	hashWithSalt := make([]byte, len(hashSum)+len(salt))
+	copy(hashWithSalt, hashSum)
+	copy(hashWithSalt[len(hashSum):], salt)
+
+	// Encode according to password option
 	switch pwOption {
 	case definitions.B64:
-		c.Password = base64.StdEncoding.EncodeToString(append(hashValue.Sum(nil), salt...))
+		c.Password = base64.StdEncoding.EncodeToString(hashWithSalt)
 		c.PasswordOption = definitions.B64
 	case definitions.HEX:
-		c.Password = hex.EncodeToString(append(hashValue.Sum(nil), salt...))
+		c.Password = hex.EncodeToString(hashWithSalt)
 		c.PasswordOption = definitions.HEX
 	default:
 		return "", errors.ErrUnsupportedPasswordOption
@@ -104,71 +115,79 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definiti
 	return c.Password, nil
 }
 
+// Pre-compiled regex pattern for password prefix matching
+var passwordPrefixPattern = regexp.MustCompile(`SSHA(256|512)(\.HEX|\.B64)?`)
+
 // GetParameters splits an encoded password into its components.
+// It extracts the salt, algorithm, and password option from the crypted password
+// and sets the corresponding fields in the CryptPassword struct.
 func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	salt []byte, alg definitions.Algorithm, pwOption definitions.PasswordOption, err error,
 ) {
-	var decodedPwSasltSalt []byte
+	var decodedPwSalt []byte
 
-	pattern := `SSHA(256|512)(\.HEX|\.B64)?`
-	re := regexp.MustCompile(pattern)
-	passwordPrefix := re.FindString(cryptedPassword)
+	// Find the password prefix (SSHA256/SSHA512 with optional .HEX/.B64)
+	passwordPrefix := passwordPrefixPattern.FindString(cryptedPassword)
+	if passwordPrefix == "" {
+		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
+	}
 
+	// Determine algorithm
 	if strings.HasPrefix(passwordPrefix, "SSHA512") {
 		alg = definitions.SSHA512
+	} else if strings.HasPrefix(passwordPrefix, "SSHA256") {
+		alg = definitions.SSHA256
 	} else {
-		if strings.HasPrefix(passwordPrefix, "SSHA256") {
-			alg = definitions.SSHA256
-		} else {
-			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
-		}
+		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 	}
-
 	c.Algorithm = alg
 
+	// Determine password option
 	if strings.HasSuffix(passwordPrefix, ".B64") {
 		pwOption = definitions.B64
+	} else if strings.HasSuffix(passwordPrefix, ".HEX") {
+		pwOption = definitions.HEX
 	} else {
-		if strings.HasSuffix(passwordPrefix, ".HEX") {
-			pwOption = definitions.HEX
-		}
-	}
-
-	// {SSHA256} or {SSHA512} without suffix
-	if len(passwordPrefix) == 7 {
+		// Default to B64 if no suffix is specified
 		pwOption = definitions.B64
 	}
-
 	c.PasswordOption = pwOption
 
-	c.Password = cryptedPassword[strings.Index(cryptedPassword, "}")+1:]
+	// Extract the password part (everything after the closing brace)
+	closingBraceIndex := strings.Index(cryptedPassword, "}")
+	if closingBraceIndex == -1 {
+		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
+	}
+	c.Password = cryptedPassword[closingBraceIndex+1:]
 
-	//goland:noinspection GoDfaConstantCondition
+	// Decode the password based on the password option
 	switch pwOption {
 	case definitions.B64:
-		decodedPwSasltSalt, err = base64.StdEncoding.DecodeString(c.Password)
+		decodedPwSalt, err = base64.StdEncoding.DecodeString(c.Password)
 	case definitions.HEX:
-		decodedPwSasltSalt, err = hex.DecodeString(c.Password)
+		decodedPwSalt, err = hex.DecodeString(c.Password)
+	default:
+		return nil, alg, pwOption, errors.ErrUnsupportedPasswordOption
 	}
 
 	if err != nil {
-		return salt, alg, pwOption, err
+		return nil, alg, pwOption, err
 	}
 
-	//goland:noinspection GoDfaConstantCondition
+	// Extract the salt based on the algorithm
 	switch alg {
 	case definitions.SSHA512:
-		if len(decodedPwSasltSalt) < 65 {
-			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
+		if len(decodedPwSalt) < 65 {
+			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
-
-		salt = decodedPwSasltSalt[64:]
+		salt = decodedPwSalt[64:]
 	case definitions.SSHA256:
-		if len(decodedPwSasltSalt) < 33 {
-			return salt, alg, pwOption, errors.ErrUnsupportedAlgorithm
+		if len(decodedPwSalt) < 33 {
+			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
-
-		salt = decodedPwSasltSalt[32:]
+		salt = decodedPwSalt[32:]
+	default:
+		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 	}
 
 	c.Salt = salt
@@ -459,7 +478,8 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *
 }
 
 // ComparePasswords takes a plain password and creates a hash. Then it compares the hashed passwords and returns true, if
-// bothe passwords are equal. If an error occurs, the result is false for the compare operation and the error is returned.
+// both passwords are equal. If an error occurs, the result is false for the compare operation and the error is returned.
+// This function uses constant-time comparison to prevent timing attacks.
 func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
 	if strings.HasPrefix(hashPassword, "{SSHA") {
 		password := &CryptPassword{}
@@ -470,11 +490,13 @@ func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
 		}
 
 		newPassword := &CryptPassword{}
-		newPassword.Generate(plainPassword, salt, alg, pwOption)
-
-		if password.Password == newPassword.Password {
-			return true, nil
+		_, err = newPassword.Generate(plainPassword, salt, alg, pwOption)
+		if err != nil {
+			return false, err
 		}
+
+		// Use subtle.ConstantTimeCompare for secure comparison
+		return subtle.ConstantTimeCompare([]byte(password.Password), []byte(newPassword.Password)) == 1, nil
 	} else {
 		// Supported passwords: MD5, SSHA256, SSHA512, bcrypt, Argon2i, Argon2id
 		_, _, _, pwhash, err := crypt.DecodeSettings(hashPassword)
@@ -482,19 +504,19 @@ func ComparePasswords(hashPassword string, plainPassword string) (bool, error) {
 			return false, err
 		}
 
-		settings, _, _ := strings.Cut(hashPassword, pwhash)
+		settings, _, found := strings.Cut(hashPassword, pwhash)
+		if !found {
+			return false, errors.ErrUnsupportedAlgorithm
+		}
 
 		encoded, err := crypt.Crypt(plainPassword, settings)
 		if err != nil {
 			return false, err
 		}
 
-		if encoded == hashPassword {
-			return true, nil
-		}
+		// Use subtle.ConstantTimeCompare for secure comparison
+		return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
 	}
-
-	return false, nil
 }
 
 // ByteSize formats a given number of bytes into a human-readable string representation.
