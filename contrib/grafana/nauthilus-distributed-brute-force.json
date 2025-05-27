@@ -760,7 +760,7 @@
       "type": "timeseries"
     },
     {
-      "collapsed": true,
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -802,7 +802,7 @@
       },
       "id": 11,
       "options": {
-        "calculate": false,
+        "calculate": true,
         "cellGap": 1,
         "color": {
           "exponent": 0.5,
@@ -831,7 +831,8 @@
         },
         "yAxis": {
           "axisPlacement": "left",
-          "reverse": false
+          "reverse": false,
+          "max": 24
         }
       },
       "pluginVersion": "10.0.4",
@@ -881,7 +882,7 @@
       },
       "id": 12,
       "options": {
-        "calculate": false,
+        "calculate": true,
         "cellGap": 1,
         "color": {
           "exponent": 0.5,
@@ -910,7 +911,8 @@
         },
         "yAxis": {
           "axisPlacement": "left",
-          "reverse": false
+          "reverse": false,
+          "max": 24
         }
       },
       "pluginVersion": "10.0.4",
@@ -994,7 +996,7 @@
       "id": 13,
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": ["mean"],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -1002,6 +1004,17 @@
         "tooltip": {
           "mode": "single",
           "sort": "none"
+        },
+        "caching": {
+          "enable": true
+        },
+        "series": {
+          "line": {
+            "show": true
+          },
+          "point": {
+            "show": false
+          }
         }
       },
       "targets": [
@@ -1011,7 +1024,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_historical_attempts_per_ip{instance=~\"$instance\"}",
+          "expr": "avg by (hour) (nauthilus_dbf_historical_attempts_per_ip{instance=~\"$instance\"})",
           "legendFormat": "Attempts per IP ({{hour}})",
           "range": true,
           "refId": "A"
@@ -1022,7 +1035,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_historical_attempts_per_user{instance=~\"$instance\"}",
+          "expr": "avg by (hour) (nauthilus_dbf_historical_attempts_per_user{instance=~\"$instance\"})",
           "hide": false,
           "legendFormat": "Attempts per User ({{hour}})",
           "range": true,
@@ -1034,7 +1047,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_historical_ips_per_user{instance=~\"$instance\"}",
+          "expr": "avg by (hour) (nauthilus_dbf_historical_ips_per_user{instance=~\"$instance\"})",
           "hide": false,
           "legendFormat": "IPs per User ({{hour}})",
           "range": true,
@@ -1045,7 +1058,7 @@
       "type": "timeseries"
     },
     {
-      "collapsed": true,
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1345,8 +1358,8 @@
           "mode": "single",
           "sort": "none"
         },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
+        "xTickLabelRotation": 45,
+        "xTickLabelSpacing": 100
       },
       "targets": [
         {
@@ -1355,7 +1368,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_severe_events{instance=~\"$instance\"}",
+          "expr": "nauthilus_dbf_severe_events{instance=~\"$instance\"} or vector(0)",
           "legendFormat": "Severe Events ({{period}})",
           "range": true,
           "refId": "A"
@@ -1366,7 +1379,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_high_events{instance=~\"$instance\"}",
+          "expr": "nauthilus_dbf_high_events{instance=~\"$instance\"} or vector(0)",
           "hide": false,
           "legendFormat": "High Events ({{period}})",
           "range": true,
@@ -1378,7 +1391,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "nauthilus_dbf_moderate_events{instance=~\"$instance\"}",
+          "expr": "nauthilus_dbf_moderate_events{instance=~\"$instance\"} or vector(0)",
           "hide": false,
           "legendFormat": "Moderate Events ({{period}})",
           "range": true,
