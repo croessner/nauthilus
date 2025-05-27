@@ -272,10 +272,14 @@ func TrainNeuralNetwork(ctx *gin.Context) lua.LGFunction {
 // LoaderModNeural loads Lua functions for neural network integration and returns them as a Lua module.
 func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
+		// Import the ProvideFeedback function from feedback.go
+		provideFeedback := ProvideFeedback(ctx)
+
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
 			definitions.LuaFnTrainNeuralNetwork:    TrainNeuralNetwork(ctx),
 			definitions.LuaFnSetLearningMode:       SetLearningMode(ctx),
+			definitions.LuaFnProvideFeedback:       provideFeedback,
 		})
 
 		L.Push(mod)

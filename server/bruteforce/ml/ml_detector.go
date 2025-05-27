@@ -610,6 +610,7 @@ type TrainingData struct {
 	Success  bool
 	Features *LoginFeatures
 	Time     time.Time
+	Feedback bool // True if this sample was created from user feedback
 }
 
 // StringEncodingType represents the type of encoding to use for string features
@@ -1679,6 +1680,8 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 // This prevents the model from becoming biased over time, which could happen if there
 // is a sudden influx of only one type of login attempt (e.g., during an attack or
 // during normal operation with very few failures).
+//
+// For recording feedback on predictions, use RecordFeedback instead.
 func RecordLoginResult(ctx context.Context, success bool, features *LoginFeatures, clientIP string, username string, guid string) error {
 	// Check if experimental ML is enabled
 	if !config.GetEnvironment().GetExperimentalML() {
@@ -3272,4 +3275,183 @@ func (d *BruteForceMLDetector) getLoginTimeKey() string {
 
 func (d *BruteForceMLDetector) getFailedAttemptsKey() string {
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:failed:attempts:" + d.clientIP
+}
+
+// RecordFeedback records user feedback on a prediction for future training.
+// This function is used to create a feedback loop for improving detection accuracy.
+// Unlike RecordLoginResult, this function does not check for balance in the training data,
+// as feedback is considered more valuable and should always be recorded.
+//
+// Parameters:
+// - ctx: The context for the request
+// - isBruteForce: Whether the login attempt was actually part of a brute force attack (true) or not (false)
+// - features: The features used for the prediction
+// - clientIP: The client IP address
+// - username: The username being authenticated
+// - guid: The unique identifier for the request
+//
+// Returns an error if the feedback could not be recorded.
+func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatures, clientIP string, username string, guid string) error {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "skip_record_feedback",
+			"reason", "experimental_ml_not_enabled",
+			definitions.LogKeyGUID, guid,
+		)
+
+		return nil
+	}
+
+	// Check if the IP should be ignored for ML training
+	if ShouldIgnoreIP(clientIP, username, guid) {
+		return nil
+	}
+
+	// Store the feedback as training data
+	data := TrainingData{
+		Success:  !isBruteForce, // Success is the opposite of isBruteForce (success means not a brute force attack)
+		Features: features,
+		Time:     time.Now(),
+		Feedback: true, // Mark this as feedback data
+	}
+
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:training:data"
+
+	// Log the feedback
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Recording user feedback: %s login", map[bool]string{true: "brute force", false: "legitimate"}[isBruteForce]),
+		"client_ip", clientIP,
+		"username", username,
+		definitions.LogKeyGUID, guid,
+	)
+
+	// Serialize the data
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Store the feedback at the beginning of the list (most recent)
+	err = rediscli.GetClient().GetWriteHandle().LPush(ctx, key, jsonBytes).Err()
+	if err != nil {
+		return err
+	}
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Get the maximum number of training records from config or use default
+	maxRecords := int64(10000) // Default value for backward compatibility
+	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+	if nnConfig != nil {
+		configMaxRecords := nnConfig.GetMaxTrainingRecords()
+		if configMaxRecords > 0 {
+			maxRecords = int64(configMaxRecords)
+		}
+	}
+
+	// Trim the list to keep only the last maxRecords entries
+	err = rediscli.GetClient().GetWriteHandle().LTrim(ctx, key, 0, maxRecords-1).Err()
+	if err != nil {
+		return err
+	}
+
+	// Trigger immediate retraining if there's enough feedback
+	go func() {
+		// Use a background context for the retraining
+		bgCtx := context.Background()
+
+		// Get the global trainer
+		globalTrainerMutex.RLock()
+		trainer := globalTrainer
+		globalTrainerMutex.RUnlock()
+
+		if trainer == nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Cannot retrain model: global trainer is nil",
+			)
+
+			return
+		}
+
+		// Count how many feedback samples we have
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		// Get a sample of training data to check how many have feedback
+		trainingData, err := trainer.GetTrainingDataFromRedis(1000)
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to get training data for feedback check: %v", err),
+			)
+
+			return
+		}
+
+		// Count feedback samples
+		feedbackCount := 0
+		for _, sample := range trainingData {
+			if sample.Feedback {
+				feedbackCount++
+			}
+		}
+
+		// If we have at least 10 feedback samples, retrain the model
+		if feedbackCount >= 10 {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Retraining model with %d feedback samples", feedbackCount),
+			)
+
+			// Train with all available data, with more epochs for better learning
+			if trainErr := trainer.TrainWithStoredData(5000, 100); trainErr != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Feedback-triggered training failed: %v", trainErr),
+				)
+
+				return
+			}
+
+			// Save the trained model to Redis
+			if saveErr := trainer.SaveModelToRedis(); saveErr != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis after feedback training: %v", saveErr),
+				)
+
+				return
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Model successfully retrained with feedback data",
+			)
+
+			// Set the modelTrained flag if it's not already set
+			modelTrainedMutex.RLock()
+			isModelTrained := modelTrained
+			modelTrainedMutex.RUnlock()
+
+			if !isModelTrained {
+				modelTrainedMutex.Lock()
+				modelTrained = true
+				modelTrainedMutex.Unlock()
+
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Model is now considered trained with feedback data",
+				)
+
+				// Save the flag to Redis for future use
+				if saveErr := SaveModelTrainedFlagToRedis(bgCtx); saveErr != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", saveErr),
+					)
+				}
+			}
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Not enough feedback samples for retraining (%d/10 required)", feedbackCount),
+			)
+		}
+	}()
+
+	return nil
 }
