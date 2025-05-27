@@ -36,6 +36,11 @@ The distributed brute force dashboard provides visualization for metrics related
 - Historical unique IPs per hour
 - Historical derived metrics (attempts per IP, attempts per user, IPs per user)
 
+### Report Metrics
+- Threat Levels: Maximum and average threat levels from security reports
+- Security Events by Severity: Count of severe, high, and moderate security events
+- Event Count and Report Generations: Total number of security events and report generation count
+
 ## Installation
 
 1. Import the dashboard JSON files into your Grafana instance.

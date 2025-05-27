@@ -374,6 +374,56 @@ The following tasks are still pending:
    - Implement feedback loops for improving detection accuracy
    - Create comprehensive reporting tools for security analysis
 
+## Security Considerations
+
+### Metrics Endpoint Authentication
+
+The metrics endpoint (`/metrics`) is now secured with authentication to prevent unauthorized access to sensitive monitoring data. The following authentication methods are supported:
+
+1. **JWT Authentication**: If JWT authentication is enabled, users must have the "security" role to access the metrics endpoint.
+2. **Basic Authentication**: If Basic Authentication is enabled, users must provide valid credentials to access the metrics endpoint.
+3. **No Authentication**: If neither JWT nor Basic Authentication is enabled, the metrics endpoint is accessible without authentication.
+
+#### Configuring Prometheus to Access Secured Metrics
+
+To configure Prometheus to access the secured metrics endpoint, you need to add authentication configuration to your Prometheus scrape configuration:
+
+##### Basic Authentication
+
+```yaml
+scrape_configs:
+  - job_name: 'nauthilus'
+    metrics_path: '/metrics'
+    basic_auth:
+      username: 'your_username'
+      password: 'your_password'
+    static_configs:
+      - targets: ['nauthilus:8080']
+```
+
+##### Bearer Token Authentication (JWT)
+
+```yaml
+scrape_configs:
+  - job_name: 'nauthilus'
+    metrics_path: '/metrics'
+    authorization:
+      type: Bearer
+      credentials: 'your_jwt_token'
+    static_configs:
+      - targets: ['nauthilus:8080']
+```
+
+You can generate a JWT token with the "security" role using the `/api/v1/jwt/token` endpoint:
+
+```bash
+curl -X POST http://nauthilus:8080/api/v1/jwt/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"your_password"}'
+```
+
+The response will include a token that you can use in the Prometheus configuration.
+
 ## Integration Guide
 
 This section provides instructions for integrating the distributed brute force detection and mitigation system into your Nauthilus deployment.

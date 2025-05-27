@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -1349,8 +1350,60 @@ func setupRouter(router *gin.Engine) {
 
 	// Define high-priority endpoints that should be fast and always available
 
-	// Prometheus endpoint
-	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
+	// Prometheus endpoint with authentication
+	router.GET("/metrics", func(c *gin.Context) {
+		// Check if JWT auth is enabled
+		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+			// Extract token
+			tokenString, err := ExtractJWTToken(c)
+			if err == nil {
+				// Validate token
+				claims, err := ValidateJWTToken(tokenString)
+				if err == nil {
+					// Check if user has the "security" role
+					for _, role := range claims.Roles {
+						if role == "security" {
+							// User has security role, allow access
+							promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+
+							return
+						}
+					}
+				}
+			}
+		}
+
+		// Check if Basic Auth is enabled
+		if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+			username, password, httpBasicAuthOk := c.Request.BasicAuth()
+
+			if httpBasicAuthOk {
+				usernameHash := sha256.Sum256([]byte(username))
+				passwordHash := sha256.Sum256([]byte(password))
+				expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
+				expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
+
+				usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
+				passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
+
+				if usernameMatch && passwordMatch {
+					// Basic auth successful, allow access
+					promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+
+					return
+				}
+			}
+
+			// Basic auth failed, request authentication
+			c.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
+			c.AbortWithStatus(http.StatusUnauthorized)
+
+			return
+		}
+
+		// If neither JWT nor Basic Auth is enabled, allow access
+		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	// Healthcheck - keep this simple and fast
 	router.GET("/ping", RequestHandler)
@@ -1406,6 +1459,9 @@ func HTTPApp(ctx context.Context) {
 	httpServer := setupHTTPServer(router)
 
 	setupRouter(router)
+
+	// Initialize distributed brute force reports with the router
+	ml.InitDistributedBruteForceReports(router)
 
 	go waitForShutdown(httpServer, ctx)
 
