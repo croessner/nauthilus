@@ -782,6 +782,10 @@ func (f *FileSettings) GetLuaScriptPath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if luaConf == nil {
+			return ""
+		}
+
 		return luaConf.BackendScriptPath
 	}
 
@@ -803,6 +807,10 @@ func (f *FileSettings) GetLuaInitScriptPath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if luaConf == nil {
+			return ""
+		}
+
 		if len(luaConf.InitScriptPaths) > 0 {
 			return luaConf.InitScriptPaths[0]
 		}
@@ -827,6 +835,10 @@ func (f *FileSettings) GetLuaInitScriptPaths() []string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if luaConf == nil {
+			return nil
+		}
+
 		var paths []string
 
 		// Add the single init script path if it's set
@@ -857,6 +869,10 @@ func (f *FileSettings) GetLuaPackagePath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		if luaConf == nil || luaConf.PackagePath == "" {
+			return definitions.LuaPackagePath
+		}
+
 		return luaConf.PackagePath
 	}
 
@@ -986,7 +1002,7 @@ func (f *FileSettings) HaveLuaInit() bool {
 		}
 
 		luaConf, ok := getConfig.(*LuaConf)
-		if !ok {
+		if !ok || luaConf == nil {
 			return false
 		}
 
