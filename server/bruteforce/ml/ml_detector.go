@@ -2852,10 +2852,28 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		}
 	}
 
-	// Acquire read lock to get the model
+	// Acquire read lock to check if globalTrainer is still nil after initialization
 	globalTrainerMutex.RLock()
-	model := globalTrainer.GetModel()
+	trainerIsStillNil := globalTrainer == nil
 	globalTrainerMutex.RUnlock()
+
+	// If globalTrainer is still nil after initialization, create a default model
+	var model *NeuralNetwork
+	if trainerIsStillNil {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "get_detector_create_default_model",
+			"reason", "global_trainer_still_nil_after_init",
+			definitions.LogKeyGUID, guid,
+		)
+
+		// Create a default model with 6 input neurons (standard features)
+		model = NewNeuralNetwork(6, 1)
+	} else {
+		// Get the model from the global trainer
+		globalTrainerMutex.RLock()
+		model = globalTrainer.GetModel()
+		globalTrainerMutex.RUnlock()
+	}
 
 	// Get encoding type preferences from the context if they exist
 	var encodingTypes map[string]string
