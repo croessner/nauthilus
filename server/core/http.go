@@ -1434,14 +1434,14 @@ func setupRouter(router *gin.Engine) {
 	// Healthcheck - keep this simple and fast
 	router.GET("/ping", RequestHandler)
 
-	// Parse static folder for template files
-	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
-
 	// Setup static content early as it's often cached and doesn't require complex processing
 	setupStaticContent(router)
 
 	// Setup frontend endpoints if enabled
 	if config.GetFile().GetServer().Frontend.Enabled {
+		// Parse static folder for template files
+		router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
+
 		store := setupSessionStore()
 
 		// Group related endpoint setup functions for better organization and potential parallel initialization
