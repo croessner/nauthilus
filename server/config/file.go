@@ -400,11 +400,7 @@ func (f *FileSettings) GetBackendServers() []*BackendServer {
 	}
 
 	if f.GetBackendServerMonitoring() != nil {
-		if f.BackendServerMonitoring.BackendServers == nil {
-			return []*BackendServer{}
-		}
-
-		return f.BackendServerMonitoring.BackendServers
+		return f.GetBackendServerMonitoring().GetBackendServers()
 	}
 
 	return []*BackendServer{}
@@ -418,7 +414,7 @@ func (f *FileSettings) GetBackendServer(protocol string) *BackendServer {
 	}
 
 	for _, server := range f.GetBackendServers() {
-		if server.Protocol == protocol {
+		if server.GetProtocol() == protocol {
 			return server
 		}
 	}
@@ -461,7 +457,7 @@ func (f *FileSettings) GetLDAPConfigStartTLS() bool {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.StartTLS
+		return ldapConf.IsStartTLS()
 	}
 
 	return false
@@ -480,7 +476,7 @@ func (f *FileSettings) GetLDAPConfigTLSSkipVerify() bool {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.TLSSkipVerify
+		return ldapConf.IsTLSSkipVerify()
 	}
 
 	return false
@@ -499,7 +495,7 @@ func (f *FileSettings) GetLDAPConfigSASLExternal() bool {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.SASLExternal
+		return ldapConf.IsSASLExternal()
 	}
 
 	return false
@@ -517,7 +513,7 @@ func (f *FileSettings) GetLDAPConfigLookupIdlePoolSize() int {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.LookupIdlePoolSize
+		return ldapConf.GetLookupIdlePoolSize()
 	}
 
 	return definitions.LDAPIdlePoolSize
@@ -536,7 +532,7 @@ func (f *FileSettings) GetLDAPConfigAuthIdlePoolSize() int {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.AuthIdlePoolSize
+		return ldapConf.GetAuthIdlePoolSize()
 	}
 
 	return definitions.LDAPIdlePoolSize
@@ -554,7 +550,7 @@ func (f *FileSettings) GetLDAPConfigLookupPoolSize() int {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.LookupPoolSize
+		return ldapConf.GetLookupPoolSize()
 	}
 
 	return definitions.LDAPIdlePoolSize
@@ -572,7 +568,7 @@ func (f *FileSettings) GetLDAPConfigAuthPoolSize() int {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.AuthPoolSize
+		return ldapConf.GetAuthPoolSize()
 	}
 
 	return definitions.LDAPIdlePoolSize
@@ -590,7 +586,7 @@ func (f *FileSettings) GetLDAPConfigConnectAbortTimeout() time.Duration {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.ConnectAbortTimeout
+		return ldapConf.GetConnectAbortTimeout()
 	}
 
 	return 0
@@ -608,7 +604,7 @@ func (f *FileSettings) GetLDAPConfigBindDN() string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.BindDN
+		return ldapConf.GetBindDN()
 	}
 
 	return ""
@@ -626,7 +622,7 @@ func (f *FileSettings) GetLDAPConfigBindPW() string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.BindPW
+		return ldapConf.GetBindPW()
 	}
 
 	return ""
@@ -644,7 +640,7 @@ func (f *FileSettings) GetLDAPConfigTLSCAFile() string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.TLSCAFile
+		return ldapConf.GetTLSCAFile()
 	}
 
 	return ""
@@ -663,7 +659,7 @@ func (f *FileSettings) GetLDAPConfigTLSClientCert() string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.TLSClientCert
+		return ldapConf.GetTLSClientCert()
 	}
 
 	return ""
@@ -681,7 +677,7 @@ func (f *FileSettings) GetLDAPConfigTLSClientKey() string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.TLSClientKey
+		return ldapConf.GetTLSClientKey()
 	}
 
 	return ""
@@ -699,7 +695,7 @@ func (f *FileSettings) GetLDAPConfigServerURIs() []string {
 	}
 
 	if ldapConf, assertOk := getConfig.(*LDAPConf); assertOk {
-		return ldapConf.ServerURIs
+		return ldapConf.GetServerURIs()
 	}
 
 	return []string{"ldap://localhost"}
@@ -713,12 +709,12 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	protocols := f.GetProtocols(definitions.BackendLDAP)
-	if protocols == nil {
+	getProtocols := f.GetProtocols(definitions.BackendLDAP)
+	if getProtocols == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	ldapProtocols, ok := protocols.([]LDAPSearchProtocol)
+	ldapProtocols, ok := getProtocols.([]LDAPSearchProtocol)
 	if !ok {
 		return nil, errors.ErrLDAPConfig.WithDetail("Invalid protocol configuration type")
 	}
@@ -728,8 +724,9 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 			continue
 		}
 
-		for protoIndex := range ldapProtocols[index].Protocols {
-			if ldapProtocols[index].Protocols[protoIndex] == protocol {
+		protocols := ldapProtocols[index].GetProtocols()
+		for protoIndex := range protocols {
+			if protocols[protoIndex] == protocol {
 				return &ldapProtocols[index], nil
 			}
 		}
@@ -795,7 +792,7 @@ func (f *FileSettings) GetLuaScriptPath() string {
 			return ""
 		}
 
-		return luaConf.BackendScriptPath
+		return luaConf.GetBackendScriptPath()
 	}
 
 	return ""
@@ -820,11 +817,12 @@ func (f *FileSettings) GetLuaInitScriptPath() string {
 			return ""
 		}
 
-		if len(luaConf.InitScriptPaths) > 0 {
-			return luaConf.InitScriptPaths[0]
+		initScriptPaths := luaConf.GetInitScriptPaths()
+		if len(initScriptPaths) > 0 {
+			return initScriptPaths[0]
 		}
 
-		return luaConf.InitScriptPath
+		return luaConf.GetInitScriptPath()
 	}
 
 	return ""
@@ -851,13 +849,15 @@ func (f *FileSettings) GetLuaInitScriptPaths() []string {
 		var paths []string
 
 		// Add the single init script path if it's set
-		if luaConf.InitScriptPath != "" {
-			paths = append(paths, luaConf.InitScriptPath)
+		initScriptPath := luaConf.GetInitScriptPath()
+		if initScriptPath != "" {
+			paths = append(paths, initScriptPath)
 		}
 
 		// Add all paths from the list
-		if len(luaConf.InitScriptPaths) > 0 {
-			paths = append(paths, luaConf.InitScriptPaths...)
+		initScriptPaths := luaConf.GetInitScriptPaths()
+		if len(initScriptPaths) > 0 {
+			paths = append(paths, initScriptPaths...)
 		}
 
 		return paths
@@ -878,11 +878,16 @@ func (f *FileSettings) GetLuaPackagePath() string {
 	}
 
 	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
-		if luaConf == nil || luaConf.PackagePath == "" {
+		if luaConf == nil {
 			return definitions.LuaPackagePath
 		}
 
-		return luaConf.PackagePath
+		packagePath := luaConf.GetPackagePath()
+		if packagePath == "" {
+			return definitions.LuaPackagePath
+		}
+
+		return packagePath
 	}
 
 	return definitions.LuaPackagePath
@@ -897,12 +902,12 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string)
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	getSearch := f.GetProtocols(definitions.BackendLua)
-	if getSearch == nil {
+	getProtocols := f.GetProtocols(definitions.BackendLua)
+	if getProtocols == nil {
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	luaProtocols, ok := getSearch.([]LuaSearchProtocol)
+	luaProtocols, ok := getProtocols.([]LuaSearchProtocol)
 	if !ok {
 		return nil, errors.ErrLuaConfig.WithDetail("Invalid protocol configuration type")
 	}
@@ -912,8 +917,9 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string)
 			continue
 		}
 
-		for protoIndex := range luaProtocols[index].Protocols {
-			if luaProtocols[index].Protocols[protoIndex] == protocol {
+		protocols := luaProtocols[index].GetProtocols()
+		for protoIndex := range protocols {
+			if protocols[protoIndex] == protocol {
 				return &luaProtocols[index], nil
 			}
 		}
@@ -949,7 +955,7 @@ func (f *FileSettings) HaveLuaFilters() bool {
 	}
 
 	if f.HaveLua() {
-		return len(f.Lua.Filters) > 0
+		return len(f.GetLua().GetFilters()) > 0
 	}
 
 	return false
@@ -964,7 +970,7 @@ func (f *FileSettings) HaveLuaFeatures() bool {
 	}
 
 	if f.HaveLua() {
-		return len(f.Lua.Features) > 0
+		return len(f.GetLua().GetFeatures()) > 0
 	}
 
 	return false
@@ -977,7 +983,7 @@ func (f *FileSettings) HaveLuaHooks() bool {
 	}
 
 	if f.HaveLua() {
-		return len(f.Lua.Hooks) > 0
+		return len(f.GetLua().GetHooks()) > 0
 	}
 
 	return false
@@ -992,7 +998,7 @@ func (f *FileSettings) HaveLuaActions() bool {
 	}
 
 	if f.HaveLua() {
-		return len(f.Lua.Actions) > 0
+		return len(f.GetLua().GetActions()) > 0
 	}
 
 	return false
@@ -1020,7 +1026,7 @@ func (f *FileSettings) HaveLuaInit() bool {
 			return false
 		}
 
-		return luaConf.InitScriptPath != "" || len(luaConf.InitScriptPaths) > 0
+		return luaConf.GetInitScriptPath() != "" || len(luaConf.GetInitScriptPaths()) > 0
 	}
 
 	return false
@@ -1047,7 +1053,7 @@ func (f *FileSettings) HaveLuaBackend() bool {
 		return false
 	}
 
-	for _, backendType := range f.Server.Backends {
+	for _, backendType := range f.GetServer().GetBackends() {
 		if backendType.Get() == definitions.BackendLua {
 			return true
 		}
@@ -1066,7 +1072,7 @@ func (f *FileSettings) HaveLDAPBackend() bool {
 		return false
 	}
 
-	for _, backendType := range f.Server.Backends {
+	for _, backendType := range f.GetServer().GetBackends() {
 		if backendType.Get() == definitions.BackendLDAP {
 			return true
 		}
@@ -1079,17 +1085,17 @@ func (f *FileSettings) HaveLDAPBackend() bool {
  * Dynamic server configuration
  */
 
-// GetServer retrieves the ServerSection from the FileSettings. Returns nil if the FileSettings is nil or if no Server is present.
+// GetServer retrieves the ServerSection from the FileSettings. Returns an empty ServerSection if the FileSettings is nil or if no Server is present.
 func (f *FileSettings) GetServer() *ServerSection {
 	if f == nil {
-		return nil
+		return &ServerSection{}
 	}
 
-	if f.HaveServer() {
-		return f.Server
+	if f.Server == nil {
+		return &ServerSection{}
 	}
 
-	return nil
+	return f.Server
 }
 
 // HaveServer is a method on the FileSettings struct.
@@ -1174,9 +1180,9 @@ func (f *FileSettings) GetSection(backend definitions.Backend) any {
 
 	switch backend {
 	case definitions.BackendLDAP:
-		return f.LDAP
+		return f.GetLDAP()
 	case definitions.BackendLua:
-		return f.Lua
+		return f.GetLua()
 	default:
 		return nil
 	}
@@ -1189,9 +1195,11 @@ func (f *FileSettings) GetBruteForceRules() (rules []BruteForceRule) {
 		return nil
 	}
 
-	if f.BruteForce != nil {
-		if len(f.BruteForce.Buckets) > 0 {
-			rules = f.BruteForce.Buckets
+	bruteForce := f.GetBruteForce()
+	if bruteForce != nil {
+		buckets := bruteForce.GetBuckets()
+		if len(buckets) > 0 {
+			rules = buckets
 		}
 	}
 
@@ -1208,16 +1216,18 @@ func (f *FileSettings) GetAllProtocols() []string {
 
 	if ldapProtocols := f.GetProtocols(definitions.BackendLDAP); ldapProtocols != nil {
 		for index := range ldapProtocols.([]LDAPSearchProtocol) {
-			for protoIndex := range f.LDAP.Search[index].Protocols {
-				protocols.Set(f.LDAP.Search[index].Protocols[protoIndex])
+			protoList := ldapProtocols.([]LDAPSearchProtocol)[index].GetProtocols()
+			for protoIndex := range protoList {
+				protocols.Set(protoList[protoIndex])
 			}
 		}
 	}
 
 	if luaProtocols := f.GetProtocols(definitions.BackendLua); luaProtocols != nil {
 		for index := range luaProtocols.([]LuaSearchProtocol) {
-			for protoIndex := range f.Lua.Search[index].Protocols {
-				protocols.Set(f.Lua.Search[index].Protocols[protoIndex])
+			protoList := luaProtocols.([]LuaSearchProtocol)[index].GetProtocols()
+			for protoIndex := range protoList {
+				protocols.Set(protoList[protoIndex])
 			}
 		}
 	}
@@ -1227,9 +1237,11 @@ func (f *FileSettings) GetAllProtocols() []string {
 
 // getOAuth2ClientIndex returns the index and found status of an OAuth-2 client with the given client ID in the LoadableConfig.Oauth2.Clients slice. If the client is found, the index
 func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found bool) {
-	if f.Oauth2 != nil {
-		for index = range GetFile().GetOauth2().Clients {
-			if f.Oauth2.Clients[index].ClientId != clientId {
+	oauth2 := f.GetOauth2()
+	if oauth2 != nil {
+		clients := oauth2.GetClients()
+		for index = range clients {
+			if clients[index].GetClientId() != clientId {
 				continue
 			}
 
@@ -1245,7 +1257,9 @@ func (f *FileSettings) getOAuth2ClientIndex(clientId string) (index int, found b
 // GetSkipTOTP returns a boolean true, if TOTP two-factor authentication shall be skipped for an OAuth-2 client.
 func (f *FileSettings) GetSkipTOTP(clientId string) (skip bool) {
 	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		return f.Oauth2.Clients[index].SkipTOTP
+		clients := f.GetOauth2().GetClients()
+
+		return clients[index].IsSkipTOTP()
 	}
 
 	return
@@ -1254,7 +1268,9 @@ func (f *FileSettings) GetSkipTOTP(clientId string) (skip bool) {
 // GetSkipConsent returns a boolean true, if the consent dialog shall be skipped for an OAuth-2 client.
 func (f *FileSettings) GetSkipConsent(clientId string) (skip bool) {
 	if index, found := f.getOAuth2ClientIndex(clientId); found {
-		return f.Oauth2.Clients[index].SkipConsent
+		clients := f.GetOauth2().GetClients()
+
+		return clients[index].IsSkipConsent()
 	}
 
 	return
@@ -1266,7 +1282,7 @@ func (f *FileSettings) GetUsername() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.Username
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetUsername()
 }
 
 // GetPassword returns the HTTP request header for the password
@@ -1275,7 +1291,7 @@ func (f *FileSettings) GetPassword() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.Password
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetPassword()
 }
 
 // GetPasswordEncoded returns the HTTP request header to indicate if the password was encoded
@@ -1284,7 +1300,7 @@ func (f *FileSettings) GetPasswordEncoded() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.PasswordEncoded
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetPasswordEncoded()
 }
 
 // GetProtocol returns the HTTP request header for the used protocol
@@ -1293,7 +1309,7 @@ func (f *FileSettings) GetProtocol() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.Protocol
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetProtocol()
 }
 
 // GetLoginAttempt returns the HTTP request header for login-attempts
@@ -1302,7 +1318,7 @@ func (f *FileSettings) GetLoginAttempt() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.LoginAttempt
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetLoginAttempt()
 }
 
 // GetAuthMethod returns the HTTP request header for the auth mechanism LOGIN or PLAIN
@@ -1311,7 +1327,7 @@ func (f *FileSettings) GetAuthMethod() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.AuthMethod
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetAuthMethod()
 }
 
 // GetLocalIP returns the HTTP request header that represents the local IP address for the server that accepts client requests
@@ -1320,7 +1336,7 @@ func (f *FileSettings) GetLocalIP() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.LocalIP
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetLocalIP()
 }
 
 // GetLocalPort returns the HTTP request header that represents the local TCP port for the server that accepts client requests
@@ -1329,7 +1345,7 @@ func (f *FileSettings) GetLocalPort() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.LocalPort
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetLocalPort()
 }
 
 // GetOIDCCID retrieves the OIDC Client ID from the FileSettings' DefaultHTTPRequestHeader. Returns an empty string if nil.
@@ -1338,7 +1354,7 @@ func (f *FileSettings) GetOIDCCID() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.GetOIDCCID()
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetOIDCCID()
 }
 
 // GetClientIP returns the HTTP request header that holds the client IP of the request
@@ -1347,7 +1363,7 @@ func (f *FileSettings) GetClientIP() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.ClientIP
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetClientIP()
 }
 
 // GetClientPort returns the HTTP request header that holds the client TCP port of the request
@@ -1356,7 +1372,7 @@ func (f *FileSettings) GetClientPort() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.ClientPort
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetClientPort()
 }
 
 // GetClientHost returns the HTTP request header used to retrieve an optional client hostname
@@ -1365,7 +1381,7 @@ func (f *FileSettings) GetClientHost() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.ClientHost
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetClientHost()
 }
 
 // GetClientID returns the HTTP request header used to retrieve an optional client ID
@@ -1374,7 +1390,7 @@ func (f *FileSettings) GetClientID() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.ClientID
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetClientID()
 }
 
 // GetSSL returns the HTTP request header used to indicate SSL security for the current client connection
@@ -1383,7 +1399,7 @@ func (f *FileSettings) GetSSL() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSL
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSL()
 }
 
 // GetSSLSessionID retrieves the SSL session ID from the file's default HTTP request header. Returns an empty string
@@ -1393,7 +1409,7 @@ func (f *FileSettings) GetSSLSessionID() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLSessionID
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLSessionID()
 }
 
 // GetSSLVerify retrieves the SSL verification status from the default HTTP request header configuration.
@@ -1403,7 +1419,7 @@ func (f *FileSettings) GetSSLVerify() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLVerify
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLVerify()
 }
 
 // GetSSLSubject retrieves the SSL subject from the default HTTP request header. Returns an empty string if the file is nil.
@@ -1412,7 +1428,7 @@ func (f *FileSettings) GetSSLSubject() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLSubject
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLSubject()
 }
 
 // GetSSLClientCN retrieves the SSL client common name (CN) from the default HTTP request header.
@@ -1421,7 +1437,7 @@ func (f *FileSettings) GetSSLClientCN() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLClientCN
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLClientCN()
 }
 
 // GetSSLIssuer retrieves the SSL certificate issuer from the default HTTP request header of the server configuration.
@@ -1430,7 +1446,7 @@ func (f *FileSettings) GetSSLIssuer() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLIssuer
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuer()
 }
 
 // GetSSLClientNotBefore retrieves the "SSLClientNotBefore" value from the default HTTP request header of the server.
@@ -1440,7 +1456,7 @@ func (f *FileSettings) GetSSLClientNotBefore() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLClientNotBefore
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotBefore()
 }
 
 // GetSSLClientNotAfter retrieves the SSL client certificate's "not after" expiration date as a string. Returns an empty
@@ -1450,7 +1466,7 @@ func (f *FileSettings) GetSSLClientNotAfter() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLClientNotAfter
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotAfter()
 }
 
 // GetSSLSubjectDN returns the SSL subject distinguished name from the Server's default HTTP request header.
@@ -1459,7 +1475,7 @@ func (f *FileSettings) GetSSLSubjectDN() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLSubjectDN
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLSubjectDN()
 }
 
 // GetSSLIssuerDN retrieves the Distinguished Name (DN) of the SSL issuer from the default HTTP request header.
@@ -1468,7 +1484,7 @@ func (f *FileSettings) GetSSLIssuerDN() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLSubject
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuerDN()
 }
 
 // GetSSLClientSubjectDN returns the SSL client subject distinguished name from the default HTTP request header.
@@ -1478,7 +1494,7 @@ func (f *FileSettings) GetSSLClientSubjectDN() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLClientSubjectDN
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLClientSubjectDN()
 }
 
 // GetSSLClientIssuerDN returns the distinguished name (DN) of the SSL client issuer from the default HTTP request header.
@@ -1487,7 +1503,7 @@ func (f *FileSettings) GetSSLClientIssuerDN() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLClientIssuerDN
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLClientIssuerDN()
 }
 
 // GetSSLCipher retrieves the SSL cipher from the default HTTP request header of the server configuration.
@@ -1497,7 +1513,7 @@ func (f *FileSettings) GetSSLCipher() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLCipher
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLCipher()
 }
 
 // GetSSLProtocol retrieves the SSL protocol from the DefaultHTTPRequestHeader of the Server configuration.
@@ -1506,7 +1522,7 @@ func (f *FileSettings) GetSSLProtocol() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLProtocol
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLProtocol()
 }
 
 // GetSSLSerial retrieves the SSL serial number from the default HTTP request header of the server configuration.
@@ -1516,7 +1532,7 @@ func (f *FileSettings) GetSSLSerial() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLSerial
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLSerial()
 }
 
 // GetSSLFingerprint retrieves the SSL fingerprint from the server's default HTTP request header.
@@ -1526,14 +1542,15 @@ func (f *FileSettings) GetSSLFingerprint() string {
 		return ""
 	}
 
-	return f.Server.DefaultHTTPRequestHeader.SSLFingerprint
+	return f.GetServer().GetDefaultHTTPRequestHeader().GetSSLFingerprint()
 }
 
 // validateBruteForce validates the brute force configuration rules in the FileSettings object.
 // Returns an error if any rule is invalid or violates constraints; otherwise, returns nil.
 func (f *FileSettings) validateBruteForce() error {
-	if f.BruteForce != nil {
-		for _, rule := range f.BruteForce.Buckets {
+	bruteForce := f.GetBruteForce()
+	if bruteForce != nil {
+		for _, rule := range bruteForce.GetBuckets() {
 			if rule.IPv4 && rule.IPv6 {
 				return fmt.Errorf("%w: %s", errors.ErrRuleNoIPv4AndIPv6, rule.String())
 			}
@@ -1590,6 +1607,10 @@ func (f *FileSettings) LDAPHavePoolOnly(backendName string) bool {
 // It ensures required sections, such as 'ldap', are properly configured and assigns default values where applicable.
 // If any backend has invalid or incomplete settings, it returns an appropriate error.
 func (f *FileSettings) validatePassDBBackends() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	for _, backend := range f.Server.Backends {
 		switch backend.Get() {
 		case definitions.BackendLDAP:
@@ -1681,6 +1702,10 @@ func checkAddress(address string) error {
 
 // validateAddress ensures the server address is set and valid, defaulting to HTTPAddress if unset. Returns an error if invalid.
 func (f *FileSettings) validateAddress() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	if f.Server.Address == "" {
 		f.Server.Address = definitions.HTTPAddress
 	}
@@ -1690,6 +1715,10 @@ func (f *FileSettings) validateAddress() error {
 
 // setDefaultHydraAdminUrl sets the Hydra admin URL to a default value if it is not already configured.
 func (f *FileSettings) setDefaultHydraAdminUrl() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	if f.Server.HydraAdminUrl == "" {
 		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
 	}
@@ -1699,6 +1728,10 @@ func (f *FileSettings) setDefaultHydraAdminUrl() error {
 
 // setDefaultInstanceName ensures the Server.InstanceName field is set to a default value if it is currently empty.
 func (f *FileSettings) setDefaultInstanceName() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	if f.Server.InstanceName == "" {
 		f.Server.InstanceName = definitions.InstanceName
 	}
@@ -1708,6 +1741,10 @@ func (f *FileSettings) setDefaultInstanceName() error {
 
 // setDefaultDnsTimeout sets the default DNS timeout value for the file's server if not already specified.
 func (f *FileSettings) setDefaultDnsTimeout() error {
+	if f == nil || f.Server == nil || f.Server.DNS == (DNS{}) {
+		return nil
+	}
+
 	if f.Server.DNS.Timeout == 0 {
 		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
 	}
@@ -1717,7 +1754,13 @@ func (f *FileSettings) setDefaultDnsTimeout() error {
 
 // setDefaultPosCacheTTL sets a default Positive Cache TTL for Redis if it is not already configured.
 func (f *FileSettings) setDefaultPosCacheTTL() error {
-	if f.Server.Redis.PosCacheTTL <= 0 {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	redis := f.GetServer().GetRedis()
+
+	if redis.GetPosCacheTTL() <= 0 {
 		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL * time.Second
 	}
 
@@ -1734,7 +1777,13 @@ func (f *FileSettings) setDefaultPosCacheTTL() error {
 
 // setDefaultNegCacheTTL sets the default TTL for negative cache entries in Redis if it is not already configured.
 func (f *FileSettings) setDefaultNegCacheTTL() error {
-	if f.Server.Redis.NegCacheTTL <= 0 {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	redis := f.GetServer().GetRedis()
+
+	if redis.GetNegCacheTTL() <= 0 {
 		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL * time.Second
 	}
 
@@ -1751,7 +1800,13 @@ func (f *FileSettings) setDefaultNegCacheTTL() error {
 
 // setDefaultDelimiter sets the default delimiter for the master user if none has been defined and returns any error.
 func (f *FileSettings) setDefaultDelimiter() error {
-	if f.Server.MasterUser.Delimiter == "" {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	masterUser := f.GetServer().GetMasterUser()
+
+	if masterUser.GetDelimiter() == "" {
 		f.Server.MasterUser.Delimiter = "*"
 	}
 
@@ -1760,6 +1815,15 @@ func (f *FileSettings) setDefaultDelimiter() error {
 
 // setDefaultHeaders ensures all default HTTP request headers are set. If any header is empty, it is replaced with its default value.
 func (f *FileSettings) setDefaultHeaders() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
+	// Initialize DefaultHTTPRequestHeader if it's nil
+	if f.Server.DefaultHTTPRequestHeader == (DefaultHTTPRequestHeader{}) {
+		f.Server.DefaultHTTPRequestHeader = DefaultHTTPRequestHeader{}
+	}
+
 	defaults := map[string]*string{
 		"Auth-User":            &f.Server.DefaultHTTPRequestHeader.Username,
 		"Auth-Pass":            &f.Server.DefaultHTTPRequestHeader.Password,
@@ -1804,6 +1868,10 @@ func (f *FileSettings) setDefaultHeaders() error {
 
 // setDefaultMaxConcurrentRequests ensures that the MaxConcurrentRequests parameter is set to a valid value.
 func (f *FileSettings) setDefaultMaxConcurrentRequests() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	if f.Server.MaxConcurrentRequests == 0 {
 		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
@@ -1813,6 +1881,10 @@ func (f *FileSettings) setDefaultMaxConcurrentRequests() error {
 
 // setDefaultPasswordHistory sets MaxPasswordHistoryEntries to a default value if non-positive and returns an error if any.
 func (f *FileSettings) setDefaultPasswordHistory() error {
+	if f == nil || f.Server == nil {
+		return nil
+	}
+
 	if f.Server.MaxPasswordHistoryEntries == 0 {
 		f.Server.MaxPasswordHistoryEntries = definitions.MaxPasswordHistoryEntries
 	}
@@ -1852,7 +1924,7 @@ func (f *FileSettings) validate() (err error) {
 
 // HasFeature checks if the given feature exists in the LoadableConfig's Features list
 func (f *FileSettings) HasFeature(feature string) bool {
-	if f.Server.Features == nil {
+	if f == nil || f.Server == nil || f.Server.Features == nil {
 		return false
 	}
 

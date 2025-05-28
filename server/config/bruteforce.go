@@ -156,6 +156,16 @@ func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
 	return &s.NeuralNetwork
 }
 
+// GetBuckets retrieves the list of brute force rules from the BruteForceSection.
+// Returns an empty slice if the BruteForceSection is nil.
+func (b *BruteForceSection) GetBuckets() []BruteForceRule {
+	if b == nil {
+		return []BruteForceRule{}
+	}
+
+	return b.Buckets
+}
+
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).
 type Tolerate struct {
 	IPAddress          string        `mapstructure:"ip_address" validate:"required,ip_addr|cidr"`
@@ -165,6 +175,88 @@ type Tolerate struct {
 	MinToleratePercent uint8         `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	MaxToleratePercent uint8         `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	ScaleFactor        float64       `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+}
+
+// GetIPAddress retrieves the IP address from the Tolerate configuration.
+// Returns an empty string if the Tolerate is nil.
+func (t *Tolerate) GetIPAddress() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.IPAddress
+}
+
+// GetToleratePercent retrieves the tolerate percent value from the Tolerate configuration.
+// Returns 0 if the Tolerate is nil.
+func (t *Tolerate) GetToleratePercent() uint8 {
+	if t == nil {
+		return 0
+	}
+
+	return t.ToleratePercent
+}
+
+// GetTolerateTTL retrieves the tolerate TTL duration from the Tolerate configuration.
+// Returns 0 if the Tolerate is nil.
+func (t *Tolerate) GetTolerateTTL() time.Duration {
+	if t == nil {
+		return 0
+	}
+
+	return t.TolerateTTL
+}
+
+// GetAdaptiveToleration checks if adaptive toleration is enabled in the Tolerate configuration.
+// Returns false if the Tolerate is nil.
+func (t *Tolerate) GetAdaptiveToleration() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.AdaptiveToleration
+}
+
+// GetMinToleratePercent retrieves the minimum tolerate percent value from the Tolerate configuration.
+// Returns 10 as default if not set or if the Tolerate is nil.
+func (t *Tolerate) GetMinToleratePercent() uint8 {
+	if t == nil {
+		return 10
+	}
+
+	if t.MinToleratePercent == 0 {
+		return 10 // Default value
+	}
+
+	return t.MinToleratePercent
+}
+
+// GetMaxToleratePercent retrieves the maximum tolerate percent value from the Tolerate configuration.
+// Returns 50 as default if not set or if the Tolerate is nil.
+func (t *Tolerate) GetMaxToleratePercent() uint8 {
+	if t == nil {
+		return 50
+	}
+
+	if t.MaxToleratePercent == 0 {
+		return 50 // Default value
+	}
+
+	return t.MaxToleratePercent
+}
+
+// GetScaleFactor retrieves the scale factor value from the Tolerate configuration.
+// Returns 1.0 as default if not set or if the Tolerate is nil.
+func (t *Tolerate) GetScaleFactor() float64 {
+	if t == nil {
+		return 1.0
+	}
+
+	if t.ScaleFactor == 0 {
+		return 1.0 // Default value
+	}
+
+	return t.ScaleFactor
 }
 
 // BruteForceRule is the definition of a brute force rule as defined in the configuration file. See the markdown
@@ -188,6 +280,86 @@ func (b *BruteForceRule) String() string {
 	return fmt.Sprintf("Name: %s, Period: %s, CIDR: %d, IPv4: %t, IPv6: %t, FailedRequests: %d", b.Name, b.Period, b.CIDR, b.IPv4, b.IPv6, b.FailedRequests)
 }
 
+// GetName retrieves the name of the brute force rule.
+// Returns an empty string if the BruteForceRule is nil.
+func (b *BruteForceRule) GetName() string {
+	if b == nil {
+		return ""
+	}
+
+	return b.Name
+}
+
+// GetPeriod retrieves the period duration for the brute force rule.
+// Returns 0 if the BruteForceRule is nil.
+func (b *BruteForceRule) GetPeriod() time.Duration {
+	if b == nil {
+		return 0
+	}
+
+	return b.Period
+}
+
+// GetCIDR retrieves the CIDR value for the brute force rule.
+// Returns 0 if the BruteForceRule is nil.
+func (b *BruteForceRule) GetCIDR() uint {
+	if b == nil {
+		return 0
+	}
+
+	return b.CIDR
+}
+
+// IsIPv4 checks if the brute force rule is configured for IPv4.
+// Returns false if the BruteForceRule is nil.
+func (b *BruteForceRule) IsIPv4() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.IPv4
+}
+
+// IsIPv6 checks if the brute force rule is configured for IPv6.
+// Returns false if the BruteForceRule is nil.
+func (b *BruteForceRule) IsIPv6() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.IPv6
+}
+
+// GetFailedRequests retrieves the number of failed requests threshold for the brute force rule.
+// Returns 0 if the BruteForceRule is nil.
+func (b *BruteForceRule) GetFailedRequests() uint {
+	if b == nil {
+		return 0
+	}
+
+	return b.FailedRequests
+}
+
+// GetFilterByProtocol retrieves the list of protocols to filter by for the brute force rule.
+// Returns an empty slice if the BruteForceRule is nil.
+func (b *BruteForceRule) GetFilterByProtocol() []string {
+	if b == nil {
+		return []string{}
+	}
+
+	return b.FilterByProtocol
+}
+
+// GetFilterByOIDCCID retrieves the list of OIDC client IDs to filter by for the brute force rule.
+// Returns an empty slice if the BruteForceRule is nil.
+func (b *BruteForceRule) GetFilterByOIDCCID() []string {
+	if b == nil {
+		return []string{}
+	}
+
+	return b.FilterByOIDCCID
+}
+
 // NeuralNetwork represents the configuration for the neural network machine learning system.
 type NeuralNetwork struct {
 	MaxTrainingRecords int32   `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
@@ -204,6 +376,7 @@ func (n *NeuralNetwork) GetMaxTrainingRecords() int32 {
 	if n == nil {
 		return 10000 // Default value
 	}
+
 	return n.MaxTrainingRecords
 }
 
