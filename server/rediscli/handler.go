@@ -94,6 +94,19 @@ func NewClient() Client {
 				"error", err,
 			)
 		}
+
+		// Upload all Lua scripts to Redis at startup
+		// Create a goroutine to upload scripts asynchronously to prevent blocking server startup
+		go func() {
+			err := UploadAllScripts(context.Background())
+			if err != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to upload all Redis Lua scripts at startup",
+					"error", err,
+				)
+				// Continue despite errors - scripts will be uploaded on demand when needed
+			}
+		}()
 	}
 
 	return newClient

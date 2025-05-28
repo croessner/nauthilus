@@ -1,8 +1,24 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package redislib
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -48,6 +64,10 @@ var uploads = &Uploads{
 	scripts: make(map[string]string),
 }
 
+// defaultHashTag is the default hash tag used for Redis Cluster keys in Lua scripts
+// Using a different hash tag than the one in rediscli to distribute load across nodes
+var defaultHashTag = "{lua-nauthilus}"
+
 // evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
 func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
 	var (
@@ -58,7 +78,12 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 	evalArgs := make([]any, len(args))
 
 	for i, arg := range args {
-		evalArgs[len(keys)+i] = arg
+		evalArgs[i] = arg
+	}
+
+	// Check if we're using Redis Cluster and ensure keys hash to the same slot if needed
+	if rediscli.IsClusterClient(client) && len(keys) > 1 {
+		keys = rediscli.EnsureKeysInSameSlot(keys, defaultHashTag)
 	}
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -70,8 +95,30 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 		}
 
 		result, err = client.EvalSha(ctx, script, keys, evalArgs...).Result()
+
+		// Handle CROSSSLOT errors
+		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
+			// Force keys to use the same hash tag
+			keys = rediscli.EnsureKeysInSameSlot(keys, defaultHashTag)
+
+			// Try executing again with modified keys
+			stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			result, err = client.EvalSha(ctx, script, keys, evalArgs...).Result()
+		}
 	} else {
 		result, err = client.Eval(ctx, script, keys, evalArgs...).Result()
+
+		// Handle CROSSSLOT errors
+		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
+			// Force keys to use the same hash tag
+			keys = rediscli.EnsureKeysInSameSlot(keys, defaultHashTag)
+
+			// Try executing again with modified keys
+			stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			result, err = client.Eval(ctx, script, keys, evalArgs...).Result()
+		}
 	}
 
 	if err != nil {

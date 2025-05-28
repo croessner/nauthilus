@@ -272,3 +272,54 @@ func RedisZRank(ctx context.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// RedisZCount counts the number of members in a sorted set with scores between min and max.
+// Added in version 1.7.7
+func RedisZCount(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+
+		key := L.CheckString(2)
+		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
+		maxScore := L.CheckString(4) // Maximum score (e.g., "+inf" or a numeric value)
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		cmd := client.ZCount(ctx, key, minScore, maxScore)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}
+
+// RedisZScore retrieves the score of a member in a sorted set.
+// Added in version 1.7.7
+func RedisZScore(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+
+		key := L.CheckString(2)
+		member := L.CheckString(3) // The member whose score needs to be retrieved
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		cmd := client.ZScore(ctx, key, member)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}

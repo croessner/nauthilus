@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -966,6 +967,32 @@ func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 	}
 }
 
+// setupSecurityReportsEndpoints sets up the endpoints for security reports with appropriate authentication
+func setupSecurityReportsEndpoints(router *gin.Engine) {
+	// Check if experimental ML is enabled
+	if !config.GetEnvironment().GetExperimentalML() {
+		return
+	}
+
+	// Create a router group for security reports
+	securityGroup := router.Group("/api/security")
+
+	// Apply authentication middleware based on configuration
+	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+		securityGroup.Use(BasicAuthMiddleware())
+	}
+
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		securityGroup.Use(JWTAuthMiddleware())
+	}
+
+	// Get the reports instance
+	reports := ml.GetDistributedBruteForceReports()
+
+	// Register HTTP handlers with the security group
+	securityGroup.GET("/reports", reports.HandleReportsRequest)
+}
+
 // waitForShutdown is a function that waits for the context to be done, then shuts down the provided http.GetServer().
 // It takes in two parameters:
 // - www: a pointer to the http.Server instance
@@ -1349,20 +1376,72 @@ func setupRouter(router *gin.Engine) {
 
 	// Define high-priority endpoints that should be fast and always available
 
-	// Prometheus endpoint
-	router.GET("/metrics", gin.WrapF(promhttp.Handler().ServeHTTP))
+	// Prometheus endpoint with authentication
+	router.GET("/metrics", func(c *gin.Context) {
+		// Check if JWT auth is enabled
+		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+			// Extract token
+			tokenString, err := ExtractJWTToken(c)
+			if err == nil {
+				// Validate token
+				claims, err := ValidateJWTToken(tokenString)
+				if err == nil {
+					// Check if user has the "security" role
+					for _, role := range claims.Roles {
+						if role == "security" {
+							// User has security role, allow access
+							promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+
+							return
+						}
+					}
+				}
+			}
+		}
+
+		// Check if Basic Auth is enabled
+		if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+			username, password, httpBasicAuthOk := c.Request.BasicAuth()
+
+			if httpBasicAuthOk {
+				usernameHash := sha256.Sum256([]byte(username))
+				passwordHash := sha256.Sum256([]byte(password))
+				expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
+				expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
+
+				usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
+				passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
+
+				if usernameMatch && passwordMatch {
+					// Basic auth successful, allow access
+					promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+
+					return
+				}
+			}
+
+			// Basic auth failed, request authentication
+			c.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
+			c.AbortWithStatus(http.StatusUnauthorized)
+
+			return
+		}
+
+		// If neither JWT nor Basic Auth is enabled, allow access
+		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	// Healthcheck - keep this simple and fast
 	router.GET("/ping", RequestHandler)
-
-	// Parse static folder for template files
-	router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
 	// Setup static content early as it's often cached and doesn't require complex processing
 	setupStaticContent(router)
 
 	// Setup frontend endpoints if enabled
 	if config.GetFile().GetServer().Frontend.Enabled {
+		// Parse static folder for template files
+		router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
+
 		store := setupSessionStore()
 
 		// Group related endpoint setup functions for better organization and potential parallel initialization
@@ -1406,6 +1485,12 @@ func HTTPApp(ctx context.Context) {
 	httpServer := setupHTTPServer(router)
 
 	setupRouter(router)
+
+	// Initialize distributed brute force reports
+	ml.InitDistributedBruteForceReports()
+
+	// Setup security reports endpoints
+	setupSecurityReportsEndpoints(router)
 
 	go waitForShutdown(httpServer, ctx)
 

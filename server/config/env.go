@@ -121,60 +121,108 @@ var _ Environment = (*EnvironmentSettings)(nil)
 
 // GetSMTPBackendAddress retrieves the address of the SMTP backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetSMTPBackendAddress() string {
+	if env == nil {
+		return ""
+	}
+
 	return env.SMTPBackendAddress
 }
 
 // GetSMTPBackendPort retrieves the port of the SMTP backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetSMTPBackendPort() int {
+	if env == nil {
+		return 0
+	}
+
 	return env.SMTPBackendPort
 }
 
 // GetIMAPBackendAddress retrieves the address of the IMAP backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetIMAPBackendAddress() string {
+	if env == nil {
+		return ""
+	}
+
 	return env.IMAPBackendAddress
 }
 
 // GetIMAPBackendPort retrieves the port of the IMAP backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetIMAPBackendPort() int {
+	if env == nil {
+		return 0
+	}
+
 	return env.IMAPBackendPort
 }
 
 // GetPOP3BackendAddress retrieves the address of the POP3 backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetPOP3BackendAddress() string {
+	if env == nil {
+		return ""
+	}
+
 	return env.POP3BackendAddress
 }
 
 // GetPOP3BackendPort retrieves the port of the POP3 backend server from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetPOP3BackendPort() int {
+	if env == nil {
+		return 0
+	}
+
 	return env.POP3BackendPort
 }
 
 // GetWaitDelay retrieves the wait delay in seconds between connection attempts from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetWaitDelay() uint8 {
+	if env == nil {
+		return 0
+	}
+
 	return env.WaitDelay
 }
 
 // GetMaxLoginAttempts retrieves the maximum allowed number of login attempts from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetMaxLoginAttempts() uint8 {
+	if env == nil {
+		return 0
+	}
+
 	return env.MaxLoginAttempts
 }
 
 // GetDevMode returns the DevMode value, indicating whether the application is running in developer mode.
 func (env *EnvironmentSettings) GetDevMode() bool {
+	if env == nil {
+		return false
+	}
+
 	return env.DevMode
 }
 
 func (env *EnvironmentSettings) GetExperimentalML() bool {
+	if env == nil {
+		return false
+	}
+
 	return env.ExperimentalML
 }
 
 // GetMaxActionWorkers retrieves the maximum number of action workers allowed from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetMaxActionWorkers() uint16 {
+	if env == nil {
+		return 0
+	}
+
 	return env.MaxActionWorkers
 }
 
 // GetLocalCacheAuthTTL retrieves the time-to-live duration for local cache authentication from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetLocalCacheAuthTTL() time.Duration {
+	if env == nil {
+		return 0
+	}
+
 	return env.LocalCacheAuthTTL
 }
 

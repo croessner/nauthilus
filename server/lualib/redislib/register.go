@@ -59,6 +59,18 @@ func LoaderModRedis(ctx context.Context) lua.LGFunction {
 			definitions.LuaFnRedisZRevRange:        RedisZRevRange(ctx),
 			definitions.LuaFnRedisZRangeByScore:    RedisZRangeByScore(ctx),
 			definitions.LuaFnRedisZRemRangeByScore: RedisZRemRangeByScore(ctx),
+			definitions.LuaFnRedisZCount:           RedisZCount(ctx),
+			definitions.LuaFnRedisZScore:           RedisZScore(ctx),
+			definitions.LuaFnRedisLPush:            RedisLPush(ctx),
+			definitions.LuaFnRedisRPush:            RedisRPush(ctx),
+			definitions.LuaFnRedisLPop:             RedisLPop(ctx),
+			definitions.LuaFnRedisRPop:             RedisRPop(ctx),
+			definitions.LuaFnRedisLRange:           RedisLRange(ctx),
+			definitions.LuaFnRedisLLen:             RedisLLen(ctx),
+			definitions.LuaFnRedisMGet:             RedisMGet(ctx),
+			definitions.LuaFnRedisMSet:             RedisMSet(ctx),
+			definitions.LuaFnRedisKeys:             RedisKeys(ctx),
+			definitions.LuaFnRedisScan:             RedisScan(ctx),
 		})
 
 		L.Push(mod)

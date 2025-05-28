@@ -63,11 +63,11 @@ jobs:
       - run: |
           cd server && \
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -mod=vendor -ldflags="-s -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -mod=vendor -ldflags="-s -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GITHUB_REF#refs/tags/}-${GITHUB_SHA:0:8}" -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Copy binaries
         run: |
-          mkdir -p .debpkg/usr/sbin
+          mkdir -p .debpkg/usr/local/sbin
           mkdir -p .debpkg/usr/lib/systemd/system
           mkdir -p .debpkg/usr/share/doc/${{ env.APP_NAME }}
           cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .debpkg/usr/sbin/${{ env.APP_NAME }}

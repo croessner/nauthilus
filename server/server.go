@@ -206,14 +206,20 @@ func PreCompileFilters() error {
 	return nil
 }
 
-// PreCompileInit pre-compiles the Lua initialization script if specified in the configuration. Returns an error if it fails.
+// PreCompileInit pre-compiles the Lua initialization scripts if specified in the configuration. Returns an error if it fails.
 func PreCompileInit() error {
 	if !config.GetFile().HaveLuaInit() {
 		return nil
 	}
 
-	if err := hook.PreCompileLuaScript(config.GetFile().GetLuaInitScriptPath()); err != nil {
-		return err
+	// Get all init script paths
+	initScriptPaths := config.GetFile().GetLuaInitScriptPaths()
+
+	// Compile each init script
+	for _, scriptPath := range initScriptPaths {
+		if err := hook.PreCompileLuaScript(scriptPath); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -899,7 +905,7 @@ func debugLoadableConfig() {
 	}
 
 	if config.GetFile().GetLDAP() != nil {
-		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().GetLDAP().Config))
+		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().GetLDAP().GetConfig()))
 	}
 }
 
@@ -946,6 +952,9 @@ func initializeMLMetrics(ctx context.Context) {
 			definitions.LogKeyMsg, err,
 		)
 	}
+
+	// Initialize distributed brute force metrics
+	ml.InitDistributedBruteForceMetrics()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.
@@ -969,10 +978,16 @@ func runConnectionManager(ctx context.Context) {
 	manager.StartMonitoring(ctx)
 }
 
-// runLuaaInitScript executes the Lua initialization script if it's present in the GetFile().
-func runLuaaInitScript(ctx context.Context) {
+// runLuaInitScript executes the Lua initialization scripts if they're present in the GetFile().
+func runLuaInitScript(ctx context.Context) {
 	if config.GetFile().HaveLuaInit() {
-		hook.RunLuaInit(ctx, config.GetFile().GetLuaInitScriptPath())
+		// Get all init script paths
+		initScriptPaths := config.GetFile().GetLuaInitScriptPaths()
+
+		// Run each init script
+		for _, scriptPath := range initScriptPaths {
+			hook.RunLuaInit(ctx, scriptPath)
+		}
 	}
 }
 

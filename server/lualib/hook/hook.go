@@ -317,8 +317,22 @@ func PreCompileLuaScript(filePath string) (err error) {
 
 	LuaScripts[filePath].Replace(luaScriptNew)
 
+	// Get all init script paths
+	initScriptPaths := config.GetFile().GetLuaInitScriptPaths()
+
 	for luaScriptName := range LuaScripts {
-		if luaScriptName != config.GetFile().GetLuaInitScriptPath() {
+		// Check if this script is one of the init scripts
+		isInitScript := false
+		for _, initScriptPath := range initScriptPaths {
+			if luaScriptName == initScriptPath {
+				isInitScript = true
+
+				break
+			}
+		}
+
+		// If it's not an init script and has no compiled script, delete it
+		if !isInitScript {
 			if LuaScripts[luaScriptName].GetPrecompiledScript() == nil {
 				delete(LuaScripts, luaScriptName)
 			}

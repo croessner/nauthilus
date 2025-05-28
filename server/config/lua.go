@@ -41,19 +41,27 @@ func (l *LuaSection) String() string {
 	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
-// GetConfig retrieves the `Config` field from the LuaSection. Returns nil if the LuaSection is nil.
+// GetConfig retrieves the `Config` field from the LuaSection. Returns an empty LuaConf if the LuaSection is nil.
 func (l *LuaSection) GetConfig() any {
 	if l == nil {
-		return nil
+		return &LuaConf{}
+	}
+
+	if l.Config == nil {
+		return &LuaConf{}
 	}
 
 	return l.Config
 }
 
-// GetProtocols retrieves the search protocols from the LuaSection. Returns nil if the LuaSection is nil.
+// GetProtocols retrieves the search protocols from the LuaSection. Returns an empty slice if the LuaSection is nil.
 func (l *LuaSection) GetProtocols() any {
 	if l == nil {
-		return nil
+		return []LuaSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LuaSearchProtocol{}
 	}
 
 	return l.Search
@@ -61,13 +69,53 @@ func (l *LuaSection) GetProtocols() any {
 
 var _ GetterHandler = (*LuaSection)(nil)
 
-// GetOptionalLuaBackends retrieves the `OptionalLuaBackends` field from the LuaSection. Returns nil if the LuaSection is nil.
+// GetOptionalLuaBackends retrieves the `OptionalLuaBackends` field from the LuaSection. Returns an empty map if the LuaSection is nil.
 func (l *LuaSection) GetOptionalLuaBackends() map[string]*LuaConf {
 	if l == nil {
-		return nil
+		return map[string]*LuaConf{}
+	}
+
+	if l.OptionalLuaBackends == nil {
+		return map[string]*LuaConf{}
 	}
 
 	return l.OptionalLuaBackends
+}
+
+// GetActions retrieves the list of LuaAction from the LuaSection. Returns an empty slice if the LuaSection is nil.
+func (l *LuaSection) GetActions() []LuaAction {
+	if l == nil {
+		return []LuaAction{}
+	}
+
+	return l.Actions
+}
+
+// GetFeatures retrieves the list of LuaFeature from the LuaSection. Returns an empty slice if the LuaSection is nil.
+func (l *LuaSection) GetFeatures() []LuaFeature {
+	if l == nil {
+		return []LuaFeature{}
+	}
+
+	return l.Features
+}
+
+// GetFilters retrieves the list of LuaFilter from the LuaSection. Returns an empty slice if the LuaSection is nil.
+func (l *LuaSection) GetFilters() []LuaFilter {
+	if l == nil {
+		return []LuaFilter{}
+	}
+
+	return l.Filters
+}
+
+// GetHooks retrieves the list of LuaHooks from the LuaSection. Returns an empty slice if the LuaSection is nil.
+func (l *LuaSection) GetHooks() []LuaHooks {
+	if l == nil {
+		return []LuaHooks{}
+	}
+
+	return l.Hooks
 }
 
 // validateOptionalLuaBackend checks if a map of LuaConf structs has empty PackagePath and InitScriptPath for all entries.
@@ -113,6 +161,33 @@ func (l *LuaAction) GetAction() (string, string, string) {
 	return l.ActionType, l.ScriptName, l.ScriptPath
 }
 
+// GetActionType retrieves the ActionType from the LuaAction. Returns an empty string if the LuaAction is nil.
+func (l *LuaAction) GetActionType() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ActionType
+}
+
+// GetScriptName retrieves the ScriptName from the LuaAction. Returns an empty string if the LuaAction is nil.
+func (l *LuaAction) GetScriptName() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ScriptName
+}
+
+// GetScriptPath retrieves the ScriptPath from the LuaAction. Returns an empty string if the LuaAction is nil.
+func (l *LuaAction) GetScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ScriptPath
+}
+
 type LuaFeature struct {
 	Name       string `mapstructure:"name" validate:"required"`
 	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
@@ -124,6 +199,24 @@ func (l *LuaFeature) String() string {
 	}
 
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
+}
+
+// GetName retrieves the Name from the LuaFeature. Returns an empty string if the LuaFeature is nil.
+func (l *LuaFeature) GetName() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.Name
+}
+
+// GetScriptPath retrieves the ScriptPath from the LuaFeature. Returns an empty string if the LuaFeature is nil.
+func (l *LuaFeature) GetScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ScriptPath
 }
 
 type LuaFilter struct {
@@ -139,11 +232,30 @@ func (l *LuaFilter) String() string {
 	return fmt.Sprintf("{Name: %s}, {BackendScriptPath: %s}", l.Name, l.ScriptPath)
 }
 
+// GetName retrieves the Name from the LuaFilter. Returns an empty string if the LuaFilter is nil.
+func (l *LuaFilter) GetName() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.Name
+}
+
+// GetScriptPath retrieves the ScriptPath from the LuaFilter. Returns an empty string if the LuaFilter is nil.
+func (l *LuaFilter) GetScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ScriptPath
+}
+
 type LuaConf struct {
-	NumberOfWorkers   int    `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
-	PackagePath       string `mapstructure:"package_path"`
-	BackendScriptPath string `mapstructure:"backend_script_path" validate:"omitempty,file"`
-	InitScriptPath    string `mapstructure:"init_script_path" validate:"omitempty,file"`
+	NumberOfWorkers   int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	PackagePath       string   `mapstructure:"package_path"`
+	BackendScriptPath string   `mapstructure:"backend_script_path" validate:"omitempty,file"`
+	InitScriptPath    string   `mapstructure:"init_script_path" validate:"omitempty,file"`
+	InitScriptPaths   []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
 }
 
 func (l *LuaConf) String() string {
@@ -167,6 +279,42 @@ func (l *LuaConf) GetNumberOfWorkers() int {
 	return l.NumberOfWorkers
 }
 
+// GetPackagePath retrieves the PackagePath from the LuaConf. Returns an empty string if the LuaConf is nil.
+func (l *LuaConf) GetPackagePath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.PackagePath
+}
+
+// GetBackendScriptPath retrieves the BackendScriptPath from the LuaConf. Returns an empty string if the LuaConf is nil.
+func (l *LuaConf) GetBackendScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.BackendScriptPath
+}
+
+// GetInitScriptPath retrieves the InitScriptPath from the LuaConf. Returns an empty string if the LuaConf is nil.
+func (l *LuaConf) GetInitScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.InitScriptPath
+}
+
+// GetInitScriptPaths retrieves the InitScriptPaths from the LuaConf. Returns an empty slice if the LuaConf is nil.
+func (l *LuaConf) GetInitScriptPaths() []string {
+	if l == nil {
+		return []string{}
+	}
+
+	return l.InitScriptPaths
+}
+
 type LuaSearchProtocol struct {
 	Protocols   []string `mapstructure:"protocol"`
 	CacheName   string   `mapstructure:"cache_name" validate:"required,printascii,excludesall= "`
@@ -185,11 +333,24 @@ func (l *LuaSearchProtocol) GetCacheName() (string, error) {
 
 // GetBackendName returns the backend name configured in LuaSearchProtocol or a default value if not specified.
 func (l *LuaSearchProtocol) GetBackendName() string {
-	if l.BackendName == "" {
+	if l == nil || l.BackendName == "" {
 		return definitions.DefaultBackendName
 	}
 
 	return l.BackendName
+}
+
+// GetProtocols retrieves the list of protocols from the LuaSearchProtocol. Returns an empty slice if the LuaSearchProtocol is nil or if the Protocols field is nil.
+func (l *LuaSearchProtocol) GetProtocols() []string {
+	if l == nil {
+		return []string{}
+	}
+
+	if l.Protocols == nil {
+		return []string{}
+	}
+
+	return l.Protocols
 }
 
 type LuaHooks struct {
@@ -214,4 +375,31 @@ func (l *LuaHooks) GetRoles() []string {
 	}
 
 	return l.Roles
+}
+
+// GetLocation retrieves the Location from the LuaHooks. Returns an empty string if the LuaHooks is nil.
+func (l *LuaHooks) GetLocation() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.Location
+}
+
+// GetMethod retrieves the Method from the LuaHooks. Returns an empty string if the LuaHooks is nil.
+func (l *LuaHooks) GetMethod() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.Method
+}
+
+// GetScriptPath retrieves the ScriptPath from the LuaHooks. Returns an empty string if the LuaHooks is nil.
+func (l *LuaHooks) GetScriptPath() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.ScriptPath
 }

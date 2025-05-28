@@ -64,10 +64,14 @@ func (l *LDAPSection) GetConfig() any {
 	return l.Config
 }
 
-// GetProtocols returns the search protocols of the LDAP configuration, or nil if the receiver is nil.
+// GetProtocols returns the search protocols of the LDAP configuration, or an empty slice if the receiver is nil.
 func (l *LDAPSection) GetProtocols() any {
 	if l == nil {
-		return nil
+		return []LDAPSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LDAPSearchProtocol{}
 	}
 
 	return l.Search
@@ -75,13 +79,30 @@ func (l *LDAPSection) GetProtocols() any {
 
 var _ GetterHandler = (*LDAPSection)(nil)
 
-// GetOptionalLDAPPools returns a map of LDAP pool configurations if available, or nil if the receiver is nil.
+// GetOptionalLDAPPools returns a map of LDAP pool configurations if available, or an empty map if the receiver is nil.
 func (l *LDAPSection) GetOptionalLDAPPools() map[string]*LDAPConf {
 	if l == nil {
-		return nil
+		return map[string]*LDAPConf{}
+	}
+
+	if l.OptionalLDAPPools == nil {
+		return map[string]*LDAPConf{}
 	}
 
 	return l.OptionalLDAPPools
+}
+
+// GetSearch returns the LDAP search protocols if available, or an empty slice if the receiver is nil.
+func (l *LDAPSection) GetSearch() []LDAPSearchProtocol {
+	if l == nil {
+		return []LDAPSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LDAPSearchProtocol{}
+	}
+
+	return l.Search
 }
 
 type LDAPConf struct {
@@ -162,10 +183,170 @@ func (l *LDAPConf) GetNumberOfWorkers() int {
 	return l.NumberOfWorkers
 }
 
+// IsPoolOnly checks if the LDAPConf is configured for pool-only mode.
+// Returns false if the LDAPConf is nil.
+func (l *LDAPConf) IsPoolOnly() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.PoolOnly
+}
+
+// IsStartTLS checks if StartTLS is enabled in the LDAPConf.
+// Returns false if the LDAPConf is nil.
+func (l *LDAPConf) IsStartTLS() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.StartTLS
+}
+
+// IsTLSSkipVerify checks if TLS verification should be skipped in the LDAPConf.
+// Returns false if the LDAPConf is nil.
+func (l *LDAPConf) IsTLSSkipVerify() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.TLSSkipVerify
+}
+
+// IsSASLExternal checks if SASL External authentication is enabled in the LDAPConf.
+// Returns false if the LDAPConf is nil.
+func (l *LDAPConf) IsSASLExternal() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.SASLExternal
+}
+
+// GetLookupPoolSize retrieves the lookup pool size from the LDAPConf.
+// Returns definitions.LDAPIdlePoolSize if the LDAPConf is nil.
+func (l *LDAPConf) GetLookupPoolSize() int {
+	if l == nil {
+		return definitions.LDAPIdlePoolSize
+	}
+
+	return l.LookupPoolSize
+}
+
+// GetLookupIdlePoolSize retrieves the lookup idle pool size from the LDAPConf.
+// Returns definitions.LDAPIdlePoolSize if the LDAPConf is nil.
+func (l *LDAPConf) GetLookupIdlePoolSize() int {
+	if l == nil {
+		return definitions.LDAPIdlePoolSize
+	}
+
+	return l.LookupIdlePoolSize
+}
+
+// GetAuthPoolSize retrieves the authentication pool size from the LDAPConf.
+// Returns definitions.LDAPIdlePoolSize if the LDAPConf is nil.
+func (l *LDAPConf) GetAuthPoolSize() int {
+	if l == nil {
+		return definitions.LDAPIdlePoolSize
+	}
+
+	return l.AuthPoolSize
+}
+
+// GetAuthIdlePoolSize retrieves the authentication idle pool size from the LDAPConf.
+// Returns definitions.LDAPIdlePoolSize if the LDAPConf is nil.
+func (l *LDAPConf) GetAuthIdlePoolSize() int {
+	if l == nil {
+		return definitions.LDAPIdlePoolSize
+	}
+
+	return l.AuthIdlePoolSize
+}
+
+// GetBindDN retrieves the bind DN from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetBindDN() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.BindDN
+}
+
+// GetBindPW retrieves the bind password from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetBindPW() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.BindPW
+}
+
+// GetTLSCAFile retrieves the TLS CA certificate file path from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetTLSCAFile() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.TLSCAFile
+}
+
+// GetTLSClientCert retrieves the TLS client certificate file path from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetTLSClientCert() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.TLSClientCert
+}
+
+// GetTLSClientKey retrieves the TLS client key file path from the LDAPConf.
+// Returns an empty string if the LDAPConf is nil.
+func (l *LDAPConf) GetTLSClientKey() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.TLSClientKey
+}
+
+// GetConnectAbortTimeout retrieves the connect abort timeout duration from the LDAPConf.
+// Returns 0 if the LDAPConf is nil.
+func (l *LDAPConf) GetConnectAbortTimeout() time.Duration {
+	if l == nil {
+		return 0
+	}
+
+	return l.ConnectAbortTimeout
+}
+
+// GetServerURIs retrieves the server URIs from the LDAPConf.
+// Returns []string{"ldap://localhost"} slice if the LDAPConf is nil.
+func (l *LDAPConf) GetServerURIs() []string {
+	if l == nil {
+		return []string{"ldap://localhost"}
+	}
+
+	return l.ServerURIs
+}
+
 type LDAPFilter struct {
 	User                string `mapstructure:"user" validate:"omitempty"`
 	ListAccounts        string `mapstructure:"list_accounts" validate:"omitempty"`
 	WebAuthnCredentials string `mapstructure:"webauthn_credentials" validate:"omitempty"`
+}
+
+// GetWebAuthnCredentialsFilter returns an LDAP filter which is used to find WebAuthn credentials.
+// Returns an empty string if the LDAPFilter is nil.
+func (f *LDAPFilter) GetWebAuthnCredentialsFilter() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.WebAuthnCredentials
 }
 
 type LDAPAttributeMapping struct {
@@ -179,6 +360,96 @@ type LDAPAttributeMapping struct {
 	UniqueUserIDField string `mapstructure:"unique_user_id_field" validate:"omitempty"`
 	AAGUIDField       string `mapstructure:"aaguid_field" validate:"omitempty"`
 	SignCountField    string `mapstructure:"sign_count_field" validate:"omitempty"`
+}
+
+// GetTOTPSecretField retrieves the TOTP secret field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetTOTPSecretField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPSecretField
+}
+
+// GetTOTPRecoveryField retrieves the TOTP recovery field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetTOTPRecoveryField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.TOTPRecoveryField
+}
+
+// GetDisplayNameField retrieves the display name field from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetDisplayNameField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.DisplayNameField
+}
+
+// GetCredentialObject retrieves the credential object field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetCredentialObject() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.CredentialObject
+}
+
+// GetCredentialIDField retrieves the credential ID field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetCredentialIDField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.CredentialIDField
+}
+
+// GetPublicKeyField retrieves the public key field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetPublicKeyField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.PublicKeyField
+}
+
+// GetUniqueUserIDField retrieves the unique user ID field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetUniqueUserIDField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.UniqueUserIDField
+}
+
+// GetAAGUIDField retrieves the AAGUID field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetAAGUIDField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.AAGUIDField
+}
+
+// GetSignCountField retrieves the sign count field name from the LDAPAttributeMapping.
+// Returns an empty string if the LDAPAttributeMapping is nil.
+func (m *LDAPAttributeMapping) GetSignCountField() string {
+	if m == nil {
+		return ""
+	}
+
+	return m.SignCountField
 }
 
 type LDAPSearchProtocol struct {
@@ -241,7 +512,7 @@ func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 
 // GetPoolName returns the configured pool name. If no pool name is configured, it defaults to DefaultBackendName.
 func (p *LDAPSearchProtocol) GetPoolName() string {
-	if p.PoolName == "" {
+	if p == nil || p.PoolName == "" {
 		return definitions.DefaultBackendName
 	}
 
@@ -285,4 +556,18 @@ func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
 	}
 
 	return p.CacheName, nil
+}
+
+// GetProtocols retrieves the list of protocols from the LDAPSearchProtocol.
+// Returns an empty slice if the LDAPSearchProtocol is nil or if the Protocols field is nil.
+func (p *LDAPSearchProtocol) GetProtocols() []string {
+	if p == nil {
+		return []string{}
+	}
+
+	if p.Protocols == nil {
+		return []string{}
+	}
+
+	return p.Protocols
 }

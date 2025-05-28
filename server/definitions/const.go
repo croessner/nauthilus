@@ -1295,6 +1295,42 @@ const (
 	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
 	LuaFnRedisZRank = "redis_zrank"
 
+	// LuaFnRedisZCount is a constant defining the Redis command "ZCount" for counting the number of members in a sorted set with scores between min and max.
+	LuaFnRedisZCount = "redis_zcount"
+
+	// LuaFnRedisZScore is a constant defining the Redis command "ZScore" for retrieving the score of a member in a sorted set.
+	LuaFnRedisZScore = "redis_zscore"
+
+	// LuaFnRedisLPush is a constant defining the Redis command "LPUSH" for adding one or more values to the beginning of a list.
+	LuaFnRedisLPush = "redis_lpush"
+
+	// LuaFnRedisRPush is a constant defining the Redis command "RPUSH" for adding one or more values to the end of a list.
+	LuaFnRedisRPush = "redis_rpush"
+
+	// LuaFnRedisLPop is a constant defining the Redis command "LPOP" for removing and returning the first element of a list.
+	LuaFnRedisLPop = "redis_lpop"
+
+	// LuaFnRedisRPop is a constant defining the Redis command "RPOP" for removing and returning the last element of a list.
+	LuaFnRedisRPop = "redis_rpop"
+
+	// LuaFnRedisLRange is a constant defining the Redis command "LRANGE" for getting a range of elements from a list.
+	LuaFnRedisLRange = "redis_lrange"
+
+	// LuaFnRedisLLen is a constant defining the Redis command "LLEN" for getting the length of a list.
+	LuaFnRedisLLen = "redis_llen"
+
+	// LuaFnRedisMGet is a constant defining the Redis command "MGET" for getting the values of multiple keys.
+	LuaFnRedisMGet = "redis_mget"
+
+	// LuaFnRedisMSet is a constant defining the Redis command "MSET" for setting multiple key-value pairs.
+	LuaFnRedisMSet = "redis_mset"
+
+	// LuaFnRedisKeys is a constant defining the Redis command "KEYS" for finding all keys matching a pattern.
+	LuaFnRedisKeys = "redis_keys"
+
+	// LuaFnRedisScan is a constant defining the Redis command "SCAN" for incrementally iterating over keys.
+	LuaFnRedisScan = "redis_scan"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
@@ -1400,6 +1436,15 @@ const (
 
 	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
 	LuaFnAddAdditionalFeatures = "add_additional_features"
+
+	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
+	LuaFnTrainNeuralNetwork = "train_neural_network"
+
+	// LuaFnProvideFeedback represents the function name for "provide_feedback" in Lua
+	LuaFnProvideFeedback = "provide_feedback"
+
+	// LuaFnSetLearningMode represents the function name for "set_learning_mode" in Lua
+	LuaFnSetLearningMode = "set_learning_mode"
 
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"

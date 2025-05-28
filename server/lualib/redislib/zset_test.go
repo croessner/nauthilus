@@ -922,3 +922,118 @@ func TestRedisZRank(t *testing.T) {
 		})
 	}
 }
+
+// TestRedisZCount tests the RedisZCount function which counts the number of members in a sorted set with scores between min and max.
+// Added in version 1.7.7
+func TestRedisZCount(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		min         string
+		max         string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key, min, max string)
+	}{
+		{
+			name:        "ValidRange",
+			key:         "key1",
+			min:         "10",
+			max:         "20",
+			expectedRes: lua.LNumber(5),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, min, max string) {
+				mock.ExpectZCount(key, min, max).SetVal(5)
+			},
+		},
+		{
+			name:        "EmptyRange",
+			key:         "key2",
+			min:         "30",
+			max:         "40",
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, min, max string) {
+				mock.ExpectZCount(key, min, max).SetVal(0)
+			},
+		},
+		{
+			name:        "InfiniteRange",
+			key:         "key3",
+			min:         "-inf",
+			max:         "+inf",
+			expectedRes: lua.LNumber(10),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, min, max string) {
+				mock.ExpectZCount(key, min, max).SetVal(10)
+			},
+		},
+		{
+			name:        "NonExistentKey",
+			key:         "nonexistent",
+			min:         "0",
+			max:         "100",
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, min, max string) {
+				mock.ExpectZCount(key, min, max).SetVal(0)
+			},
+		},
+		{
+			name:        "RedisError",
+			key:         "key4",
+			min:         "10",
+			max:         "20",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("context deadline exceeded"),
+			setupMock: func(mock redismock.ClientMock, key, min, max string) {
+				mock.ExpectZCount(key, min, max).SetErr(context.DeadlineExceeded)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			rediscli.NewTestClient(db)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.min, tt.max)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("min", lua.LString(tt.min))
+			L.SetGlobal("max", lua.LString(tt.max))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zcount("default", key, min, max)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zcount() gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}

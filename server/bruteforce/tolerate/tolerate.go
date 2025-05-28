@@ -1,7 +1,23 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package tolerate
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -15,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
-	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -247,47 +262,31 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		label = "negative"
 	}
 
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	_, err := rediscli.GetClient().GetWriteHandle().ZAdd(
+	// Use Lua script to add to sorted set, count elements, and set expirations atomically
+	result, err := rediscli.ExecuteScript(
 		ctx,
-		redisKey+flag,
-		redis.Z{
-			Score: float64(now), Member: strings.ToLower(username),
-		}).Result()
+		"ZAddCountAndExpire",
+		rediscli.LuaScripts["ZAddCountAndExpire"],
+		[]string{redisKey + flag, t.getRedisKey(ipAddress)},
+		float64(now),
+		strings.ToLower(username),
+		label,
+		int(tolerateTTL.Seconds()),
+	)
+
 	if err != nil {
 		t.logRedisError(ipAddress, err)
 
 		return
 	}
 
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-	positive, err := rediscli.GetClient().GetReadHandle().ZCount(ctx, redisKey+flag, "-inf", "+inf").Uint64()
-	if err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(ctx, redisKey+flag, tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().HSet(ctx, t.getRedisKey(ipAddress), label, strconv.FormatUint(positive, 10)).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-	if err = rediscli.GetClient().GetWriteHandle().Expire(ctx, t.getRedisKey(ipAddress), tolerateTTL).Err(); err != nil {
-		t.logRedisError(ipAddress, err)
-
-		return
-	}
+	// Log the result for debugging if needed
+	util.DebugModule(definitions.DbgTolerate,
+		definitions.LogKeyMsg, fmt.Sprintf("ZAddCountAndExpire result: %v", result),
+		"ip", ipAddress,
+		"username", username,
+		"authenticated", authenticated,
+	)
 }
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
@@ -299,13 +298,40 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 	)
 
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+	pctTolerated := t.pctTolerated
+	adaptiveToleration := config.GetFile().GetBruteForce().GetAdaptiveToleration()
+	minToleratePercent := config.GetFile().GetBruteForce().GetMinToleratePercent()
+	maxToleratePercent := config.GetFile().GetBruteForce().GetMaxToleratePercent()
+	scaleFactor := config.GetFile().GetBruteForce().GetScaleFactor()
 
+	// Check for custom tolerations for this IP
 	for _, customTolerate := range t.customTolerates {
 		if !t.findIP(customTolerate.IPAddress, ipAddress) {
 			continue
 		}
 
 		tolerateTTL = customTolerate.TolerateTTL
+		pctTolerated = customTolerate.ToleratePercent
+
+		// If custom toleration has adaptive settings, use them
+		if customTolerate.AdaptiveToleration {
+			adaptiveToleration = true
+
+			if customTolerate.MinToleratePercent > 0 {
+				minToleratePercent = customTolerate.MinToleratePercent
+			}
+
+			if customTolerate.MaxToleratePercent > 0 {
+				maxToleratePercent = customTolerate.MaxToleratePercent
+			}
+
+			if customTolerate.ScaleFactor > 0 {
+				scaleFactor = customTolerate.ScaleFactor
+			}
+		} else {
+			// If custom toleration explicitly disables adaptive, respect that
+			adaptiveToleration = false
+		}
 
 		break
 	}
@@ -314,6 +340,59 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		return false
 	}
 
+	redisKey := t.getRedisKey(ipAddress)
+
+	// If adaptive toleration is enabled, use the Lua script to calculate
+	if adaptiveToleration {
+		adaptiveEnabled := 1
+
+		// Execute the adaptive toleration calculation script
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+		result, err := rediscli.ExecuteScript(
+			ctx,
+			"CalculateAdaptiveToleration",
+			rediscli.LuaScripts["CalculateAdaptiveToleration"],
+			[]string{redisKey},
+			minToleratePercent,
+			maxToleratePercent,
+			scaleFactor,
+			pctTolerated,
+			adaptiveEnabled,
+		)
+
+		if err != nil {
+			t.logRedisError(ipAddress, err)
+			// Fall back to standard calculation if script fails
+		} else {
+			// Parse the result from the Lua script
+			resultArray, ok := result.([]interface{})
+			if ok && len(resultArray) >= 5 {
+				calculatedPct, _ := resultArray[0].(int64)
+				maxNegative, _ := resultArray[1].(int64)
+				positive, _ := resultArray[2].(int64)
+				negative, _ := resultArray[3].(int64)
+				adaptiveUsed, _ := resultArray[4].(int64)
+
+				adaptiveStr := "static"
+				if adaptiveUsed == 1 {
+					adaptiveStr = "adaptive"
+				}
+
+				t.logDbgTolerate(
+					ipAddress,
+					positive,
+					negative,
+					maxNegative,
+					uint8(calculatedPct),
+					adaptiveStr,
+				)
+
+				return negative <= maxNegative
+			}
+		}
+	}
+
+	// Fall back to standard calculation if adaptive is disabled or script failed
 	ipMap := t.GetTolerateMap(ctx, ipAddress)
 
 	if positive, okay = ipMap["positive"]; !okay {
@@ -328,17 +407,6 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		negative = 0
 	}
 
-	pctTolerated := t.pctTolerated
-	for _, customToleration := range t.customTolerates {
-		if !t.findIP(customToleration.IPAddress, ipAddress) {
-			continue
-		}
-
-		pctTolerated = customToleration.ToleratePercent
-
-		break
-	}
-
 	maxNegative := (int64(pctTolerated) * positive) / 100
 
 	t.logDbgTolerate(
@@ -346,7 +414,8 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		positive,
 		negative,
 		maxNegative,
-		t.pctTolerated,
+		pctTolerated,
+		"static",
 	)
 
 	return negative <= maxNegative
@@ -455,7 +524,7 @@ func (t *tolerateImpl) getRedisKey(ipAddress string) string {
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
-func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative int64, maxNegatives int64, tolerated uint8) {
+func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative int64, maxNegatives int64, tolerated uint8, mode string) {
 	util.DebugModule(
 		definitions.DbgTolerate,
 		definitions.LogKeyClientIP, address,
@@ -463,6 +532,7 @@ func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative i
 		"negatives", negative,
 		"max_negatives", maxNegatives,
 		"tolerated", tolerated,
+		"mode", mode,
 	)
 }
 
