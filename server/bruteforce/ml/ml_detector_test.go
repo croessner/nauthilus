@@ -34,6 +34,7 @@ import (
 
 // setupTestConfig initializes the configuration for testing
 // If enableML is true, it sets the experimental_ml environment variable to true
+// It also shuts down any existing ML system to avoid race conditions
 func setupTestConfig(enableML bool) {
 	feature := config.Feature{}
 	feature.Set("brute_force")
@@ -65,6 +66,10 @@ func setupTestConfig(enableML bool) {
 	})
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+
+	// Shutdown any existing ML system to avoid race conditions
+	// This is called after setting up the configuration to avoid panic
+	ShutdownMLSystem()
 }
 
 func TestNeuralNetwork_Train(t *testing.T) {
@@ -461,6 +466,9 @@ func TestInitMLSystem(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
+
+	// Shutdown the ML system to avoid race conditions with other tests
+	ShutdownMLSystem()
 }
 
 func TestNormalizeInputs(t *testing.T) {
@@ -600,8 +608,31 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	// Set up test configuration with ML enabled
 	setupTestConfig(true)
 
+	// Create a Redis mock
+	db, mock := redismock.NewClientMock()
+	if db == nil || mock == nil {
+		t.Fatalf("Failed to create Redis mock client.")
+	}
+
+	// Inject the mock client
+	rediscli.NewTestClient(db)
+
 	// Create a context
 	ctx := context.Background()
+
+	// Set up expectations for LoadModelFromRedis - return nil to simulate no saved model
+	modelKey := getMLRedisKeyPrefix() + "model"
+	mock.ExpectGet(modelKey).RedisNil()
+
+	// Create a global trainer for the test
+	originalGlobalTrainer := globalTrainer
+	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+
+	// Create a trainer with a model
+	globalTrainer = &MLTrainer{
+		ctx:   ctx,
+		model: NewNeuralNetwork(6, 1),
+	}
 
 	// Get a detector
 	detector := GetBruteForceMLDetector(ctx, "test-guid", "127.0.0.1", "testuser")
@@ -613,6 +644,9 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	assert.Equal(t, "test-guid", detector.guid, "Detector should have the correct GUID")
 	assert.Equal(t, "127.0.0.1", detector.clientIP, "Detector should have the correct client IP")
 	assert.Equal(t, "testuser", detector.username, "Detector should have the correct username")
+
+	// Check that the model is not nil
+	assert.NotNil(t, detector.model, "Detector model should not be nil")
 }
 
 func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
@@ -1079,6 +1113,9 @@ func TestMLFunctionsWithExperimentalMLDisabled(t *testing.T) {
 	// Test InitMLSystem
 	err = InitMLSystem(ctx)
 	assert.NoError(t, err, "InitMLSystem should not return an error when experimental_ml is disabled")
+
+	// Shutdown the ML system to avoid race conditions with other tests
+	ShutdownMLSystem()
 
 	// Test NewMLBucketManager
 	bm := NewMLBucketManager(ctx, "test-guid", "127.0.0.1")
