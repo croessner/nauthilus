@@ -186,7 +186,7 @@ func (l *LuaSearchProtocol) GetCacheName() (string, error) {
 
 // GetBackendName returns the backend name configured in LuaSearchProtocol or a default value if not specified.
 func (l *LuaSearchProtocol) GetBackendName() string {
-	if l.BackendName == "" {
+	if l == nil || l.BackendName == "" {
 		return definitions.DefaultBackendName
 	}
 

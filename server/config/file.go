@@ -400,6 +400,10 @@ func (f *FileSettings) GetBackendServers() []*BackendServer {
 	}
 
 	if f.GetBackendServerMonitoring() != nil {
+		if f.BackendServerMonitoring.BackendServers == nil {
+			return []*BackendServer{}
+		}
+
 		return f.BackendServerMonitoring.BackendServers
 	}
 
@@ -714,14 +718,19 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	for index := range protocols.([]LDAPSearchProtocol) {
-		if protocols.([]LDAPSearchProtocol)[index].GetPoolName() != poolName {
+	ldapProtocols, ok := protocols.([]LDAPSearchProtocol)
+	if !ok {
+		return nil, errors.ErrLDAPConfig.WithDetail("Invalid protocol configuration type")
+	}
+
+	for index := range ldapProtocols {
+		if ldapProtocols[index].GetPoolName() != poolName {
 			continue
 		}
 
-		for protoIndex := range protocols.([]LDAPSearchProtocol)[index].Protocols {
-			if protocols.([]LDAPSearchProtocol)[index].Protocols[protoIndex] == protocol {
-				return &protocols.([]LDAPSearchProtocol)[index], nil
+		for protoIndex := range ldapProtocols[index].Protocols {
+			if ldapProtocols[index].Protocols[protoIndex] == protocol {
+				return &ldapProtocols[index], nil
 			}
 		}
 	}
@@ -893,14 +902,19 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string)
 		return nil, errors.ErrLuaConfig.WithDetail("Missing search::protocol section and no default")
 	}
 
-	for index := range getSearch.([]LuaSearchProtocol) {
-		if getSearch.([]LuaSearchProtocol)[index].GetBackendName() != backendName {
+	luaProtocols, ok := getSearch.([]LuaSearchProtocol)
+	if !ok {
+		return nil, errors.ErrLuaConfig.WithDetail("Invalid protocol configuration type")
+	}
+
+	for index := range luaProtocols {
+		if luaProtocols[index].GetBackendName() != backendName {
 			continue
 		}
 
-		for protoIndex := range getSearch.([]LuaSearchProtocol)[index].Protocols {
-			if getSearch.([]LuaSearchProtocol)[index].Protocols[protoIndex] == protocol {
-				return &getSearch.([]LuaSearchProtocol)[index], nil
+		for protoIndex := range luaProtocols[index].Protocols {
+			if luaProtocols[index].Protocols[protoIndex] == protocol {
+				return &luaProtocols[index], nil
 			}
 		}
 	}
@@ -1029,6 +1043,10 @@ func (f *FileSettings) HaveLuaBackend() bool {
 		return false
 	}
 
+	if f.Server == nil {
+		return false
+	}
+
 	for _, backendType := range f.Server.Backends {
 		if backendType.Get() == definitions.BackendLua {
 			return true
@@ -1041,6 +1059,10 @@ func (f *FileSettings) HaveLuaBackend() bool {
 // HaveLDAPBackend checks if the configuration includes an LDAP backend and returns true if it exists, otherwise false.
 func (f *FileSettings) HaveLDAPBackend() bool {
 	if f == nil {
+		return false
+	}
+
+	if f.Server == nil {
 		return false
 	}
 

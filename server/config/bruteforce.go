@@ -201,13 +201,16 @@ type NeuralNetwork struct {
 
 // GetMaxTrainingRecords retrieves the maximum number of training records to keep for the neural network.
 func (n *NeuralNetwork) GetMaxTrainingRecords() int32 {
+	if n == nil {
+		return 10000 // Default value
+	}
 	return n.MaxTrainingRecords
 }
 
 // GetStaticWeight retrieves the weight for static rules in the weighted decision.
 // Returns 0.4 as default if not set.
 func (n *NeuralNetwork) GetStaticWeight() float64 {
-	if n.StaticWeight == 0 {
+	if n == nil || n.StaticWeight == 0 {
 		return 0.4 // Default value
 	}
 
@@ -217,7 +220,7 @@ func (n *NeuralNetwork) GetStaticWeight() float64 {
 // GetMLWeight retrieves the weight for ML in the weighted decision.
 // Returns 0.6 as default if not set.
 func (n *NeuralNetwork) GetMLWeight() float64 {
-	if n.MLWeight == 0 {
+	if n == nil || n.MLWeight == 0 {
 		return 0.6 // Default value
 	}
 
@@ -227,7 +230,7 @@ func (n *NeuralNetwork) GetMLWeight() float64 {
 // GetThreshold retrieves the threshold for the weighted decision.
 // Returns 0.7 as default if not set.
 func (n *NeuralNetwork) GetThreshold() float64 {
-	if n.Threshold == 0 {
+	if n == nil || n.Threshold == 0 {
 		return 0.7 // Default value
 	}
 
@@ -237,7 +240,7 @@ func (n *NeuralNetwork) GetThreshold() float64 {
 // GetLearningRate retrieves the learning rate for the neural network.
 // Returns 0.01 as default if not set.
 func (n *NeuralNetwork) GetLearningRate() float64 {
-	if n.LearningRate == 0 {
+	if n == nil || n.LearningRate == 0 {
 		return 0.01 // Default value
 	}
 

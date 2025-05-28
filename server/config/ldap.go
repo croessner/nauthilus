@@ -241,7 +241,7 @@ func (p *LDAPSearchProtocol) GetListAccountsFilter() (string, error) {
 
 // GetPoolName returns the configured pool name. If no pool name is configured, it defaults to DefaultBackendName.
 func (p *LDAPSearchProtocol) GetPoolName() string {
-	if p.PoolName == "" {
+	if p == nil || p.PoolName == "" {
 		return definitions.DefaultBackendName
 	}
 
