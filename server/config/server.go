@@ -73,10 +73,10 @@ func (s *ServerSection) GetMaxConcurrentRequests() int32 {
 }
 
 // GetMaxPasswordHistoryEntries retrieves the maximum number of password history entries defined in the ServerSection configuration.
-// Returns 5 as a default value if the ServerSection is nil.
+// Returns definitions.MaxPasswordHistoryEntries as a default value if the ServerSection is nil.
 func (s *ServerSection) GetMaxPasswordHistoryEntries() int32 {
 	if s == nil {
-		return 5
+		return definitions.MaxPasswordHistoryEntries
 	}
 
 	return s.MaxPasswordHistoryEntries

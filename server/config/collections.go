@@ -26,16 +26,18 @@ var void struct{}
 type StringSet map[string]any
 
 // GetStringSlice returns all values for a StringSet as a slice of strings.
-func (s *StringSet) GetStringSlice() (result []string) {
+// Returns an empty slice if the StringSet is nil.
+func (s *StringSet) GetStringSlice() []string {
 	if s == nil {
-		return
+		return []string{}
 	}
 
+	var result []string
 	for key := range *s {
 		result = append(result, key)
 	}
 
-	return
+	return result
 }
 
 func (s *StringSet) String() string {

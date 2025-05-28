@@ -64,10 +64,14 @@ func (l *LDAPSection) GetConfig() any {
 	return l.Config
 }
 
-// GetProtocols returns the search protocols of the LDAP configuration, or nil if the receiver is nil.
+// GetProtocols returns the search protocols of the LDAP configuration, or an empty slice if the receiver is nil.
 func (l *LDAPSection) GetProtocols() any {
 	if l == nil {
-		return nil
+		return []LDAPSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LDAPSearchProtocol{}
 	}
 
 	return l.Search
@@ -75,13 +79,30 @@ func (l *LDAPSection) GetProtocols() any {
 
 var _ GetterHandler = (*LDAPSection)(nil)
 
-// GetOptionalLDAPPools returns a map of LDAP pool configurations if available, or nil if the receiver is nil.
+// GetOptionalLDAPPools returns a map of LDAP pool configurations if available, or an empty map if the receiver is nil.
 func (l *LDAPSection) GetOptionalLDAPPools() map[string]*LDAPConf {
 	if l == nil {
-		return nil
+		return map[string]*LDAPConf{}
+	}
+
+	if l.OptionalLDAPPools == nil {
+		return map[string]*LDAPConf{}
 	}
 
 	return l.OptionalLDAPPools
+}
+
+// GetSearch returns the LDAP search protocols if available, or an empty slice if the receiver is nil.
+func (l *LDAPSection) GetSearch() []LDAPSearchProtocol {
+	if l == nil {
+		return []LDAPSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LDAPSearchProtocol{}
+	}
+
+	return l.Search
 }
 
 type LDAPConf struct {
@@ -538,9 +559,13 @@ func (p *LDAPSearchProtocol) GetCacheName() (string, error) {
 }
 
 // GetProtocols retrieves the list of protocols from the LDAPSearchProtocol.
-// Returns an empty slice if the LDAPSearchProtocol is nil.
+// Returns an empty slice if the LDAPSearchProtocol is nil or if the Protocols field is nil.
 func (p *LDAPSearchProtocol) GetProtocols() []string {
 	if p == nil {
+		return []string{}
+	}
+
+	if p.Protocols == nil {
 		return []string{}
 	}
 

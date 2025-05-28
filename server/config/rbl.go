@@ -62,6 +62,16 @@ func (r *RBLSection) GetIPWhiteList() []string {
 	return r.IPWhiteList
 }
 
+// GetSoftWhitelist retrieves the SoftWhitelist from the RBLSection.
+// Returns nil if the RBLSection is nil.
+func (r *RBLSection) GetSoftWhitelist() SoftWhitelist {
+	if r == nil {
+		return nil
+	}
+
+	return r.SoftWhitelist
+}
+
 type RBL struct {
 	Name         string `mapstructure:"name" validate:"required"`
 	RBL          string `mapstructure:"rbl" validate:"required,hostname"`

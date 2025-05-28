@@ -41,19 +41,27 @@ func (l *LuaSection) String() string {
 	return fmt.Sprintf("LuaSection: {Config[%+v] Search[%+v]}", l.Config, l.Search)
 }
 
-// GetConfig retrieves the `Config` field from the LuaSection. Returns nil if the LuaSection is nil.
+// GetConfig retrieves the `Config` field from the LuaSection. Returns an empty LuaConf if the LuaSection is nil.
 func (l *LuaSection) GetConfig() any {
 	if l == nil {
-		return nil
+		return &LuaConf{}
+	}
+
+	if l.Config == nil {
+		return &LuaConf{}
 	}
 
 	return l.Config
 }
 
-// GetProtocols retrieves the search protocols from the LuaSection. Returns nil if the LuaSection is nil.
+// GetProtocols retrieves the search protocols from the LuaSection. Returns an empty slice if the LuaSection is nil.
 func (l *LuaSection) GetProtocols() any {
 	if l == nil {
-		return nil
+		return []LuaSearchProtocol{}
+	}
+
+	if l.Search == nil {
+		return []LuaSearchProtocol{}
 	}
 
 	return l.Search
@@ -61,10 +69,14 @@ func (l *LuaSection) GetProtocols() any {
 
 var _ GetterHandler = (*LuaSection)(nil)
 
-// GetOptionalLuaBackends retrieves the `OptionalLuaBackends` field from the LuaSection. Returns nil if the LuaSection is nil.
+// GetOptionalLuaBackends retrieves the `OptionalLuaBackends` field from the LuaSection. Returns an empty map if the LuaSection is nil.
 func (l *LuaSection) GetOptionalLuaBackends() map[string]*LuaConf {
 	if l == nil {
-		return nil
+		return map[string]*LuaConf{}
+	}
+
+	if l.OptionalLuaBackends == nil {
+		return map[string]*LuaConf{}
 	}
 
 	return l.OptionalLuaBackends
@@ -328,9 +340,13 @@ func (l *LuaSearchProtocol) GetBackendName() string {
 	return l.BackendName
 }
 
-// GetProtocols retrieves the list of protocols from the LuaSearchProtocol. Returns an empty slice if the LuaSearchProtocol is nil.
+// GetProtocols retrieves the list of protocols from the LuaSearchProtocol. Returns an empty slice if the LuaSearchProtocol is nil or if the Protocols field is nil.
 func (l *LuaSearchProtocol) GetProtocols() []string {
 	if l == nil {
+		return []string{}
+	}
+
+	if l.Protocols == nil {
 		return []string{}
 	}
 

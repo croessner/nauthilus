@@ -85,10 +85,10 @@ func (b *BruteForceSection) GetTolerateTTL() time.Duration {
 	return b.TolerateTTL
 }
 
-// GetCustomTolerations returns the CustomTolerations slice from the BruteForceSection. Returns nil if the receiver is nil.
+// GetCustomTolerations returns the CustomTolerations slice from the BruteForceSection. Returns an empty slice if the receiver is nil.
 func (b *BruteForceSection) GetCustomTolerations() []Tolerate {
 	if b == nil {
-		return nil
+		return []Tolerate{}
 	}
 
 	return b.CustomTolerations
@@ -146,11 +146,31 @@ func (b *BruteForceSection) GetScaleFactor() float64 {
 	return b.ScaleFactor
 }
 
+// GetSoftWhitelist retrieves the SoftWhitelist from the BruteForceSection.
+// Returns an empty map if the BruteForceSection is nil.
+func (b *BruteForceSection) GetSoftWhitelist() SoftWhitelist {
+	if b == nil {
+		return map[string][]string{}
+	}
+
+	return b.SoftWhitelist
+}
+
+// GetIPWhitelist retrieves the IP whitelist from the BruteForceSection.
+// Returns an empty slice if the BruteForceSection is nil.
+func (b *BruteForceSection) GetIPWhitelist() []string {
+	if b == nil {
+		return []string{}
+	}
+
+	return b.IPWhitelist
+}
+
 // GetNeuralNetwork retrieves a pointer to the NeuralNetwork configuration from the ServerSection instance.
-// Returns nil if the BruteForceSection is nil.
+// Returns an empty NeuralNetwork if the BruteForceSection is nil.
 func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
 	if s == nil {
-		return nil
+		return &NeuralNetwork{}
 	}
 
 	return &s.NeuralNetwork

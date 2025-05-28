@@ -343,9 +343,9 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 
 	dnsResolverErr.Store(false)
 	rblChan := make(chan int)
-	numberOfRBLs := len(config.GetFile().GetRBLs().Lists)
+	numberOfRBLs := len(config.GetFile().GetRBLs().GetLists())
 
-	for _, rbl := range config.GetFile().GetRBLs().Lists {
+	for _, rbl := range config.GetFile().GetRBLs().GetLists() {
 		waitGroup.Add(1)
 
 		go a.processRBL(ctx, &rbl, rblChan, waitGroup, &dnsResolverErr)
@@ -389,7 +389,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if a.IsInNetwork(config.GetFile().GetRBLs().IPWhiteList) {
+	if a.IsInNetwork(config.GetFile().GetRBLs().GetIPWhiteList()) {
 		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
@@ -406,7 +406,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if totalRBLScore >= config.GetFile().GetRBLs().Threshold {
+	if totalRBLScore >= config.GetFile().GetRBLs().GetThreshold() {
 		triggered = true
 	}
 

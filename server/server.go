@@ -905,7 +905,7 @@ func debugLoadableConfig() {
 	}
 
 	if config.GetFile().GetLDAP() != nil {
-		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().GetLDAP().Config))
+		level.Debug(log.Logger).Log("ldap", fmt.Sprintf("%+v", config.GetFile().GetLDAP().GetConfig()))
 	}
 }
 

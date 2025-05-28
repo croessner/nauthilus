@@ -40,6 +40,16 @@ func (r *RelayDomainsSection) GetStaticDomains() []string {
 	return r.StaticDomains
 }
 
+// GetSoftWhitelist retrieves the SoftWhitelist from the RelayDomainsSection.
+// Returns an empty map if the RelayDomainsSection is nil.
+func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
+	if r == nil {
+		return map[string][]string{}
+	}
+
+	return r.SoftWhitelist
+}
+
 type BackendServer struct {
 	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
 	Host          string `mapstructure:"host" validate:"required,hostname|ip"`

@@ -1868,7 +1868,7 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 
 	// Check if the IP is in the soft whitelist
 	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(username, clientIP, guid, config.GetFile().GetBruteForce().SoftWhitelist) {
+		if util.IsSoftWhitelisted(username, clientIP, guid, config.GetFile().GetBruteForce().GetSoftWhitelist()) {
 			util.DebugModule(
 				definitions.DbgNeural,
 				"action", "ignore_ip_for_ml_training",
@@ -1883,8 +1883,8 @@ func ShouldIgnoreIP(clientIP, username, guid string) bool {
 	}
 
 	// Check if the IP is in the IP whitelist
-	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
-		if util.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist, guid, clientIP) {
+	if len(config.GetFile().GetBruteForce().GetIPWhitelist()) > 0 {
+		if util.IsInNetwork(config.GetFile().GetBruteForce().GetIPWhitelist(), guid, clientIP) {
 			util.DebugModule(
 				definitions.DbgNeural,
 				"action", "ignore_ip_for_ml_training",

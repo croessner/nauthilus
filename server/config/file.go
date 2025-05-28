@@ -381,13 +381,14 @@ func (f *FileSettings) GetLDAP() *LDAPSection {
 
 // GetBackendServerMonitoring is a method on the FileSettings struct.
 // It returns the BackendServerMonitoring field from the FileSettings struct.
+// Returns an empty BackendServerMonitoring if the FileSettings is nil or if the BackendServerMonitoring field is nil.
 func (f *FileSettings) GetBackendServerMonitoring() *BackendServerMonitoring {
 	if f == nil {
-		return nil
+		return &BackendServerMonitoring{}
 	}
 
 	if f.BackendServerMonitoring == nil {
-		return nil
+		return &BackendServerMonitoring{}
 	}
 
 	return f.BackendServerMonitoring
@@ -407,10 +408,10 @@ func (f *FileSettings) GetBackendServers() []*BackendServer {
 }
 
 // GetBackendServer retrieves the first BackendServer that matches the specified protocol from the FileSettings's backend servers.
-// Returns nil if no matching server is found or if the FileSettings object is nil.
+// Returns an empty BackendServer if no matching server is found or if the FileSettings object is nil.
 func (f *FileSettings) GetBackendServer(protocol string) *BackendServer {
 	if f == nil {
-		return nil
+		return &BackendServer{}
 	}
 
 	for _, server := range f.GetBackendServers() {
@@ -419,7 +420,7 @@ func (f *FileSettings) GetBackendServer(protocol string) *BackendServer {
 		}
 	}
 
-	return nil
+	return &BackendServer{}
 }
 
 /*
@@ -704,6 +705,7 @@ func (f *FileSettings) GetLDAPConfigServerURIs() []string {
 // GetLDAPSearchProtocol retrieves the LDAPSearchProtocol configuration based on the specified protocol.
 // If the protocol is not found, it falls back to the default protocol.
 // Returns an error if the configuration or default protocol is missing.
+// Returns nil if no matching protocol is found and there's no error.
 func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (*LDAPSearchProtocol, error) {
 	if f == nil {
 		return nil, errors.ErrLDAPConfig.WithDetail("Missing search::protocol section and no default")
@@ -736,19 +738,19 @@ func (f *FileSettings) GetLDAPSearchProtocol(protocol string, poolName string) (
 }
 
 // GetLDAPOptionalPools retrieves a map of optional LDAP pool configurations from the file settings.
-// Returns nil if the file settings or LDAP section is not properly configured.
+// Returns an empty map if the file settings or LDAP section is not properly configured.
 func (f *FileSettings) GetLDAPOptionalPools() map[string]*LDAPConf {
 	if f == nil {
-		return nil
+		return map[string]*LDAPConf{}
 	}
 
 	if f.GetLDAP() == nil {
-		return nil
+		return map[string]*LDAPConf{}
 	}
 
 	pools := f.GetLDAP().GetOptionalLDAPPools()
 	if pools == nil {
-		return nil
+		return map[string]*LDAPConf{}
 	}
 
 	return pools
@@ -896,6 +898,7 @@ func (f *FileSettings) GetLuaPackagePath() string {
 // GetLuaSearchProtocol retrieves a LuaSearchProtocol configuration matching the specified protocol.
 // Returns a default LuaSearchProtocol if the protocol cannot be found and protocol is set to ProtoDefault.
 // Returns a DetailedError if the protocol cannot be found and no default is configured.
+// Returns nil if no matching protocol is found and there's no error.
 // Accepts a string representing the protocol to search for.
 func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string) (*LuaSearchProtocol, error) {
 	if f == nil {
@@ -928,19 +931,19 @@ func (f *FileSettings) GetLuaSearchProtocol(protocol string, backendName string)
 	return nil, nil
 }
 
-// GetLuaOptionalBackends retrieves the optional Lua backends configuration from FileSettings. Returns nil if unavailable.
+// GetLuaOptionalBackends retrieves the optional Lua backends configuration from FileSettings. Returns an empty map if unavailable.
 func (f *FileSettings) GetLuaOptionalBackends() map[string]*LuaConf {
 	if f == nil {
-		return nil
+		return map[string]*LuaConf{}
 	}
 
 	if f.GetLua() == nil {
-		return nil
+		return map[string]*LuaConf{}
 	}
 
 	backends := f.GetLua().GetOptionalLuaBackends()
 	if backends == nil {
-		return nil
+		return map[string]*LuaConf{}
 	}
 
 	return backends
@@ -1114,10 +1117,10 @@ func (f *FileSettings) HaveServer() bool {
 
 // RetrieveGetterMap returns a map associating each supported backend with its corresponding GetterHandler implementation.
 // This method initializes a new map for the backends, and populates it by checking if certain backend sections exist.
-// If the provided FileSettings object is nil, it returns nil.
+// If the provided FileSettings object is nil, it returns an empty map.
 func (f *FileSettings) RetrieveGetterMap() map[definitions.Backend]GetterHandler {
 	if f == nil {
-		return nil
+		return map[definitions.Backend]GetterHandler{}
 	}
 
 	getterMap := make(map[definitions.Backend]GetterHandler, 3)
@@ -1189,27 +1192,28 @@ func (f *FileSettings) GetSection(backend definitions.Backend) any {
 }
 
 // GetBruteForceRules retrieves the list of brute force rules defined in the configuration file.
-// If no rules are defined or the FileSettings instance is nil, it returns nil.
-func (f *FileSettings) GetBruteForceRules() (rules []BruteForceRule) {
+// If no rules are defined or the FileSettings instance is nil, it returns an empty slice.
+func (f *FileSettings) GetBruteForceRules() []BruteForceRule {
 	if f == nil {
-		return nil
+		return []BruteForceRule{}
 	}
 
 	bruteForce := f.GetBruteForce()
 	if bruteForce != nil {
 		buckets := bruteForce.GetBuckets()
 		if len(buckets) > 0 {
-			rules = buckets
+			return buckets
 		}
 	}
 
-	return
+	return []BruteForceRule{}
 }
 
 // GetAllProtocols returns a unique slice of strings (a Set) for all defined protocols in the database search sections.
+// Returns an empty slice if the FileSettings is nil.
 func (f *FileSettings) GetAllProtocols() []string {
 	if f == nil {
-		return nil
+		return []string{}
 	}
 
 	protocols := NewStringSet()
@@ -1579,24 +1583,25 @@ func (f *FileSettings) LDAPHavePoolOnly(backendName string) bool {
 	}
 
 	if backendName == definitions.DefaultBackendName {
-		if f.LDAP.Config == nil {
+		ldapConfig := f.GetLDAP().GetConfig()
+		if ldapConfig == nil {
 			return false
 		}
 
-		return f.LDAP.Config.PoolOnly
+		return ldapConfig.(*LDAPConf).IsPoolOnly()
 	}
 
-	if f.LDAP.OptionalLDAPPools == nil {
+	if f.GetLDAP().GetOptionalLDAPPools() == nil {
 		return false
 	}
 
-	for poolKey, poolSettings := range f.LDAP.OptionalLDAPPools {
+	for poolKey, poolSettings := range f.GetLDAP().GetOptionalLDAPPools() {
 		if poolKey == backendName {
 			if poolSettings == nil {
 				return false
 			}
 
-			return poolSettings.PoolOnly
+			return poolSettings.IsPoolOnly()
 		}
 	}
 
@@ -1614,11 +1619,11 @@ func (f *FileSettings) validatePassDBBackends() error {
 	for _, backend := range f.Server.Backends {
 		switch backend.Get() {
 		case definitions.BackendLDAP:
-			if f.LDAP == nil {
+			if f.GetLDAP() == nil {
 				return errors.ErrNoLDAPSection
 			}
 
-			if !f.LDAP.Config.PoolOnly && len(f.LDAP.Search) == 0 {
+			if !f.GetLDAP().GetConfig().(*LDAPConf).IsPoolOnly() && len(f.GetLDAP().GetSearch()) == 0 {
 				return errors.ErrNoLDAPSearchSection
 			}
 
@@ -1661,7 +1666,7 @@ func (f *FileSettings) validatePassDBBackends() error {
 
 // validateOAuth2 validates and processes the OAuth2 configuration in the FileSettings struct, ensuring valid custom scope descriptions.
 func (f *FileSettings) validateOAuth2() error {
-	if f.Oauth2 != nil {
+	if f.GetOauth2() != nil {
 		var descriptions map[string]any
 
 		for customScopeIndex := range f.Oauth2.CustomScopes {
@@ -1706,7 +1711,7 @@ func (f *FileSettings) validateAddress() error {
 		return nil
 	}
 
-	if f.Server.Address == "" {
+	if f.GetServer().GetListenAddress() == "" {
 		f.Server.Address = definitions.HTTPAddress
 	}
 
@@ -1719,7 +1724,7 @@ func (f *FileSettings) setDefaultHydraAdminUrl() error {
 		return nil
 	}
 
-	if f.Server.HydraAdminUrl == "" {
+	if f.GetServer().HydraAdminUrl == "" {
 		f.Server.HydraAdminUrl = "http://127.0.0.1:4445"
 	}
 
@@ -1732,7 +1737,7 @@ func (f *FileSettings) setDefaultInstanceName() error {
 		return nil
 	}
 
-	if f.Server.InstanceName == "" {
+	if f.GetServer().GetInstanceName() == "" {
 		f.Server.InstanceName = definitions.InstanceName
 	}
 
@@ -1745,7 +1750,7 @@ func (f *FileSettings) setDefaultDnsTimeout() error {
 		return nil
 	}
 
-	if f.Server.DNS.Timeout == 0 {
+	if f.GetServer().GetDNS().GetTimeout() == 0 {
 		f.Server.DNS.Timeout = definitions.DNSResolveTimeout
 	}
 
@@ -1764,11 +1769,11 @@ func (f *FileSettings) setDefaultPosCacheTTL() error {
 		f.Server.Redis.PosCacheTTL = definitions.RedisPosCacheTTL * time.Second
 	}
 
-	if f.Server.Redis.PosCacheTTL < time.Second {
+	if redis.GetPosCacheTTL() < time.Second {
 		f.Server.Redis.PosCacheTTL = f.Server.Redis.PosCacheTTL * time.Second
 
-		if f.Server.Redis.PosCacheTTL > definitions.DurationMaxPeriod {
-			return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, f.Server.Redis.PosCacheTTL.String())
+		if redis.GetPosCacheTTL() > definitions.DurationMaxPeriod {
+			return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, redis.GetPosCacheTTL().String())
 		}
 	}
 
@@ -1787,10 +1792,10 @@ func (f *FileSettings) setDefaultNegCacheTTL() error {
 		f.Server.Redis.NegCacheTTL = definitions.RedisNegCacheTTL * time.Second
 	}
 
-	if f.Server.Redis.NegCacheTTL < time.Second {
+	if redis.GetNegCacheTTL() < time.Second {
 		f.Server.Redis.NegCacheTTL = f.Server.Redis.NegCacheTTL * time.Second
 
-		if f.Server.Redis.NegCacheTTL > definitions.DurationMaxPeriod {
+		if redis.GetNegCacheTTL() > definitions.DurationMaxPeriod {
 			return fmt.Errorf("%w: %s", errors.ErrDurationTooHigh, f.Server.Redis.NegCacheTTL.String())
 		}
 	}
@@ -1872,7 +1877,7 @@ func (f *FileSettings) setDefaultMaxConcurrentRequests() error {
 		return nil
 	}
 
-	if f.Server.MaxConcurrentRequests == 0 {
+	if f.GetServer().GetMaxConcurrentRequests() == 0 {
 		f.Server.MaxConcurrentRequests = definitions.MaxConcurrentRequests
 	}
 
@@ -1885,7 +1890,7 @@ func (f *FileSettings) setDefaultPasswordHistory() error {
 		return nil
 	}
 
-	if f.Server.MaxPasswordHistoryEntries == 0 {
+	if f.GetServer().GetMaxPasswordHistoryEntries() <= 0 {
 		f.Server.MaxPasswordHistoryEntries = definitions.MaxPasswordHistoryEntries
 	}
 
