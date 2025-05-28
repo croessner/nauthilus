@@ -70,7 +70,7 @@ jobs:
           mkdir -p .debpkg/usr/local/sbin
           mkdir -p .debpkg/usr/lib/systemd/system
           mkdir -p .debpkg/usr/share/doc/${{ env.APP_NAME }}
-          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .debpkg/usr/sbin/${{ env.APP_NAME }}
+          cp server/${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }} .debpkg/usr/local/sbin/${{ env.APP_NAME }}
           cp systemd/${{ env.APP_NAME }}.service .debpkg/usr/lib/systemd/system/
           cp LICENSE README.md NOTICE.md .debpkg/usr/share/doc/${{ env.APP_NAME }}/
 
