@@ -985,7 +985,11 @@ func (f *FileSettings) HaveLuaInit() bool {
 			return false
 		}
 
-		luaConf := getConfig.(*LuaConf)
+		luaConf, ok := getConfig.(*LuaConf)
+		if !ok {
+			return false
+		}
+
 		return luaConf.InitScriptPath != "" || len(luaConf.InitScriptPaths) > 0
 	}
 
