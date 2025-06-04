@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	_ "go.uber.org/automaxprocs"
 )
 
 var (
