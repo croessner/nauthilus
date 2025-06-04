@@ -206,11 +206,12 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 // FeatureRelayDomains triggers if a user sent an email address as a login name and the domain component does not
 // match the list of known domains.
 func (a *AuthState) FeatureRelayDomains() (triggered bool) {
-	if config.GetFile().GetRelayDomains() == nil {
+	relayDomains := config.GetFile().GetRelayDomains()
+	if relayDomains == nil {
 		return
 	}
 
-	if len(config.GetFile().GetRelayDomains().StaticDomains) == 0 {
+	if len(relayDomains.StaticDomains) == 0 {
 		return
 	}
 
@@ -234,7 +235,7 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 			return
 		}
 
-		for _, domain := range config.GetFile().GetRelayDomains().StaticDomains {
+		for _, domain := range relayDomains.StaticDomains {
 			if strings.EqualFold(domain, split[1]) {
 				return
 			}
@@ -339,13 +340,19 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 		dnsResolverErr atomic.Bool
 	)
 
+	rbls := config.GetFile().GetRBLs()
+	if rbls == nil {
+		return
+	}
+
 	waitGroup := &sync.WaitGroup{}
 
 	dnsResolverErr.Store(false)
 	rblChan := make(chan int)
-	numberOfRBLs := len(config.GetFile().GetRBLs().GetLists())
+	rblLists := rbls.GetLists()
+	numberOfRBLs := len(rblLists)
 
-	for _, rbl := range config.GetFile().GetRBLs().GetLists() {
+	for _, rbl := range rblLists {
 		waitGroup.Add(1)
 
 		go a.processRBL(ctx, &rbl, rblChan, waitGroup, &dnsResolverErr)
@@ -379,7 +386,8 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		totalRBLScore int
 	)
 
-	if config.GetFile().GetRBLs() == nil {
+	rbls := config.GetFile().GetRBLs()
+	if rbls == nil {
 		return
 	}
 
@@ -389,7 +397,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if a.IsInNetwork(config.GetFile().GetRBLs().GetIPWhiteList()) {
+	if a.IsInNetwork(rbls.GetIPWhiteList()) {
 		logAddMessage(a, definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
@@ -406,7 +414,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if totalRBLScore >= config.GetFile().GetRBLs().GetThreshold() {
+	if totalRBLScore >= rbls.GetThreshold() {
 		triggered = true
 	}
 
@@ -485,8 +493,13 @@ func (a *AuthState) checkTLSEncryptionFeature() (triggered bool) {
 // It checks if the client is whitelisted and processes the feature action accordingly.
 func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
 	isWhitelisted := func() bool {
-		return config.GetFile().GetRelayDomains().HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.GetFile().GetRelayDomains().SoftWhitelist)
+		relayDomains := config.GetFile().GetRelayDomains()
+		if relayDomains == nil {
+			return false
+		}
+
+		return relayDomains.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, relayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -504,8 +517,13 @@ func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
 // Returns true if the feature is triggered and processed, otherwise false.
 func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error) {
 	isWhitelisted := func() bool {
-		return config.GetFile().GetRBLs().HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.GetFile().GetRBLs().SoftWhitelist)
+		rbls := config.GetFile().GetRBLs()
+		if rbls == nil {
+			return false
+		}
+
+		return rbls.HasSoftWhitelist() &&
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, rbls.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -529,7 +547,8 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 func (a *AuthState) processFeatureAction(featureName string, luaAction definitions.LuaAction, luaActionName string) {
 	a.FeatureName = featureName
 
-	if config.GetFile().GetBruteForce().LearnFromFeature(featureName) {
+	bruteForce := config.GetFile().GetBruteForce()
+	if bruteForce != nil && bruteForce.LearnFromFeature(featureName) {
 		a.UpdateBruteForceBucketsCounter()
 	}
 
