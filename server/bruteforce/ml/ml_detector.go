@@ -105,20 +105,31 @@ func NewNeuralNetworkWithSeed(inputSize, outputSize int, seed int64) *NeuralNetw
 	var activationFunction string
 
 	// Get neural network configuration, handling nil case
-	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
+	// First check if BruteForce section exists
+	bruteForce := config.GetFile().GetBruteForce()
+	var nnConfig *config.NeuralNetwork
 
-	// Set default hidden size if config is nil or hiddenNeurons is 0
-	if nnConfig == nil || nnConfig.HiddenNeurons == 0 {
+	if bruteForce == nil {
+		// If BruteForce section is nil, use default values
 		hiddenSize = 10
+		activationFunction = "sigmoid"
 	} else {
-		hiddenSize = nnConfig.HiddenNeurons
-	}
+		// Get neural network configuration
+		nnConfig = bruteForce.GetNeuralNetwork()
 
-	// Get activation function from config or use default
-	if nnConfig == nil || nnConfig.ActivationFunction == "" {
-		activationFunction = "sigmoid" // Default to sigmoid if not specified
-	} else {
-		activationFunction = nnConfig.ActivationFunction
+		// Set default hidden size if config is nil or hiddenNeurons is 0
+		if nnConfig == nil || nnConfig.HiddenNeurons == 0 {
+			hiddenSize = 10
+		} else {
+			hiddenSize = nnConfig.HiddenNeurons
+		}
+
+		// Get activation function from config or use default
+		if nnConfig == nil || nnConfig.ActivationFunction == "" {
+			activationFunction = "sigmoid" // Default to sigmoid if not specified
+		} else {
+			activationFunction = nnConfig.ActivationFunction
+		}
 	}
 
 	// Debug: Log neural network creation
