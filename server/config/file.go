@@ -2321,10 +2321,10 @@ func NewFile() (newCfg File, err error) {
 
 	viper.SetConfigName("nauthilus") // name of environment file (without extension)
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/usr/local/etc/nauthilus/")
-	viper.AddConfigPath("/etc/nauthilus/")
-	viper.AddConfigPath("$HOME/.nauthilus")
 	viper.AddConfigPath(".")
+	viper.AddConfigPath("$HOME/.nauthilus")
+	viper.AddConfigPath("/etc/nauthilus/")
+	viper.AddConfigPath("/usr/local/etc/nauthilus/")
 
 	err = viper.ReadInConfig()
 	if err != nil {
