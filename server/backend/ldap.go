@@ -203,6 +203,7 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 
 // prepareAndValidateSearchFields validates and retrieves expected fields from a Lua table, returning a map of field values.
 // Fields are matched against a predefined set of expected names and types, raising an error if a field is missing or invalid.
+// It also accepts an optional "raw_result" boolean field to indicate if the raw LDAP result should be returned.
 func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string]lua.LValue {
 	expectedFields := map[string]string{
 		"pool_name":  definitions.LuaLiteralString,
@@ -220,6 +221,18 @@ func prepareAndValidateSearchFields(L *lua.LState, table *lua.LTable) map[string
 		}
 
 		fieldValues[field] = L.GetField(table, field)
+	}
+
+	// Check for optional raw_result field
+	rawResult := L.GetField(table, "raw_result")
+	if rawResult != lua.LNil {
+		if _, ok := rawResult.(lua.LBool); !ok {
+			L.RaiseError("raw_result should be a boolean")
+
+			return nil
+		}
+
+		fieldValues["raw_result"] = rawResult
 	}
 
 	return fieldValues
@@ -367,6 +380,7 @@ func extractAttributes(attrTable *lua.LTable) []string {
 }
 
 // processReply processes an LDAP reply received from a channel and converts it into a Lua-compatible value or error.
+// If raw_result is true, it returns the raw LDAP entries instead of the processed result.
 func processReply(L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
 	ldapReply := <-ldapReplyChan
 
@@ -376,6 +390,42 @@ func processReply(L *lua.LState, ldapReplyChan chan *bktype.LDAPReply) int {
 		L.Push(lua.LString(ldapReply.Err.Error()))
 
 		return 2
+	}
+
+	// Get the raw_result parameter from the first argument (table)
+	table := L.CheckTable(1)
+	rawResultValue := L.GetField(table, "raw_result")
+	rawResult := rawResultValue != lua.LNil && rawResultValue.(lua.LBool) == lua.LTrue
+
+	if rawResult && len(ldapReply.RawResult) > 0 {
+		// Convert raw LDAP entries to Lua table
+		rawResultTable := L.NewTable()
+
+		for i, entry := range ldapReply.RawResult {
+			entryTable := L.NewTable()
+
+			// Add DN
+			entryTable.RawSetString("dn", convert.GoToLuaValue(L, entry.DN))
+
+			// Add attributes
+			attributesTable := L.NewTable()
+			for _, attr := range entry.Attributes {
+				attrValuesTable := L.NewTable()
+				for _, val := range attr.Values {
+					attrValuesTable.Append(convert.GoToLuaValue(L, val))
+				}
+
+				attributesTable.RawSetString(attr.Name, attrValuesTable)
+			}
+
+			entryTable.RawSetString("attributes", attributesTable)
+
+			rawResultTable.RawSetInt(i+1, entryTable)
+		}
+
+		L.Push(rawResultTable)
+
+		return 1
 	}
 
 	// Converting AttributeMapping (map[string][]any) to map[any]any
