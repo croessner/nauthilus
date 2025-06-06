@@ -26,7 +26,7 @@ import (
 // protocol handling, and integrations with other systems such as Redis and Prometheus.
 type ServerSection struct {
 	Address                   string                   `mapstructure:"address" validate:"omitempty,tcp_addr"`
-	MaxConcurrentRequests     int32                    `mapstructure:"max_concurrent_requests" validate:"required,gte=1"`
+	MaxConcurrentRequests     int32                    `mapstructure:"max_concurrent_requests" validate:"omitempty,gte=1"`
 	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
@@ -66,7 +66,11 @@ func (s *ServerSection) GetListenAddress() string {
 // Returns 10 as a default value if the ServerSection is nil.
 func (s *ServerSection) GetMaxConcurrentRequests() int32 {
 	if s == nil {
-		return 10
+		return 100
+	}
+
+	if s.MaxConcurrentRequests < 1 {
+		return 100
 	}
 
 	return s.MaxConcurrentRequests
@@ -76,6 +80,10 @@ func (s *ServerSection) GetMaxConcurrentRequests() int32 {
 // Returns definitions.MaxPasswordHistoryEntries as a default value if the ServerSection is nil.
 func (s *ServerSection) GetMaxPasswordHistoryEntries() int32 {
 	if s == nil {
+		return definitions.MaxPasswordHistoryEntries
+	}
+
+	if s.MaxPasswordHistoryEntries < 1 {
 		return definitions.MaxPasswordHistoryEntries
 	}
 
