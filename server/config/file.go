@@ -2320,7 +2320,7 @@ func NewFile() (newCfg File, err error) {
 	newCfg = &FileSettings{}
 
 	viper.SetConfigName("nauthilus") // name of environment file (without extension)
-	viper.SetConfigType("yaml")
+	// Note: Config type is now set via command line flag in server.go
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("$HOME/.nauthilus")
 	viper.AddConfigPath("/etc/nauthilus/")

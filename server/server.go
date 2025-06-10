@@ -923,6 +923,7 @@ func debugLoadableConfig() {
 func parseFlagsAndPrintVersion() {
 	var versionFlag = flag.Bool("version", false, "print version and exit")
 	var configFlag = flag.String("config", "", "path to configuration file")
+	var configFormatFlag = flag.String("config-format", "yaml", "configuration file format (yaml, json, toml, etc.)")
 
 	flag.Parse()
 
@@ -937,6 +938,9 @@ func parseFlagsAndPrintVersion() {
 
 		viper.SetConfigFile(*configFlag)
 	}
+
+	// Set the configuration format
+	viper.SetConfigType(*configFormatFlag)
 }
 
 // initializeInstanceInfo sets the version and instance name metrics used for monitoring and debugging.
