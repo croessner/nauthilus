@@ -375,6 +375,37 @@ func CustomRequestHandler(ctx *gin.Context) {
 //     to handle different service values.
 //  6. For the "flush" service, it calls the HandleBruteForceRuleFlush function.
 func CacheHandler(ctx *gin.Context) {
+	// Check if JWT auth is enabled
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		// Extract token
+		tokenString, err := ExtractJWTToken(ctx)
+		if err == nil {
+			// Validate token
+			claims, err := ValidateJWTToken(tokenString)
+			if err == nil {
+				// Check if user has the security or admin role
+				hasRequiredRole := false
+				for _, role := range claims.Roles {
+					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
+						hasRequiredRole = true
+						break
+					}
+				}
+
+				if !hasRequiredRole {
+					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
+					return
+				}
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	//nolint:gocritic // Prepared for future commands
 	switch ctx.Param("category") {
 	case definitions.CatCache:
@@ -1386,9 +1417,9 @@ func setupRouter(router *gin.Engine) {
 				// Validate token
 				claims, err := ValidateJWTToken(tokenString)
 				if err == nil {
-					// Check if user has the "security" role
+					// Check if user has the security role
 					for _, role := range claims.Roles {
-						if role == "security" {
+						if role == definitions.RoleSecurity {
 							// User has security role, allow access
 							promhttp.Handler().ServeHTTP(c.Writer, c.Request)
 

@@ -377,6 +377,37 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 // HanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
 func HanldeBruteForceList(ctx *gin.Context) {
+	// Check if JWT auth is enabled
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		// Extract token
+		tokenString, err := ExtractJWTToken(ctx)
+		if err == nil {
+			// Validate token
+			claims, err := ValidateJWTToken(tokenString)
+			if err == nil {
+				// Check if user has the security or admin role
+				hasRequiredRole := false
+				for _, role := range claims.Roles {
+					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
+						hasRequiredRole = true
+						break
+					}
+				}
+
+				if !hasRequiredRole {
+					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
+					return
+				}
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	var filterCmd *FilterCmd
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)

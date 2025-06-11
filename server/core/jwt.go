@@ -349,26 +349,26 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Set claims in context
 		ctx.Set(definitions.CtxJWTClaimsKey, claims)
 
-		// Check if the user has the "authenticated" role when NoAuth is false
-		// NoAuth==false mode requires the "authenticated" role
+		// Check if the user has the authenticate role when NoAuth is false
+		// NoAuth==false mode requires the authenticate role
 		if ctx.Query("mode") != "no-auth" {
-			hasAuthenticatedRole := false
+			hasAuthenticateRole := false
 			for _, role := range claims.Roles {
-				if role == "authenticated" {
-					hasAuthenticatedRole = true
+				if role == definitions.RoleAuthenticate {
+					hasAuthenticateRole = true
 
 					break
 				}
 			}
 
-			if !hasAuthenticatedRole {
+			if !hasAuthenticateRole {
 				level.Warn(log.Logger).Log(
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyUsername, claims.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
-					definitions.LogKeyMsg, "JWT user does not have the 'authenticated' role required for authentication",
+					definitions.LogKeyMsg, "JWT user does not have the 'authenticate' role required for authentication",
 				)
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing required role: authenticated"})
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing required role: authenticate"})
 
 				return
 			}
@@ -531,13 +531,13 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 	// Add user info role if NoAuth is true
 	if auth.(*AuthState).NoAuth {
-		roles = append(roles, "user_info")
+		roles = append(roles, definitions.RoleUserInfo)
 	}
 
 	// Add list accounts role if the user can list accounts
 	accountList := auth.(*AuthState).ListUserAccounts()
 	if len(accountList) > 0 {
-		roles = append(roles, "list_accounts")
+		roles = append(roles, definitions.RoleListAccounts)
 	}
 
 	// Generate JWT token
