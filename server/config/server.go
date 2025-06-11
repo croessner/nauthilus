@@ -990,15 +990,16 @@ func (s *Sentinels) GetPassword() string {
 
 // Cluster represents the configuration for a Redis cluster setup.
 type Cluster struct {
-	Addresses      []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
-	Username       string        `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password       string        `mapstructure:"password" validate:"omitempty,excludesall= "`
-	RouteByLatency bool          `mapstructure:"route_by_latency"`
-	RouteRandomly  bool          `mapstructure:"route_randomly"`
-	ReadOnly       bool          `mapstructure:"read_only"`
-	MaxRedirects   int           `mapstructure:"max_redirects" validate:"omitempty,gte=0"`
-	ReadTimeout    time.Duration `mapstructure:"read_timeout" validate:"omitempty"`
-	WriteTimeout   time.Duration `mapstructure:"write_timeout" validate:"omitempty"`
+	Addresses            []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username             string        `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password             string        `mapstructure:"password" validate:"omitempty,excludesall= "`
+	RouteByLatency       bool          `mapstructure:"route_by_latency"`
+	RouteRandomly        bool          `mapstructure:"route_randomly"`
+	ReadOnly             bool          `mapstructure:"read_only"` // Deprecated: Use RouteReadsToReplicas instead
+	RouteReadsToReplicas bool          `mapstructure:"route_reads_to_replicas"`
+	MaxRedirects         int           `mapstructure:"max_redirects" validate:"omitempty,gte=0"`
+	ReadTimeout          time.Duration `mapstructure:"read_timeout" validate:"omitempty"`
+	WriteTimeout         time.Duration `mapstructure:"write_timeout" validate:"omitempty"`
 }
 
 // GetAddresses retrieves the list of Redis cluster addresses configured in the Cluster instance.
@@ -1053,12 +1054,25 @@ func (c *Cluster) GetRouteRandomly() bool {
 
 // GetReadOnly returns whether read-only commands should be allowed from replicas.
 // Returns false if the Cluster is nil.
+// Deprecated: Use GetRouteReadsToReplicas instead.
 func (c *Cluster) GetReadOnly() bool {
 	if c == nil {
 		return false
 	}
 
-	return c.ReadOnly
+	// For backward compatibility, check both parameters
+	return c.ReadOnly || c.RouteReadsToReplicas
+}
+
+// GetRouteReadsToReplicas returns whether read commands should be routed to replica nodes.
+// Returns false if the Cluster is nil.
+func (c *Cluster) GetRouteReadsToReplicas() bool {
+	if c == nil {
+		return false
+	}
+
+	// For backward compatibility, check both parameters
+	return c.RouteReadsToReplicas || c.ReadOnly
 }
 
 // GetMaxRedirects returns the maximum number of redirects to follow.
