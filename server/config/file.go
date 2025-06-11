@@ -2219,6 +2219,8 @@ func (f *FileSettings) HandleFile() (err error) {
 	validate.RegisterValidation("validateOptionalLuaBackend", validateOptionalLuaBackend)
 	validate.RegisterValidation("validateAuthPoolRequired", validateAuthPoolRequired)
 	validate.RegisterValidation("validatDefaultBackendName", validatDefaultBackendName)
+	// Register custom validator for alphanumeric characters and symbols
+	validate.RegisterValidation("alphanumsymbol", isAlphanumSymbol)
 
 	if err = validate.Struct(f); err != nil {
 		if stderrors.As(err, &validationErrors) {
