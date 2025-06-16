@@ -38,7 +38,8 @@ These options provide fine-grained control over how the Redis Cluster client beh
 
 - **RouteByLatency**: When enabled, commands are routed to the node with the lowest latency
 - **RouteRandomly**: When enabled, commands are routed randomly across nodes
-- **ReadOnly**: When enabled, read commands are directed to replica nodes
+- **RouteReadsToReplicas**: When enabled, read commands are directed to replica nodes (Available from v1.7.11)
+- **ReadOnly**: Deprecated, use RouteReadsToReplicas instead
 - **MaxRedirects**: Maximum number of redirects to follow for a single command
 - **ReadTimeout**: Timeout for read operations
 - **WriteTimeout**: Timeout for write operations
@@ -63,7 +64,7 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
         // Topology awareness options
         RouteByLatency: clusterCfg.GetRouteByLatency(),
         RouteRandomly:  clusterCfg.GetRouteRandomly(),
-        ReadOnly:       clusterCfg.GetReadOnly(),
+        ReadOnly:       clusterCfg.GetRouteReadsToReplicas(), // Using new getter for better semantics
     }
 
     // Set optional parameters only if they have non-zero values
@@ -108,8 +109,8 @@ func (clt *redisClient) newRedisReplicaClient() {
         // For Redis Cluster, create a read-only client for read operations
         clusterCfg := redisCfg.GetCluster()
 
-        // Only create a separate read client if ReadOnly is enabled in the configuration
-        if clusterCfg.GetReadOnly() {
+        // Only create a separate read client if RouteReadsToReplicas is enabled in the configuration
+        if clusterCfg.GetRouteReadsToReplicas() {
             // Create a virtual address to represent the cluster
             clusterAddress := "cluster:" + clusterCfg.GetAddresses()[0]
 
@@ -142,7 +143,7 @@ redis:
     password: "redis_password"
     route_by_latency: true
     route_randomly: false
-    read_only: true
+    route_reads_to_replicas: true
     max_redirects: 3
     read_timeout: 200ms
     write_timeout: 500ms

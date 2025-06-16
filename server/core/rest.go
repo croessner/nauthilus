@@ -377,6 +377,37 @@ func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string)
 
 // HanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
 func HanldeBruteForceList(ctx *gin.Context) {
+	// Check if JWT auth is enabled
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		// Extract token
+		tokenString, err := ExtractJWTToken(ctx)
+		if err == nil {
+			// Validate token
+			claims, err := ValidateJWTToken(ctx, tokenString)
+			if err == nil {
+				// Check if user has the security or admin role
+				hasRequiredRole := false
+				for _, role := range claims.Roles {
+					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
+						hasRequiredRole = true
+						break
+					}
+				}
+
+				if !hasRequiredRole {
+					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
+					return
+				}
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	var filterCmd *FilterCmd
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -410,6 +441,57 @@ func HanldeBruteForceList(ctx *gin.Context) {
 		Operation: definitions.ServList,
 		Result:    []any{blockedIPAddresses, blockedAccounts},
 	})
+}
+
+// HandleConfigLoad handles loading the server configuration and applies necessary JWT authentication checks.
+// This function validates a provided JWT token for required roles when authentication is enabled.
+// If JWT authentication fails, appropriate HTTP error responses are returned, such as Unauthorized or Forbidden.
+// On success, it retrieves the server configuration as JSON and binds it to the request context.
+func HandleConfigLoad(ctx *gin.Context) {
+	// Check if JWT auth is enabled
+	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		// Extract token
+		tokenString, err := ExtractJWTToken(ctx)
+		if err == nil {
+			// Validate token
+			claims, err := ValidateJWTToken(ctx, tokenString)
+			if err == nil {
+				// Check if user has the security or admin role
+				hasRequiredRole := false
+				for _, role := range claims.Roles {
+					if role == definitions.RoleAdmin {
+						hasRequiredRole = true
+						break
+					}
+				}
+
+				if !hasRequiredRole {
+					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
+					return
+				}
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+		} else {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Loading configuration")
+
+	jsonBytes, err := config.GetFile().GetConfigFileAsJSON()
+	if err != nil {
+		HandleJSONError(ctx, err)
+
+		return
+	}
+
+	ctx.Header("Content-Type", "application/json")
+	ctx.String(http.StatusOK, string(jsonBytes))
 }
 
 // HandleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter

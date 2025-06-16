@@ -105,7 +105,7 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 
 // newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
 // The cluster options include the addresses of the Redis cluster nodes, username, password, pool size, and minimum idle connections.
-// It also includes topology awareness features like RouteByLatency, RouteRandomly, and ReadOnly.
+// It also includes topology awareness features like RouteByLatency, RouteRandomly, and RouteReadsToReplicas.
 // Additional options include MaxRedirects, ReadTimeout, and WriteTimeout for fine-tuning the cluster behavior.
 // The function includes the TLS configuration obtained from the RedisTLSOptions function.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
@@ -123,7 +123,7 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		// Topology awareness options
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
-		ReadOnly:       clusterCfg.GetReadOnly(),
+		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
 	}
 
 	// Set optional parameters only if they have non-zero values

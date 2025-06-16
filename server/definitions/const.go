@@ -17,6 +17,24 @@ package definitions
 
 import "time"
 
+// Role constants for JWT authentication
+const (
+	// RoleAdmin represents the admin role with full access to all features
+	RoleAdmin = "admin"
+
+	// RoleSecurity represents the security role with access to security-related features
+	RoleSecurity = "security"
+
+	// RoleAuthenticate represents the role required to perform authentication requests
+	RoleAuthenticate = "authenticate"
+
+	// RoleUserInfo represents the user_info role for accessing user information
+	RoleUserInfo = "user_info"
+
+	// RoleListAccounts represents the list_accounts role for listing user accounts
+	RoleListAccounts = "list_accounts"
+)
+
 const (
 	// LogKeyGUID represents the session identifier used in log entries.
 	LogKeyGUID = "session"
@@ -500,6 +518,9 @@ const (
 	// CatBruteForce is a constant for the "bruteforce" category.
 	CatBruteForce = "bruteforce"
 
+	// CatConfig is a constant representing the "config" category.
+	CatConfig = "config"
+
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
@@ -523,6 +544,9 @@ const (
 
 	// ServList is a constant for the "list" service.
 	ServList = "list"
+
+	// ServLoad is a constant representing the "load" service category.
+	ServLoad = "load"
 )
 
 // TwoFAv1Root is the root path for the two-factor authentication (2FA) version 1 endpoints.

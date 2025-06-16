@@ -18,10 +18,10 @@ server:
     users:                # Optional: Define JWT-specific users
       - username: "admin"
         password: "admin-password"
-        roles: ["authenticated", "user_info", "list_accounts"]
+        roles: ["authenticate", "user_info", "list_accounts"]
       - username: "user"
         password: "user-password"
-        roles: ["authenticated"]
+        roles: ["authenticate"]
 ```
 
 Configuration options:
@@ -36,7 +36,7 @@ Configuration options:
   - `username`: The username for the JWT user.
   - `password`: The password for the JWT user.
   - `roles`: List of roles assigned to the user. Default roles include:
-    - `authenticated`: Basic access role.
+    - `authenticate`: Role required to perform authentication requests (renamed from "authenticated" in version 1.7.11).
     - `user_info`: Access to user information.
     - `list_accounts`: Access to list accounts.
 
@@ -114,7 +114,7 @@ The following endpoints are public and do not require authentication:
 
 JWT tokens include roles that determine what actions the user can perform:
 
-- `authenticated`: This role is needed to make authentication requests.
+- `authenticate`: This role is needed to perform authentication requests (renamed from "authenticated" in version 1.7.11).
 - `user_info`: Users with NoAuth=true have this role. This role is required to access endpoints with `mode=no-auth`.
 - `list_accounts`: Users who can list accounts have this role. This role is required to access endpoints with `mode=list-accounts`.
 - Custom roles: You can define custom roles for your users and use them for custom hooks.
@@ -144,7 +144,7 @@ In this example:
 - The "status" hook requires the user to have either the "admin" or "monitoring" role.
 - The "user-info" hook requires the user to have the "user_info" role.
 
-If no roles are specified for a hook, any authenticated user can access it when JWT is enabled.
+If no roles are specified for a hook, any user with the `authenticate` role can access it when JWT is enabled.
 
 ## Using JWT Authentication
 

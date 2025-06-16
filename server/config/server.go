@@ -16,7 +16,9 @@
 package config
 
 import (
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/go-playground/validator/v10"
@@ -299,6 +301,7 @@ type Endpoint struct {
 	AuthSASLAuthd bool `mapstructure:"auth_saslauthd"`
 	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
+	Configuration bool `mapstructure:"configuration"`
 }
 
 // IsAuthHeaderDisabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.
@@ -369,6 +372,16 @@ func (e *Endpoint) IsCustomHooksDisabled() bool {
 	}
 
 	return e.CustomHooks
+}
+
+// IsConfigurationDisabled checks if the configuration setting is enabled for the endpoint and returns the corresponding boolean value.
+// Returns false if the Endpoint is nil.
+func (e *Endpoint) IsConfigurationDisabled() bool {
+	if e == nil {
+		return false
+	}
+
+	return e.Configuration
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.
@@ -481,13 +494,13 @@ func (c *HTTPClient) GetProxy() string {
 type BasicAuth struct {
 	Enabled  bool   `mapstructure:"enabled"`
 	Username string `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
+	Password string `mapstructure:"password" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
 }
 
 // JWTAuth represents the configuration for JWT authentication.
 type JWTAuth struct {
 	Enabled            bool          `mapstructure:"enabled"`
-	SecretKey          string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumunicode,excludesall= "`
+	SecretKey          string        `mapstructure:"secret_key" validate:"omitempty,min=32,alphanumsymbol,excludesall= "`
 	TokenExpiry        time.Duration `mapstructure:"token_expiry" validate:"omitempty,gt=0"`
 	RefreshToken       bool          `mapstructure:"refresh_token"`
 	RefreshTokenExpiry time.Duration `mapstructure:"refresh_token_expiry" validate:"omitempty,gt=0"`
@@ -768,7 +781,7 @@ func (d *DNS) GetResolveClientIP() bool {
 type Redis struct {
 	DatabaseNmuber int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
 	Prefix         string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
-	PasswordNonce  string        `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumunicode,excludesall= "`
+	PasswordNonce  string        `mapstructure:"password_nonce" validate:"omitempty,min=16,alphanumsymbol,excludesall= "`
 	PoolSize       int           `mapstructure:"pool_size" validate:"omitempty,gte=1"`
 	IdlePoolSize   int           `mapstructure:"idle_pool_size" validate:"omitempty,gte=0"`
 	TLS            TLS           `mapstructure:"tls" validate:"omitempty"`
@@ -795,6 +808,10 @@ func (r *Redis) GetDatabaseNumber() int {
 func (r *Redis) GetPrefix() string {
 	if r == nil {
 		return ""
+	}
+
+	if r.Prefix == "" {
+		return "nt:"
 	}
 
 	return r.Prefix
@@ -990,15 +1007,16 @@ func (s *Sentinels) GetPassword() string {
 
 // Cluster represents the configuration for a Redis cluster setup.
 type Cluster struct {
-	Addresses      []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
-	Username       string        `mapstructure:"username" validate:"omitempty,excludesall= "`
-	Password       string        `mapstructure:"password" validate:"omitempty,excludesall= "`
-	RouteByLatency bool          `mapstructure:"route_by_latency"`
-	RouteRandomly  bool          `mapstructure:"route_randomly"`
-	ReadOnly       bool          `mapstructure:"read_only"`
-	MaxRedirects   int           `mapstructure:"max_redirects" validate:"omitempty,gte=0"`
-	ReadTimeout    time.Duration `mapstructure:"read_timeout" validate:"omitempty"`
-	WriteTimeout   time.Duration `mapstructure:"write_timeout" validate:"omitempty"`
+	Addresses            []string      `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Username             string        `mapstructure:"username" validate:"omitempty,excludesall= "`
+	Password             string        `mapstructure:"password" validate:"omitempty,excludesall= "`
+	RouteByLatency       bool          `mapstructure:"route_by_latency"`
+	RouteRandomly        bool          `mapstructure:"route_randomly"`
+	ReadOnly             bool          `mapstructure:"read_only"` // Deprecated: Use RouteReadsToReplicas instead
+	RouteReadsToReplicas bool          `mapstructure:"route_reads_to_replicas"`
+	MaxRedirects         int           `mapstructure:"max_redirects" validate:"omitempty,gte=0"`
+	ReadTimeout          time.Duration `mapstructure:"read_timeout" validate:"omitempty"`
+	WriteTimeout         time.Duration `mapstructure:"write_timeout" validate:"omitempty"`
 }
 
 // GetAddresses retrieves the list of Redis cluster addresses configured in the Cluster instance.
@@ -1053,12 +1071,25 @@ func (c *Cluster) GetRouteRandomly() bool {
 
 // GetReadOnly returns whether read-only commands should be allowed from replicas.
 // Returns false if the Cluster is nil.
+// Deprecated: Use GetRouteReadsToReplicas instead.
 func (c *Cluster) GetReadOnly() bool {
 	if c == nil {
 		return false
 	}
 
-	return c.ReadOnly
+	// For backward compatibility, check both parameters
+	return c.ReadOnly || c.RouteReadsToReplicas
+}
+
+// GetRouteReadsToReplicas returns whether read commands should be routed to replica nodes.
+// Returns false if the Cluster is nil.
+func (c *Cluster) GetRouteReadsToReplicas() bool {
+	if c == nil {
+		return false
+	}
+
+	// For backward compatibility, check both parameters
+	return c.RouteReadsToReplicas || c.ReadOnly
 }
 
 // GetMaxRedirects returns the maximum number of redirects to follow.
@@ -1120,9 +1151,9 @@ func (m *MasterUser) GetDelimiter() string {
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
 	Enabled            bool   `mapstructure:"enabled"`
-	CSRFSecret         string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumunicode,excludesall= "`
-	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumunicode,excludesall= "`
-	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumunicode,excludesall= ,validateCookieStoreEncKey"`
+	CSRFSecret         string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1169,6 +1200,17 @@ func validateCookieStoreEncKey(fl validator.FieldLevel) bool {
 	length := len(fl.Field().String())
 
 	return length == 16 || length == 24 || length == 32
+}
+
+// isAlphanumSymbol is a validation function for validating if the current field's value
+// is a valid alphanumeric unicode value including symbols.
+// This validator allows Unicode letters, numbers, and symbols, but excludes control characters and whitespace.
+// It is an extension of the alphanumunicode validator that also allows symbols.
+func isAlphanumSymbol(fl validator.FieldLevel) bool {
+	// Check if the string contains any control characters or whitespace
+	return !strings.ContainsFunc(fl.Field().String(), func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	})
 }
 
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.

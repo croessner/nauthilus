@@ -104,3 +104,5 @@ nauthilus.yml
 oauth2test/client.go
 
 bin/*
+/ui/node_modules/
+/node_modules/
