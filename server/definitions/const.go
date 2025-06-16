@@ -518,6 +518,9 @@ const (
 	// CatBruteForce is a constant for the "bruteforce" category.
 	CatBruteForce = "bruteforce"
 
+	// CatConfig is a constant representing the "config" category.
+	CatConfig = "config"
+
 	// ServNginx is a constant for the "nginx" service.
 	ServNginx = "nginx"
 
@@ -541,6 +544,9 @@ const (
 
 	// ServList is a constant for the "list" service.
 	ServList = "list"
+
+	// ServLoad is a constant representing the "load" service category.
+	ServLoad = "load"
 )
 
 // TwoFAv1Root is the root path for the two-factor authentication (2FA) version 1 endpoints.

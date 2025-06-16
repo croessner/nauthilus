@@ -16,6 +16,7 @@
 package config
 
 import (
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net"
@@ -35,7 +36,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 // The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
@@ -74,6 +74,9 @@ type File interface {
 
 	// HandleFile processes the configuration file.
 	HandleFile() error
+
+	// GetConfigFileAsJSON returns the configuration file contents as a JSON-formatted string. An error is returned if conversion fails.
+	GetConfigFileAsJSON() ([]byte, error)
 
 	/*
 		Lua-related methods
@@ -308,6 +311,18 @@ type FileSettings struct {
 }
 
 var _ File = (*FileSettings)(nil)
+
+// GetConfigFileAsJSON returns the current configuration settings as a JSON string, ensuring thread safety with a mutex lock.
+func (f *FileSettings) GetConfigFileAsJSON() ([]byte, error) {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+
+	allSettings := viper.AllSettings()
+
+	jsonBytes, err := json.Marshal(allSettings)
+
+	return jsonBytes, err
+}
 
 // GetRBLs retrieves the RBLSection configuration from the FileSettings instance.
 // Returns nil if the FileSettings instance is nil.
@@ -2209,10 +2224,6 @@ func (f *FileSettings) HandleFile() (err error) {
 		return err
 	}
 
-	if environment.GetDevMode() {
-		dumpConfig(f)
-	}
-
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
 	validate.RegisterValidation("validateCookieStoreEncKey", validateCookieStoreEncKey)
@@ -2238,32 +2249,6 @@ func (f *FileSettings) HandleFile() (err error) {
 	f.Other = nil
 
 	return nil
-}
-
-func dumpConfig(f *FileSettings) {
-	var intermediateMap map[string]any
-
-	if f == nil {
-		fmt.Println("Config is nil")
-
-		return
-	}
-
-	err := mapstructure.Decode(f, &intermediateMap)
-	if err != nil {
-		fmt.Printf("Failed to convert config to map: %v\n", err)
-
-		return
-	}
-
-	data, err := yaml.Marshal(intermediateMap)
-	if err != nil {
-		fmt.Printf("Failed to PrettyPrint config as YAML: %v\n", err)
-
-		return
-	}
-
-	fmt.Println(string(data))
 }
 
 // bindEnvs recursively binds struct fields to environment variables using Viper, constructing keys from struct tags or field names.
