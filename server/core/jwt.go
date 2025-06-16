@@ -129,7 +129,7 @@ func GenerateRefreshToken(username string) (string, error) {
 }
 
 // StoreTokenInRedis stores a JWT token in Redis for multi-instance compatibility
-func StoreTokenInRedis(username, token string, expiresAt int64) error {
+func StoreTokenInRedis(ctx context.Context, username, token string, expiresAt int64) error {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
@@ -143,17 +143,17 @@ func StoreTokenInRedis(username, token string, expiresAt int64) error {
 	}
 
 	// Create Redis key
-	key := fmt.Sprintf("jwt:token:%s", username)
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	key := fmt.Sprintf(prefix+"jwt:token:%s", username)
 
 	// Store token in Redis with expiry
-	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetWriteHandle()
 
 	return redisClient.Set(ctx, key, token, ttl).Err()
 }
 
 // StoreRefreshTokenInRedis stores a JWT refresh token in Redis for multi-instance compatibility
-func StoreRefreshTokenInRedis(username, refreshToken string) error {
+func StoreRefreshTokenInRedis(ctx context.Context, username, refreshToken string) error {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
@@ -162,7 +162,8 @@ func StoreRefreshTokenInRedis(username, refreshToken string) error {
 	}
 
 	// Create Redis key
-	key := fmt.Sprintf("jwt:refresh:%s", username)
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	key := fmt.Sprintf(prefix+"jwt:refresh:%s", username)
 
 	// Determine expiry time
 	expiry := jwtConfig.GetRefreshTokenExpiry()
@@ -172,14 +173,13 @@ func StoreRefreshTokenInRedis(username, refreshToken string) error {
 	}
 
 	// Store refresh token in Redis with configured expiry
-	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetWriteHandle()
 
 	return redisClient.Set(ctx, key, refreshToken, expiry).Err()
 }
 
 // GetTokenFromRedis retrieves a JWT token from Redis
-func GetTokenFromRedis(username string) (string, error) {
+func GetTokenFromRedis(ctx context.Context, username string) (string, error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
@@ -187,10 +187,10 @@ func GetTokenFromRedis(username string) (string, error) {
 	}
 
 	// Create Redis key
-	key := fmt.Sprintf("jwt:token:%s", username)
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	key := fmt.Sprintf(prefix+"jwt:token:%s", username)
 
 	// Get token from Redis
-	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetReadHandle()
 
 	token, err := redisClient.Get(ctx, key).Result()
@@ -206,7 +206,7 @@ func GetTokenFromRedis(username string) (string, error) {
 }
 
 // GetRefreshTokenFromRedis retrieves a JWT refresh token from Redis
-func GetRefreshTokenFromRedis(username string) (string, error) {
+func GetRefreshTokenFromRedis(ctx context.Context, username string) (string, error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	if !config.GetFile().GetServer().GetJWTAuth().IsStoreInRedisEnabled() {
@@ -214,10 +214,10 @@ func GetRefreshTokenFromRedis(username string) (string, error) {
 	}
 
 	// Create Redis key
-	key := fmt.Sprintf("jwt:refresh:%s", username)
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	key := fmt.Sprintf(prefix+"jwt:refresh:%s", username)
 
 	// Get refresh token from Redis
-	ctx := context.Background()
 	redisClient := rediscli.GetClient().GetReadHandle()
 
 	token, err := redisClient.Get(ctx, key).Result()
@@ -233,7 +233,7 @@ func GetRefreshTokenFromRedis(username string) (string, error) {
 }
 
 // ValidateJWTToken validates a JWT token and returns the claims
-func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
+func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, error) {
 	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() {
@@ -267,7 +267,7 @@ func ValidateJWTToken(tokenString string) (*JWTClaims, error) {
 
 	// If Redis storage is enabled, verify that the token exists in Redis
 	if jwtConfig.IsStoreInRedisEnabled() {
-		storedToken, err := GetTokenFromRedis(claims.Username)
+		storedToken, err := GetTokenFromRedis(ctx, claims.Username)
 		if err != nil {
 			util.DebugModule(
 				definitions.DbgJWT,
@@ -339,7 +339,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate token
-		claims, err := ValidateJWTToken(tokenString)
+		claims, err := ValidateJWTToken(ctx, tokenString)
 		if err != nil {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 
@@ -463,7 +463,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 		// Store tokens in Redis if enabled
 		if jwtConfig.IsStoreInRedisEnabled() {
-			if err := StoreTokenInRedis(request.Username, token, expiresAt); err != nil {
+			if err := StoreTokenInRedis(ctx, request.Username, token, expiresAt); err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyUsername, request.Username,
@@ -474,7 +474,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			}
 
 			if jwtConfig.IsRefreshTokenEnabled() && response.RefreshToken != "" {
-				if err := StoreRefreshTokenInRedis(request.Username, response.RefreshToken); err != nil {
+				if err := StoreRefreshTokenInRedis(ctx, request.Username, response.RefreshToken); err != nil {
 					level.Error(log.Logger).Log(
 						definitions.LogKeyGUID, guid,
 						definitions.LogKeyUsername, request.Username,
@@ -578,7 +578,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 	// Store tokens in Redis if enabled
 	if jwtConfig.IsStoreInRedisEnabled() {
-		if err := StoreTokenInRedis(request.Username, token, expiresAt); err != nil {
+		if err := StoreTokenInRedis(ctx, request.Username, token, expiresAt); err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, auth.GetGUID(),
 				definitions.LogKeyUsername, auth.GetUsername(),
@@ -589,7 +589,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		}
 
 		if jwtConfig.IsRefreshTokenEnabled() && response.RefreshToken != "" {
-			if err := StoreRefreshTokenInRedis(request.Username, response.RefreshToken); err != nil {
+			if err := StoreRefreshTokenInRedis(ctx, request.Username, response.RefreshToken); err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, auth.GetGUID(),
 					definitions.LogKeyUsername, auth.GetUsername(),
@@ -654,7 +654,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 	// If Redis storage is enabled, verify that the refresh token exists in Redis
 	if jwtConfig.IsStoreInRedisEnabled() {
-		storedRefreshToken, err := GetRefreshTokenFromRedis(claims.Subject)
+		storedRefreshToken, err := GetRefreshTokenFromRedis(ctx, claims.Subject)
 		if err != nil {
 			util.DebugModule(
 				definitions.DbgJWT,
@@ -741,7 +741,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 
 	// Store tokens in Redis if enabled
 	if jwtConfig.IsStoreInRedisEnabled() {
-		if err := StoreTokenInRedis(claims.Subject, newToken, expiresAt); err != nil {
+		if err := StoreTokenInRedis(ctx, claims.Subject, newToken, expiresAt); err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, claims.Subject,
@@ -751,7 +751,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 			)
 		}
 
-		if err := StoreRefreshTokenInRedis(claims.Subject, newRefreshToken); err != nil {
+		if err := StoreRefreshTokenInRedis(ctx, claims.Subject, newRefreshToken); err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, claims.Subject,

@@ -392,7 +392,7 @@ func CacheHandler(ctx *gin.Context) {
 		tokenString, err := ExtractJWTToken(ctx)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTToken(tokenString)
+			claims, err := ValidateJWTToken(ctx, tokenString)
 			if err == nil {
 				// Check if user has the security or admin role
 				hasRequiredRole := false
@@ -1419,20 +1419,20 @@ func setupRouter(router *gin.Engine) {
 	// Define high-priority endpoints that should be fast and always available
 
 	// Prometheus endpoint with authentication
-	router.GET("/metrics", func(c *gin.Context) {
+	router.GET("/metrics", func(ctx *gin.Context) {
 		// Check if JWT auth is enabled
 		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
 			// Extract token
-			tokenString, err := ExtractJWTToken(c)
+			tokenString, err := ExtractJWTToken(ctx)
 			if err == nil {
 				// Validate token
-				claims, err := ValidateJWTToken(tokenString)
+				claims, err := ValidateJWTToken(ctx, tokenString)
 				if err == nil {
 					// Check if user has the security role
 					for _, role := range claims.Roles {
 						if role == definitions.RoleSecurity {
 							// User has security role, allow access
-							promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+							promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 
 							return
 						}
@@ -1443,7 +1443,7 @@ func setupRouter(router *gin.Engine) {
 
 		// Check if Basic Auth is enabled
 		if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-			username, password, httpBasicAuthOk := c.Request.BasicAuth()
+			username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
 
 			if httpBasicAuthOk {
 				usernameHash := sha256.Sum256([]byte(username))
@@ -1456,21 +1456,21 @@ func setupRouter(router *gin.Engine) {
 
 				if usernameMatch && passwordMatch {
 					// Basic auth successful, allow access
-					promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+					promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 
 					return
 				}
 			}
 
 			// Basic auth failed, request authentication
-			c.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
-			c.AbortWithStatus(http.StatusUnauthorized)
+			ctx.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
+			ctx.AbortWithStatus(http.StatusUnauthorized)
 
 			return
 		}
 
 		// If neither JWT nor Basic Auth is enabled, allow access
-		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+		promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 	})
 
 	// Healthcheck - keep this simple and fast

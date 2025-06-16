@@ -810,6 +810,10 @@ func (r *Redis) GetPrefix() string {
 		return ""
 	}
 
+	if r.Prefix == "" {
+		return "nt:"
+	}
+
 	return r.Prefix
 }
 

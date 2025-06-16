@@ -383,7 +383,7 @@ func HanldeBruteForceList(ctx *gin.Context) {
 		tokenString, err := ExtractJWTToken(ctx)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTToken(tokenString)
+			claims, err := ValidateJWTToken(ctx, tokenString)
 			if err == nil {
 				// Check if user has the security or admin role
 				hasRequiredRole := false
@@ -454,7 +454,7 @@ func HandleConfigLoad(ctx *gin.Context) {
 		tokenString, err := ExtractJWTToken(ctx)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTToken(tokenString)
+			claims, err := ValidateJWTToken(ctx, tokenString)
 			if err == nil {
 				// Check if user has the security or admin role
 				hasRequiredRole := false
