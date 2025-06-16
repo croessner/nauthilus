@@ -301,6 +301,7 @@ type Endpoint struct {
 	AuthSASLAuthd bool `mapstructure:"auth_saslauthd"`
 	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
+	Configuration bool `mapstructure:"configuration"`
 }
 
 // IsAuthHeaderDisabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.
@@ -371,6 +372,16 @@ func (e *Endpoint) IsCustomHooksDisabled() bool {
 	}
 
 	return e.CustomHooks
+}
+
+// IsConfigurationDisabled checks if the configuration setting is enabled for the endpoint and returns the corresponding boolean value.
+// Returns false if the Endpoint is nil.
+func (e *Endpoint) IsConfigurationDisabled() bool {
+	if e == nil {
+		return false
+	}
+
+	return e.Configuration
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.

@@ -275,6 +275,10 @@ func RequestHandler(ctx *gin.Context) {
 		case definitions.CatConfig:
 			switch ctx.Param("service") {
 			case definitions.ServLoad:
+				if config.GetFile().GetServer().GetEndpoint().IsConfigurationDisabled() {
+					ctx.AbortWithStatus(http.StatusNotFound)
+				}
+
 				HandleConfigLoad(ctx)
 			default:
 				ctx.AbortWithStatus(http.StatusNotFound)
