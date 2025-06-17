@@ -17,6 +17,8 @@ package rediscli
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"os"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -33,11 +35,26 @@ import (
 func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 	if tlsCfg != nil && tlsCfg.IsEnabled() {
 		var certs []tls.Certificate
+		var caCertPool *x509.CertPool
+
+		if tlsCfg.GetCAFile() != "" {
+			caCert, err := os.ReadFile(tlsCfg.GetCAFile())
+			if err != nil {
+				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+			}
+
+			caCertPool = x509.NewCertPool()
+			if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
+				level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to append CA certificate")
+
+				return nil
+			}
+		}
 
 		if tlsCfg.GetCert() != "" && tlsCfg.GetKey() != "" {
 			cert, err := tls.LoadX509KeyPair(tlsCfg.GetCert(), tlsCfg.GetKey())
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(), definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
 
 				return nil
 			}
@@ -47,7 +64,9 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 
 		// Create a tls.Config object to use
 		tlsConfig := &tls.Config{
-			Certificates: certs,
+			Certificates:       certs,
+			RootCAs:            caCertPool,
+			InsecureSkipVerify: tlsCfg.GetSkipVerify(),
 		}
 
 		return tlsConfig

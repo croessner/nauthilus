@@ -386,10 +386,14 @@ func (e *Endpoint) IsConfigurationDisabled() bool {
 
 // TLS represents the configuration for enabling TLS and managing certificates.
 type TLS struct {
-	Enabled              bool   `mapstructure:"enabled"`
-	Cert                 string `mapstructure:"cert" validate:"omitempty,file"`
-	Key                  string `mapstructure:"key" validate:"omitempty,file"`
-	HTTPClientSkipVerify bool   `mapstructure:"http_client_skip_verify"`
+	Enabled              bool     `mapstructure:"enabled"`
+	SkipVerify           bool     `mapstructure:"skip_verify"`
+	HTTPClientSkipVerify bool     `mapstructure:"http_client_skip_verify"`
+	MinTLSVersion        string   `mapstructure:"min_tls_version" validate:"omitempty,oneof=TLS1.2 TLS1.3"`
+	Cert                 string   `mapstructure:"cert" validate:"omitempty,file"`
+	Key                  string   `mapstructure:"key" validate:"omitempty,file"`
+	CAFile               string   `mapstructure:"ca_file" validate:"omitempty,file"`
+	CipherSuites         []string `mapstructure:"cipher_suites" validate:"omitempty,dive,alphanumsymbol"`
 }
 
 // IsEnabled returns true if TLS is enabled, otherwise false.
@@ -422,8 +426,18 @@ func (t *TLS) GetKey() string {
 	return t.Key
 }
 
+// GetCAFile returns the CA certificate file path as a string. Returns an empty string if the TLS receiver is nil.
+func (t *TLS) GetCAFile() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.CAFile
+}
+
 // GetHTTPClientSkipVerify returns the value of the HTTPClientSkipVerify field, indicating whether TLS verification is skipped.
 // Returns false if the TLS is nil.
+// Deprecated: Use GetSkipVerify() instead
 func (t *TLS) GetHTTPClientSkipVerify() bool {
 	if t == nil {
 		return false
@@ -432,12 +446,45 @@ func (t *TLS) GetHTTPClientSkipVerify() bool {
 	return t.HTTPClientSkipVerify
 }
 
+// GetSkipVerify returns the value of the SkipVerify field, indicating whether TLS certificate verification is skipped.
+// Returns false if the TLS receiver is nil.
+func (t *TLS) GetSkipVerify() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.SkipVerify
+}
+
+// GetCipherSuites returns the list of configured cipher suites as a slice of strings. Returns an empty slice if the TLS is nil.
+func (t *TLS) GetCipherSuites() []string {
+	if t == nil {
+		return []string{}
+	}
+
+	return t.CipherSuites
+}
+
+// GetMinTLSVersion returns the minimum TLS version configured. Defaults to "TLS1.2" if unset or if the receiver is nil.
+func (t *TLS) GetMinTLSVersion() string {
+	if t == nil {
+		return "TLS1.2"
+	}
+
+	if t.MinTLSVersion == "" {
+		return "TLS1.2"
+	}
+
+	return t.MinTLSVersion
+}
+
 type HTTPClient struct {
 	MaxConnsPerHost     int           `mapstructure:"max_connections_per_host" validate:"omitempty,gte=1"`
 	MaxIdleConns        int           `mapstructure:"max_idle_connections" validate:"omitempty,gte=1"`
 	MaxIdleConnsPerHost int           `mapstructure:"max_idle_connections_per_host" validate:"omitempty,gte=0"`
 	IdleConnTimeout     time.Duration `mapstructure:"idle_connection_timeout" validate:"omitempty,gte=0"`
 	Proxy               string        `mapstructure:"proxy"`
+	TLS                 TLS           `mapstructure:"tls"`
 }
 
 // GetMaxConnsPerHost returns the maximum number of connections allowed per host for the HTTP client.
@@ -488,6 +535,15 @@ func (c *HTTPClient) GetProxy() string {
 	}
 
 	return c.Proxy
+}
+
+// GetTLS returns the TLS configuration associated with the HTTP client. Returns an empty TLS struct if the receiver is nil.
+func (c *HTTPClient) GetTLS() *TLS {
+	if c == nil {
+		return &TLS{}
+	}
+
+	return &c.TLS
 }
 
 // BasicAuth represents the configuration for basic HTTP authentication.

@@ -590,7 +590,7 @@ func NewHTTPClient() *http.Client {
 			MaxIdleConnsPerHost: config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
 			IdleConnTimeout:     config.GetFile().GetServer().GetHTTPClient().GetIdleConnTimeout(),
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetHTTPClientSkipVerify(),
+				InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetHTTPClientSkipVerify() || config.GetFile().GetServer().GetHTTPClient().GetTLS().GetSkipVerify(),
 			},
 		},
 	}
