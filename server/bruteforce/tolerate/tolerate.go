@@ -520,7 +520,7 @@ func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
 
 // getRedisKey constructs a Redis key using the configured prefix and the given IP address.
 func (t *tolerateImpl) getRedisKey(ipAddress string) string {
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + ":bf:TR:" + ipAddress
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + ipAddress
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
