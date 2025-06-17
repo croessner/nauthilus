@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -1228,10 +1229,82 @@ func logAndExit(message string, err error) {
 
 // configureTLS returns a new *tls.Config with the NextProtos field set to [h2, http/1.1, h3] and the MinVersion field set to tls.VersionTLS12.
 func configureTLS() *tls.Config {
-	return &tls.Config{
-		NextProtos: []string{"h3", "h2", "http/1.1"},
-		MinVersion: tls.VersionTLS12,
+	var caCertPool *x509.CertPool
+	var cipherSuites []uint16
+	var minTLSVersion uint16
+
+	if config.GetFile().GetServer().GetTLS().GetCAFile() != "" {
+		caCert, err := os.ReadFile(config.GetFile().GetServer().GetTLS().GetCAFile())
+		if err != nil {
+			logAndExit("Failed to read CA certificate", err)
+		}
+
+		caCertPool = x509.NewCertPool()
+		if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
+			logAndExit("Failed to parse CA certificate", err)
+		}
 	}
+
+	var tlsVersionMap = map[string]uint16{
+		"TLS1.2": tls.VersionTLS12,
+		"TLS1.3": tls.VersionTLS13,
+	}
+
+	if tlsVersion, exists := tlsVersionMap[config.GetFile().GetServer().GetTLS().GetMinTLSVersion()]; exists {
+		minTLSVersion = tlsVersion
+	} else {
+		minTLSVersion = tls.VersionTLS12
+	}
+
+	var cipherMap = map[string]uint16{
+		// TLS 1.3 Cipher Suites
+		"TLS_AES_128_GCM_SHA256":       tls.TLS_AES_128_GCM_SHA256,
+		"TLS_AES_256_GCM_SHA384":       tls.TLS_AES_256_GCM_SHA384,
+		"TLS_CHACHA20_POLY1305_SHA256": tls.TLS_CHACHA20_POLY1305_SHA256,
+
+		// TLS 1.2 Cipher Suites
+		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305":  tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305":    tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	}
+
+	preferredCiphers := []string{
+		"TLS_AES_256_GCM_SHA384",                  // TLS 1.3
+		"TLS_CHACHA20_POLY1305_SHA256",            // TLS 1.3
+		"TLS_AES_128_GCM_SHA256",                  // TLS 1.3
+		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", // TLS 1.2
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",   // TLS 1.2
+	}
+
+	if len(config.GetFile().GetServer().GetTLS().GetCipherSuites()) > 0 {
+		preferredCiphers = config.GetFile().GetServer().GetTLS().GetCipherSuites()
+	}
+
+	for _, cipherString := range preferredCiphers {
+		if cipher, exists := cipherMap[cipherString]; exists {
+			cipherSuites = append(cipherSuites, cipher)
+		} else {
+			level.Warn(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Cipher suite %s not found", cipherString))
+		}
+	}
+
+	tlsConfig := &tls.Config{
+		NextProtos:         []string{"h3", "h2", "http/1.1"},
+		MinVersion:         minTLSVersion,
+		RootCAs:            caCertPool,
+		CipherSuites:       cipherSuites,
+		InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetSkipVerify(),
+	}
+
+	if caCertPool != nil {
+		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+	}
+
+	return tlsConfig
 }
 
 // gzipWriter is a custom ResponseWriter that compresses the response using gzip.
