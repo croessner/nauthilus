@@ -399,7 +399,7 @@ func TestBruteForceLogic(t *testing.T) {
 			config.GetFile().
 				GetServer().
 				GetRedis().
-				GetPrefix() + ":bf:TR:" + testIPAddress).
+				GetPrefix() + "bf:TR:" + testIPAddress).
 			SetVal(map[string]string{
 				"positive": "100",
 				"negative": "5",
