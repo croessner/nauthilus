@@ -84,7 +84,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		reverseIPAddr = strings.Join(ipv6Slice, ".")
 	}
 
-	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.RBL)
+	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.GetRBL())
 
 	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
 
@@ -102,18 +102,18 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 			util.DebugModule(
 				definitions.DbgRBL,
 				definitions.LogKeyGUID, guid,
-				"query", query, "result", result.String(), "rbl", rbl.Name,
+				"query", query, "result", result.String(), "rbl", rbl.GetName(),
 			)
 
 			return true, rbl.Name, nil
 		}
 
-		for _, returnCode := range rbl.ReturnCodes {
+		for _, returnCode := range rbl.GetReturnCodes() {
 			if result.String() == returnCode {
 				util.DebugModule(
 					definitions.DbgRBL,
 					definitions.LogKeyGUID, guid,
-					"query", query, "result", result.String(), "rbl", rbl.Name,
+					"query", query, "result", result.String(), "rbl", rbl.GetName(),
 				)
 
 				return true, rbl.Name, nil

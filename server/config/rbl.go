@@ -78,8 +78,8 @@ type RBL struct {
 	IPv4         bool
 	IPv6         bool
 	AllowFailure bool     `mapstructure:"allow_failure"`
-	ReturnCode   string   `mapstructure:"return_code" validate:"required,ip4_addr"`
-	ReturnCodes  []string `mapstructure:"return_codes" validate:"omitempty,dive,ip4_addr"`
+	ReturnCode   string   `mapstructure:"return_code" validate:"omitempty,ip4_addr"`
+	ReturnCodes  []string `mapstructure:"return_codes" validate:"required,dive,ip4_addr"`
 	Weight       int      `mapstructure:"weight" validate:"omitempty,min=-100,max=100"`
 }
 
