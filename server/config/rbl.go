@@ -77,9 +77,10 @@ type RBL struct {
 	RBL          string `mapstructure:"rbl" validate:"required,hostname"`
 	IPv4         bool
 	IPv6         bool
-	AllowFailure bool   `mapstructure:"allow_failure"`
-	ReturnCode   string `mapstructure:"return_code" validate:"required,ip4_addr"`
-	Weight       int    `mapstructure:"weight" validate:"omitempty,min=-100,max=100"`
+	AllowFailure bool     `mapstructure:"allow_failure"`
+	ReturnCode   string   `mapstructure:"return_code" validate:"required,ip4_addr"`
+	ReturnCodes  []string `mapstructure:"return_codes" validate:"omitempty,dive,ip4_addr"`
+	Weight       int      `mapstructure:"weight" validate:"omitempty,min=-100,max=100"`
 }
 
 // GetName retrieves the name of the RBL.
@@ -134,12 +135,23 @@ func (r *RBL) IsAllowFailure() bool {
 
 // GetReturnCode retrieves the return code for the RBL.
 // Returns an empty string if the RBL is nil.
+// Deprecated: Use GetReturnCodes() instead
 func (r *RBL) GetReturnCode() string {
 	if r == nil {
 		return ""
 	}
 
 	return r.ReturnCode
+}
+
+// GetReturnCodes retrieves the list of return codes for the RBL.
+// Returns an empty slice if the RBL is nil.
+func (r *RBL) GetReturnCodes() []string {
+	if r == nil {
+		return []string{}
+	}
+
+	return r.ReturnCodes
 }
 
 // GetWeight retrieves the weight value for the RBL.

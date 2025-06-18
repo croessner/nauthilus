@@ -98,7 +98,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	}
 
 	for _, result := range results {
-		if result.String() == rbl.ReturnCode {
+		if result.String() == rbl.GetReturnCode() {
 			util.DebugModule(
 				definitions.DbgRBL,
 				definitions.LogKeyGUID, guid,
@@ -106,6 +106,18 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 			)
 
 			return true, rbl.Name, nil
+		}
+
+		for _, returnCode := range rbl.ReturnCodes {
+			if result.String() == returnCode {
+				util.DebugModule(
+					definitions.DbgRBL,
+					definitions.LogKeyGUID, guid,
+					"query", query, "result", result.String(), "rbl", rbl.Name,
+				)
+
+				return true, rbl.Name, nil
+			}
 		}
 	}
 
