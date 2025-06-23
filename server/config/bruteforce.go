@@ -382,6 +382,7 @@ func (b *BruteForceRule) GetFilterByOIDCCID() []string {
 
 // NeuralNetwork represents the configuration for the neural network machine learning system.
 type NeuralNetwork struct {
+	DryRun             bool    `mapstructure:"dry_run" validate:"omitempty"`
 	MaxTrainingRecords int32   `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
 	HiddenNeurons      int     `mapstructure:"hidden_neurons" validate:"omitempty,min=8,max=20"`
 	ActivationFunction string  `mapstructure:"activation_function" validate:"omitempty,oneof=sigmoid tanh relu leaky_relu"`
@@ -438,4 +439,14 @@ func (n *NeuralNetwork) GetLearningRate() float64 {
 	}
 
 	return n.LearningRate
+}
+
+// GetDryRun retrieves the dry-run flag for the neural network.
+// Returns false as default if the receiver is nil.
+func (n *NeuralNetwork) GetDryRun() bool {
+	if n == nil {
+		return false
+	}
+
+	return n.DryRun
 }
