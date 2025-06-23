@@ -354,10 +354,11 @@ func (l *LuaSearchProtocol) GetProtocols() []string {
 }
 
 type LuaHooks struct {
-	Location   string   `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
-	Method     string   `mapstructure:"http_method" validate:"required,oneof=GET POST PUT DELETE PATCH"`
-	ScriptPath string   `mapstructure:"script_path" validate:"required,file"`
-	Roles      []string `mapstructure:"roles"`
+	Location    string   `mapstructure:"http_location" validate:"required,printascii,excludesall= "`
+	Method      string   `mapstructure:"http_method" validate:"required,oneof=HEAD GET POST PUT DELETE PATCH"`
+	ContentType string   `mapstructure:"content_type" validate:"omitempty,printascii,excludesall= "`
+	ScriptPath  string   `mapstructure:"script_path" validate:"required,file"`
+	Roles       []string `mapstructure:"roles"`
 }
 
 func (l *LuaHooks) String() string {
@@ -384,6 +385,20 @@ func (l *LuaHooks) GetLocation() string {
 	}
 
 	return l.Location
+}
+
+// GetContentType retrieves the Content-Type from the LuaHooks. Returns "application/json" if the LuaHooks is nil or
+// the ContentType is an empty string
+func (l *LuaHooks) GetContentType() string {
+	if l == nil {
+		return "application/json"
+	}
+
+	if l.ContentType == "" {
+		return "application/json"
+	}
+
+	return l.ContentType
 }
 
 // GetMethod retrieves the Method from the LuaHooks. Returns an empty string if the LuaHooks is nil.

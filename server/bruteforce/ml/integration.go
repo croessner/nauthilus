@@ -172,7 +172,7 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 	// Only proceed with ML if experimental_ml is enabled and we have a detector
 	if !withError && m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
 		// Check if the model is in learning mode
-		isLearningMode := m.mlDetector.IsLearningMode()
+		isLearningMode := m.mlDetector.IsLearningMode() || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
 
 		// Log the state of static bucket system before ML prediction
 		util.DebugModule(definitions.DbgNeural,
@@ -366,6 +366,7 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 					if message != nil {
 						return *message
 					}
+
 					return "ML override: High confidence brute force detection"
 				}(),
 				definitions.LogKeyUsername, m.username,
@@ -453,7 +454,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 	// Process with ML if available
 	if m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
 		// Check if the model is in learning mode
-		isLearningMode := m.mlDetector.IsLearningMode()
+		isLearningMode := m.mlDetector.IsLearningMode() || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
 
 		// Log the state before ML processing
 		util.DebugModule(definitions.DbgNeural,
@@ -877,32 +878,3 @@ func (m *MLBucketManager) GetBruteForceName() string {
 
 	return m.BucketManager.GetBruteForceName()
 }
-
-// How to use the ML-enhanced bucket manager:
-//
-// 1. Replace the standard bucket manager creation with the ML version:
-//
-//    // Instead of:
-//    // bm := bruteforce.NewBucketManager(ctx, guid, clientIP)
-//
-//    // Use:
-//    bm := ml.NewMLBucketManager(ctx, guid, clientIP)
-//
-// 2. The rest of the code remains the same, as the ML-enhanced version
-//    implements the same BucketManager interface
-//
-// 3. To add additional features for the ML system, use the WithAdditionalFeatures method:
-//
-//    // Create a map of additional features
-//    additionalFeatures := map[string]any{
-//        "geo_country": "DE",
-//        "geo_city": "Berlin",
-//        "device_type": "mobile",
-//        "connection_type": "4G",
-//    }
-//
-//    // Add the features to the bucket manager
-//    bm = bm.WithAdditionalFeatures(additionalFeatures)
-//
-//    // These features will be stored in the LoginFeatures struct and can be used
-//    // for future model improvements or other purposes.
