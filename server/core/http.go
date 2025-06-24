@@ -625,6 +625,20 @@ func LoggerMiddleware() gin.HandlerFunc {
 			cipherSuiteName = tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
 		}
 
+		// Determine authentication information
+		authType := "none"
+
+		// Check if authentication was attempted
+		if ctx.Request.Header.Get("Authorization") != "" {
+			if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Basic ") {
+				authType = "basic"
+			} else if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Bearer ") {
+				authType = "bearer"
+			} else {
+				authType = "other"
+			}
+		}
+
 		logWrapper(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -642,6 +656,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 			definitions.LogKeyTLSSecure, negotiatedProtocol,
 			definitions.LogKeyTLSCipher, cipherSuiteName,
 			definitions.LogKeyUriPath, ctx.Request.URL.Path,
+			definitions.LogKeyAuthMethod, authType,
 			definitions.LogKeyMsg, func() string {
 				if err != nil {
 					return err.Error()
