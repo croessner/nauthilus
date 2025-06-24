@@ -490,8 +490,12 @@ func HandleConfigLoad(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Header("Content-Type", "application/json")
-	ctx.String(http.StatusOK, string(jsonBytes))
+	ctx.JSON(http.StatusOK, &RESTResult{
+		GUID:      guid,
+		Object:    definitions.CatConfig,
+		Operation: definitions.ServLoad,
+		Result:    string(jsonBytes),
+	})
 }
 
 // HandleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
