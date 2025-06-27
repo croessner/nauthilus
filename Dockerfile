@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine3.21 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine3.22 AS builder
 
 WORKDIR /build
 
@@ -6,15 +6,19 @@ COPY . ./
 
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=0
-RUN apk add --no-cache build-base git
+RUN apk add --no-cache build-base git upx
 
 RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     GIT_COMMIT=$(git rev-parse --short HEAD) && echo "commit="${GIT_COMMIT}"" && \
-    cd server && go build -mod=vendor -tags="avx" -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT}" -o nauthilus .
+    cd server && go build -mod=vendor -tags="avx netgo" \
+    -trimpath \
+    -ldflags="-s -w -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT}" \
+    -o nauthilus . && \
+    upx --best --lzma nauthilus
 
-RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s" -o healthcheck .
-RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s" -o fakesmtp .
-RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s" -o fakeimap .
+RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthcheck . && upx --best --lzma healthcheck
+RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
+RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
 
 FROM --platform=$BUILDPLATFORM alpine:3
 
@@ -49,7 +53,7 @@ RUN echo 'hosts: files dns' > /etc/nsswitch.conf
 ENV ZONEINFO=/zoneinfo.zip
 ENV TERM=xterm-256color
 
-EXPOSE 8180
+EXPOSE 8080
 
 USER nauthilus
 
