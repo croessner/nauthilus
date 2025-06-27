@@ -14,7 +14,7 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     -trimpath \
     -ldflags="-s -w -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT}" \
     -o nauthilus . && \
-    upx --best --lzma nauthilus
+    upx -1 --lzma nauthilus
 
 RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthcheck . && upx --best --lzma healthcheck
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
