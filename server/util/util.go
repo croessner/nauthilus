@@ -550,9 +550,10 @@ func ValidateUsername(username string) bool {
 // NewDNSResolver creates a new DNS resolver based on the configured settings.
 func NewDNSResolver() (resolver *net.Resolver) {
 	if config.GetFile().GetServer().GetDNS().GetResolver() == "" {
-		resolver = &net.Resolver{PreferGo: false}
+		resolver = &net.Resolver{PreferGo: true}
 	} else {
 		resolver = &net.Resolver{
+			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dialer := net.Dialer{
 					Timeout: time.Duration(10) * time.Second,
