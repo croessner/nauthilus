@@ -58,9 +58,6 @@ import (
 // json is a package-level variable for jsoniter with standard configuration
 var json = jsoniter.ConfigFastest
 
-// configFilePath stores the path to the configuration file specified via the -config flag
-var configFilePath string
-
 // contextTuple represents a tuple that contains a context and a cancel function.
 // This type is used for managing contexts and cancellations in various parts of the application.
 type contextTuple struct {
@@ -108,9 +105,9 @@ func setupConfiguration() (err error) {
 	setTimeZone()
 
 	// If a specific configuration file is provided via the -config flag, check if it exists
-	if configFilePath != "" {
-		if _, err := os.Stat(configFilePath); os.IsNotExist(err) {
-			return fmt.Errorf("specified configuration file does not exist: %s", configFilePath)
+	if config.ConfigFilePath != "" {
+		if _, err := os.Stat(config.ConfigFilePath); os.IsNotExist(err) {
+			return fmt.Errorf("specified configuration file does not exist: %s", config.ConfigFilePath)
 		}
 	}
 
@@ -934,7 +931,7 @@ func parseFlagsAndPrintVersion() {
 	}
 
 	if *configFlag != "" {
-		configFilePath = *configFlag
+		config.ConfigFilePath = *configFlag
 
 		viper.SetConfigFile(*configFlag)
 	}

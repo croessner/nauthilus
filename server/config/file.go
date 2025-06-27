@@ -43,6 +43,9 @@ import (
 // LoadableConfig is a variable of type *FileSettings that represents the configuration file that can be loaded.
 var file File
 
+// ConfigFilePath stores the path to the configuration file specified via the -config flag
+var ConfigFilePath string
+
 // GetFile returns the loaded FileSettings configuration instance.
 func GetFile() File {
 	if file == nil {
@@ -2306,12 +2309,14 @@ func bindEnvs(i any, parts ...string) error {
 func NewFile() (newCfg File, err error) {
 	newCfg = &FileSettings{}
 
-	viper.SetConfigName("nauthilus") // name of environment file (without extension)
-	// Note: Config type is now set via command line flag in server.go
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("$HOME/.nauthilus")
-	viper.AddConfigPath("/etc/nauthilus/")
-	viper.AddConfigPath("/usr/local/etc/nauthilus/")
+	if ConfigFilePath == "" {
+		viper.SetConfigName("nauthilus") // name of environment file (without extension)
+		// Note: Config type is now set via command line flag in server.go
+		viper.AddConfigPath(".")
+		viper.AddConfigPath("$HOME/.nauthilus")
+		viper.AddConfigPath("/etc/nauthilus/")
+		viper.AddConfigPath("/usr/local/etc/nauthilus/")
+	}
 
 	err = viper.ReadInConfig()
 	if err != nil {
