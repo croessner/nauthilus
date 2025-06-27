@@ -20,7 +20,7 @@ RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthchec
 RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
 RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
 
-FROM scratch
+FROM --platform=$BUILDPLATFORM alpine:3
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
