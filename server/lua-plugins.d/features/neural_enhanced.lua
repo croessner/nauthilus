@@ -38,6 +38,9 @@ function nauthilus_call_neural_network(request)
     local window = 3600 -- 1 hour window
     local username = request.username
 
+    -- Define the key for the top-100 failed logins
+    local top_failed_logins_key = "ntc:top_failed_logins"
+
     -- Collect global metrics
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
 
@@ -75,6 +78,7 @@ function nauthilus_call_neural_network(request)
     local account_targeting_score = 0
     local account_unique_ip_rate = 0
     local account_fail_ratio = 0
+    local top_failed_login_score = 0
 
     if username and username ~= "" then
         local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics"
@@ -111,6 +115,19 @@ function nauthilus_call_neural_network(request)
                 account_fail_ratio = math.min(1.0, account_failed_attempts / 100)
             end
         end
+
+        -- Check if the username is in the top-100 failed logins list
+        local failed_login_score = nauthilus_redis.redis_zscore(redis_handle, top_failed_logins_key, username)
+        if failed_login_score then
+            -- Get the rank of the username in the top-100 list (0-based, so rank 0 is the highest)
+            local rank = nauthilus_redis.redis_zrevrank(redis_handle, top_failed_logins_key, username)
+
+            if rank ~= nil then
+                -- Calculate a score based on the rank (0 to 1, where 1 is the highest rank)
+                -- Rank 0 (highest) gets a score of 1.0, rank 99 (lowest) gets a score of 0.01
+                top_failed_login_score = 1.0 - (rank / 100)
+            end
+        end
     end
 
     -- Normalize values to [0, 1] range
@@ -135,7 +152,8 @@ function nauthilus_call_neural_network(request)
         global_ip_user_ratio = normalized_global_ip_user_ratio,
         account_targeting_score = normalized_account_targeting_score,
         account_unique_ip_rate = normalized_account_unique_ip_rate,
-        account_fail_ratio = account_fail_ratio
+        account_fail_ratio = account_fail_ratio,
+        top_failed_login_score = top_failed_login_score
     }
 
     -- Add to neural network using one-hot encoding
@@ -152,6 +170,7 @@ function nauthilus_call_neural_network(request)
     logs.account_targeting_score = account_targeting_score
     logs.account_unique_ip_rate = account_unique_ip_rate
     logs.account_fail_ratio = account_fail_ratio
+    logs.top_failed_login_score = top_failed_login_score
     logs.normalized_global_auth_rate = normalized_global_auth_rate
     logs.normalized_global_unique_ip_rate = normalized_global_unique_ip_rate
     logs.normalized_global_ip_user_ratio = normalized_global_ip_user_ratio
@@ -167,6 +186,7 @@ function nauthilus_call_neural_network(request)
     nauthilus_builtin.custom_log_add(N .. "_account_targeting_score", account_targeting_score)
     nauthilus_builtin.custom_log_add(N .. "_account_unique_ip_rate", account_unique_ip_rate)
     nauthilus_builtin.custom_log_add(N .. "_account_fail_ratio", account_fail_ratio)
+    nauthilus_builtin.custom_log_add(N .. "_top_failed_login_score", top_failed_login_score)
     nauthilus_builtin.custom_log_add(N .. "_normalized_global_auth_rate", normalized_global_auth_rate)
     nauthilus_builtin.custom_log_add(N .. "_normalized_global_unique_ip_rate", normalized_global_unique_ip_rate)
     nauthilus_builtin.custom_log_add(N .. "_normalized_global_ip_user_ratio", normalized_global_ip_user_ratio)

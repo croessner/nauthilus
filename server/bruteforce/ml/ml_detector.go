@@ -952,6 +952,9 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	// Replace the current model
 	t.model = nn
 
+	// Record network structure metrics
+	GetMLMetrics().RecordNetworkStructure(nn.inputSize, nn.hiddenSize, nn.outputSize)
+
 	// Try to load encodings configuration if it exists
 	encodingsKey := key + "_encodings"
 	encodingsJSON, err := rediscli.GetClient().GetReadHandle().Get(t.ctx, encodingsKey).Bytes()
