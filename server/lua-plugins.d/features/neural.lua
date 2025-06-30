@@ -15,14 +15,26 @@
 
 local N = "neural"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_prometheus")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
+dynamic_loader("nauthilus_neural")
+local nauthilus_neural = require("nauthilus_neural")
+
+dynamic_loader("nauthilus_gluahttp")
+local http = require("glua_http")
+
+dynamic_loader("nauthilus_gll_json")
+local json = require("json")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_neural_network(request)
     if request.no_auth then
         return
     end
-
-    local nauthilus_util = require("nauthilus_util")
 
     -- Check if the IP is routable at the very beginning
     local is_routable = false
@@ -42,14 +54,6 @@ function nauthilus_call_neural_network(request)
     logs.level = "info"
 
     -- For non-authenticated users, we still need to get the country code
-    dynamic_loader("nauthilus_prometheus")
-    local nauthilus_prometheus = require("nauthilus_prometheus")
-
-    dynamic_loader("nauthilus_gluahttp")
-    local http = require("glua_http")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
 
     local t = {}
 
@@ -126,9 +130,6 @@ function nauthilus_call_neural_network(request)
         end
 
         -- Add country code to neural network
-        dynamic_loader("nauthilus_neural")
-        local nauthilus_neural = require("nauthilus_neural")
-
         -- Add country code as a feature for non-authenticated users
         -- Using the actual country code retrieved from the GeoIP service
         local additional_features_one_hot = {

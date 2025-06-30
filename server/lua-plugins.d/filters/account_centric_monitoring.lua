@@ -15,16 +15,15 @@
 
 local N = "account_centric_monitoring"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
 function nauthilus_call_filter(request)
     if request.no_auth then
         return nauthilus_builtin.FILTER_TRIGGER_NO, nauthilus_builtin.FILTERS_ABORT_NO, nauthilus_builtin.FILTER_RESULT_YES
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Load Redis module
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
 
     -- Get Redis connection
     local redis_pool = "default"

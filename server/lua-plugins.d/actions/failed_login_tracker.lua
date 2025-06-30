@@ -15,21 +15,19 @@
 
 local N = "failed_login_tracker"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
+dynamic_loader("nauthilus_context")
+local nauthilus_context = require("nauthilus_context")
+
 function nauthilus_call_action(request)
     -- Skip if no authentication was attempted or if authentication was successful
     if request.no_auth or request.authenticated then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Load Redis module
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
-
-    -- Load context module
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
 
     -- Get Redis connection
     local redis_pool = "default"
