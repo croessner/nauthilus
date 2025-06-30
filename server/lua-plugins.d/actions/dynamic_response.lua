@@ -15,6 +15,20 @@
 
 local N = "dynamic_response"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_mail")
+local nauthilus_mail = require("nauthilus_mail")
+
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
+dynamic_loader("nauthilus_context")
+local nauthilus_context = require("nauthilus_context")
+
+dynamic_loader("nauthilus_gll_template")
+local template = require("template")
+
 -- Email template for administrator notifications
 local admin_email_template = [[
 Subject: [NAUTHILUS ALERT] {{subject}}
@@ -40,7 +54,6 @@ Nauthilus Security System
 -- Notify administrators about the threat
 local function notify_administrators(subject, metrics)
     -- Log the notification
-    local nauthilus_util = require("nauthilus_util")
 
     local notify_logs = {}
     notify_logs.caller = N .. ".lua"
@@ -52,12 +65,6 @@ local function notify_administrators(subject, metrics)
     nauthilus_util.print_result({ log_format = "json" }, notify_logs)
 
     -- Send email notification
-    dynamic_loader("nauthilus_mail")
-    local nauthilus_mail = require("nauthilus_mail")
-
-    dynamic_loader("nauthilus_gll_template")
-    local template = require("template")
-
     -- Get SMTP configuration from environment variables
     local smtp_use_lmtp = os.getenv("SMTP_USE_LMTP")
     local smtp_server = os.getenv("SMTP_SERVER")
@@ -280,12 +287,6 @@ function nauthilus_call_action(request)
         return
     end
 
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Load Redis module
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
-
     -- Get Redis connection
     local redis_pool = "default"
     local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
@@ -378,10 +379,6 @@ function nauthilus_call_action(request)
 
     -- Get suspicious regions based on IP geolocation
     local suspicious_regions = {}
-
-    -- Load context module
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
 
     -- Get country code from context (set by geoip.lua)
     local iso_codes_seen = nauthilus_context.context_get("geoippolicyd_iso_codes_seen")

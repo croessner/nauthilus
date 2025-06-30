@@ -15,16 +15,15 @@
 
 local N = "global_pattern_monitoring"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
 function nauthilus_call_feature(request)
     if request.no_auth then
         return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Load Redis module
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
 
     -- Get Redis connection
     local redis_pool = "default"

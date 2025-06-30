@@ -15,20 +15,18 @@
 
 local N = "neural_enhanced"
 
+local nauthilus_util = require("nauthilus_util")
+
+dynamic_loader("nauthilus_redis")
+local nauthilus_redis = require("nauthilus_redis")
+
+dynamic_loader("nauthilus_neural")
+local nauthilus_neural = require("nauthilus_neural")
+
 function nauthilus_call_neural_network(request)
     if request.no_auth then
         return
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Load Redis module
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
-
-    -- Load Neural module
-    dynamic_loader("nauthilus_neural")
-    local nauthilus_neural = require("nauthilus_neural")
 
     -- Get Redis connection
     local redis_pool = "default"
