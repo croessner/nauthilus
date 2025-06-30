@@ -811,10 +811,45 @@ func (t *MLTrainer) InitModel() {
 		inputSize += len(trainingData[0].Features.AdditionalFeatures)
 
 		util.DebugModule(definitions.DbgNeural,
-			"action", "init_model_with_additional_features",
+			"action", "init_model_with_additional_features_from_training",
 			"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
 			"total_input_size", inputSize,
 		)
+	}
+
+	// Also check if we have additional features from Lua context
+	// This ensures we account for newly added Lua features that haven't been saved to training data yet
+	if t.ctx != nil {
+		if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
+			// If we have additional features from context, ensure they're counted in the input size
+			// We need to check if these features are already counted from training data
+			if err != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
+				trainingData[0].Features.AdditionalFeatures == nil {
+				// No training data features, add all context features
+				inputSize += len(additionalFeatures)
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "init_model_with_additional_features_from_context",
+					"additional_features_count", len(additionalFeatures),
+					"total_input_size", inputSize,
+				)
+			} else {
+				// We have both training data features and context features
+				// Count any context features not in training data
+				for featureName := range additionalFeatures {
+					if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
+						// This feature is in context but not in training data, add it to input size
+						inputSize++
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "init_model_with_additional_feature_from_context",
+							"feature_name", featureName,
+							"total_input_size", inputSize,
+						)
+					}
+				}
+			}
+		}
 	}
 
 	// Create a neural network with the appropriate number of input neurons,
