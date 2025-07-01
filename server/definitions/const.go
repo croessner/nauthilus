@@ -1325,6 +1325,9 @@ const (
 	// LuaFnRedisZScore is a constant defining the Redis command "ZScore" for retrieving the score of a member in a sorted set.
 	LuaFnRedisZScore = "redis_zscore"
 
+	// LuaFnRedisZIncrBy is a constant defining the Redis command "ZIncrBy" for incrementing the score of a member in a sorted set.
+	LuaFnRedisZIncrBy = "redis_zincrby"
+
 	// LuaFnRedisLPush is a constant defining the Redis command "LPUSH" for adding one or more values to the beginning of a list.
 	LuaFnRedisLPush = "redis_lpush"
 

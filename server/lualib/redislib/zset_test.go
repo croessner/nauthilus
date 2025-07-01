@@ -1037,3 +1037,107 @@ func TestRedisZCount(t *testing.T) {
 		})
 	}
 }
+
+// TestRedisZIncrBy tests the RedisZIncrBy function which increments the score of a member in a sorted set.
+// Added in version 1.7.18
+func TestRedisZIncrBy(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		increment   float64
+		member      string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key string, increment float64, member string)
+	}{
+		{
+			name:        "IncrementExistingMember",
+			key:         "key1",
+			increment:   1.0,
+			member:      "member1",
+			expectedRes: lua.LNumber(11.0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, increment float64, member string) {
+				mock.ExpectZIncrBy(key, increment, member).SetVal(11.0)
+			},
+		},
+		{
+			name:        "DecrementExistingMember",
+			key:         "key2",
+			increment:   -5.0,
+			member:      "member2",
+			expectedRes: lua.LNumber(5.0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, increment float64, member string) {
+				mock.ExpectZIncrBy(key, increment, member).SetVal(5.0)
+			},
+		},
+		{
+			name:        "IncrementNonExistingMember",
+			key:         "key3",
+			increment:   2.5,
+			member:      "newmember",
+			expectedRes: lua.LNumber(2.5),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, increment float64, member string) {
+				mock.ExpectZIncrBy(key, increment, member).SetVal(2.5)
+			},
+		},
+		{
+			name:        "RedisError",
+			key:         "key4",
+			increment:   1.0,
+			member:      "member1",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("context deadline exceeded"),
+			setupMock: func(mock redismock.ClientMock, key string, increment float64, member string) {
+				mock.ExpectZIncrBy(key, increment, member).SetErr(context.DeadlineExceeded)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			rediscli.NewTestClient(db)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.increment, tt.member)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("increment", lua.LNumber(tt.increment))
+			L.SetGlobal("member", lua.LString(tt.member))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zincrby("default", key, increment, member)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zincrby() gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}

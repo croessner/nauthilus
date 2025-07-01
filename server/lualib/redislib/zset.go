@@ -323,3 +323,29 @@ func RedisZScore(ctx context.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// RedisZIncrBy increments the score of a member in a sorted set by the given increment value.
+// Added in version 1.7.18
+func RedisZIncrBy(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+
+		key := L.CheckString(2)
+		increment := float64(L.CheckNumber(3)) // The increment value
+		member := L.CheckString(4)             // The member whose score needs to be incremented
+
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		cmd := client.ZIncrBy(ctx, key, increment, member)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}

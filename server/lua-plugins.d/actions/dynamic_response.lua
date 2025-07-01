@@ -173,10 +173,10 @@ local function notify_administrators(subject, metrics)
 end
 
 -- Apply severe measures for high threat levels
-local function apply_severe_measures(redis_handle, metrics)
+local function apply_severe_measures(custom_pool, metrics)
     -- Enable global captcha using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+        custom_pool, 
         "", 
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
@@ -197,7 +197,7 @@ local function apply_severe_measures(redis_handle, metrics)
         end
 
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+            custom_pool, 
             "", 
             "SAddMultiExpire", 
             {"ntc:multilayer:global:blocked_regions"}, 
@@ -208,7 +208,7 @@ local function apply_severe_measures(redis_handle, metrics)
 
     -- Increase ML sensitivity using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+        custom_pool, 
         "", 
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
@@ -224,7 +224,7 @@ local function apply_severe_measures(redis_handle, metrics)
 end
 
 -- Apply high measures for high threat levels
-local function apply_high_measures(redis_handle, metrics)
+local function apply_high_measures(custom_pool, metrics)
     -- Enable targeted captcha for affected accounts using atomic Redis Lua script
     if metrics.targeted_accounts and #metrics.targeted_accounts > 0 then
         local args = {3600} -- Expire after 1 hour
@@ -233,7 +233,7 @@ local function apply_high_measures(redis_handle, metrics)
         end
 
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+            custom_pool, 
             "", 
             "SAddMultiExpire", 
             {"ntc:multilayer:global:captcha_accounts"}, 
@@ -250,7 +250,7 @@ local function apply_high_measures(redis_handle, metrics)
         end
 
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+            custom_pool, 
             "", 
             "SAddMultiExpire", 
             {"ntc:multilayer:global:rate_limited_ips"}, 
@@ -264,10 +264,10 @@ local function apply_high_measures(redis_handle, metrics)
 end
 
 -- Apply moderate measures for moderate threat levels
-local function apply_moderate_measures(redis_handle, metrics)
+local function apply_moderate_measures(custom_pool, metrics)
     -- Enable monitoring mode using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+        custom_pool, 
         "", 
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
@@ -288,8 +288,14 @@ function nauthilus_call_action(request)
     end
 
     -- Get Redis connection
-    local redis_pool = "default"
-    local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
 
     -- Get current timestamp
     local timestamp = os.time()
@@ -301,12 +307,10 @@ function nauthilus_call_action(request)
     local metrics = {}
 
     -- Check if this account is under distributed attack
-    local is_account_under_attack = false
     if username and username ~= "" then
         local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-        local attack_score = nauthilus_redis.redis_zscore(redis_handle, attacked_accounts_key, username)
+        local attack_score = nauthilus_redis.redis_zscore(custom_pool, attacked_accounts_key, username)
         if attack_score then
-            is_account_under_attack = true
             threat_level = math.max(threat_level, 0.7) -- High threat level if account is under attack
             metrics.targeted_accounts = {username}
         end
@@ -316,16 +320,16 @@ function nauthilus_call_action(request)
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
 
     -- Get global metrics
-    local attempts_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "attempts")
+    local attempts_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "attempts")
     local attempts = tonumber(attempts_str) or 0
 
-    local unique_ips_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_ips")
+    local unique_ips_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "unique_ips")
     local unique_ips = tonumber(unique_ips_str) or 0
 
-    local unique_users_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_users")
+    local unique_users_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "unique_users")
     local unique_users = tonumber(unique_users_str) or 0
 
-    local ips_per_user_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "ips_per_user")
+    local ips_per_user_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "ips_per_user")
     local ips_per_user = tonumber(ips_per_user_str) or 0
 
     -- Store metrics for response
@@ -346,10 +350,10 @@ function nauthilus_call_action(request)
     local hour_key = os.date("%Y-%m-%d-%H", timestamp - 3600) -- Previous hour
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
 
-    local prev_attempts_str = nauthilus_redis.redis_hget(redis_handle, historical_metrics_key, "attempts")
+    local prev_attempts_str = nauthilus_redis.redis_hget(custom_pool, historical_metrics_key, "attempts")
     local prev_attempts = tonumber(prev_attempts_str) or 0
 
-    local prev_unique_ips_str = nauthilus_redis.redis_hget(redis_handle, historical_metrics_key, "unique_ips")
+    local prev_unique_ips_str = nauthilus_redis.redis_hget(custom_pool, historical_metrics_key, "unique_ips")
     local prev_unique_ips = tonumber(prev_unique_ips_str) or 0
 
     -- Calculate rate of change
@@ -396,12 +400,12 @@ function nauthilus_call_action(request)
 
         -- Get count of attempts from this country
         local country_key = "ntc:multilayer:global:country:" .. country_code
-        local country_count = nauthilus_redis.redis_get(redis_handle, country_key) or "0"
+        local country_count = nauthilus_redis.redis_get(custom_pool, country_key) or "0"
         country_count = tonumber(country_count) or 0
 
         -- Increment country count using atomic Redis Lua script
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+                custom_pool, 
             "", 
             "IncrementAndExpire", 
             {country_key}, 
@@ -412,7 +416,7 @@ function nauthilus_call_action(request)
         -- Get total countries using atomic Redis Lua script
         local countries_key = "ntc:multilayer:global:countries"
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+                custom_pool, 
             "", 
             "AddToSetAndExpire", 
             {countries_key}, 
@@ -420,7 +424,7 @@ function nauthilus_call_action(request)
         )
         nauthilus_util.if_error_raise(err_script)
 
-        local total_countries = nauthilus_redis.redis_scard(redis_handle, countries_key) or 1
+        local total_countries = nauthilus_redis.redis_scard(custom_pool, countries_key) or 1
 
         -- If this country has a disproportionate number of attempts, mark it as suspicious
         if total_countries > 1 and country_count > (attempts / total_countries) * 2 then
@@ -441,7 +445,7 @@ function nauthilus_call_action(request)
     -- Apply dynamic response based on threat level
     if threat_level >= 0.9 then
         -- Severe threat: Implement strict measures
-        apply_severe_measures(redis_handle, metrics)
+        apply_severe_measures(custom_pool, metrics)
 
         -- Log the response
         local severe_logs = {}
@@ -458,7 +462,7 @@ function nauthilus_call_action(request)
         nauthilus_builtin.custom_log_add(N .. "_response", "severe")
     elseif threat_level >= 0.7 then
         -- High threat: Implement moderate measures
-        apply_high_measures(redis_handle, metrics)
+        apply_high_measures(custom_pool, metrics)
 
         -- Log the response
         local high_logs = {}
@@ -475,7 +479,7 @@ function nauthilus_call_action(request)
         nauthilus_builtin.custom_log_add(N .. "_response", "high")
     elseif threat_level >= 0.5 then
         -- Moderate threat: Implement light measures
-        apply_moderate_measures(redis_handle, metrics)
+        apply_moderate_measures(custom_pool, metrics)
 
         -- Log the response
         local moderate_logs = {}
@@ -509,7 +513,7 @@ function nauthilus_call_action(request)
 
     -- Store the current threat level in Redis for other components to use using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+            custom_pool, 
         "", 
         "HSetMultiExpire", 
         {"ntc:multilayer:global:settings"}, 
