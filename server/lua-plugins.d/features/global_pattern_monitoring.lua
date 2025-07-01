@@ -26,8 +26,14 @@ function nauthilus_call_feature(request)
     end
 
     -- Get Redis connection
-    local redis_pool = "default"
-    local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
 
     -- Track global authentication metrics in sliding windows
     local timestamp = os.time()
@@ -38,7 +44,7 @@ function nauthilus_call_feature(request)
         -- Track authentication attempts using atomic Redis Lua script
         local key = "ntc:multilayer:global:auth_attempts:" .. window
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+                custom_pool,
             "", 
             "ZAddRemExpire", 
             {key}, 
@@ -49,7 +55,7 @@ function nauthilus_call_feature(request)
         -- Track unique IPs using atomic Redis Lua script
         local ip_key = "ntc:multilayer:global:unique_ips:" .. window
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+                custom_pool,
             "", 
             "ZAddRemExpire", 
             {ip_key}, 
@@ -60,7 +66,7 @@ function nauthilus_call_feature(request)
         -- Track unique usernames using atomic Redis Lua script
         local user_key = "ntc:multilayer:global:unique_users:" .. window
         local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
+                custom_pool,
             "", 
             "ZAddRemExpire", 
             {user_key}, 
@@ -72,7 +78,7 @@ function nauthilus_call_feature(request)
     -- Store metrics for this authentication attempt using atomic Redis Lua script
     local metrics_key = "ntc:multilayer:global:metrics:" .. timestamp
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+            custom_pool,
         "", 
         "HSetMultiExpire", 
         {metrics_key}, 
@@ -92,9 +98,9 @@ function nauthilus_call_feature(request)
     local ip_key = "ntc:multilayer:global:unique_ips:" .. window
     local user_key = "ntc:multilayer:global:unique_users:" .. window
 
-    local attempts = nauthilus_redis.redis_zcount(redis_handle, key, timestamp - window, timestamp)
-    local unique_ips = nauthilus_redis.redis_zcount(redis_handle, ip_key, timestamp - window, timestamp)
-    local unique_users = nauthilus_redis.redis_zcount(redis_handle, user_key, timestamp - window, timestamp)
+    local attempts = nauthilus_redis.redis_zcount(custom_pool, key, timestamp - window, timestamp)
+    local unique_ips = nauthilus_redis.redis_zcount(custom_pool, ip_key, timestamp - window, timestamp)
+    local unique_users = nauthilus_redis.redis_zcount(custom_pool, user_key, timestamp - window, timestamp)
 
     -- Calculate metrics
     local attempts_per_ip = attempts / math.max(unique_ips, 1)
@@ -104,7 +110,7 @@ function nauthilus_call_feature(request)
     -- Store current metrics using atomic Redis Lua script
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+            custom_pool,
         "", 
         "HSetMultiExpire", 
         {current_metrics_key}, 
@@ -127,7 +133,7 @@ function nauthilus_call_feature(request)
 
     -- Only update once per hour to avoid overwriting using atomic Redis Lua script
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
+            custom_pool,
         "", 
         "ExistsHSetMultiExpire", 
         {historical_metrics_key}, 

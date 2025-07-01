@@ -30,8 +30,14 @@ function nauthilus_call_action(request)
     end
 
     -- Get Redis connection
-    local redis_pool = "default"
-    local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
+    local custom_pool = "default"
+    local custom_pool_name =  os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if custom_pool_name ~= nil and  custom_pool_name ~= "" then
+        local err_redis_client
+
+        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
+        nauthilus_util.if_error_raise(err_redis_client)
+    end
 
     -- Define the key for the top-100 failed logins
     local top_failed_logins_key = "ntc:top_failed_logins"
@@ -44,13 +50,10 @@ function nauthilus_call_action(request)
         -- This prevents legitimate users who mistype their password from being added to the list
         if not request.account or request.account == "" then
             -- Increment the score for this username in the sorted set
-            nauthilus_redis.redis_zincrby(redis_handle, top_failed_logins_key, 1, username)
+            nauthilus_redis.redis_zincrby(custom_pool, top_failed_logins_key, 1, username)
 
             -- Trim the sorted set to keep only the top 100 entries
-            nauthilus_redis.redis_zremrangebyrank(redis_handle, top_failed_logins_key, 0, -101)
-
-            -- Set the key to never expire (persistent)
-            nauthilus_redis.redis_persist(redis_handle, top_failed_logins_key)
+            nauthilus_redis.redis_zremrangebyrank(custom_pool, top_failed_logins_key, 0, -101)
         end
 
         -- Get result table
