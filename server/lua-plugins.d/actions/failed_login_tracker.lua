@@ -50,10 +50,12 @@ function nauthilus_call_action(request)
         -- This prevents legitimate users who mistype their password from being added to the list
         if not request.account or request.account == "" then
             -- Increment the score for this username in the sorted set
-            nauthilus_redis.redis_zincrby(custom_pool, top_failed_logins_key, 1, username)
+            local _, zib_err = nauthilus_redis.redis_zincrby(custom_pool, top_failed_logins_key, 1, username)
+            nauthilus_util.if_error_raise(zib_err)
 
             -- Trim the sorted set to keep only the top 100 entries
-            nauthilus_redis.redis_zremrangebyrank(custom_pool, top_failed_logins_key, 0, -101)
+            local _, zrrbr_err = nauthilus_redis.redis_zremrangebyrank(custom_pool, top_failed_logins_key, 0, -101)
+            nauthilus_util.if_error_raise(zrrbr_err)
         end
 
         -- Get result table
