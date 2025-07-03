@@ -108,3 +108,72 @@ Access the plugin through HTTP requests with the following query parameters:
 - `samples=<number>`: Maximum number of samples to use for training (default: 5000)
 
 Example: `https://nauthilus-server/api/v1/custom/train-neural-network?epochs=100&samples=10000`
+
+## Configuring Hooks in nauthilus.yml
+
+To use the hooks in this directory, you need to configure them in your nauthilus.yml configuration file. Hooks are configured in the `lua.custom_hooks` section of the configuration file.
+
+### Configuration Structure
+
+Each hook requires the following configuration:
+
+```yaml
+lua:
+  custom_hooks:
+    - http_location: "hook-name"      # The URL path for the hook (relative to /api/v1/custom/)
+      http_method: "HTTP_METHOD"      # The HTTP method (GET, POST, PUT, DELETE, PATCH)
+      script_path: "/path/to/hook.lua" # Full path to the Lua script
+      roles: ["role1", "role2"]       # Optional: List of roles that can access this hook when JWT auth is enabled
+```
+
+### Example Configuration
+
+Here's an example configuration for the hooks described in this README:
+
+```yaml
+lua:
+  custom_hooks:
+    - http_location: "distributed-brute-force-admin"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-admin.lua"
+      roles: ["admin", "security"]
+
+    - http_location: "distributed-brute-force-test"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
+      roles: ["admin", "security"]
+
+    - http_location: "learning-mode"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/learning-mode.lua"
+      roles: ["admin"]
+
+    - http_location: "neural-feedback"
+      http_method: "POST"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/neural-feedback.lua"
+      roles: ["admin", "security"]
+
+    - http_location: "train-neural-network"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/train-neural-network.lua"
+      roles: ["admin"]
+```
+
+### Access Control with JWT Authentication
+
+When JWT authentication is enabled in Nauthilus, you can restrict access to hooks based on user roles:
+
+1. Define the required roles in the `roles` array for each hook
+2. Users must have at least one of the specified roles in their JWT token to access the hook
+3. If no roles are specified, any authenticated user can access the hook
+4. If JWT authentication is not enabled, role restrictions are ignored
+
+### Enabling/Disabling All Custom Hooks
+
+You can disable all custom hooks by setting `custom_hooks: false` in the `server.disabled_endpoints` section:
+
+```yaml
+server:
+  disabled_endpoints:
+    custom_hooks: true  # Disables all custom hooks
+```
