@@ -1112,7 +1112,7 @@ func PublishModelUpdate(ctx context.Context) error {
 	}
 
 	// Publish message to channel
-	channel := getMLRedisKeyPrefix() + "model:updates"
+	channel := getModelUpdateChannel()
 	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
 	if err != nil {
 		return fmt.Errorf("failed to publish model update message: %w", err)
@@ -2198,7 +2198,7 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 	}
 
 	// Subscribe to model update channel
-	channel := getMLRedisKeyPrefix() + "model:updates"
+	channel := getModelUpdateChannel()
 	pubsub := redisClient.Subscribe(ctx, channel)
 
 	defer pubsub.Close()
@@ -2258,6 +2258,13 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 					level.Info(log.Logger).Log(
 						definitions.LogKeyMsg, "Successfully reloaded model after update notification",
 					)
+
+					// Also update the model trained flags from Redis
+					if err := LoadModelTrainedFlagFromRedis(ctx); err != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flags from Redis after update notification: %v", err),
+						)
+					}
 				}
 			}
 		}
@@ -2278,7 +2285,7 @@ func learningModeUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 	}
 
 	// Subscribe to learning mode update channel
-	channel := getMLRedisKeyPrefix() + "learning_mode:updates"
+	channel := getLearningModeUpdateChannel()
 	pubsub := redisClient.Subscribe(ctx, channel)
 
 	defer pubsub.Close()
@@ -2340,6 +2347,13 @@ func learningModeUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			modelTrainedMutex.Lock()
 			modelDryRun = learningMode
 			modelTrainedMutex.Unlock()
+
+			// Save the updated flag to Redis
+			if err := SaveModelTrainedFlagToRedis(ctx); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flags to Redis after update from notification: %v", err),
+				)
+			}
 
 			util.DebugModule(definitions.DbgNeural,
 				"action", "update_learning_mode_from_notification",
@@ -2635,7 +2649,7 @@ func PublishLearningModeUpdate(ctx context.Context, enabled bool) error {
 	}
 
 	// Publish message to channel
-	channel := getMLRedisKeyPrefix() + "learning_mode:updates"
+	channel := getLearningModeUpdateChannel()
 	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
 	if err != nil {
 		return fmt.Errorf("failed to publish learning mode update message: %w", err)
@@ -2696,6 +2710,18 @@ func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
 
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:" + instanceName + ":trained:"
+}
+
+// getLearningModeUpdateChannel returns a common channel name for learning mode updates
+// This channel is shared across all instances to ensure learning mode updates are propagated to all instances
+func getLearningModeUpdateChannel() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:learning_mode:updates"
+}
+
+// getModelUpdateChannel returns a common channel name for model updates
+// This channel is shared across all instances to ensure model updates are propagated to all instances
+func getModelUpdateChannel() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:model:updates"
 }
 
 // GetAdditionalFeaturesRedisKey returns the Redis key for additional features
