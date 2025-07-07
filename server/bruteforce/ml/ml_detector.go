@@ -2084,7 +2084,6 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 	return nil
 }
 
-// Global variables for the ML system
 var (
 	// Global model trainer
 	globalTrainer *MLTrainer
@@ -2103,6 +2102,9 @@ var (
 
 	// Flag to track if the scheduler is running
 	schedulerStarted bool
+
+	// modelDryRun determines if the model operations should execute in dry-run mode without making actual changes.
+	modelDryRun bool
 
 	// Flag to track if the model has been trained with real data
 	modelTrained bool
@@ -2498,19 +2500,17 @@ type BruteForceMLDetector struct {
 // IsLearningMode returns true if the model is still in learning mode
 func (d *BruteForceMLDetector) IsLearningMode() bool {
 	modelTrainedMutex.RLock()
-	isModelTrained := modelTrained
+	isModelTrained := modelTrained && !modelDryRun
 	modelTrainedMutex.RUnlock()
 
 	return !isModelTrained
 }
 
-// SetLearningMode sets the learning mode state
-// If enabled is true, the system will be in learning mode (modelTrained = false)
-// If enabled is false, the system will not be in learning mode (modelTrained = true)
-// Returns the new learning mode state (true if in learning mode, false otherwise)
+// SetLearningMode updates the learning mode state for the model based on the given boolean flag and persists the change.
+// Returns the updated learning mode state and an error if the operation fails.
 func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 	modelTrainedMutex.Lock()
-	modelTrained = !enabled
+	modelDryRun = enabled
 	modelTrainedMutex.Unlock()
 
 	// Save the updated flag to Redis
@@ -2541,7 +2541,7 @@ func GetAdditionalFeaturesRedisKey() string {
 
 // getModelTrainedRedisKey returns the Redis key for the model trained flag
 func getModelTrainedRedisKey() string {
-	return getMLRedisKeyPrefix() + "model_trained"
+	return getMLRedisKeyPrefix() + "MODEL_TRAINED"
 }
 
 // SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
@@ -2555,68 +2555,113 @@ func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
 }
 
 // SaveModelTrainedFlagToRedis saves the model trained flag to Redis
+// SaveModelTrainedFlagToRedis saves the model trained flag to Redis
 func SaveModelTrainedFlagToRedis(ctx context.Context) error {
 	modelTrainedMutex.RLock()
 	isModelTrained := modelTrained
+	isModelDryRun := modelDryRun
 	modelTrainedMutex.RUnlock()
 
-	key := getModelTrainedRedisKey()
-	value := "0"
-	if isModelTrained {
-		value = "1"
+	defer util.DebugModule(definitions.DbgNeural,
+		"action", "save_model_trained_flag",
+		"model_trained", isModelTrained,
+		"model_dry_run", isModelDryRun,
+	)
+
+	// Erstelle eine Map für die Flags
+	flags := map[string]string{
+		"trained": "0",
+		"dry_run": "0",
 	}
+
+	if isModelTrained {
+		flags["trained"] = "1"
+	}
+	if isModelDryRun {
+		flags["dry_run"] = "1"
+	}
+
+	key := getModelTrainedRedisKey()
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	err := rediscli.GetClient().GetWriteHandle().Set(
+	err := rediscli.GetClient().GetWriteHandle().HSet(
 		ctx,
 		key,
-		value,
-		0, // No expiration
+		flags,
 	).Err()
 
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", err),
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flags to Redis: %v", err),
 		)
+
 		return err
 	}
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "save_model_trained_flag",
-		"model_trained", isModelTrained,
-	)
 
 	return nil
 }
 
 // LoadModelTrainedFlagFromRedis loads the model trained flag from Redis
 func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
+	var isModelTrained bool
+	var isModelDryRun bool
+
+	defer util.DebugModule(definitions.DbgNeural,
+		"action", "load_model_trained_flag",
+		"model_trained", isModelTrained,
+		"model_dry_run", isModelDryRun,
+	)
+
 	key := getModelTrainedRedisKey()
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	val, err := rediscli.GetClient().GetReadHandle().Get(ctx, key).Result()
+	// Get all flags from the hash map
+	flags, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// Key doesn't exist, model is not trained
 			modelTrainedMutex.Lock()
 			modelTrained = false
+			modelDryRun = false
 			modelTrainedMutex.Unlock()
+
 			return nil
 		}
+
 		return err
 	}
 
-	isModelTrained := val == "1"
+	// If the hash map is empty, set default values
+	if len(flags) == 0 {
+		modelTrainedMutex.Lock()
+		modelTrained = false
+		modelDryRun = false
+		modelTrainedMutex.Unlock()
+
+		return nil
+	}
+
+	// Read flags from the hash map with key existence check
+	trainedValue, trainedExists := flags["trained"]
+	dryRunValue, dryRunExists := flags["dry_run"]
+
+	// Set default values if keys don't exist
+	if !trainedExists {
+		trainedValue = "0"
+	}
+	if !dryRunExists {
+		dryRunValue = "0"
+	}
+
+	isModelTrained = trainedValue == "1"
+	isModelDryRun = dryRunValue == "1"
+
 	modelTrainedMutex.Lock()
 	modelTrained = isModelTrained
+	modelDryRun = isModelDryRun
 	modelTrainedMutex.Unlock()
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "load_model_trained_flag",
-		"model_trained", isModelTrained,
-	)
 
 	return nil
 }
