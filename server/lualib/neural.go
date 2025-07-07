@@ -2,6 +2,7 @@ package lualib
 
 import (
 	"github.com/croessner/nauthilus/server/bruteforce/ml"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib/convert"
@@ -166,6 +167,20 @@ func SetLearningMode(ctx *gin.Context) lua.LGFunction {
 		// Get the enabled parameter
 		enabled := L.ToBool(1)
 
+		// Check if Dry-Run is activated in the configuration
+		if config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun() {
+			errMsg := "Cannot change learning mode when Dry-Run is activated in configuration"
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, errMsg,
+			)
+
+			// Push false and error message
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(errMsg))
+
+			return 2
+		}
+
 		// Log the learning mode change request
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Learning mode change requested via Lua",
@@ -188,6 +203,14 @@ func SetLearningMode(ctx *gin.Context) lua.LGFunction {
 
 		return 2
 	}
+}
+
+// GetLearningMode checks the system's current learning mode and pushes a boolean value to the Lua stack.
+// Returns 1 as the number of return values being pushed to Lua.
+func GetLearningMode(L *lua.LState) int {
+	L.Push(lua.LBool(ml.GetLearningMode()))
+
+	return 1
 }
 
 // TrainNeuralNetwork returns a Lua function that allows manual training of the neural network.
@@ -279,6 +302,7 @@ func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
 			definitions.LuaFnTrainNeuralNetwork:    TrainNeuralNetwork(ctx),
 			definitions.LuaFnSetLearningMode:       SetLearningMode(ctx),
+			definitions.LuaFNGetLearningMode:       GetLearningMode,
 			definitions.LuaFnProvideFeedback:       provideFeedback,
 		})
 

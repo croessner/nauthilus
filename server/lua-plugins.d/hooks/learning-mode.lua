@@ -34,7 +34,8 @@ function nauthilus_run_hook(logging, session)
     local enabled_param = nauthilus_http_request.get_http_query_param("enabled")
 
     -- Default to current state if not specified
-    local enabled = nil
+    local enabled
+    local is_learning, error_message
 
     if enabled_param and enabled_param ~= "" then
         if enabled_param == "true" or enabled_param == "1" then
@@ -48,26 +49,30 @@ function nauthilus_run_hook(logging, session)
 
             return result
         end
-    else
-        result.level = "error"
-        result.error = "Missing required parameter: enabled"
-        nauthilus_util.print_result(logging, result)
 
-        return result
+        -- Call the set_learning_mode function to change the mode
+        is_learning, error_message = nauthilus_neural.set_learning_mode(enabled)
+    else
+        -- No parameter provided, get the current learning mode
+        is_learning = nauthilus_neural.get_learning_mode()
+        result.status = "success"
+        result.message = "Retrieved current learning mode"
     end
 
-    -- Call the set_learning_mode function
-    local is_learning, error_message = nauthilus_neural.set_learning_mode(enabled)
-
-    if error_message then
-        result.level = "error"
-        result.status = "error"
-        result.message = "Failed to set learning mode"
-        result.error = error_message
-        result.learning_mode = is_learning
+    if enabled_param and enabled_param ~= "" then
+        if error_message then
+            result.level = "error"
+            result.status = "error"
+            result.message = "Failed to set learning mode"
+            result.error = error_message
+            result.learning_mode = is_learning
+        else
+            result.status = "success"
+            result.message = "Learning mode set successfully"
+            result.learning_mode = is_learning
+        end
     else
-        result.status = "success"
-        result.message = "Learning mode set successfully"
+        -- We already set status and message for the query case
         result.learning_mode = is_learning
     end
 

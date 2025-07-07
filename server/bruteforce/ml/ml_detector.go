@@ -1112,7 +1112,7 @@ func PublishModelUpdate(ctx context.Context) error {
 	}
 
 	// Publish message to channel
-	channel := getMLRedisKeyPrefix() + "model:updates"
+	channel := getModelUpdateChannel()
 	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
 	if err != nil {
 		return fmt.Errorf("failed to publish model update message: %w", err)
@@ -2084,7 +2084,6 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 	return nil
 }
 
-// Global variables for the ML system
 var (
 	// Global model trainer
 	globalTrainer *MLTrainer
@@ -2104,6 +2103,9 @@ var (
 	// Flag to track if the scheduler is running
 	schedulerStarted bool
 
+	// modelDryRun determines if the model operations should execute in dry-run mode without making actual changes.
+	modelDryRun bool
+
 	// Flag to track if the model has been trained with real data
 	modelTrained bool
 
@@ -2111,9 +2113,397 @@ var (
 	modelTrainedMutex sync.RWMutex
 )
 
-// InitMLSystem initializes the ML system without requiring request-specific parameters
-// This should be called during application startup
-// It will only initialize the ML system if the experimental_ml environment variable is set
+// initializeModelAndTrainedFlag initializes and verifies the ML model and its trained status flag.
+// It attempts to load a pre-trained model and trained flag from Redis, or initializes with defaults if unavailable.
+// Returns true if the model was successfully loaded from Redis, otherwise false.
+func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool {
+	// Initialize modelTrained flag to false
+	modelTrainedMutex.Lock()
+	modelTrained = false
+	modelTrainedMutex.Unlock()
+
+	// Try to load a previously trained model first
+	modelLoadedFromRedis := false
+	if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
+		)
+
+		// Initialize the neural network model with random weights as fallback
+		trainer.InitModel()
+	} else {
+		modelLoadedFromRedis = true
+	}
+
+	// Try to load the model trained flag from Redis
+	if loadFlagErr := LoadModelTrainedFlagFromRedis(ctx); loadFlagErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flag from Redis: %v", loadFlagErr),
+		)
+
+		// If we can't load the flag, check if we have enough training data
+		// to consider the model trained
+		if modelLoadedFromRedis {
+			// Get a sample of training data to check if we have enough
+			trainingData, err := trainer.GetTrainingDataFromRedis(100)
+			if err == nil && len(trainingData) >= 100 {
+				modelTrainedMutex.Lock()
+				modelTrained = true
+				modelTrainedMutex.Unlock()
+
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Loaded model is considered trained with real data",
+				)
+
+				// Save the flag to Redis for future use
+				_ = SaveModelTrainedFlagToRedis(ctx)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Loaded model does not have enough training data, starting in learning mode",
+				)
+			}
+		}
+	} else {
+		// Flag was loaded successfully, log the current state
+		modelTrainedMutex.RLock()
+		isModelTrained := modelTrained
+		modelTrainedMutex.RUnlock()
+
+		if isModelTrained {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Model is marked as trained with real data",
+			)
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Model is in learning mode",
+			)
+		}
+	}
+
+	return modelLoadedFromRedis
+}
+
+// modelUpdateSubscriber listens for model update notifications and triggers model reload when updates are received.
+// It subscribes to a Redis pub/sub channel for update events and processes incoming messages.
+// The function ensures updates from the current instance are skipped to prevent redundant reloads.
+// It gracefully handles termination via context cancellation or stop channel signals.
+func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
+	redisClient := rediscli.GetClient().GetReadHandle()
+	if redisClient == nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to get Redis client for model update subscription",
+		)
+
+		return
+	}
+
+	// Subscribe to model update channel
+	channel := getModelUpdateChannel()
+	pubsub := redisClient.Subscribe(ctx, channel)
+
+	defer pubsub.Close()
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Subscribed to model update notifications",
+		"channel", channel,
+	)
+
+	// Listen for messages
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopChan:
+			return
+		case msg := <-pubsub.Channel():
+			// Parse message
+			var updateMsg map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to parse model update message: %v", err),
+					"payload", msg.Payload,
+				)
+
+				continue
+			}
+
+			// Skip our own messages
+			if instanceName, ok := updateMsg["instance_name"].(string); ok {
+				if instanceName == config.GetFile().GetServer().GetInstanceName() {
+					util.DebugModule(definitions.DbgNeural,
+						"action", "skip_own_model_update",
+						"instance", instanceName,
+					)
+
+					continue
+				}
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Received model update notification, reloading model",
+				"from_instance", updateMsg["instance_name"],
+			)
+
+			// Reload model
+			globalTrainerMutex.RLock()
+			localTrainer := globalTrainer
+			globalTrainerMutex.RUnlock()
+
+			if localTrainer != nil {
+				if loadErr := localTrainer.LoadModelFromRedis(); loadErr != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to reload model after update notification: %v", loadErr),
+					)
+				} else {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Successfully reloaded model after update notification",
+					)
+
+					// Also update the model trained flags from Redis
+					if err := LoadModelTrainedFlagFromRedis(ctx); err != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flags from Redis after update notification: %v", err),
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+// learningModeUpdateSubscriber listens to a Redis channel for learning mode updates and updates the system's state accordingly.
+// ctx is the context to manage the lifetime of the subscriber.
+// stopChan is a channel used to gracefully stop the subscription.
+func learningModeUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
+	redisClient := rediscli.GetClient().GetReadHandle()
+	if redisClient == nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to get Redis client for learning mode update subscription",
+		)
+
+		return
+	}
+
+	// Subscribe to learning mode update channel
+	channel := getLearningModeUpdateChannel()
+	pubsub := redisClient.Subscribe(ctx, channel)
+
+	defer pubsub.Close()
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Subscribed to learning mode update notifications",
+		"channel", channel,
+	)
+
+	// Listen for messages
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopChan:
+			return
+		case msg := <-pubsub.Channel():
+			// Parse message
+			var updateMsg map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to parse learning mode update message: %v", err),
+					"payload", msg.Payload,
+				)
+
+				continue
+			}
+
+			// Skip our own messages
+			if instanceName, ok := updateMsg["instance_name"].(string); ok {
+				if instanceName == config.GetFile().GetServer().GetInstanceName() {
+					util.DebugModule(definitions.DbgNeural,
+						"action", "skip_own_learning_mode_update",
+						"instance", instanceName,
+					)
+
+					continue
+				}
+			}
+
+			// Get the learning mode from the message
+			learningMode, ok := updateMsg["learning_mode"].(bool)
+			if !ok {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Learning mode update message has invalid format",
+					"payload", msg.Payload,
+				)
+
+				continue
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Received learning mode update notification, updating learning mode",
+				"from_instance", updateMsg["instance_name"],
+				"learning_mode", learningMode,
+			)
+
+			// Update learning mode
+			modelTrainedMutex.Lock()
+			modelDryRun = learningMode
+			modelTrainedMutex.Unlock()
+
+			// Save the updated flag to Redis
+			if err := SaveModelTrainedFlagToRedis(ctx); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flags to Redis after update from notification: %v", err),
+				)
+			}
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "update_learning_mode_from_notification",
+				"learning_mode", learningMode,
+			)
+		}
+	}
+}
+
+// scheduledTraining periodically trains the model
+func scheduledTraining(ctx context.Context, stopChan chan struct{}) {
+	ticker := time.NewTicker(12 * time.Hour) // Train once twice per day
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopChan:
+			return
+		case <-ticker.C:
+			performScheduledTraining(ctx)
+		}
+	}
+}
+
+// performScheduledTraining manages the periodic training of a machine learning model in a distributed environment.
+// It prevents over-training, ensures synchronization across instances, and utilizes locks to avoid concurrent training.
+func performScheduledTraining(ctx context.Context) {
+	// Check when the last training occurred
+	lastTrainingTime, err := GetLastTrainingTime(ctx)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time: %v", err),
+		)
+		// Continue with training if we can't determine the last training time
+	} else if !lastTrainingTime.IsZero() {
+		// If last training was less than 6 hours ago, skip this training cycle
+		// This prevents training too frequently, especially during rolling updates
+		minInterval := 6 * time.Hour
+		timeSinceLastTraining := time.Since(lastTrainingTime)
+
+		if timeSinceLastTraining < minInterval {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Skipping scheduled training - too soon since last training",
+				"last_training", lastTrainingTime.Format(time.RFC3339),
+				"time_since", timeSinceLastTraining.String(),
+				"min_interval", minInterval.String(),
+			)
+
+			return
+		}
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Sufficient time has passed since last training",
+			"last_training", lastTrainingTime.Format(time.RFC3339),
+			"time_since", timeSinceLastTraining.String(),
+		)
+	}
+
+	// Try to acquire the distributed training lock
+	// Use a reasonable timeout to prevent deadlocks (30 minutes should be enough for training)
+	lockAcquired, lockErr := AcquireTrainingLock(ctx, 30*time.Minute)
+	if lockErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to acquire training lock: %v", lockErr),
+		)
+
+		return
+	}
+
+	if !lockAcquired {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Skipping scheduled training - another instance is already training",
+		)
+
+		return
+	}
+
+	// We have the lock, proceed with training
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Starting scheduled model training",
+	)
+
+	// Acquire write lock before training
+	globalTrainerMutex.RLock()
+	localTrainer := globalTrainer
+	globalTrainerMutex.RUnlock()
+
+	// Train with the last 5000 samples for 50 epochs
+	trainErr := localTrainer.TrainWithStoredData(5000, 50)
+	if trainErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Scheduled training failed: %v", trainErr),
+		)
+
+		// Release the lock since training failed
+		if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
+			)
+		}
+
+		return
+	}
+
+	// Save the trained model to Redis
+	saveErr := localTrainer.SaveModelToRedis()
+	if saveErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis: %v", saveErr),
+		)
+
+		// Release the lock since saving failed
+		if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
+			)
+		}
+
+		return
+	}
+
+	// Update the last training timestamp
+	if timeErr := SetLastTrainingTime(ctx); timeErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to update last training time: %v", timeErr),
+		)
+		// Continue despite error - this just means next training might happen sooner than optimal
+	}
+
+	// Publish model update notification to other instances
+	pubErr := PublishModelUpdate(ctx)
+	if pubErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification: %v", pubErr),
+		)
+		// Continue despite error - other instances will still work, just won't get the update notification
+	}
+
+	// Release the training lock
+	if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
+		)
+	}
+}
+
+// InitMLSystem initializes the machine learning system, including training scheduler and model update subscribers.
+// It performs initialization only once and skips setup if experimental ML is disabled in the environment configuration.
 func InitMLSystem(ctx context.Context) error {
 	// Check if experimental ML is enabled
 	if !config.GetEnvironment().GetExperimentalML() {
@@ -2127,306 +2517,24 @@ func InitMLSystem(ctx context.Context) error {
 	var err error
 
 	initOnce.Do(func() {
-		// Initialize modelTrained flag to false
-		modelTrainedMutex.Lock()
-		modelTrained = false
-		modelTrainedMutex.Unlock()
-
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
-		// Try to load a previously trained model first
-		modelLoadedFromRedis := false
-		if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
-			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
-			)
-
-			// Initialize the neural network model with random weights as fallback
-			trainer.InitModel()
-		} else {
-			modelLoadedFromRedis = true
-		}
-
-		// Try to load the model trained flag from Redis
-		if loadFlagErr := LoadModelTrainedFlagFromRedis(ctx); loadFlagErr != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flag from Redis: %v", loadFlagErr),
-			)
-
-			// If we can't load the flag, check if we have enough training data
-			// to consider the model trained
-			if modelLoadedFromRedis {
-				// Get a sample of training data to check if we have enough
-				trainingData, err := trainer.GetTrainingDataFromRedis(100)
-				if err == nil && len(trainingData) >= 100 {
-					modelTrainedMutex.Lock()
-					modelTrained = true
-					modelTrainedMutex.Unlock()
-
-					level.Info(log.Logger).Log(
-						definitions.LogKeyMsg, "Loaded model is considered trained with real data",
-					)
-
-					// Save the flag to Redis for future use
-					_ = SaveModelTrainedFlagToRedis(ctx)
-				} else {
-					level.Info(log.Logger).Log(
-						definitions.LogKeyMsg, "Loaded model does not have enough training data, starting in learning mode",
-					)
-				}
-			}
-		} else {
-			// Flag was loaded successfully, log the current state
-			modelTrainedMutex.RLock()
-			isModelTrained := modelTrained
-			modelTrainedMutex.RUnlock()
-
-			if isModelTrained {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyMsg, "Model is marked as trained with real data",
-				)
-			} else {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyMsg, "Model is in learning mode",
-				)
-			}
-		}
+		// Initialize model and trained flag
+		initializeModelAndTrainedFlag(ctx, trainer)
 
 		// Start scheduled training
 		stopChan := make(chan struct{})
 		stopTrainingChan = stopChan
 
 		// Start model update subscriber
-		// This goroutine subscribes to the Redis channel for model updates and reloads the model
-		// when a notification is received from another instance. This is part of the distributed
-		// model training system that enables multiple instances of Nauthilus to share neural
-		// network models.
-		//
-		// When one instance trains a model (either through scheduled training or after collecting
-		// enough feedback), it publishes a notification to this channel. All other instances
-		// receive the notification and reload the model from Redis. This ensures that all instances
-		// use the most up-to-date model without having to train it themselves.
-		//
-		// The system handles the following scenarios:
-		// 1. When an instance collects 10 or more feedback samples, it trains the model and notifies others
-		// 2. During scheduled training (every 12 hours), the instance trains the model and notifies others
-		// 3. When an instance receives a notification, it reloads the model from Redis
-		//
-		// This approach ensures that:
-		// - Only one instance needs to perform the resource-intensive training
-		// - All instances benefit from feedback provided to any instance
-		// - The system works correctly in a load-balanced environment where requests may be
-		//   distributed across multiple instances
-		go func() {
-			// Get Redis client
-			redisClient := rediscli.GetClient().GetReadHandle()
-			if redisClient == nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, "Failed to get Redis client for model update subscription",
-				)
+		go modelUpdateSubscriber(ctx, stopChan)
 
-				return
-			}
-
-			// Subscribe to model update channel
-			channel := getMLRedisKeyPrefix() + "model:updates"
-			pubsub := redisClient.Subscribe(ctx, channel)
-
-			defer pubsub.Close()
-
-			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, "Subscribed to model update notifications",
-				"channel", channel,
-			)
-
-			// Listen for messages
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-stopChan:
-					return
-				case msg := <-pubsub.Channel():
-					// Parse message
-					var updateMsg map[string]interface{}
-					if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to parse model update message: %v", err),
-							"payload", msg.Payload,
-						)
-
-						continue
-					}
-
-					// Skip our own messages
-					if instanceName, ok := updateMsg["instance_name"].(string); ok {
-						if instanceName == config.GetFile().GetServer().GetInstanceName() {
-							util.DebugModule(definitions.DbgNeural,
-								"action", "skip_own_model_update",
-								"instance", instanceName,
-							)
-
-							continue
-						}
-					}
-
-					level.Info(log.Logger).Log(
-						definitions.LogKeyMsg, "Received model update notification, reloading model",
-						"from_instance", updateMsg["instance_name"],
-					)
-
-					// Reload model
-					globalTrainerMutex.RLock()
-					localTrainer := globalTrainer
-					globalTrainerMutex.RUnlock()
-
-					if localTrainer != nil {
-						if loadErr := localTrainer.LoadModelFromRedis(); loadErr != nil {
-							level.Error(log.Logger).Log(
-								definitions.LogKeyMsg, fmt.Sprintf("Failed to reload model after update notification: %v", loadErr),
-							)
-						} else {
-							level.Info(log.Logger).Log(
-								definitions.LogKeyMsg, "Successfully reloaded model after update notification",
-							)
-						}
-					}
-				}
-			}
-		}()
+		// Start learning mode update subscriber
+		go learningModeUpdateSubscriber(ctx, stopChan)
 
 		// Start scheduled training
-		go func() {
-			ticker := time.NewTicker(12 * time.Hour) // Train once twice per day
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-stopChan:
-					return
-				case <-ticker.C:
-					// Check when the last training occurred
-					lastTrainingTime, err := GetLastTrainingTime(ctx)
-					if err != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time: %v", err),
-						)
-						// Continue with training if we can't determine the last training time
-					} else if !lastTrainingTime.IsZero() {
-						// If last training was less than 6 hours ago, skip this training cycle
-						// This prevents training too frequently, especially during rolling updates
-						minInterval := 6 * time.Hour
-						timeSinceLastTraining := time.Since(lastTrainingTime)
-
-						if timeSinceLastTraining < minInterval {
-							level.Info(log.Logger).Log(
-								definitions.LogKeyMsg, "Skipping scheduled training - too soon since last training",
-								"last_training", lastTrainingTime.Format(time.RFC3339),
-								"time_since", timeSinceLastTraining.String(),
-								"min_interval", minInterval.String(),
-							)
-
-							continue
-						}
-
-						level.Info(log.Logger).Log(
-							definitions.LogKeyMsg, "Sufficient time has passed since last training",
-							"last_training", lastTrainingTime.Format(time.RFC3339),
-							"time_since", timeSinceLastTraining.String(),
-						)
-					}
-
-					// Try to acquire the distributed training lock
-					// Use a reasonable timeout to prevent deadlocks (30 minutes should be enough for training)
-					lockAcquired, lockErr := AcquireTrainingLock(ctx, 30*time.Minute)
-					if lockErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to acquire training lock: %v", lockErr),
-						)
-						continue
-					}
-
-					if !lockAcquired {
-						level.Info(log.Logger).Log(
-							definitions.LogKeyMsg, "Skipping scheduled training - another instance is already training",
-						)
-
-						continue
-					}
-
-					// We have the lock, proceed with training
-					level.Info(log.Logger).Log(
-						definitions.LogKeyMsg, "Starting scheduled model training",
-					)
-
-					// Acquire write lock before training
-					globalTrainerMutex.RLock()
-					localTrainer := globalTrainer
-					globalTrainerMutex.RUnlock()
-
-					// Train with the last 5000 samples for 50 epochs
-					trainErr := localTrainer.TrainWithStoredData(5000, 50)
-					if trainErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Scheduled training failed: %v", trainErr),
-						)
-
-						// Release the lock since training failed
-						if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
-							level.Error(log.Logger).Log(
-								definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
-							)
-						}
-
-						continue
-					}
-
-					// Save the trained model to Redis
-					saveErr := localTrainer.SaveModelToRedis()
-					if saveErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to save model to Redis: %v", saveErr),
-						)
-
-						// Release the lock since saving failed
-						if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
-							level.Error(log.Logger).Log(
-								definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
-							)
-						}
-
-						continue
-					}
-
-					// Update the last training timestamp
-					if timeErr := SetLastTrainingTime(ctx); timeErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to update last training time: %v", timeErr),
-						)
-						// Continue despite error - this just means next training might happen sooner than optimal
-					}
-
-					// Publish model update notification to other instances
-					pubErr := PublishModelUpdate(ctx)
-					if pubErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification: %v", pubErr),
-						)
-						// Continue despite error - other instances will still work, just won't get the update notification
-					}
-
-					// Release the training lock
-					if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
-						level.Error(log.Logger).Log(
-							definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
-						)
-					}
-				}
-			}
-		}()
+		go scheduledTraining(ctx, stopChan)
 
 		schedulerStarted = true
 
@@ -2498,25 +2606,86 @@ type BruteForceMLDetector struct {
 // IsLearningMode returns true if the model is still in learning mode
 func (d *BruteForceMLDetector) IsLearningMode() bool {
 	modelTrainedMutex.RLock()
-	isModelTrained := modelTrained
+	isModelTrained := modelTrained && !modelDryRun
 	modelTrainedMutex.RUnlock()
 
 	return !isModelTrained
 }
 
-// SetLearningMode sets the learning mode state
-// If enabled is true, the system will be in learning mode (modelTrained = false)
-// If enabled is false, the system will not be in learning mode (modelTrained = true)
-// Returns the new learning mode state (true if in learning mode, false otherwise)
+// PublishLearningModeUpdate publishes a message to notify other instances that the learning mode has changed.
+// This function is similar to PublishModelUpdate but specifically for learning mode changes.
+//
+// The function publishes a message to a Redis channel that includes:
+// - The timestamp of when the learning mode was changed
+// - The name of the instance that changed the learning mode
+// - The new learning mode state (enabled/disabled)
+//
+// Other instances subscribe to this channel and update their learning mode when they receive a notification.
+// This ensures that all instances use the same learning mode without having to set it manually on each instance.
+//
+// Parameters:
+// - ctx: The context for the request
+// - enabled: The new learning mode state
+//
+// Returns an error if the message could not be published.
+func PublishLearningModeUpdate(ctx context.Context, enabled bool) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetWriteHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for publishing learning mode update")
+	}
+
+	// Create message with timestamp, instance name, and learning mode
+	message := map[string]interface{}{
+		"timestamp":     time.Now().Unix(),
+		"instance_name": config.GetFile().GetServer().GetInstanceName(),
+		"learning_mode": enabled,
+	}
+
+	// Convert message to JSON
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal learning mode update message: %w", err)
+	}
+
+	// Publish message to channel
+	channel := getLearningModeUpdateChannel()
+	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
+	if err != nil {
+		return fmt.Errorf("failed to publish learning mode update message: %w", err)
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Published learning mode update notification",
+		"channel", channel,
+		"instance", config.GetFile().GetServer().GetInstanceName(),
+		"learning_mode", enabled,
+	)
+
+	return nil
+}
+
+// SetLearningMode updates the learning mode state for the model based on the given boolean flag and persists the change.
+// Returns the updated learning mode state and an error if the operation fails.
 func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 	modelTrainedMutex.Lock()
-	modelTrained = !enabled
+	modelDryRun = enabled
 	modelTrainedMutex.Unlock()
 
 	// Save the updated flag to Redis
 	err := SaveModelTrainedFlagToRedis(ctx)
 	if err != nil {
 		return enabled, err
+	}
+
+	// Publish learning mode update notification to other instances
+	pubErr := PublishLearningModeUpdate(ctx, enabled)
+	if pubErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to publish learning mode update notification: %v", pubErr),
+		)
+		// We don't return the error here because the learning mode was successfully updated locally
+		// and in Redis, even if the notification failed
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -2527,11 +2696,32 @@ func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 	return enabled, nil
 }
 
+// GetLearningMode determines if the system is in learning mode, based on training status and dry-run configuration.
+func GetLearningMode() bool {
+	modelTrainedMutex.RLock()
+	enabled := !modelTrained || modelDryRun
+	modelTrainedMutex.RUnlock()
+
+	return enabled
+}
+
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
 
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:" + instanceName + ":trained:"
+}
+
+// getLearningModeUpdateChannel returns a common channel name for learning mode updates
+// This channel is shared across all instances to ensure learning mode updates are propagated to all instances
+func getLearningModeUpdateChannel() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:learning_mode:updates"
+}
+
+// getModelUpdateChannel returns a common channel name for model updates
+// This channel is shared across all instances to ensure model updates are propagated to all instances
+func getModelUpdateChannel() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:model:updates"
 }
 
 // GetAdditionalFeaturesRedisKey returns the Redis key for additional features
@@ -2541,7 +2731,7 @@ func GetAdditionalFeaturesRedisKey() string {
 
 // getModelTrainedRedisKey returns the Redis key for the model trained flag
 func getModelTrainedRedisKey() string {
-	return getMLRedisKeyPrefix() + "model_trained"
+	return getMLRedisKeyPrefix() + "MODEL_TRAINED"
 }
 
 // SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
@@ -2555,68 +2745,113 @@ func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
 }
 
 // SaveModelTrainedFlagToRedis saves the model trained flag to Redis
+// SaveModelTrainedFlagToRedis saves the model trained flag to Redis
 func SaveModelTrainedFlagToRedis(ctx context.Context) error {
 	modelTrainedMutex.RLock()
 	isModelTrained := modelTrained
+	isModelDryRun := modelDryRun
 	modelTrainedMutex.RUnlock()
 
-	key := getModelTrainedRedisKey()
-	value := "0"
-	if isModelTrained {
-		value = "1"
+	defer util.DebugModule(definitions.DbgNeural,
+		"action", "save_model_trained_flag",
+		"model_trained", isModelTrained,
+		"model_dry_run", isModelDryRun,
+	)
+
+	// Erstelle eine Map für die Flags
+	flags := map[string]string{
+		"trained": "0",
+		"dry_run": "0",
 	}
+
+	if isModelTrained {
+		flags["trained"] = "1"
+	}
+	if isModelDryRun {
+		flags["dry_run"] = "1"
+	}
+
+	key := getModelTrainedRedisKey()
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	err := rediscli.GetClient().GetWriteHandle().Set(
+	err := rediscli.GetClient().GetWriteHandle().HSet(
 		ctx,
 		key,
-		value,
-		0, // No expiration
+		flags,
 	).Err()
 
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", err),
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flags to Redis: %v", err),
 		)
+
 		return err
 	}
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "save_model_trained_flag",
-		"model_trained", isModelTrained,
-	)
 
 	return nil
 }
 
 // LoadModelTrainedFlagFromRedis loads the model trained flag from Redis
 func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
+	var isModelTrained bool
+	var isModelDryRun bool
+
+	defer util.DebugModule(definitions.DbgNeural,
+		"action", "load_model_trained_flag",
+		"model_trained", isModelTrained,
+		"model_dry_run", isModelDryRun,
+	)
+
 	key := getModelTrainedRedisKey()
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	val, err := rediscli.GetClient().GetReadHandle().Get(ctx, key).Result()
+	// Get all flags from the hash map
+	flags, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// Key doesn't exist, model is not trained
 			modelTrainedMutex.Lock()
 			modelTrained = false
+			modelDryRun = false
 			modelTrainedMutex.Unlock()
+
 			return nil
 		}
+
 		return err
 	}
 
-	isModelTrained := val == "1"
+	// If the hash map is empty, set default values
+	if len(flags) == 0 {
+		modelTrainedMutex.Lock()
+		modelTrained = false
+		modelDryRun = false
+		modelTrainedMutex.Unlock()
+
+		return nil
+	}
+
+	// Read flags from the hash map with key existence check
+	trainedValue, trainedExists := flags["trained"]
+	dryRunValue, dryRunExists := flags["dry_run"]
+
+	// Set default values if keys don't exist
+	if !trainedExists {
+		trainedValue = "0"
+	}
+	if !dryRunExists {
+		dryRunValue = "0"
+	}
+
+	isModelTrained = trainedValue == "1"
+	isModelDryRun = dryRunValue == "1"
+
 	modelTrainedMutex.Lock()
 	modelTrained = isModelTrained
+	modelDryRun = isModelDryRun
 	modelTrainedMutex.Unlock()
-
-	util.DebugModule(definitions.DbgNeural,
-		"action", "load_model_trained_flag",
-		"model_trained", isModelTrained,
-	)
 
 	return nil
 }
