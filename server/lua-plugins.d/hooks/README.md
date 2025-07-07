@@ -134,12 +134,12 @@ Here's an example configuration for the hooks described in this README:
 lua:
   custom_hooks:
     - http_location: "distributed-brute-force-admin"
-      http_method: "GET"
+      http_method: "POST"
       script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-admin.lua"
       roles: ["admin", "security"]
 
     - http_location: "distributed-brute-force-test"
-      http_method: "GET"
+      http_method: "POST"
       script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
       roles: ["admin", "security"]
 
