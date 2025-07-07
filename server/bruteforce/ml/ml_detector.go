@@ -2682,6 +2682,15 @@ func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 	return enabled, nil
 }
 
+// GetLearningMode determines if the system is in learning mode, based on training status and dry-run configuration.
+func GetLearningMode() bool {
+	modelTrainedMutex.RLock()
+	enabled := !modelTrained || modelDryRun
+	modelTrainedMutex.RUnlock()
+
+	return enabled
+}
+
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
 func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
