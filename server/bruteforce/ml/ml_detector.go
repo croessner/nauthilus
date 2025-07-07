@@ -2702,7 +2702,8 @@ func GetLearningMode() bool {
 	enabled := !modelTrained || modelDryRun
 	modelTrainedMutex.RUnlock()
 
-	return enabled
+	// Also check if dry run is enabled in the configuration
+	return enabled || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
 }
 
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name
