@@ -2298,6 +2298,98 @@ func InitMLSystem(ctx context.Context) error {
 			}
 		}()
 
+		// Start learning mode update subscriber
+		// This goroutine subscribes to the Redis channel for learning mode updates and updates the
+		// learning mode state when a notification is received from another instance. This ensures
+		// that all instances use the same learning mode setting.
+		//
+		// When one instance changes the learning mode (via the SetLearningMode function), it publishes
+		// a notification to this channel. All other instances receive the notification and update
+		// their learning mode state. This ensures that all instances use the same learning mode
+		// without having to set it manually on each instance.
+		go func() {
+			// Get Redis client
+			redisClient := rediscli.GetClient().GetReadHandle()
+			if redisClient == nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to get Redis client for learning mode update subscription",
+				)
+
+				return
+			}
+
+			// Subscribe to learning mode update channel
+			channel := getMLRedisKeyPrefix() + "learning_mode:updates"
+			pubsub := redisClient.Subscribe(ctx, channel)
+
+			defer pubsub.Close()
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Subscribed to learning mode update notifications",
+				"channel", channel,
+			)
+
+			// Listen for messages
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopChan:
+					return
+				case msg := <-pubsub.Channel():
+					// Parse message
+					var updateMsg map[string]interface{}
+					if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to parse learning mode update message: %v", err),
+							"payload", msg.Payload,
+						)
+
+						continue
+					}
+
+					// Skip our own messages
+					if instanceName, ok := updateMsg["instance_name"].(string); ok {
+						if instanceName == config.GetFile().GetServer().GetInstanceName() {
+							util.DebugModule(definitions.DbgNeural,
+								"action", "skip_own_learning_mode_update",
+								"instance", instanceName,
+							)
+
+							continue
+						}
+					}
+
+					// Get the learning mode from the message
+					learningMode, ok := updateMsg["learning_mode"].(bool)
+					if !ok {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, "Learning mode update message has invalid format",
+							"payload", msg.Payload,
+						)
+
+						continue
+					}
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Received learning mode update notification, updating learning mode",
+						"from_instance", updateMsg["instance_name"],
+						"learning_mode", learningMode,
+					)
+
+					// Update learning mode
+					modelTrainedMutex.Lock()
+					modelDryRun = learningMode
+					modelTrainedMutex.Unlock()
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "update_learning_mode_from_notification",
+						"learning_mode", learningMode,
+					)
+				}
+			}
+		}()
+
 		// Start scheduled training
 		go func() {
 			ticker := time.NewTicker(12 * time.Hour) // Train once twice per day
@@ -2506,6 +2598,59 @@ func (d *BruteForceMLDetector) IsLearningMode() bool {
 	return !isModelTrained
 }
 
+// PublishLearningModeUpdate publishes a message to notify other instances that the learning mode has changed.
+// This function is similar to PublishModelUpdate but specifically for learning mode changes.
+//
+// The function publishes a message to a Redis channel that includes:
+// - The timestamp of when the learning mode was changed
+// - The name of the instance that changed the learning mode
+// - The new learning mode state (enabled/disabled)
+//
+// Other instances subscribe to this channel and update their learning mode when they receive a notification.
+// This ensures that all instances use the same learning mode without having to set it manually on each instance.
+//
+// Parameters:
+// - ctx: The context for the request
+// - enabled: The new learning mode state
+//
+// Returns an error if the message could not be published.
+func PublishLearningModeUpdate(ctx context.Context, enabled bool) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetWriteHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for publishing learning mode update")
+	}
+
+	// Create message with timestamp, instance name, and learning mode
+	message := map[string]interface{}{
+		"timestamp":     time.Now().Unix(),
+		"instance_name": config.GetFile().GetServer().GetInstanceName(),
+		"learning_mode": enabled,
+	}
+
+	// Convert message to JSON
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal learning mode update message: %w", err)
+	}
+
+	// Publish message to channel
+	channel := getMLRedisKeyPrefix() + "learning_mode:updates"
+	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
+	if err != nil {
+		return fmt.Errorf("failed to publish learning mode update message: %w", err)
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Published learning mode update notification",
+		"channel", channel,
+		"instance", config.GetFile().GetServer().GetInstanceName(),
+		"learning_mode", enabled,
+	)
+
+	return nil
+}
+
 // SetLearningMode updates the learning mode state for the model based on the given boolean flag and persists the change.
 // Returns the updated learning mode state and an error if the operation fails.
 func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
@@ -2517,6 +2662,16 @@ func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 	err := SaveModelTrainedFlagToRedis(ctx)
 	if err != nil {
 		return enabled, err
+	}
+
+	// Publish learning mode update notification to other instances
+	pubErr := PublishLearningModeUpdate(ctx, enabled)
+	if pubErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to publish learning mode update notification: %v", pubErr),
+		)
+		// We don't return the error here because the learning mode was successfully updated locally
+		// and in Redis, even if the notification failed
 	}
 
 	util.DebugModule(definitions.DbgNeural,
