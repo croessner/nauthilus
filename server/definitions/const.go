@@ -1476,6 +1476,9 @@ const (
 	// LuaFNGetLearningMode is a constant string representing the Lua function name for retrieving the learning mode state.
 	LuaFNGetLearningMode = "get_learning_mode"
 
+	// LuaFnResetNeuralNetwork represents the function name for "reset_neural_network" in Lua
+	LuaFnResetNeuralNetwork = "reset_neural_network"
+
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"
 )

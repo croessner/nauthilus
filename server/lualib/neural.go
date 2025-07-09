@@ -292,6 +292,34 @@ func TrainNeuralNetwork(ctx *gin.Context) lua.LGFunction {
 	}
 }
 
+// ResetNeuralNetwork returns a Lua function that resets the neural network model to use only the canonical features.
+// This is useful for fixing issues where the model's input size has grown too large.
+// Returns a boolean indicating success and an error message if the operation failed.
+func ResetNeuralNetwork(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Log the reset request
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Neural network reset requested via Lua",
+		)
+
+		// Reset the model
+		err := ml.ResetModelToCanonicalFeatures(ctx)
+		if err != nil {
+			// Push false and error message
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		// Push true and nil error
+		L.Push(lua.LBool(true))
+		L.Push(lua.LNil)
+
+		return 2
+	}
+}
+
 // LoaderModNeural loads Lua functions for neural network integration and returns them as a Lua module.
 func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -304,6 +332,7 @@ func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 			definitions.LuaFnSetLearningMode:       SetLearningMode(ctx),
 			definitions.LuaFNGetLearningMode:       GetLearningMode,
 			definitions.LuaFnProvideFeedback:       provideFeedback,
+			definitions.LuaFnResetNeuralNetwork:    ResetNeuralNetwork(ctx),
 		})
 
 		L.Push(mod)

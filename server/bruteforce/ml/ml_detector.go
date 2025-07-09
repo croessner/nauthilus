@@ -2997,6 +2997,14 @@ func InitMLSystem(ctx context.Context) error {
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
+		// Reset the model to use only the features in the canonical list
+		if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features: %v", resetErr),
+			)
+			// Continue despite error - we'll still try to initialize the model
+		}
+
 		// Migrate all instance-specific feature lists to the common list
 		if migrateErr := MigrateAllInstanceFeaturesToCommonList(ctx); migrateErr != nil {
 			level.Error(log.Logger).Log(
@@ -3221,6 +3229,64 @@ func GetFeatureListRedisKey() string {
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:dynamic_features:list"
 }
 
+// ResetModelToCanonicalFeatures resets the model to use only the features in the canonical list
+// This is used to fix issues where the model's input size has grown too large
+func ResetModelToCanonicalFeatures(ctx context.Context) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetWriteHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for resetting model")
+	}
+
+	// Get the canonical list of features from Redis
+	canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get canonical features from Redis: %w", err)
+	}
+
+	// Get instance name for logging
+	instanceName := "unknown"
+	if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+		instanceName = serverConfig.GetInstanceName()
+	}
+
+	// Calculate the expected input size: 6 standard features + canonical features
+	expectedInputSize := 6 + len(canonicalFeatures)
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Resetting model to use %d input neurons (%d standard + %d dynamic) based on canonical feature list",
+			expectedInputSize, 6, len(canonicalFeatures)),
+		"instance", instanceName,
+		"features", strings.Join(canonicalFeatures, ", "),
+	)
+
+	// Create a new model with the correct input size
+	newModel := NewNeuralNetwork(expectedInputSize, 1)
+
+	// Create a temporary trainer with the new model
+	tempTrainer := NewMLTrainer().WithContext(ctx)
+	tempTrainer.model = newModel
+
+	// Save the new model to Redis
+	if err := tempTrainer.SaveModelToRedis(); err != nil {
+		return fmt.Errorf("failed to save reset model to Redis: %w", err)
+	}
+
+	// Publish a model update notification to ensure all instances are aware of the reset
+	if err := PublishModelUpdate(ctx); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification after reset: %v", err),
+		)
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Successfully reset model to canonical features",
+		"instance", instanceName,
+	)
+
+	return nil
+}
+
 // StoreDynamicFeaturesToRedis stores the list of dynamic features to Redis
 // This ensures all instances have access to the same canonical list of features
 // It also publishes a model update notification if new features were added
@@ -3299,12 +3365,6 @@ func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 	}
 
 	return nil
-}
-
-// getOldFeatureListRedisKey returns the old Redis key for the canonical list of dynamic features
-// This is used for migration purposes only
-func getOldFeatureListRedisKey() string {
-	return getMLRedisKeyPrefix() + "dynamic_features:list"
 }
 
 // MigrateAllInstanceFeaturesToCommonList migrates features from all instance-specific lists to the common list
@@ -3414,45 +3474,6 @@ func GetDynamicFeaturesFromRedis(ctx context.Context) ([]string, error) {
 	features, err := redisClient.SMembers(ctx, key).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("failed to retrieve dynamic features from Redis: %w", err)
-	}
-
-	// If no features found or error is redis.Nil, check the old key for migration
-	if len(features) == 0 || errors.Is(err, redis.Nil) {
-		// Try to get features from the old instance-specific key
-		oldKey := getOldFeatureListRedisKey()
-		oldFeatures, oldErr := redisClient.SMembers(ctx, oldKey).Result()
-
-		if oldErr == nil && len(oldFeatures) > 0 {
-			// Get instance name for logging
-			instanceName := "unknown"
-			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
-				instanceName = serverConfig.GetInstanceName()
-			}
-
-			// Found features in the old key, migrate them to the new key
-			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Migrating %d features from old instance-specific key to new common key", len(oldFeatures)),
-				"instance", instanceName,
-			)
-
-			// Store the old features in the new common key
-			if migrateErr := StoreDynamicFeaturesToRedis(ctx, oldFeatures); migrateErr != nil {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to migrate features to new common key: %v", migrateErr),
-				)
-			} else {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyMsg, "Successfully migrated features to new common key",
-					"instance", instanceName,
-				)
-			}
-
-			// Use the migrated features
-			features = oldFeatures
-		} else if errors.Is(err, redis.Nil) {
-			// No features found in either key
-			return []string{}, nil
-		}
 	}
 
 	// Get instance name for logging
