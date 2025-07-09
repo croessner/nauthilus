@@ -805,49 +805,113 @@ func (t *MLTrainer) InitModel() {
 
 	// Skip dynamic neuron adjustment during tests
 	if os.Getenv("NAUTHILUS_TESTING") != "1" {
-		// Check if we have any training data with additional features
-		trainingData, err := t.GetTrainingDataFromRedis(1)
-		if err == nil && len(trainingData) > 0 && trainingData[0].Features != nil &&
-			trainingData[0].Features.AdditionalFeatures != nil && len(trainingData[0].Features.AdditionalFeatures) > 0 {
-			// Add the number of additional features to the input size
-			inputSize += len(trainingData[0].Features.AdditionalFeatures)
+		// First, try to get the canonical list of features from Redis
+		canonicalFeatures, err := GetDynamicFeaturesFromRedis(t.ctx)
+		if err == nil && len(canonicalFeatures) > 0 {
+			// Add the number of canonical features to the input size
+			inputSize += len(canonicalFeatures)
+
+			// Get instance name for logging
+			instanceName := "unknown"
+			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+				instanceName = serverConfig.GetInstanceName()
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Initializing model with %d input neurons (%d standard + %d dynamic) based on canonical feature list",
+					inputSize, 6, len(canonicalFeatures)),
+				"instance", instanceName,
+				"features", strings.Join(canonicalFeatures, ", "),
+			)
 
 			util.DebugModule(definitions.DbgNeural,
-				"action", "init_model_with_additional_features_from_training",
-				"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
+				"action", "init_model_with_canonical_features",
+				"canonical_features_count", len(canonicalFeatures),
 				"total_input_size", inputSize,
 			)
-		}
+		} else {
+			// If we couldn't get the canonical list, fall back to checking training data and context
 
-		// Also check if we have additional features from Lua context
-		// This ensures we account for newly added Lua features that haven't been saved to training data yet
-		if t.ctx != nil {
-			if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
-				// If we have additional features from context, ensure they're counted in the input size
-				// We need to check if these features are already counted from training data
-				if err != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
-					trainingData[0].Features.AdditionalFeatures == nil {
-					// No training data features, add all context features
-					inputSize += len(additionalFeatures)
+			// Check if we have any training data with additional features
+			trainingData, err := t.GetTrainingDataFromRedis(1)
+			if err == nil && len(trainingData) > 0 && trainingData[0].Features != nil &&
+				trainingData[0].Features.AdditionalFeatures != nil && len(trainingData[0].Features.AdditionalFeatures) > 0 {
+				// Add the number of additional features to the input size
+				inputSize += len(trainingData[0].Features.AdditionalFeatures)
 
-					util.DebugModule(definitions.DbgNeural,
-						"action", "init_model_with_additional_features_from_context",
-						"additional_features_count", len(additionalFeatures),
-						"total_input_size", inputSize,
+				// Store these features in the canonical list for future use
+				var featureNames []string
+				for featureName := range trainingData[0].Features.AdditionalFeatures {
+					featureNames = append(featureNames, featureName)
+				}
+
+				if storeErr := StoreDynamicFeaturesToRedis(t.ctx, featureNames); storeErr != nil {
+					level.Warn(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to store training data features to canonical list: %v", storeErr),
 					)
-				} else {
-					// We have both training data features and context features
-					// Count any context features not in training data
-					for featureName := range additionalFeatures {
-						if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
-							// This feature is in context but not in training data, add it to input size
-							inputSize++
+				}
 
-							util.DebugModule(definitions.DbgNeural,
-								"action", "init_model_with_additional_feature_from_context",
-								"feature_name", featureName,
-								"total_input_size", inputSize,
+				util.DebugModule(definitions.DbgNeural,
+					"action", "init_model_with_additional_features_from_training",
+					"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
+					"total_input_size", inputSize,
+				)
+			}
+
+			// Also check if we have additional features from Lua context
+			// This ensures we account for newly added Lua features that haven't been saved to training data yet
+			if t.ctx != nil {
+				if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
+					// If we have additional features from context, ensure they're counted in the input size
+					// We need to check if these features are already counted from training data
+					if err != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
+						trainingData[0].Features.AdditionalFeatures == nil {
+						// No training data features, add all context features
+						inputSize += len(additionalFeatures)
+
+						// Store these features in the canonical list for future use
+						var featureNames []string
+						for featureName := range additionalFeatures {
+							featureNames = append(featureNames, featureName)
+						}
+
+						if storeErr := StoreDynamicFeaturesToRedis(t.ctx, featureNames); storeErr != nil {
+							level.Warn(log.Logger).Log(
+								definitions.LogKeyMsg, fmt.Sprintf("Failed to store context features to canonical list: %v", storeErr),
 							)
+						}
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "init_model_with_additional_features_from_context",
+							"additional_features_count", len(additionalFeatures),
+							"total_input_size", inputSize,
+						)
+					} else {
+						// We have both training data features and context features
+						// Count any context features not in training data
+						var newFeatures []string
+
+						for featureName := range additionalFeatures {
+							if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
+								// This feature is in context but not in training data, add it to input size
+								inputSize++
+								newFeatures = append(newFeatures, featureName)
+
+								util.DebugModule(definitions.DbgNeural,
+									"action", "init_model_with_additional_feature_from_context",
+									"feature_name", featureName,
+									"total_input_size", inputSize,
+								)
+							}
+						}
+
+						// Store any new features in the canonical list
+						if len(newFeatures) > 0 {
+							if storeErr := StoreDynamicFeaturesToRedis(t.ctx, newFeatures); storeErr != nil {
+								level.Warn(log.Logger).Log(
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to store new context features to canonical list: %v", storeErr),
+								)
+							}
 						}
 					}
 				}
@@ -949,57 +1013,105 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 
 	// Skip dynamic neuron adjustment during tests
 	if os.Getenv("NAUTHILUS_TESTING") != "1" {
+		// First, get the canonical list of dynamic features from Redis
+		canonicalFeatures, err := GetDynamicFeaturesFromRedis(t.ctx)
+		if err != nil {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to retrieve canonical feature list from Redis: %v", err),
+			)
+
+			// Continue with empty list if there was an error
+			canonicalFeatures = []string{}
+		}
+
 		// Check if we have additional features from Lua context that weren't in the model
+		var contextFeatures []string
 		if t.ctx != nil {
 			if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
-				// Get a sample of training data to check what features were already in the model
-				trainingData, trainingErr := t.GetTrainingDataFromRedis(1)
-
-				if trainingErr != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
-					trainingData[0].Features.AdditionalFeatures == nil {
-					// No training data features, add all context features
-					inputSize += len(additionalFeatures)
-					inputSizeAdjusted = true
-
-					// Track all feature names
-					for featureName := range additionalFeatures {
-						newFeatures = append(newFeatures, featureName)
-					}
-
-					util.DebugModule(definitions.DbgNeural,
-						"action", "adjust_model_input_size_with_additional_features_from_context",
-						"additional_features_count", len(additionalFeatures),
-						"original_input_size", originalInputSize,
-						"new_input_size", inputSize,
-						"new_features", strings.Join(newFeatures, ", "),
-					)
-				} else {
-					// We have both training data features and context features
-					// Count any context features not in training data
-					for featureName := range additionalFeatures {
-						if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
-							// This feature is in context but not in training data, add it to input size
-							inputSize++
-							inputSizeAdjusted = true
-							newFeatures = append(newFeatures, featureName)
-
-							util.DebugModule(definitions.DbgNeural,
-								"action", "adjust_model_input_size_with_additional_feature_from_context",
-								"feature_name", featureName,
-								"original_input_size", originalInputSize,
-								"new_input_size", inputSize,
-							)
-						}
-					}
+				// Track all feature names from context
+				for featureName := range additionalFeatures {
+					contextFeatures = append(contextFeatures, featureName)
 				}
+			}
+		}
+
+		// Combine canonical features with context features to get a complete list
+		allFeatures := make(map[string]bool)
+
+		// Add canonical features
+		for _, feature := range canonicalFeatures {
+			allFeatures[feature] = true
+		}
+
+		// Add context features
+		for _, feature := range contextFeatures {
+			allFeatures[feature] = true
+		}
+
+		// Convert back to slice for processing
+		var combinedFeatures []string
+		for feature := range allFeatures {
+			combinedFeatures = append(combinedFeatures, feature)
+		}
+
+		// Get a sample of training data to check what features were already in the model
+		trainingData, trainingErr := t.GetTrainingDataFromRedis(1)
+
+		// Determine which features are new and need to be added to the model
+		for _, featureName := range combinedFeatures {
+			isNewFeature := false
+
+			if trainingErr != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
+				trainingData[0].Features.AdditionalFeatures == nil {
+				// No training data features, all combined features are new
+				isNewFeature = true
+			} else {
+				// Check if this feature exists in training data
+				if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
+					isNewFeature = true
+				}
+			}
+
+			// If this is a new feature, add it to the model
+			if isNewFeature {
+				inputSize++
+				inputSizeAdjusted = true
+				newFeatures = append(newFeatures, featureName)
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "adjust_model_input_size_with_feature",
+					"feature_name", featureName,
+					"original_input_size", originalInputSize,
+					"current_input_size", inputSize,
+				)
+			}
+		}
+
+		// Store the updated list of features to Redis
+		if len(newFeatures) > 0 {
+			if storeErr := StoreDynamicFeaturesToRedis(t.ctx, combinedFeatures); storeErr != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to store updated feature list to Redis: %v", storeErr),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Updated canonical feature list in Redis with %d features", len(combinedFeatures)),
+				)
 			}
 		}
 
 		// Log if we adjusted the input size
 		if inputSizeAdjusted {
+			// Get instance name for logging
+			instanceName := "unknown"
+			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+				instanceName = serverConfig.GetInstanceName()
+			}
+
 			level.Info(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Adjusted model input size from %d to %d to account for dynamic neurons: %s",
 					originalInputSize, inputSize, strings.Join(newFeatures, ", ")),
+				"instance", instanceName,
 			)
 
 			// Update the input size in the model data
@@ -1330,7 +1442,7 @@ func PublishModelUpdate(ctx context.Context) error {
 	}
 
 	// Create message with timestamp and instance name
-	message := map[string]interface{}{
+	message := map[string]any{
 		"timestamp":     time.Now().Unix(),
 		"instance_name": config.GetFile().GetServer().GetInstanceName(),
 	}
@@ -2352,11 +2464,36 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 	modelTrained = false
 	modelTrainedMutex.Unlock()
 
+	// Get instance name for logging
+	instanceName := "unknown"
+	if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+		instanceName = serverConfig.GetInstanceName()
+	}
+
+	// Try to load the canonical list of dynamic features from Redis
+	// This ensures we know about all possible features even before loading the model
+	if os.Getenv("NAUTHILUS_TESTING") != "1" {
+		canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+		if err != nil {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to retrieve canonical feature list from Redis during initialization: %v", err),
+				"instance", instanceName,
+			)
+		} else if len(canonicalFeatures) > 0 {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Loaded canonical feature list with %d features during initialization", len(canonicalFeatures)),
+				"instance", instanceName,
+				"features", strings.Join(canonicalFeatures, ", "),
+			)
+		}
+	}
+
 	// Try to load a previously trained model first
 	modelLoadedFromRedis := false
 	if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("No pre-trained model found, initializing with random weights: %v", loadErr),
+			"instance", instanceName,
 		)
 
 		// Initialize the neural network model with random weights as fallback
@@ -2447,7 +2584,7 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			return
 		case msg := <-pubsub.Channel():
 			// Parse message
-			var updateMsg map[string]interface{}
+			var updateMsg map[string]any
 			if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to parse model update message: %v", err),
@@ -2542,7 +2679,7 @@ func learningModeUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			return
 		case msg := <-pubsub.Channel():
 			// Parse message
-			var updateMsg map[string]interface{}
+			var updateMsg map[string]any
 			if err := json.Unmarshal([]byte(msg.Payload), &updateMsg); err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to parse learning mode update message: %v", err),
@@ -2874,7 +3011,7 @@ func PublishLearningModeUpdate(ctx context.Context, enabled bool) error {
 	}
 
 	// Create message with timestamp, instance name, and learning mode
-	message := map[string]interface{}{
+	message := map[string]any{
 		"timestamp":     time.Now().Unix(),
 		"instance_name": config.GetFile().GetServer().GetInstanceName(),
 		"learning_mode": enabled,
@@ -2966,6 +3103,67 @@ func getModelUpdateChannel() string {
 // GetAdditionalFeaturesRedisKey returns the Redis key for additional features
 func GetAdditionalFeaturesRedisKey() string {
 	return getMLRedisKeyPrefix() + "additional_features"
+}
+
+// GetFeatureListRedisKey returns the Redis key for the canonical list of dynamic features
+func GetFeatureListRedisKey() string {
+	return getMLRedisKeyPrefix() + "dynamic_features:list"
+}
+
+// StoreDynamicFeaturesToRedis stores the list of dynamic features to Redis
+// This ensures all instances have access to the same canonical list of features
+func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetWriteHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for storing dynamic features")
+	}
+
+	// Store the features as a set in Redis
+	key := GetFeatureListRedisKey()
+
+	// Use SADD to add all features to the set
+	if len(features) > 0 {
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		args := make([]any, len(features))
+		for i, feature := range features {
+			args[i] = feature
+		}
+
+		_, err := redisClient.SAdd(ctx, key, args...).Result()
+		if err != nil {
+			return fmt.Errorf("failed to store dynamic features to Redis: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetDynamicFeaturesFromRedis retrieves the canonical list of dynamic features from Redis
+func GetDynamicFeaturesFromRedis(ctx context.Context) ([]string, error) {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetReadHandle()
+	if redisClient == nil {
+		return nil, fmt.Errorf("failed to get Redis client for retrieving dynamic features")
+	}
+
+	// Get the features from Redis
+	key := GetFeatureListRedisKey()
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	features, err := redisClient.SMembers(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// No features stored yet, return empty list
+			return []string{}, nil
+		}
+
+		return nil, fmt.Errorf("failed to retrieve dynamic features from Redis: %w", err)
+	}
+
+	return features, nil
 }
 
 // getModelTrainedRedisKey returns the Redis key for the model trained flag
@@ -3394,22 +3592,64 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 
 		// Skip dynamic neuron adjustment during tests
 		if os.Getenv("NAUTHILUS_TESTING") != "1" {
-			// Check if we have additional features from Lua context
-			if additionalFeatures, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
-				// Add the number of additional features to the input size
-				inputSize += len(additionalFeatures)
+			// First, try to get the canonical list of features from Redis
+			canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+			if err == nil && len(canonicalFeatures) > 0 {
+				// Add the number of canonical features to the input size
+				inputSize += len(canonicalFeatures)
+
+				// Get instance name for logging
+				instanceName := "unknown"
+				if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+					instanceName = serverConfig.GetInstanceName()
+				}
+
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Creating default model with %d input neurons (%d standard + %d dynamic) based on canonical feature list",
+						inputSize, 6, len(canonicalFeatures)),
+					"instance", instanceName,
+					"features", strings.Join(canonicalFeatures, ", "),
+					definitions.LogKeyGUID, guid,
+				)
 
 				util.DebugModule(definitions.DbgNeural,
-					"action", "adjust_default_model_input_size",
-					"additional_features_count", len(additionalFeatures),
+					"action", "create_default_model_with_canonical_features",
+					"canonical_features_count", len(canonicalFeatures),
 					"total_input_size", inputSize,
 					definitions.LogKeyGUID, guid,
 				)
+			} else {
+				// If we couldn't get the canonical list, fall back to checking context
+				// Check if we have additional features from Lua context
+				if additionalFeatures, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
+					// Add the number of additional features to the input size
+					inputSize += len(additionalFeatures)
 
-				level.Info(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Creating default model with %d input neurons to account for dynamic neurons", inputSize),
-					definitions.LogKeyGUID, guid,
-				)
+					// Store these features in the canonical list for future use
+					var featureNames []string
+					for featureName := range additionalFeatures {
+						featureNames = append(featureNames, featureName)
+					}
+
+					if storeErr := StoreDynamicFeaturesToRedis(ctx, featureNames); storeErr != nil {
+						level.Warn(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to store context features to canonical list: %v", storeErr),
+							definitions.LogKeyGUID, guid,
+						)
+					}
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "adjust_default_model_input_size",
+						"additional_features_count", len(additionalFeatures),
+						"total_input_size", inputSize,
+						definitions.LogKeyGUID, guid,
+					)
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Creating default model with %d input neurons to account for dynamic neurons", inputSize),
+						definitions.LogKeyGUID, guid,
+					)
+				}
 			}
 		} else {
 			util.DebugModule(definitions.DbgNeural,
