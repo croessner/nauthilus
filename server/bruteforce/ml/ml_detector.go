@@ -1449,8 +1449,9 @@ func PublishModelUpdate(ctx context.Context) error {
 	}
 
 	// Create message with timestamp and instance name
+	timestamp := time.Now().Unix()
 	message := map[string]any{
-		"timestamp":     time.Now().Unix(),
+		"timestamp":     timestamp,
 		"instance_name": config.GetFile().GetServer().GetInstanceName(),
 	}
 
@@ -1465,6 +1466,37 @@ func PublishModelUpdate(ctx context.Context) error {
 	err = redisClient.Publish(ctx, channel, jsonBytes).Err()
 	if err != nil {
 		return fmt.Errorf("failed to publish model update message: %w", err)
+	}
+
+	// Store the notification in Redis for persistence
+	// This ensures instances that are down when the notification is published
+	// can still retrieve it when they come back up
+	storeKey := getModelUpdateStoreKey()
+	err = redisClient.ZAdd(ctx, storeKey, redis.Z{
+		Score:  float64(timestamp),
+		Member: string(jsonBytes),
+	}).Err()
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to store model update notification in Redis: %v", err),
+		)
+		// Continue despite error - the pub/sub notification will still work for online instances
+	} else {
+		// Trim the sorted set to keep only the last 10 notifications
+		// This prevents the set from growing indefinitely
+		err = redisClient.ZRemRangeByRank(ctx, storeKey, 0, -11).Err()
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to trim model update notification store: %v", err),
+			)
+			// Continue despite error - this is just housekeeping
+		}
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Stored model update notification in Redis for persistence",
+			"store_key", storeKey,
+			"timestamp", time.Unix(timestamp, 0).Format(time.RFC3339),
+		)
 	}
 
 	level.Info(log.Logger).Log(
@@ -1631,6 +1663,9 @@ func GetLastTrainingTime(ctx context.Context) (time.Time, error) {
 //     if another instance recently completed training
 //  3. Different training triggers (scheduled vs. feedback-triggered) can
 //     coordinate with each other to prevent unnecessary training
+//
+// This function also increments a counter to track the number of training cycles
+// in a short period of time, which is used to detect and break potential training loops.
 func SetLastTrainingTime(ctx context.Context) error {
 	// Get Redis client
 	redisClient := rediscli.GetClient().GetWriteHandle()
@@ -1644,6 +1679,44 @@ func SetLastTrainingTime(ctx context.Context) error {
 
 	if err := redisClient.Set(ctx, key, strconv.FormatInt(timestamp, 10), 0).Err(); err != nil {
 		return fmt.Errorf("failed to set last training time: %w", err)
+	}
+
+	// Increment the training counter and set expiration to 24 hours
+	// This counter is used to detect training loops
+	counterKey := getMLRedisKeyPrefix() + "training:counter"
+	count, err := redisClient.Incr(ctx, counterKey).Result()
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to increment training counter: %v", err),
+		)
+		// Continue despite error - this is just for loop detection
+	} else {
+		// Set expiration on the counter if it doesn't exist
+		redisClient.Expire(ctx, counterKey, 24*time.Hour)
+
+		// If there have been too many training cycles in a short period, log a warning
+		if count > 5 {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "Potential training loop detected - too many training cycles in a short period",
+				"count", count,
+				"period", "24 hours",
+			)
+
+			// Force a longer cooldown by setting the timestamp further in the future
+			// This effectively creates a 24-hour cooldown from now
+			futureTimestamp := time.Now().Add(24 * time.Hour).Unix()
+			if err := redisClient.Set(ctx, key, strconv.FormatInt(futureTimestamp, 10), 0).Err(); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to set extended cooldown period: %v", err),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Enforced extended cooldown period to break potential training loop",
+					"cooldown", "24 hours",
+					"timestamp", time.Unix(futureTimestamp, 0).Format(time.RFC3339),
+				)
+			}
+		}
 	}
 
 	level.Info(log.Logger).Log(
@@ -2707,6 +2780,31 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 				}
 			}
 
+			// Check if the update timestamp is newer than our last training time
+			// This prevents loading older models and potentially triggering unnecessary retraining
+			if timestamp, ok := updateMsg["timestamp"].(float64); ok {
+				updateTime := time.Unix(int64(timestamp), 0)
+				lastTrainingTime, err := GetLastTrainingTime(ctx)
+				if err == nil && !lastTrainingTime.IsZero() {
+					// If our last training is more recent than the update, skip it
+					if lastTrainingTime.After(updateTime) {
+						util.DebugModule(definitions.DbgNeural,
+							"action", "skip_older_model_update",
+							"update_time", updateTime.Format(time.RFC3339),
+							"last_training_time", lastTrainingTime.Format(time.RFC3339),
+						)
+
+						level.Info(log.Logger).Log(
+							definitions.LogKeyMsg, "Skipping model update - our model is more recent",
+							"update_time", updateTime.Format(time.RFC3339),
+							"our_time", lastTrainingTime.Format(time.RFC3339),
+						)
+
+						continue
+					}
+				}
+			}
+
 			level.Info(log.Logger).Log(
 				definitions.LogKeyMsg, "Received model update notification, reloading model",
 				"from_instance", updateMsg["instance_name"],
@@ -2978,9 +3076,9 @@ func performScheduledTraining(ctx context.Context) {
 		)
 		return
 	} else if !lastTrainingTime.IsZero() {
-		// If last training was less than 6 hours ago, skip this training cycle
+		// If last training was less than 12 hours ago, skip this training cycle
 		// This prevents training too frequently, especially during rolling updates
-		minInterval := 6 * time.Hour
+		minInterval := 12 * time.Hour
 		timeSinceLastTraining := time.Since(lastTrainingTime)
 
 		if timeSinceLastTraining < minInterval {
@@ -3125,6 +3223,11 @@ func InitMLSystem(ctx context.Context) error {
 		// Note: initializeModelAndTrainedFlag now calls ResetModelToCanonicalFeatures internally
 		// before loading the model, so we don't need to call it here
 		initializeModelAndTrainedFlag(ctx, trainer)
+
+		// Check for missed model update notifications
+		// This ensures that instances that were down when notifications were published
+		// can still process them when they come back up
+		checkForMissedModelUpdates(ctx, trainer)
 
 		// Start scheduled training
 		stopChan := make(chan struct{})
@@ -3326,6 +3429,246 @@ func getLearningModeUpdateChannel() string {
 // This channel is shared across all instances to ensure model updates are propagated to all instances
 func getModelUpdateChannel() string {
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:model:updates"
+}
+
+// getModelUpdateStoreKey returns a common Redis key for storing model update notifications
+// This key is shared across all instances to ensure all instances can access the same notifications
+// The notifications are stored in a sorted set with the timestamp as the score
+func getModelUpdateStoreKey() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:model:updates:store"
+}
+
+// checkForMissedModelUpdates checks for model update notifications that were published
+// while the instance was down and processes them.
+// This function is called during initialization to ensure that instances that were down
+// when notifications were published can still process them when they come back up.
+func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetReadHandle()
+	if redisClient == nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to get Redis client for checking missed model updates",
+		)
+		return
+	}
+
+	// Get the last training time
+	lastTrainingTime, err := GetLastTrainingTime(ctx)
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time during missed update check: %v", err),
+		)
+		// Continue with a zero time, which will process all notifications
+		lastTrainingTime = time.Time{}
+	}
+
+	// Get the key for the notification store
+	storeKey := getModelUpdateStoreKey()
+
+	// Get all notifications from the store that are newer than our last training time
+	// If lastTrainingTime is zero, this will get all notifications
+	var minScore string
+	if lastTrainingTime.IsZero() {
+		minScore = "-inf"
+	} else {
+		minScore = strconv.FormatInt(lastTrainingTime.Unix(), 10)
+	}
+
+	// Get notifications with scores greater than our last training time
+	notifications, err := redisClient.ZRangeByScore(ctx, storeKey, &redis.ZRangeBy{
+		Min: minScore,
+		Max: "+inf",
+	}).Result()
+
+	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to get missed model update notifications: %v", err),
+		)
+		return
+	}
+
+	if len(notifications) == 0 {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "No missed model update notifications found",
+		)
+		return
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Found %d missed model update notifications", len(notifications)),
+	)
+
+	// Process each notification
+	for _, notificationJSON := range notifications {
+		// Parse the notification
+		var notification map[string]any
+		if err := json.Unmarshal([]byte(notificationJSON), &notification); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to parse missed model update notification: %v", err),
+				"notification", notificationJSON,
+			)
+			continue
+		}
+
+		// Skip our own notifications
+		if instanceName, ok := notification["instance_name"].(string); ok {
+			if instanceName == config.GetFile().GetServer().GetInstanceName() {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "skip_own_missed_model_update",
+					"instance", instanceName,
+				)
+				continue
+			}
+		}
+
+		// Check if the update timestamp is newer than our last training time
+		if timestamp, ok := notification["timestamp"].(float64); ok {
+			updateTime := time.Unix(int64(timestamp), 0)
+			if !lastTrainingTime.IsZero() && lastTrainingTime.After(updateTime) {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "skip_older_missed_model_update",
+					"update_time", updateTime.Format(time.RFC3339),
+					"last_training_time", lastTrainingTime.Format(time.RFC3339),
+				)
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Skipping missed model update - our model is more recent",
+					"update_time", updateTime.Format(time.RFC3339),
+					"our_time", lastTrainingTime.Format(time.RFC3339),
+				)
+				continue
+			}
+		}
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Processing missed model update notification",
+			"from_instance", notification["instance_name"],
+		)
+
+		// Process the notification by reloading the model
+		// This is similar to what modelUpdateSubscriber does
+		if trainer != nil {
+			// Get the canonical list of features from Redis
+			canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+			if err != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to retrieve canonical feature list from Redis during missed update processing: %v", err),
+				)
+			} else if len(canonicalFeatures) > 0 {
+				// Get instance name for logging
+				instanceName := "unknown"
+				if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+					instanceName = serverConfig.GetInstanceName()
+				}
+
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Loaded canonical feature list with %d features during missed update processing", len(canonicalFeatures)),
+					"instance", instanceName,
+					"features", strings.Join(canonicalFeatures, ", "),
+				)
+
+				// Get existing additional features from context
+				var existingFeatures map[string]any
+				if exists, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
+					existingFeatures = exists
+				} else {
+					existingFeatures = make(map[string]any)
+				}
+
+				// Create a map of canonical features for quick lookup
+				canonicalMap := make(map[string]bool)
+				for _, feature := range canonicalFeatures {
+					canonicalMap[feature] = true
+				}
+
+				// Add any missing canonical features to the context and remove any that are no longer in the canonical list
+				var addedFeatures []string
+				var removedFeatures []string
+
+				// First, identify features to remove (those in existingFeatures but not in canonicalMap)
+				for feature := range existingFeatures {
+					if !canonicalMap[feature] {
+						delete(existingFeatures, feature)
+						removedFeatures = append(removedFeatures, feature)
+					}
+				}
+
+				// Then, add missing features (those in canonicalMap but not in existingFeatures)
+				for _, feature := range canonicalFeatures {
+					if _, exists := existingFeatures[feature]; !exists {
+						existingFeatures[feature] = 0.0
+						addedFeatures = append(addedFeatures, feature)
+					}
+				}
+
+				// Store the updated features in the context
+				ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
+
+				// Log detailed information about added features
+				if len(addedFeatures) > 0 {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Added %d missing features from canonical list during missed update processing", len(addedFeatures)),
+						"instance", instanceName,
+						"features", strings.Join(addedFeatures, ", "),
+					)
+				}
+
+				// Log detailed information about removed features
+				if len(removedFeatures) > 0 {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Removed %d features that are no longer in canonical list during missed update processing", len(removedFeatures)),
+						"instance", instanceName,
+						"features", strings.Join(removedFeatures, ", "),
+					)
+				}
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "update_canonical_features_during_missed_update_processing",
+					"features_added", len(addedFeatures),
+					"features_removed", len(removedFeatures),
+					"total_features", len(existingFeatures),
+				)
+			}
+
+			// Ensure the trainer has the current context before loading the model
+			trainer = trainer.WithContext(ctx)
+
+			// Reset the model to use the canonical features from Redis
+			if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features during missed update processing: %v", resetErr),
+				)
+				// Continue despite error - we'll still try to load the model
+			}
+
+			// Load the model from Redis
+			if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to load model from Redis during missed update processing: %v", loadErr),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Successfully loaded model from Redis during missed update processing",
+				)
+
+				// Update the last training time to prevent immediate retraining
+				// This is crucial to prevent a training loop between instances
+				if err := SetLastTrainingTime(ctx); err != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to update last training time after missed update processing: %v", err),
+					)
+				} else {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Updated last training time after missed update processing to prevent retraining loop",
+					)
+				}
+
+				// Update the global trainer with the updated trainer
+				globalTrainerMutex.Lock()
+				globalTrainer = trainer
+				globalTrainerMutex.Unlock()
+			}
+		}
+	}
 }
 
 // GetAdditionalFeaturesRedisKey returns the Redis key for additional features
@@ -5222,10 +5565,10 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 			)
 			return
 		} else if !lastTrainingTime.IsZero() {
-			// If last training was less than 1 hour ago, skip this training
+			// If last training was less than 3 hours ago, skip this training
 			// For feedback-triggered training, we use a shorter interval than scheduled training
-			// because feedback is more valuable and time-sensitive
-			minInterval := 1 * time.Hour
+			// because feedback is more valuable and time-sensitive, but still need to prevent loops
+			minInterval := 3 * time.Hour
 			timeSinceLastTraining := time.Since(lastTrainingTime)
 
 			if timeSinceLastTraining < minInterval {
