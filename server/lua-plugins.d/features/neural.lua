@@ -133,7 +133,7 @@ function nauthilus_call_neural_network(request)
         -- Add country code as a feature for non-authenticated users
         -- Using the actual country code retrieved from the GeoIP service
         local additional_features_one_hot = {
-            identifier = identifier,
+            -- identifier = identifier, -- Commented out: User agent or client ID is too general and can vary widely even for legitimate users
         }
 
         local additional_features_embedding = {
