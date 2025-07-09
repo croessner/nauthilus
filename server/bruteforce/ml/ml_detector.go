@@ -2301,6 +2301,9 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			globalTrainerMutex.RUnlock()
 
 			if localTrainer != nil {
+				// Ensure the trainer has the current context before loading the model
+				localTrainer = localTrainer.WithContext(ctx)
+
 				if loadErr := localTrainer.LoadModelFromRedis(); loadErr != nil {
 					level.Error(log.Logger).Log(
 						definitions.LogKeyMsg, fmt.Sprintf("Failed to reload model after update notification: %v", loadErr),
@@ -2316,6 +2319,11 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 							definitions.LogKeyMsg, fmt.Sprintf("Failed to load model trained flags from Redis after update notification: %v", err),
 						)
 					}
+
+					// Update the global trainer with the updated trainer
+					globalTrainerMutex.Lock()
+					globalTrainer = localTrainer
+					globalTrainerMutex.Unlock()
 				}
 			}
 		}
@@ -3202,8 +3210,29 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 			definitions.LogKeyGUID, guid,
 		)
 
-		// Create a default model with 6 input neurons (standard features)
-		model = NewNeuralNetwork(6, 1)
+		// Default input size is 6 for the standard features
+		inputSize := 6
+
+		// Check if we have additional features from Lua context
+		if additionalFeatures, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
+			// Add the number of additional features to the input size
+			inputSize += len(additionalFeatures)
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "adjust_default_model_input_size",
+				"additional_features_count", len(additionalFeatures),
+				"total_input_size", inputSize,
+				definitions.LogKeyGUID, guid,
+			)
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Creating default model with %d input neurons to account for dynamic neurons", inputSize),
+				definitions.LogKeyGUID, guid,
+			)
+		}
+
+		// Create a default model with the adjusted input size
+		model = NewNeuralNetwork(inputSize, 1)
 	} else {
 		// Get the model from the global trainer
 		globalTrainerMutex.RLock()
