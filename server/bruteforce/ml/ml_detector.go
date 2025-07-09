@@ -2817,6 +2817,18 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 						)
 					}
 
+					// Update the last training time to prevent immediate retraining
+					// This is crucial to prevent a training loop between instances
+					if err := SetLastTrainingTime(ctx); err != nil {
+						level.Error(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Failed to update last training time after model update: %v", err),
+						)
+					} else {
+						level.Info(log.Logger).Log(
+							definitions.LogKeyMsg, "Updated last training time after model update to prevent retraining loop",
+						)
+					}
+
 					// Update the global trainer with the updated trainer
 					globalTrainerMutex.Lock()
 					globalTrainer = localTrainer
