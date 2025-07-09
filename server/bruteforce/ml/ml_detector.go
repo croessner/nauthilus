@@ -2774,6 +2774,18 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 				// Ensure the trainer has the current context before loading the model
 				localTrainer = localTrainer.WithContext(ctx)
 
+				// Reset the model to use the canonical features from Redis
+				if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features during model update: %v", resetErr),
+					)
+					// Continue despite error - we'll still try to load the model
+				} else {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Successfully reset model to canonical features during model update",
+					)
+				}
+
 				if loadErr := localTrainer.LoadModelFromRedis(); loadErr != nil {
 					level.Error(log.Logger).Log(
 						definitions.LogKeyMsg, fmt.Sprintf("Failed to reload model after update notification: %v", loadErr),
@@ -3049,12 +3061,30 @@ func InitMLSystem(ctx context.Context) error {
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
+		// Get the canonical list of features from Redis
+		canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+		if err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to get canonical features from Redis during initialization: %v", err),
+			)
+			// Continue despite error - we'll still try to initialize the model
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Loaded %d canonical features during ML system initialization", len(canonicalFeatures)),
+				"features", strings.Join(canonicalFeatures, ", "),
+			)
+		}
+
 		// Reset the model to use only the features in the canonical list
 		if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features: %v", resetErr),
 			)
 			// Continue despite error - we'll still try to initialize the model
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Successfully reset model to canonical features during initialization",
+			)
 		}
 
 		// Initialize model and trained flag
@@ -3652,6 +3682,29 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 		encodingTypes = exists
 	}
 
+	// Store feature names in the canonical list in Redis
+	if features != nil && len(features) > 0 {
+		// Extract feature names
+		featureNames := make([]string, 0, len(features))
+		for key := range features {
+			featureNames = append(featureNames, key)
+		}
+
+		// Store feature names in Redis
+		if err := StoreDynamicFeaturesToRedis(d.ctx, featureNames); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, d.guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to store dynamic features to Redis: %v", err),
+			)
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyGUID, d.guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Stored %d dynamic features to canonical list", len(featureNames)),
+				"features", strings.Join(featureNames, ", "),
+			)
+		}
+	}
+
 	// Check if we need to reinitialize the model due to new additional features
 	if d.model != nil && features != nil && len(features) > 0 {
 		// Calculate the expected input size based on standard features (6) plus additional features
@@ -3848,18 +3901,29 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 								definitions.LogKeyMsg, fmt.Sprintf("Failed to train model after reinitializing for additional features: %v", err),
 							)
 						} else {
-							// Save the trained model to both Redis keys
-							if err := localTrainer.SaveModelToRedis(); err != nil {
+							// Reset the model to use the canonical features from Redis
+							if err := ResetModelToCanonicalFeatures(context.Background()); err != nil {
 								level.Error(log.Logger).Log(
-									definitions.LogKeyMsg, fmt.Sprintf("Failed to save reinitialized model to Redis: %v", err),
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features after training: %v", err),
 								)
-							}
+							} else {
+								level.Info(log.Logger).Log(
+									definitions.LogKeyMsg, "Successfully reset model to canonical features after training",
+								)
 
-							// Also save to the additional features key
-							if err := localTrainer.SaveAdditionalFeaturesToRedis(); err != nil {
-								level.Error(log.Logger).Log(
-									definitions.LogKeyMsg, fmt.Sprintf("Failed to save additional features model to Redis: %v", err),
-								)
+								// Save the trained model to both Redis keys
+								if err := localTrainer.SaveModelToRedis(); err != nil {
+									level.Error(log.Logger).Log(
+										definitions.LogKeyMsg, fmt.Sprintf("Failed to save reinitialized model to Redis: %v", err),
+									)
+								}
+
+								// Also save to the additional features key
+								if err := localTrainer.SaveAdditionalFeaturesToRedis(); err != nil {
+									level.Error(log.Logger).Log(
+										definitions.LogKeyMsg, fmt.Sprintf("Failed to save additional features model to Redis: %v", err),
+									)
+								}
 							}
 						}
 					}()
