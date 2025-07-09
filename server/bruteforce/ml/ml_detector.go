@@ -932,6 +932,9 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	originalInputSize := modelData.InputSize
 	inputSize := originalInputSize
 
+	// Track which features we need to add
+	var newFeatures []string
+
 	// Check if we have additional features from Lua context that weren't in the model
 	if t.ctx != nil {
 		if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
@@ -943,11 +946,17 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 				// No training data features, add all context features
 				inputSize += len(additionalFeatures)
 
+				// Track all feature names
+				for featureName := range additionalFeatures {
+					newFeatures = append(newFeatures, featureName)
+				}
+
 				util.DebugModule(definitions.DbgNeural,
 					"action", "adjust_model_input_size_with_additional_features_from_context",
 					"additional_features_count", len(additionalFeatures),
 					"original_input_size", originalInputSize,
 					"new_input_size", inputSize,
+					"new_features", strings.Join(newFeatures, ", "),
 				)
 			} else {
 				// We have both training data features and context features
@@ -956,6 +965,7 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 					if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
 						// This feature is in context but not in training data, add it to input size
 						inputSize++
+						newFeatures = append(newFeatures, featureName)
 
 						util.DebugModule(definitions.DbgNeural,
 							"action", "adjust_model_input_size_with_additional_feature_from_context",
@@ -970,9 +980,11 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	}
 
 	// Log if we adjusted the input size
-	if inputSize != originalInputSize {
+	inputSizeAdjusted := inputSize != originalInputSize
+	if inputSizeAdjusted {
 		level.Info(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Adjusted model input size from %d to %d to account for dynamic neurons", originalInputSize, inputSize),
+			definitions.LogKeyMsg, fmt.Sprintf("Adjusted model input size from %d to %d to account for dynamic neurons: %s",
+				originalInputSize, inputSize, strings.Join(newFeatures, ", ")),
 		)
 
 		// Update the input size in the model data
@@ -990,6 +1002,88 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		"output_bias_count", len(modelData.OutputBias),
 		"activation_function", activationFunction,
 	)
+
+	// Check if we need to resize the weights array due to input size adjustment
+	expectedWeightsSize := modelData.InputSize*modelData.HiddenSize + modelData.HiddenSize*modelData.OutputSize
+	originalWeightsSize := len(modelData.Weights)
+
+	if originalWeightsSize != expectedWeightsSize {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Resizing weights array from %d to %d elements due to input size adjustment",
+				originalWeightsSize, expectedWeightsSize),
+		)
+
+		// Create a new weights array with the correct size
+		newWeights := make([]float64, expectedWeightsSize)
+
+		// If the input size increased, we need to preserve the existing weights and initialize the new ones
+		if originalInputSize < modelData.InputSize {
+			// Calculate how many new input neurons we have
+			newInputNeurons := modelData.InputSize - originalInputSize
+
+			// Copy weights for existing input-to-hidden connections
+			// For each hidden neuron, copy its connections from the original inputs
+			for h := 0; h < modelData.HiddenSize; h++ {
+				for i := 0; i < originalInputSize; i++ {
+					oldIndex := h*originalInputSize + i
+					newIndex := h*modelData.InputSize + i
+
+					if oldIndex < originalWeightsSize {
+						newWeights[newIndex] = modelData.Weights[oldIndex]
+					}
+				}
+
+				// Initialize weights for new input neurons with small random values
+				for i := 0; i < newInputNeurons; i++ {
+					newIndex := h*modelData.InputSize + originalInputSize + i
+					newWeights[newIndex] = (rand.Float64() - 0.5) * 0.1
+				}
+			}
+
+			// Copy weights for hidden-to-output connections
+			// These connections start after all input-to-hidden connections
+			hiddenToOutputStart := modelData.InputSize * modelData.HiddenSize
+			oldHiddenToOutputStart := originalInputSize * modelData.HiddenSize
+
+			for o := 0; o < modelData.OutputSize; o++ {
+				for h := 0; h < modelData.HiddenSize; h++ {
+					oldIndex := oldHiddenToOutputStart + o*modelData.HiddenSize + h
+					newIndex := hiddenToOutputStart + o*modelData.HiddenSize + h
+
+					if oldIndex < originalWeightsSize {
+						newWeights[newIndex] = modelData.Weights[oldIndex]
+					}
+				}
+			}
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "resize_weights_array",
+				"reason", "input_size_increased",
+				"original_input_size", originalInputSize,
+				"new_input_size", modelData.InputSize,
+				"new_input_neurons", newInputNeurons,
+				"original_weights_size", originalWeightsSize,
+				"new_weights_size", expectedWeightsSize,
+			)
+		} else {
+			// If the input size decreased (unlikely but possible), initialize all weights
+			for i := range newWeights {
+				newWeights[i] = (rand.Float64() - 0.5) * 0.1
+			}
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "resize_weights_array",
+				"reason", "input_size_changed_unexpectedly",
+				"original_input_size", originalInputSize,
+				"new_input_size", modelData.InputSize,
+				"original_weights_size", originalWeightsSize,
+				"new_weights_size", expectedWeightsSize,
+			)
+		}
+
+		// Update the weights in the model data
+		modelData.Weights = newWeights
+	}
 
 	// Create a new neural network with the loaded parameters
 	nn := &NeuralNetwork{
@@ -1040,6 +1134,53 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 
 	// Record network structure metrics
 	GetMLMetrics().RecordNetworkStructure(nn.inputSize, nn.hiddenSize, nn.outputSize)
+
+	// If we adjusted the input size or resized the weights array, save the adjusted model back to Redis
+	// and publish an update notification to other instances
+	if inputSizeAdjusted || originalWeightsSize != expectedWeightsSize {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Saving adjusted model back to Redis and notifying other instances",
+		)
+
+		// Save the adjusted model back to Redis
+		go func() {
+			// Create a new context with a timeout for the save operation
+			saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Create a temporary trainer with the adjusted model
+			tempTrainer := &MLTrainer{
+				ctx:                 saveCtx,
+				model:               nn,
+				oneHotEncodings:     t.oneHotEncodings,
+				oneHotSizes:         t.oneHotSizes,
+				featureEncodingType: t.featureEncodingType,
+				embeddingSize:       t.embeddingSize,
+			}
+
+			// Save the adjusted model to Redis
+			if err := tempTrainer.SaveModelToRedisWithKey(key); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to save adjusted model to Redis: %v", err),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Successfully saved adjusted model to Redis",
+				)
+
+				// Publish an update notification to other instances
+				if err := PublishModelUpdate(saveCtx); err != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification: %v", err),
+					)
+				} else {
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, "Successfully published model update notification",
+					)
+				}
+			}
+		}()
+	}
 
 	// Try to load encodings configuration if it exists
 	encodingsKey := key + "_encodings"
@@ -3258,11 +3399,44 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		featureEncodingTypes: encodingTypes,
 	}
 
-	util.DebugModule(definitions.DbgNeural,
-		"action", "get_detector_complete",
-		definitions.LogKeyGUID, guid,
-		"model_nil", detector.model == nil,
-	)
+	// Log detailed information about the model for diagnostic purposes
+	if model != nil {
+		// Get instance name for logging
+		instanceName := "unknown"
+		if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+			instanceName = serverConfig.GetInstanceName()
+		}
+
+		// Count additional features from context
+		additionalFeaturesCount := 0
+		if additionalFeatures, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
+			additionalFeaturesCount = len(additionalFeatures)
+		}
+
+		// Log model information
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("ML detector using model with %d input neurons (%d standard + %d dynamic)",
+				model.inputSize, 6, model.inputSize-6),
+			"instance", instanceName,
+			"additional_features_in_context", additionalFeaturesCount,
+		)
+	}
+
+	// Debug logging with model input size if available
+	if detector.model != nil {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "get_detector_complete",
+			definitions.LogKeyGUID, guid,
+			"model_nil", false,
+			"model_input_size", detector.model.inputSize,
+		)
+	} else {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "get_detector_complete",
+			definitions.LogKeyGUID, guid,
+			"model_nil", true,
+		)
+	}
 
 	return detector
 }
