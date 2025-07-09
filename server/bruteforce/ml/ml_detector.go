@@ -2634,6 +2634,20 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 		}
 	}
 
+	// Update the last training time during initialization
+	// This prevents immediate retraining after system restart
+	if modelLoadedFromRedis {
+		if err := SetLastTrainingTime(ctx); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to update last training time during initialization: %v", err),
+			)
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Updated last training time during initialization to prevent immediate retraining",
+			)
+		}
+	}
+
 	return modelLoadedFromRedis
 }
 
@@ -2957,7 +2971,12 @@ func performScheduledTraining(ctx context.Context) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time: %v", err),
 		)
-		// Continue with training if we can't determine the last training time
+		// Skip training if we can't determine the last training time
+		// This prevents training loops during system restarts or Redis connectivity issues
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Skipping scheduled training - cannot determine last training time",
+		)
+		return
 	} else if !lastTrainingTime.IsZero() {
 		// If last training was less than 6 hours ago, skip this training cycle
 		// This prevents training too frequently, especially during rolling updates
@@ -5196,7 +5215,12 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 			level.Error(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time: %v", err),
 			)
-			// Continue with training if we can't determine the last training time
+			// Skip training if we can't determine the last training time
+			// This prevents training loops during system restarts or Redis connectivity issues
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Skipping feedback-triggered training - cannot determine last training time",
+			)
+			return
 		} else if !lastTrainingTime.IsZero() {
 			// If last training was less than 1 hour ago, skip this training
 			// For feedback-triggered training, we use a shorter interval than scheduled training
