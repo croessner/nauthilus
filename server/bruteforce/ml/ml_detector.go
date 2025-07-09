@@ -2560,6 +2560,21 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 		}
 	}
 
+	// Reset the model to use the canonical features from Redis before loading
+	// This ensures that the model will have the correct input size for the canonical features
+	if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features before loading: %v", resetErr),
+			"instance", instanceName,
+		)
+		// Continue despite error - we'll still try to load the model
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Successfully reset model to canonical features before loading",
+			"instance", instanceName,
+		)
+	}
+
 	// Try to load a previously trained model first
 	modelLoadedFromRedis := false
 	if loadErr := trainer.LoadModelFromRedis(); loadErr != nil {
@@ -3075,19 +3090,9 @@ func InitMLSystem(ctx context.Context) error {
 			)
 		}
 
-		// Reset the model to use only the features in the canonical list
-		if resetErr := ResetModelToCanonicalFeatures(ctx); resetErr != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model to canonical features: %v", resetErr),
-			)
-			// Continue despite error - we'll still try to initialize the model
-		} else {
-			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, "Successfully reset model to canonical features during initialization",
-			)
-		}
-
 		// Initialize model and trained flag
+		// Note: initializeModelAndTrainedFlag now calls ResetModelToCanonicalFeatures internally
+		// before loading the model, so we don't need to call it here
 		initializeModelAndTrainedFlag(ctx, trainer)
 
 		// Start scheduled training
