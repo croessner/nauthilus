@@ -2501,8 +2501,25 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 				existingFeatures = make(map[string]any)
 			}
 
-			// Add any missing canonical features to the context
+			// Create a map of canonical features for quick lookup
+			canonicalMap := make(map[string]bool)
+			for _, feature := range canonicalFeatures {
+				canonicalMap[feature] = true
+			}
+
+			// Add any missing canonical features to the context and remove any that are no longer in the canonical list
 			var addedFeatures []string
+			var removedFeatures []string
+
+			// First, identify features to remove (those in existingFeatures but not in canonicalMap)
+			for feature := range existingFeatures {
+				if !canonicalMap[feature] {
+					delete(existingFeatures, feature)
+					removedFeatures = append(removedFeatures, feature)
+				}
+			}
+
+			// Then, add missing features (those in canonicalMap but not in existingFeatures)
 			for _, feature := range canonicalFeatures {
 				if _, exists := existingFeatures[feature]; !exists {
 					existingFeatures[feature] = 0.0
@@ -2510,7 +2527,7 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 				}
 			}
 
-			// Store the features in the context
+			// Store the updated features in the context
 			ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
 
 			// Log detailed information about added features
@@ -2520,14 +2537,23 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 					"instance", instanceName,
 					"features", strings.Join(addedFeatures, ", "),
 				)
+			}
 
-				util.DebugModule(definitions.DbgNeural,
-					"action", "add_canonical_features_during_initialization",
-					"features_added", len(addedFeatures),
-					"features", strings.Join(addedFeatures, ", "),
-					"total_features", len(existingFeatures),
+			// Log detailed information about removed features
+			if len(removedFeatures) > 0 {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Removed %d features that are no longer in canonical list during initialization", len(removedFeatures)),
+					"instance", instanceName,
+					"features", strings.Join(removedFeatures, ", "),
 				)
 			}
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "update_canonical_features_during_initialization",
+				"features_added", len(addedFeatures),
+				"features_removed", len(removedFeatures),
+				"total_features", len(existingFeatures),
+			)
 
 			// Update the trainer's context
 			trainer.WithContext(ctx)
@@ -2690,8 +2716,25 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 						existingFeatures = make(map[string]any)
 					}
 
-					// Add any missing canonical features to the context
+					// Create a map of canonical features for quick lookup
+					canonicalMap := make(map[string]bool)
+					for _, feature := range canonicalFeatures {
+						canonicalMap[feature] = true
+					}
+
+					// Add any missing canonical features to the context and remove any that are no longer in the canonical list
 					var addedFeatures []string
+					var removedFeatures []string
+
+					// First, identify features to remove (those in existingFeatures but not in canonicalMap)
+					for feature := range existingFeatures {
+						if !canonicalMap[feature] {
+							delete(existingFeatures, feature)
+							removedFeatures = append(removedFeatures, feature)
+						}
+					}
+
+					// Then, add missing features (those in canonicalMap but not in existingFeatures)
 					for _, feature := range canonicalFeatures {
 						if _, exists := existingFeatures[feature]; !exists {
 							existingFeatures[feature] = 0.0
@@ -2699,7 +2742,7 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 						}
 					}
 
-					// Store the features in the context
+					// Store the updated features in the context
 					ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
 
 					// Log detailed information about added features
@@ -2709,14 +2752,23 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 							"instance", instanceName,
 							"features", strings.Join(addedFeatures, ", "),
 						)
+					}
 
-						util.DebugModule(definitions.DbgNeural,
-							"action", "add_canonical_features_during_model_update",
-							"features_added", len(addedFeatures),
-							"features", strings.Join(addedFeatures, ", "),
-							"total_features", len(existingFeatures),
+					// Log detailed information about removed features
+					if len(removedFeatures) > 0 {
+						level.Info(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Removed %d features that are no longer in canonical list during model update", len(removedFeatures)),
+							"instance", instanceName,
+							"features", strings.Join(removedFeatures, ", "),
 						)
 					}
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "update_canonical_features_during_model_update",
+						"features_added", len(addedFeatures),
+						"features_removed", len(removedFeatures),
+						"total_features", len(existingFeatures),
+					)
 				}
 
 				// Ensure the trainer has the current context before loading the model
@@ -3275,6 +3327,78 @@ func ResetModelToCanonicalFeatures(ctx context.Context) error {
 		definitions.LogKeyMsg, "Successfully reset model to canonical features",
 		"instance", instanceName,
 	)
+
+	return nil
+}
+
+// RemoveFeaturesFromRedis removes the specified features from the canonical list in Redis
+// This ensures all instances have access to the same updated canonical list of features
+// It also publishes a model update notification to ensure all instances are aware of the removal
+func RemoveFeaturesFromRedis(ctx context.Context, featuresToRemove []string) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetWriteHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for removing dynamic features")
+	}
+
+	// Get the key for the feature list
+	key := GetFeatureListRedisKey()
+
+	// Skip if no features to remove
+	if len(featuresToRemove) == 0 {
+		return nil
+	}
+
+	// Convert features to remove to interface slice for Redis SREM command
+	args := make([]any, len(featuresToRemove))
+	for i, feature := range featuresToRemove {
+		args[i] = feature
+	}
+
+	// Remove the features from the set
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+	removed, err := redisClient.SRem(ctx, key, args...).Result()
+	if err != nil {
+		return fmt.Errorf("failed to remove dynamic features from Redis: %w", err)
+	}
+
+	// Get instance name for logging
+	instanceName := "unknown"
+	if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+		instanceName = serverConfig.GetInstanceName()
+	}
+
+	// Log the number of features removed
+	if removed > 0 {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Removed %d features from canonical list: %s",
+				removed, strings.Join(featuresToRemove, ", ")),
+			"instance", instanceName,
+		)
+
+		// Reset the model to use the updated canonical features
+		if err := ResetModelToCanonicalFeatures(ctx); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to reset model after removing features: %v", err),
+			)
+		}
+
+		// Publish a model update notification to ensure all instances are aware of the removal
+		if err := PublishModelUpdate(ctx); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification after removing features: %v", err),
+			)
+		} else {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Successfully published model update notification for removed features",
+			)
+		}
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "No features were removed from canonical list (features not found)",
+			"instance", instanceName,
+		)
+	}
 
 	return nil
 }

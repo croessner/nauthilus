@@ -1464,6 +1464,9 @@ const (
 	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
 	LuaFnAddAdditionalFeatures = "add_additional_features"
 
+	// LuaFnRemoveFeaturesFromRedis represents the function name for "remove_features_from_redis" in Lua
+	LuaFnRemoveFeaturesFromRedis = "remove_features_from_redis"
+
 	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
 	LuaFnTrainNeuralNetwork = "train_neural_network"
 
