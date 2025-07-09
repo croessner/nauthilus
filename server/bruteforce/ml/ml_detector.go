@@ -2485,6 +2485,45 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 				"instance", instanceName,
 				"features", strings.Join(canonicalFeatures, ", "),
 			)
+
+			// Get existing additional features from context
+			var existingFeatures map[string]any
+			if exists, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
+				existingFeatures = exists
+			} else {
+				existingFeatures = make(map[string]any)
+			}
+
+			// Add any missing canonical features to the context
+			var addedFeatures []string
+			for _, feature := range canonicalFeatures {
+				if _, exists := existingFeatures[feature]; !exists {
+					existingFeatures[feature] = 0.0
+					addedFeatures = append(addedFeatures, feature)
+				}
+			}
+
+			// Store the features in the context
+			ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
+
+			// Log detailed information about added features
+			if len(addedFeatures) > 0 {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Added %d missing features from canonical list during initialization", len(addedFeatures)),
+					"instance", instanceName,
+					"features", strings.Join(addedFeatures, ", "),
+				)
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "add_canonical_features_during_initialization",
+					"features_added", len(addedFeatures),
+					"features", strings.Join(addedFeatures, ", "),
+					"total_features", len(existingFeatures),
+				)
+			}
+
+			// Update the trainer's context
+			trainer.WithContext(ctx)
 		}
 	}
 
@@ -2617,6 +2656,62 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			globalTrainerMutex.RUnlock()
 
 			if localTrainer != nil {
+				// Get the canonical list of features from Redis
+				canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+				if err != nil {
+					level.Warn(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Failed to retrieve canonical feature list from Redis during model update: %v", err),
+					)
+				} else if len(canonicalFeatures) > 0 {
+					// Get instance name for logging
+					instanceName := "unknown"
+					if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+						instanceName = serverConfig.GetInstanceName()
+					}
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Loaded canonical feature list with %d features during model update", len(canonicalFeatures)),
+						"instance", instanceName,
+						"features", strings.Join(canonicalFeatures, ", "),
+					)
+
+					// Get existing additional features from context
+					var existingFeatures map[string]any
+					if exists, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
+						existingFeatures = exists
+					} else {
+						existingFeatures = make(map[string]any)
+					}
+
+					// Add any missing canonical features to the context
+					var addedFeatures []string
+					for _, feature := range canonicalFeatures {
+						if _, exists := existingFeatures[feature]; !exists {
+							existingFeatures[feature] = 0.0
+							addedFeatures = append(addedFeatures, feature)
+						}
+					}
+
+					// Store the features in the context
+					ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
+
+					// Log detailed information about added features
+					if len(addedFeatures) > 0 {
+						level.Info(log.Logger).Log(
+							definitions.LogKeyMsg, fmt.Sprintf("Added %d missing features from canonical list during model update", len(addedFeatures)),
+							"instance", instanceName,
+							"features", strings.Join(addedFeatures, ", "),
+						)
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "add_canonical_features_during_model_update",
+							"features_added", len(addedFeatures),
+							"features", strings.Join(addedFeatures, ", "),
+							"total_features", len(existingFeatures),
+						)
+					}
+				}
+
 				// Ensure the trainer has the current context before loading the model
 				localTrainer = localTrainer.WithContext(ctx)
 
@@ -3112,6 +3207,7 @@ func GetFeatureListRedisKey() string {
 
 // StoreDynamicFeaturesToRedis stores the list of dynamic features to Redis
 // This ensures all instances have access to the same canonical list of features
+// It also publishes a model update notification if new features were added
 func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 	// Get Redis client
 	redisClient := rediscli.GetClient().GetWriteHandle()
@@ -3121,6 +3217,26 @@ func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 
 	// Store the features as a set in Redis
 	key := GetFeatureListRedisKey()
+
+	// First, get the existing features to check if we're adding new ones
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	existingFeatures, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("failed to retrieve existing dynamic features from Redis: %w", err)
+	}
+
+	// Track if we're adding new features
+	existingMap := make(map[string]bool)
+	for _, feature := range existingFeatures {
+		existingMap[feature] = true
+	}
+
+	var newFeatures []string
+	for _, feature := range features {
+		if !existingMap[feature] {
+			newFeatures = append(newFeatures, feature)
+		}
+	}
 
 	// Use SADD to add all features to the set
 	if len(features) > 0 {
@@ -3134,6 +3250,32 @@ func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 		_, err := redisClient.SAdd(ctx, key, args...).Result()
 		if err != nil {
 			return fmt.Errorf("failed to store dynamic features to Redis: %w", err)
+		}
+
+		// If we added new features, publish a model update notification
+		if len(newFeatures) > 0 {
+			// Get instance name for logging
+			instanceName := "unknown"
+			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+				instanceName = serverConfig.GetInstanceName()
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Added %d new features to canonical list: %s",
+					len(newFeatures), strings.Join(newFeatures, ", ")),
+				"instance", instanceName,
+			)
+
+			// Publish a model update notification to ensure all instances are aware of the new features
+			if err := PublishModelUpdate(ctx); err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification after adding new features: %v", err),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Successfully published model update notification for new features",
+				)
+			}
 		}
 	}
 
@@ -3667,6 +3809,122 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		globalTrainerMutex.RLock()
 		model = globalTrainer.GetModel()
 		globalTrainerMutex.RUnlock()
+
+		// Check if the model's input size matches the expected size based on canonical features
+		if model != nil && os.Getenv("NAUTHILUS_TESTING") != "1" {
+			// Get the canonical list of features from Redis
+			canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+			if err == nil && len(canonicalFeatures) > 0 {
+				// Calculate expected input size: 6 standard features + canonical features
+				expectedInputSize := 6 + len(canonicalFeatures)
+
+				// If the model's input size is smaller than expected, we need to create a new model
+				if model.inputSize < expectedInputSize {
+					// Get instance name for logging
+					instanceName := "unknown"
+					if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+						instanceName = serverConfig.GetInstanceName()
+					}
+
+					level.Info(log.Logger).Log(
+						definitions.LogKeyMsg, fmt.Sprintf("Model input size (%d) is smaller than expected (%d) based on canonical features. Creating new model.",
+							model.inputSize, expectedInputSize),
+						"instance", instanceName,
+						"canonical_features_count", len(canonicalFeatures),
+						definitions.LogKeyGUID, guid,
+					)
+
+					// Create a new model with the correct input size
+					model = NewNeuralNetwork(expectedInputSize, 1)
+
+					// Update the global trainer with the new model
+					globalTrainerMutex.Lock()
+					globalTrainer.model = model
+					globalTrainerMutex.Unlock()
+
+					// Save the new model to Redis and notify other instances
+					go func() {
+						// Create a new context with a timeout for the save operation
+						saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+
+						if err := globalTrainer.SaveModelToRedis(); err != nil {
+							level.Error(log.Logger).Log(
+								definitions.LogKeyMsg, fmt.Sprintf("Failed to save new model to Redis: %v", err),
+								definitions.LogKeyGUID, guid,
+							)
+						} else {
+							level.Info(log.Logger).Log(
+								definitions.LogKeyMsg, "Successfully saved new model to Redis",
+								definitions.LogKeyGUID, guid,
+							)
+
+							// Publish an update notification to other instances
+							if err := PublishModelUpdate(saveCtx); err != nil {
+								level.Error(log.Logger).Log(
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to publish model update notification: %v", err),
+									definitions.LogKeyGUID, guid,
+								)
+							} else {
+								level.Info(log.Logger).Log(
+									definitions.LogKeyMsg, "Successfully published model update notification",
+									definitions.LogKeyGUID, guid,
+								)
+							}
+						}
+					}()
+				}
+			}
+		}
+	}
+
+	// Get the canonical list of features from Redis
+	canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
+	if err == nil && len(canonicalFeatures) > 0 {
+		// Get existing additional features from context
+		var existingFeatures map[string]any
+		if exists, ok := ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok {
+			existingFeatures = exists
+		} else {
+			existingFeatures = make(map[string]any)
+		}
+
+		// Add any missing canonical features to the context
+		featuresAdded := false
+		var addedFeatures []string
+		for _, feature := range canonicalFeatures {
+			if _, exists := existingFeatures[feature]; !exists {
+				existingFeatures[feature] = 0.0
+				featuresAdded = true
+				addedFeatures = append(addedFeatures, feature)
+			}
+		}
+
+		// If we added features, update the context and log
+		if featuresAdded {
+			ctx = context.WithValue(ctx, definitions.CtxAdditionalFeaturesKey, existingFeatures)
+
+			// Get instance name for logging
+			instanceName := "unknown"
+			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+				instanceName = serverConfig.GetInstanceName()
+			}
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Added %d missing features from canonical list to context", len(addedFeatures)),
+				"instance", instanceName,
+				"features", strings.Join(addedFeatures, ", "),
+				definitions.LogKeyGUID, guid,
+			)
+
+			util.DebugModule(definitions.DbgNeural,
+				"action", "add_canonical_features_to_context",
+				"features_added", len(addedFeatures),
+				"features", strings.Join(addedFeatures, ", "),
+				"total_features", len(existingFeatures),
+				definitions.LogKeyGUID, guid,
+			)
+		}
 	}
 
 	// Get encoding type preferences from the context if they exist
