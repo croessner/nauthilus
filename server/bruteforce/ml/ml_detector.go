@@ -928,6 +928,57 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		}
 	}
 
+	// Check if we need to adjust the input size for additional features from Lua context
+	originalInputSize := modelData.InputSize
+	inputSize := originalInputSize
+
+	// Check if we have additional features from Lua context that weren't in the model
+	if t.ctx != nil {
+		if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
+			// Get a sample of training data to check what features were already in the model
+			trainingData, trainingErr := t.GetTrainingDataFromRedis(1)
+
+			if trainingErr != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
+				trainingData[0].Features.AdditionalFeatures == nil {
+				// No training data features, add all context features
+				inputSize += len(additionalFeatures)
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "adjust_model_input_size_with_additional_features_from_context",
+					"additional_features_count", len(additionalFeatures),
+					"original_input_size", originalInputSize,
+					"new_input_size", inputSize,
+				)
+			} else {
+				// We have both training data features and context features
+				// Count any context features not in training data
+				for featureName := range additionalFeatures {
+					if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
+						// This feature is in context but not in training data, add it to input size
+						inputSize++
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "adjust_model_input_size_with_additional_feature_from_context",
+							"feature_name", featureName,
+							"original_input_size", originalInputSize,
+							"new_input_size", inputSize,
+						)
+					}
+				}
+			}
+		}
+	}
+
+	// Log if we adjusted the input size
+	if inputSize != originalInputSize {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Adjusted model input size from %d to %d to account for dynamic neurons", originalInputSize, inputSize),
+		)
+
+		// Update the input size in the model data
+		modelData.InputSize = inputSize
+	}
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "load_model_parsed",
 		"key", key,
@@ -2702,7 +2753,8 @@ func GetLearningMode() bool {
 	enabled := !modelTrained || modelDryRun
 	modelTrainedMutex.RUnlock()
 
-	return enabled
+	// Also check if dry run is enabled in the configuration
+	return enabled || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
 }
 
 // getMLRedisKeyPrefix returns the Redis key prefix for ML models, including the instance name

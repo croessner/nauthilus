@@ -145,13 +145,13 @@ function nauthilus_call_neural_network(request)
 
     -- Add these features to the neural network
     local additional_features_one_hot = {
-        global_auth_rate = normalized_global_auth_rate,
-        global_unique_ip_rate = normalized_global_unique_ip_rate,
-        global_ip_user_ratio = normalized_global_ip_user_ratio,
-        account_targeting_score = normalized_account_targeting_score,
-        account_unique_ip_rate = normalized_account_unique_ip_rate,
-        account_fail_ratio = account_fail_ratio,
-        top_failed_login_score = top_failed_login_score
+        -- global_auth_rate = normalized_global_auth_rate, -- Commented out: Too general, system-wide metric not specific to attack patterns
+        -- global_unique_ip_rate = normalized_global_unique_ip_rate, -- Commented out: Too general, not specific to individual attack patterns
+        -- global_ip_user_ratio = normalized_global_ip_user_ratio, -- Commented out: Too general, can be influenced by normal traffic patterns
+        account_targeting_score = normalized_account_targeting_score, -- Keeping: Specific to account targeting patterns
+        account_unique_ip_rate = normalized_account_unique_ip_rate, -- Keeping: Good indicator of distributed attacks on specific account
+        account_fail_ratio = account_fail_ratio, -- Keeping: Direct indicator of failed attempts, crucial for brute force detection
+        top_failed_login_score = top_failed_login_score -- Keeping: Indicates if account is among most attacked accounts
     }
 
     -- Add to neural network using one-hot encoding
