@@ -66,3 +66,39 @@ An enhanced version of the neural.lua plugin with additional features and improv
 The plugin runs automatically on each authentication attempt and uses Redis to store and retrieve metrics. No specific environment variables are required for this plugin, as it leverages the Redis connection established by the system.
 
 This plugin requires more computational resources than the basic neural.lua plugin but provides higher accuracy and more detailed insights by analyzing patterns in authentication data stored in Redis.
+
+### neural_remove_features.lua
+Provides functionality to remove specific features from the canonical list in Redis for the neural network model.
+
+**Features:**
+- Removes specified features from the canonical feature list in Redis
+- Helps maintain a clean and relevant feature set for the neural network
+- Automatically resets the model to use the updated canonical features
+- Publishes model update notifications to ensure all instances are aware of changes
+- Returns detailed JSON responses for integration with admin interfaces
+
+**Usage:**
+Access the plugin through HTTP POST requests with a JSON payload specifying the features to remove:
+
+```json
+{
+  "features": ["feature1", "feature2", "feature3"]
+}
+```
+
+Example: `curl -X POST -H "Content-Type: application/json" -d '{"features": ["unused_feature", "noisy_feature"]}' http://localhost:8080/api/v1/lua/neural_remove_features`
+
+### neural_reset.lua
+Provides functionality to reset the neural network model to use only the canonical features from Redis.
+
+**Features:**
+- Resets the neural network model to use only the canonical features
+- Fixes issues where the model's input size has grown too large
+- Ensures all instances use a consistent set of features
+- Provides detailed logging of the reset operation
+- Returns JSON responses indicating success or failure
+
+**Usage:**
+Access the plugin through a simple HTTP POST request without any parameters:
+
+Example: `curl -X POST http://localhost:8080/api/v1/lua/neural_reset`
