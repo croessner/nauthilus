@@ -1094,8 +1094,15 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to store updated feature list to Redis: %v", storeErr),
 				)
 			} else {
+				// Get instance name for logging
+				instanceName := "unknown"
+				if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+					instanceName = serverConfig.GetInstanceName()
+				}
+
 				level.Info(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Updated canonical feature list in Redis with %d features", len(combinedFeatures)),
+					"instance", instanceName,
 				)
 			}
 		}
@@ -2990,6 +2997,14 @@ func InitMLSystem(ctx context.Context) error {
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
+		// Migrate all instance-specific feature lists to the common list
+		if migrateErr := MigrateAllInstanceFeaturesToCommonList(ctx); migrateErr != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to migrate instance-specific feature lists: %v", migrateErr),
+			)
+			// Continue despite error - we'll still try to use the common list
+		}
+
 		// Initialize model and trained flag
 		initializeModelAndTrainedFlag(ctx, trainer)
 
@@ -3201,8 +3216,9 @@ func GetAdditionalFeaturesRedisKey() string {
 }
 
 // GetFeatureListRedisKey returns the Redis key for the canonical list of dynamic features
+// This key is shared across all instances to ensure all instances have access to the same canonical list
 func GetFeatureListRedisKey() string {
-	return getMLRedisKeyPrefix() + "dynamic_features:list"
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:dynamic_features:list"
 }
 
 // StoreDynamicFeaturesToRedis stores the list of dynamic features to Redis
@@ -3260,9 +3276,12 @@ func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 				instanceName = serverConfig.GetInstanceName()
 			}
 
+			// Get the total number of features after adding the new ones
+			totalFeatures := len(existingFeatures) + len(newFeatures)
+
 			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Added %d new features to canonical list: %s",
-					len(newFeatures), strings.Join(newFeatures, ", ")),
+				definitions.LogKeyMsg, fmt.Sprintf("Added %d new features to canonical list: %s (total: %d)",
+					len(newFeatures), strings.Join(newFeatures, ", "), totalFeatures),
 				"instance", instanceName,
 			)
 
@@ -3282,6 +3301,103 @@ func StoreDynamicFeaturesToRedis(ctx context.Context, features []string) error {
 	return nil
 }
 
+// getOldFeatureListRedisKey returns the old Redis key for the canonical list of dynamic features
+// This is used for migration purposes only
+func getOldFeatureListRedisKey() string {
+	return getMLRedisKeyPrefix() + "dynamic_features:list"
+}
+
+// MigrateAllInstanceFeaturesToCommonList migrates features from all instance-specific lists to the common list
+// This is used during startup to ensure all features from all instances are properly migrated
+func MigrateAllInstanceFeaturesToCommonList(ctx context.Context) error {
+	// Get Redis client
+	redisClient := rediscli.GetClient().GetReadHandle()
+	if redisClient == nil {
+		return fmt.Errorf("failed to get Redis client for migrating features")
+	}
+
+	// Get the Redis prefix
+	redisPrefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+
+	// Get all keys matching the pattern for instance-specific feature lists
+	pattern := redisPrefix + "ml:*:trained:dynamic_features:list"
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	keys, err := redisClient.Keys(ctx, pattern).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get instance-specific feature list keys: %w", err)
+	}
+
+	// Get instance name for logging
+	instanceName := "unknown"
+	if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+		instanceName = serverConfig.GetInstanceName()
+	}
+
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Found %d instance-specific feature lists to migrate", len(keys)),
+		"instance", instanceName,
+	)
+
+	// Collect all features from all instance-specific lists
+	allFeatures := make(map[string]bool)
+
+	for _, key := range keys {
+		// Get features from this instance-specific list
+		instanceFeatures, err := redisClient.SMembers(ctx, key).Result()
+		if err != nil {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to get features from key %s: %v", key, err),
+				"instance", instanceName,
+			)
+			continue
+		}
+
+		if len(instanceFeatures) > 0 {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Migrating %d features from key %s", len(instanceFeatures), key),
+				"instance", instanceName,
+			)
+
+			// Add features to the map to deduplicate
+			for _, feature := range instanceFeatures {
+				allFeatures[feature] = true
+			}
+		}
+	}
+
+	// Convert map to slice
+	var featuresToMigrate []string
+	for feature := range allFeatures {
+		featuresToMigrate = append(featuresToMigrate, feature)
+	}
+
+	// Store all features in the common list
+	if len(featuresToMigrate) > 0 {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Migrating %d unique features from all instances to common list", len(featuresToMigrate)),
+			"instance", instanceName,
+		)
+
+		if err := StoreDynamicFeaturesToRedis(ctx, featuresToMigrate); err != nil {
+			return fmt.Errorf("failed to store migrated features to common list: %w", err)
+		}
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Successfully migrated all instance features to common list",
+			"instance", instanceName,
+		)
+	} else {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "No features found to migrate from instance-specific lists",
+			"instance", instanceName,
+		)
+	}
+
+	return nil
+}
+
 // GetDynamicFeaturesFromRedis retrieves the canonical list of dynamic features from Redis
 func GetDynamicFeaturesFromRedis(ctx context.Context) ([]string, error) {
 	// Get Redis client
@@ -3296,14 +3412,60 @@ func GetDynamicFeaturesFromRedis(ctx context.Context) ([]string, error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	features, err := redisClient.SMembers(ctx, key).Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			// No features stored yet, return empty list
-			return []string{}, nil
-		}
-
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("failed to retrieve dynamic features from Redis: %w", err)
 	}
+
+	// If no features found or error is redis.Nil, check the old key for migration
+	if len(features) == 0 || errors.Is(err, redis.Nil) {
+		// Try to get features from the old instance-specific key
+		oldKey := getOldFeatureListRedisKey()
+		oldFeatures, oldErr := redisClient.SMembers(ctx, oldKey).Result()
+
+		if oldErr == nil && len(oldFeatures) > 0 {
+			// Get instance name for logging
+			instanceName := "unknown"
+			if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+				instanceName = serverConfig.GetInstanceName()
+			}
+
+			// Found features in the old key, migrate them to the new key
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Migrating %d features from old instance-specific key to new common key", len(oldFeatures)),
+				"instance", instanceName,
+			)
+
+			// Store the old features in the new common key
+			if migrateErr := StoreDynamicFeaturesToRedis(ctx, oldFeatures); migrateErr != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to migrate features to new common key: %v", migrateErr),
+				)
+			} else {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyMsg, "Successfully migrated features to new common key",
+					"instance", instanceName,
+				)
+			}
+
+			// Use the migrated features
+			features = oldFeatures
+		} else if errors.Is(err, redis.Nil) {
+			// No features found in either key
+			return []string{}, nil
+		}
+	}
+
+	// Get instance name for logging
+	instanceName := "unknown"
+	if serverConfig := config.GetFile().GetServer(); serverConfig != nil {
+		instanceName = serverConfig.GetInstanceName()
+	}
+
+	// Log the number of features for monitoring
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, fmt.Sprintf("Retrieved %d dynamic features from canonical list", len(features)),
+		"instance", instanceName,
+	)
 
 	return features, nil
 }
