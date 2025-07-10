@@ -1001,6 +1001,9 @@ func (t *NeuralNetworkTrainer) InitModel() {
 	// 8 hidden neurons, and 1 output neuron (probability of brute force)
 	t.model = NewNeuralNetwork(inputSize, 1)
 
+	// Ensure metrics are updated with the correct input size
+	GetMLMetrics().RecordNetworkStructure(inputSize, t.model.hiddenSize, 1)
+
 	util.DebugModule(definitions.DbgNeural,
 		"action", "init_model_complete",
 		"input_size", inputSize,
@@ -3906,6 +3909,9 @@ func ResetModelToCanonicalFeatures(ctx context.Context) error {
 	// Create a new model with the correct input size
 	newModel := NewNeuralNetwork(expectedInputSize, 1)
 
+	// Ensure metrics are updated with the correct input size
+	GetMLMetrics().RecordNetworkStructure(expectedInputSize, newModel.hiddenSize, 1)
+
 	// Set the model in the temporary trainer
 	tempTrainer.model = newModel
 
@@ -4442,6 +4448,9 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 				// Update this detector's model
 				d.model = newModel
 
+				// Ensure metrics are updated with the correct input size
+				GetMLMetrics().RecordNetworkStructure(expectedInputSize, newModel.hiddenSize, 1)
+
 				level.Info(log.Logger).Log(
 					definitions.LogKeyGUID, d.guid,
 					definitions.LogKeyMsg, fmt.Sprintf("Reinitialized neural network model to handle %d additional features (new input size: %d)", len(features), expectedInputSize),
@@ -4712,6 +4721,9 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 
 		// Create a default model with the adjusted input size
 		model = NewNeuralNetwork(inputSize, 1)
+
+		// Ensure metrics are updated with the correct input size
+		GetMLMetrics().RecordNetworkStructure(inputSize, model.hiddenSize, 1)
 	} else {
 		// Get the model from the global trainer
 		globalTrainerMutex.RLock()
@@ -4737,6 +4749,9 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 
 					// Create a new model with the correct input size
 					model = NewNeuralNetwork(expectedInputSize, 1)
+
+					// Ensure metrics are updated with the correct input size
+					GetMLMetrics().RecordNetworkStructure(expectedInputSize, model.hiddenSize, 1)
 
 					// Update the global trainer with the new model
 					globalTrainerMutex.Lock()
