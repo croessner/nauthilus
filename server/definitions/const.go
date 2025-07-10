@@ -1316,6 +1316,9 @@ const (
 	// LuaFnRedisZRemRangeByScore is a Lua function constant used to remove range of members in a sorted set by their score.
 	LuaFnRedisZRemRangeByScore = "redis_zremrangebyscore"
 
+	// LuaFnRedisZRemRangeByRank is a Lua function constant used to remove range of members in a sorted set by their rank.
+	LuaFnRedisZRemRangeByRank = "redis_zremrangebyrank"
+
 	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
 	LuaFnRedisZRank = "redis_zrank"
 

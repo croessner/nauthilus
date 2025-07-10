@@ -51,7 +51,9 @@ function nauthilus_call_neural_network(request)
     local logs = {}
 
     logs.caller = N .. ".lua"
+    logs.ts = nauthilus_util.get_current_timestamp()
     logs.level = "info"
+    logs.session = request.session
 
     -- For non-authenticated users, we still need to get the country code
 

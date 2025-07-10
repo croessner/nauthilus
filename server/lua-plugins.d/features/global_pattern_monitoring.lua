@@ -153,6 +153,8 @@ function nauthilus_call_feature(request)
     -- Add log
     local logs = {}
     logs.caller = N .. ".lua"
+    logs.ts = nauthilus_util.get_current_timestamp()
+    logs.session = request.session
     logs.level = "info"
     logs.message = "Global metrics tracked"
     logs.attempts = attempts

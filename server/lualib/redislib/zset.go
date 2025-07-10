@@ -249,6 +249,32 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 	}
 }
 
+// RedisZRemRangeByRank removes all elements in a Redis sorted set with ranks within the specified range.
+// Added in version 1.7.20
+func RedisZRemRangeByRank(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+
+		key := L.CheckString(2)  // The key of the sorted set
+		start := L.CheckInt64(3) // Start rank (0-based, inclusive)
+		stop := L.CheckInt64(4)  // Stop rank (0-based, inclusive)
+
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		cmd := client.ZRemRangeByRank(ctx, key, int64(start), int64(stop))
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}
+
 // RedisZRank retrieves the rank of a member within a sorted set in Redis, returning the rank or an error if applicable.
 func RedisZRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {

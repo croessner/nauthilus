@@ -160,7 +160,9 @@ function nauthilus_call_neural_network(request)
     -- Add log
     local logs = {}
     logs.caller = N .. ".lua"
+    logs.ts = nauthilus_util.get_current_timestamp()
     logs.level = "info"
+    logs.session = request.session
     logs.message = "Enhanced neural features added"
     logs.global_auth_rate = global_auth_rate
     logs.global_unique_ip_rate = global_unique_ip_rate
