@@ -122,7 +122,9 @@ function nauthilus_call_filter(request)
         -- Log the suspicious activity
         local attack_logs = {}
         attack_logs.caller = N .. ".lua"
+        attack_logs.ts = nauthilus_util.get_current_timestamp()
         attack_logs.level = "warning"
+        attack_logs.session = request.session
         attack_logs.message = "Potential distributed brute force attack detected"
         attack_logs.username = username
         attack_logs.unique_ips = unique_ips
@@ -142,7 +144,9 @@ function nauthilus_call_filter(request)
     -- Add log
     local logs = {}
     logs.caller = N .. ".lua"
+    logs.ts = nauthilus_util.get_current_timestamp()
     logs.level = "info"
+    logs.session = request.session
     logs.message = "Account metrics tracked"
     logs.username = username
     logs.unique_ips = unique_ips
