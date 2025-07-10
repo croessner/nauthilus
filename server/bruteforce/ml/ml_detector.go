@@ -41,6 +41,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Minimum number of samples required for training
+const minSamplesForTraining = 1000
+
 var httpClient *http.Client
 
 // json is a package-level variable for jsoniter with configuration for ML package (without decimal truncation)
@@ -2337,6 +2340,16 @@ func (t *NeuralNetworkTrainer) TrainWithStoredData(maxSamples int, epochs int) e
 		definitions.LogKeyMsg, fmt.Sprintf("Retrieved %d training samples from Redis", len(trainingData)),
 	)
 
+	// Check if we have enough samples to start training
+	if len(trainingData) < minSamplesForTraining {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Not enough training samples (%d). Need at least %d samples before training starts.",
+				len(trainingData), minSamplesForTraining),
+		)
+
+		return nil
+	}
+
 	// Prepare the data for training
 	features, labels := t.PrepareTrainingData(trainingData)
 	if len(features) == 0 || len(labels) == 0 {
@@ -2371,23 +2384,20 @@ func (t *NeuralNetworkTrainer) TrainWithStoredData(maxSamples int, epochs int) e
 		definitions.LogKeyMsg, fmt.Sprintf("Model training completed successfully in %.2f seconds", trainingDuration),
 	)
 
-	// Set the modelTrained flag if we have enough data
-	// We consider the model trained if we have at least 100 samples
-	if len(trainingData) >= 100 {
-		modelTrainedMutex.Lock()
-		modelTrained = true
-		modelTrainedMutex.Unlock()
+	// Set the modelTrained flag.
+	modelTrainedMutex.Lock()
+	modelTrained = true
+	modelTrainedMutex.Unlock()
 
-		level.Info(log.Logger).Log(
-			definitions.LogKeyMsg, "Model is now considered trained with real data",
+	level.Info(log.Logger).Log(
+		definitions.LogKeyMsg, "Model is now considered trained with real data",
+	)
+
+	// Save the flag to Redis for future use
+	if saveErr := SaveModelTrainedFlagToRedis(t.ctx); saveErr != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", saveErr),
 		)
-
-		// Save the flag to Redis for future use
-		if saveErr := SaveModelTrainedFlagToRedis(t.ctx); saveErr != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to save model trained flag to Redis: %v", saveErr),
-			)
-		}
 	}
 
 	return nil
