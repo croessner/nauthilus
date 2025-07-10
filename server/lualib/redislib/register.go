@@ -55,6 +55,7 @@ func LoaderModRedis(ctx context.Context) lua.LGFunction {
 			definitions.LuaFnRedisZAdd:             RedisZAdd(ctx),
 			definitions.LuaFnRedisZRem:             RedisZRem(ctx),
 			definitions.LuaFnRedisZRank:            RedisZRank(ctx),
+			definitions.LuaFnRedisZRevRank:         RedisZRevRank(ctx),
 			definitions.LuaFNRedisZRange:           RedisZRange(ctx),
 			definitions.LuaFnRedisZRevRange:        RedisZRevRange(ctx),
 			definitions.LuaFnRedisZRangeByScore:    RedisZRangeByScore(ctx),

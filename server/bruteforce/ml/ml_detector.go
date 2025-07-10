@@ -797,6 +797,27 @@ func (t *NeuralNetworkTrainer) getOrCreateOneHotEncoding(featureName string, val
 	return t.oneHotSizes[featureName], newIndex
 }
 
+// calculateFeatureNeuronCount returns the number of neurons needed for a feature based on its encoding type
+func (t *NeuralNetworkTrainer) calculateFeatureNeuronCount(featureName string) int {
+	encodingType := t.GetFeatureEncodingType(featureName)
+
+	switch encodingType {
+	case EmbeddingEncoding:
+		// For embedding encoding, use the embedding size
+		return t.embeddingSize
+	case OneHotEncoding:
+		// For one-hot encoding, use the number of possible values
+		if size, exists := t.oneHotSizes[featureName]; exists && size > 0 {
+			return size
+		}
+		// If we don't have any values yet, default to 1
+		return 1
+	default:
+		// For numeric features or unknown encoding types, use 1 neuron
+		return 1
+	}
+}
+
 // InitModel initializes the neural network model
 func (t *NeuralNetworkTrainer) InitModel() {
 	util.DebugModule(definitions.DbgNeural,
@@ -805,24 +826,41 @@ func (t *NeuralNetworkTrainer) InitModel() {
 
 	// Default input size is 6 for the standard features
 	inputSize := 6
+	additionalFeatureCount := 0
+	additionalNeuronCount := 0
 
 	// Skip dynamic neuron adjustment during tests
 	if os.Getenv("NAUTHILUS_TESTING") != "1" {
 		// First, try to get the canonical list of features from Redis
 		canonicalFeatures, err := GetDynamicFeaturesFromRedis(t.ctx)
 		if err == nil && len(canonicalFeatures) > 0 {
-			// Add the number of canonical features to the input size
-			inputSize += len(canonicalFeatures)
+			// Calculate the actual neuron count for each feature
+			additionalFeatureCount = len(canonicalFeatures)
+			for _, featureName := range canonicalFeatures {
+				neuronCount := t.calculateFeatureNeuronCount(featureName)
+				additionalNeuronCount += neuronCount
+
+				util.DebugModule(definitions.DbgNeural,
+					"action", "calculate_feature_neurons",
+					"feature_name", featureName,
+					"encoding_type", t.GetFeatureEncodingType(featureName),
+					"neuron_count", neuronCount,
+				)
+			}
+
+			// Add the total neuron count to the input size
+			inputSize += additionalNeuronCount
 
 			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Initializing model with %d input neurons (%d standard + %d dynamic) based on canonical feature list",
-					inputSize, 6, len(canonicalFeatures)),
+				definitions.LogKeyMsg, fmt.Sprintf("Initializing model with %d input neurons (%d standard + %d dynamic from %d features) based on canonical feature list",
+					inputSize, 6, additionalNeuronCount, additionalFeatureCount),
 				"features", strings.Join(canonicalFeatures, ", "),
 			)
 
 			util.DebugModule(definitions.DbgNeural,
 				"action", "init_model_with_canonical_features",
-				"canonical_features_count", len(canonicalFeatures),
+				"additional_features_count", additionalFeatureCount,
+				"additional_neurons_count", additionalNeuronCount,
 				"total_input_size", inputSize,
 			)
 		} else {
@@ -832,15 +870,28 @@ func (t *NeuralNetworkTrainer) InitModel() {
 			trainingData, err := t.GetTrainingDataFromRedis(1)
 			if err == nil && len(trainingData) > 0 && trainingData[0].Features != nil &&
 				trainingData[0].Features.AdditionalFeatures != nil && len(trainingData[0].Features.AdditionalFeatures) > 0 {
-				// Add the number of additional features to the input size
-				inputSize += len(trainingData[0].Features.AdditionalFeatures)
 
-				// Store these features in the canonical list for future use
+				// Calculate the actual neuron count for each feature
+				additionalFeatureCount = len(trainingData[0].Features.AdditionalFeatures)
 				var featureNames []string
+
 				for featureName := range trainingData[0].Features.AdditionalFeatures {
 					featureNames = append(featureNames, featureName)
+					neuronCount := t.calculateFeatureNeuronCount(featureName)
+					additionalNeuronCount += neuronCount
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "calculate_feature_neurons_from_training",
+						"feature_name", featureName,
+						"encoding_type", t.GetFeatureEncodingType(featureName),
+						"neuron_count", neuronCount,
+					)
 				}
 
+				// Add the total neuron count to the input size
+				inputSize += additionalNeuronCount
+
+				// Store these features in the canonical list for future use
 				if storeErr := StoreDynamicFeaturesToRedis(t.ctx, featureNames); storeErr != nil {
 					level.Warn(log.Logger).Log(
 						definitions.LogKeyMsg, fmt.Sprintf("Failed to store training data features to canonical list: %v", storeErr),
@@ -849,7 +900,8 @@ func (t *NeuralNetworkTrainer) InitModel() {
 
 				util.DebugModule(definitions.DbgNeural,
 					"action", "init_model_with_additional_features_from_training",
-					"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
+					"additional_features_count", additionalFeatureCount,
+					"additional_neurons_count", additionalNeuronCount,
 					"total_input_size", inputSize,
 				)
 			}
@@ -863,14 +915,29 @@ func (t *NeuralNetworkTrainer) InitModel() {
 					if err != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
 						trainingData[0].Features.AdditionalFeatures == nil {
 						// No training data features, add all context features
-						inputSize += len(additionalFeatures)
-
-						// Store these features in the canonical list for future use
+						contextFeatureCount := len(additionalFeatures)
+						contextNeuronCount := 0
 						var featureNames []string
+
 						for featureName := range additionalFeatures {
 							featureNames = append(featureNames, featureName)
+							neuronCount := t.calculateFeatureNeuronCount(featureName)
+							contextNeuronCount += neuronCount
+
+							util.DebugModule(definitions.DbgNeural,
+								"action", "calculate_feature_neurons_from_context",
+								"feature_name", featureName,
+								"encoding_type", t.GetFeatureEncodingType(featureName),
+								"neuron_count", neuronCount,
+							)
 						}
 
+						// Add the total neuron count to the input size
+						inputSize += contextNeuronCount
+						additionalFeatureCount = contextFeatureCount
+						additionalNeuronCount = contextNeuronCount
+
+						// Store these features in the canonical list for future use
 						if storeErr := StoreDynamicFeaturesToRedis(t.ctx, featureNames); storeErr != nil {
 							level.Warn(log.Logger).Log(
 								definitions.LogKeyMsg, fmt.Sprintf("Failed to store context features to canonical list: %v", storeErr),
@@ -879,27 +946,36 @@ func (t *NeuralNetworkTrainer) InitModel() {
 
 						util.DebugModule(definitions.DbgNeural,
 							"action", "init_model_with_additional_features_from_context",
-							"additional_features_count", len(additionalFeatures),
+							"additional_features_count", contextFeatureCount,
+							"additional_neurons_count", contextNeuronCount,
 							"total_input_size", inputSize,
 						)
 					} else {
 						// We have both training data features and context features
 						// Count any context features not in training data
 						var newFeatures []string
+						contextNeuronCount := 0
 
 						for featureName := range additionalFeatures {
 							if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
-								// This feature is in context but not in training data, add it to input size
-								inputSize++
+								// This feature is in context but not in training data
 								newFeatures = append(newFeatures, featureName)
+								neuronCount := t.calculateFeatureNeuronCount(featureName)
+								contextNeuronCount += neuronCount
 
 								util.DebugModule(definitions.DbgNeural,
-									"action", "init_model_with_additional_feature_from_context",
+									"action", "calculate_feature_neurons_from_new_context",
 									"feature_name", featureName,
-									"total_input_size", inputSize,
+									"encoding_type", t.GetFeatureEncodingType(featureName),
+									"neuron_count", neuronCount,
+									"total_input_size", inputSize+contextNeuronCount,
 								)
 							}
 						}
+
+						// Add the total neuron count to the input size
+						inputSize += contextNeuronCount
+						additionalNeuronCount += contextNeuronCount
 
 						// Store any new features in the canonical list
 						if len(newFeatures) > 0 {
@@ -3798,20 +3874,39 @@ func ResetModelToCanonicalFeatures(ctx context.Context) error {
 		return fmt.Errorf("failed to get canonical features from Redis: %w", err)
 	}
 
-	// Calculate the expected input size: 6 standard features + canonical features
-	expectedInputSize := 6 + len(canonicalFeatures)
+	// Create a temporary trainer to calculate neuron counts
+	tempTrainer := NewMLTrainer().WithContext(ctx)
+
+	// Calculate the expected input size: 6 standard features + neurons for canonical features
+	expectedInputSize := 6
+	additionalNeuronCount := 0
+
+	// Calculate the actual neuron count for each feature
+	for _, featureName := range canonicalFeatures {
+		neuronCount := tempTrainer.calculateFeatureNeuronCount(featureName)
+		additionalNeuronCount += neuronCount
+
+		util.DebugModule(definitions.DbgNeural,
+			"action", "reset_model_calculate_feature_neurons",
+			"feature_name", featureName,
+			"encoding_type", tempTrainer.GetFeatureEncodingType(featureName),
+			"neuron_count", neuronCount,
+		)
+	}
+
+	// Add the total neuron count to the input size
+	expectedInputSize += additionalNeuronCount
 
 	level.Info(log.Logger).Log(
-		definitions.LogKeyMsg, fmt.Sprintf("Resetting model to use %d input neurons (%d standard + %d dynamic) based on canonical feature list",
-			expectedInputSize, 6, len(canonicalFeatures)),
+		definitions.LogKeyMsg, fmt.Sprintf("Resetting model to use %d input neurons (%d standard + %d dynamic from %d features) based on canonical feature list",
+			expectedInputSize, 6, additionalNeuronCount, len(canonicalFeatures)),
 		"features", strings.Join(canonicalFeatures, ", "),
 	)
 
 	// Create a new model with the correct input size
 	newModel := NewNeuralNetwork(expectedInputSize, 1)
 
-	// Create a temporary trainer with the new model
-	tempTrainer := NewMLTrainer().WithContext(ctx)
+	// Set the model in the temporary trainer
 	tempTrainer.model = newModel
 
 	// Save the new model to Redis
@@ -4184,12 +4279,35 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 					// Set the encoding type in the trainer
 					trainer.SetFeatureEncodingType(key, EmbeddingEncoding)
 				} else {
-					// For one-hot encoding, add 1 (we'll expand it later in Predict)
-					expectedInputSize += 1
-
-					// Set the encoding type in the trainer if it exists
+					// For one-hot encoding, check if we already have values in oneHotSizes
 					if trainer != nil {
 						trainer.SetFeatureEncodingType(key, OneHotEncoding)
+
+						// Check if we have existing one-hot sizes for this feature
+						if size, exists := trainer.oneHotSizes[key]; exists && size > 0 {
+							// Use the actual number of possible values
+							expectedInputSize += size
+
+							util.DebugModule(definitions.DbgNeural,
+								"action", "calculate_one_hot_size_from_existing",
+								"feature_name", key,
+								"one_hot_size", size,
+								definitions.LogKeyGUID, d.guid,
+							)
+						} else {
+							// No existing values, add 1 (we'll expand it later in Predict)
+							expectedInputSize += 1
+
+							util.DebugModule(definitions.DbgNeural,
+								"action", "using_default_one_hot_size",
+								"feature_name", key,
+								"one_hot_size", 1,
+								definitions.LogKeyGUID, d.guid,
+							)
+						}
+					} else {
+						// No trainer available, add 1
+						expectedInputSize += 1
 					}
 				}
 			} else {
