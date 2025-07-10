@@ -1141,3 +1141,340 @@ func TestRedisZIncrBy(t *testing.T) {
 		})
 	}
 }
+
+// TestRedisZScore tests the RedisZScore function which retrieves the score of a member in a sorted set.
+// Added in version 1.7.7
+func TestRedisZScore(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		member      string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key, member string)
+	}{
+		{
+			name:        "MemberExists",
+			key:         "key1",
+			member:      "member1",
+			expectedRes: lua.LNumber(10.5),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZScore(key, member).SetVal(10.5)
+			},
+		},
+		{
+			name:        "MemberNotExists",
+			key:         "key2",
+			member:      "nonexistent",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("redis: nil"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZScore(key, member).SetErr(redis.Nil)
+			},
+		},
+		{
+			name:        "EmptyKey",
+			key:         "",
+			member:      "member1",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("redis: nil"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZScore(key, member).SetErr(redis.Nil)
+			},
+		},
+		{
+			name:        "RedisError",
+			key:         "key4",
+			member:      "member1",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("context deadline exceeded"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZScore(key, member).SetErr(context.DeadlineExceeded)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			rediscli.NewTestClient(db)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.member)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("member", lua.LString(tt.member))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zscore("default", key, member)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zscore() gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+// TestRedisZRevRank tests the RedisZRevRank function which retrieves the rank of a member in a sorted set, with scores ordered from high to low.
+func TestRedisZRevRank(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		member      string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key, member string)
+	}{
+		{
+			name:        "MemberExists",
+			key:         "key1",
+			member:      "member1",
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZRevRank(key, member).SetVal(0)
+			},
+		},
+		{
+			name:        "MemberNotExists",
+			key:         "key2",
+			member:      "nonexistent",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("redis: nil"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZRevRank(key, member).SetErr(redis.Nil)
+			},
+		},
+		{
+			name:        "EmptyKey",
+			key:         "",
+			member:      "member1",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("redis: nil"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZRevRank(key, member).SetErr(redis.Nil)
+			},
+		},
+		{
+			name:        "RedisError",
+			key:         "key4",
+			member:      "member1",
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("context deadline exceeded"),
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZRevRank(key, member).SetErr(context.DeadlineExceeded)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			rediscli.NewTestClient(db)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.member)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("member", lua.LString(tt.member))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zrevrank("default", key, member)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zrevrank() gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+// TestRedisZScoreWithCustomHandle tests the RedisZScore function with a custom connection handle
+func TestRedisZScoreWithCustomHandle(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		member      string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key, member string)
+	}{
+		{
+			name:        "MemberExistsWithCustomHandle",
+			key:         "key1",
+			member:      "member1",
+			expectedRes: lua.LNumber(10.5),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZScore(key, member).SetVal(10.5)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			// Create a userdata with the Redis client
+			ud := L.NewUserData()
+			ud.Value = db
+			L.SetMetatable(ud, L.GetTypeMetatable("redis_client"))
+			L.SetGlobal("custom_handle", ud)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.member)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("member", lua.LString(tt.member))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zscore(custom_handle, key, member)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zscore() with custom handle gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+// TestRedisZRevRankWithCustomHandle tests the RedisZRevRank function with a custom connection handle
+func TestRedisZRevRankWithCustomHandle(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		member      string
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key, member string)
+	}{
+		{
+			name:        "MemberExistsWithCustomHandle",
+			key:         "key1",
+			member:      "member1",
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key, member string) {
+				mock.ExpectZRevRank(key, member).SetVal(0)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			// Create a userdata with the Redis client
+			ud := L.NewUserData()
+			ud.Value = db
+			L.SetMetatable(ud, L.GetTypeMetatable("redis_client"))
+			L.SetGlobal("custom_handle", ud)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.member)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("member", lua.LString(tt.member))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zrevrank(custom_handle, key, member)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zrevrank() with custom handle gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}

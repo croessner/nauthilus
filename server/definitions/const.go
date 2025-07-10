@@ -1319,6 +1319,9 @@ const (
 	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
 	LuaFnRedisZRank = "redis_zrank"
 
+	// LuaFnRedisZRevRank is a constant defining the Redis command "ZRevRank" for retrieving the rank of a member in a sorted set, with the scores ordered from high to low.
+	LuaFnRedisZRevRank = "redis_zrevrank"
+
 	// LuaFnRedisZCount is a constant defining the Redis command "ZCount" for counting the number of members in a sorted set with scores between min and max.
 	LuaFnRedisZCount = "redis_zcount"
 

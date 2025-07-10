@@ -324,6 +324,31 @@ func RedisZScore(ctx context.Context) lua.LGFunction {
 	}
 }
 
+// RedisZRevRank retrieves the rank of a member within a sorted set in Redis, with the scores ordered from high to low.
+// The rank is 0-based, meaning that the member with the highest score has rank 0.
+func RedisZRevRank(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+
+		key := L.CheckString(2)
+		member := L.CheckString(3) // The member whose rank needs to be retrieved
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		cmd := client.ZRevRank(ctx, key, member)
+		if cmd.Err() != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(cmd.Err().Error()))
+
+			return 2
+		}
+
+		L.Push(lua.LNumber(cmd.Val()))
+
+		return 1
+	}
+}
+
 // RedisZIncrBy increments the score of a member in a sorted set by the given increment value.
 // Added in version 1.7.18
 func RedisZIncrBy(ctx context.Context) lua.LGFunction {
