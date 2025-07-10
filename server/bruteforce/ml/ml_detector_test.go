@@ -635,7 +635,7 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
 	// Create a trainer with a model
-	globalTrainer = &MLTrainer{
+	globalTrainer = &NeuralNetworkTrainer{
 		ctx:   ctx,
 		model: NewNeuralNetwork(6, 1),
 	}
@@ -700,7 +700,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
 		// Create a trainer with context to avoid nil pointer in goroutine
-		globalTrainer = &MLTrainer{
+		globalTrainer = &NeuralNetworkTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
 		}
@@ -793,7 +793,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		originalGlobalTrainer := globalTrainer
 		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
-		globalTrainer = &MLTrainer{
+		globalTrainer = &NeuralNetworkTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
 		}

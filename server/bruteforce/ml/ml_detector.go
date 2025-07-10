@@ -635,8 +635,8 @@ const (
 	EmbeddingEncoding StringEncodingType = "embedding"
 )
 
-// MLTrainer handles the training of the ML model without requiring request-specific parameters
-type MLTrainer struct {
+// NeuralNetworkTrainer handles the training of the ML model without requiring request-specific parameters
+type NeuralNetworkTrainer struct {
 	ctx                 context.Context
 	model               *NeuralNetwork
 	oneHotEncodings     map[string]map[string]int     // Maps feature name -> (value -> index)
@@ -646,8 +646,8 @@ type MLTrainer struct {
 }
 
 // NewMLTrainer creates a new ML trainer with a default context
-func NewMLTrainer() *MLTrainer {
-	return &MLTrainer{
+func NewMLTrainer() *NeuralNetworkTrainer {
+	return &NeuralNetworkTrainer{
 		ctx:                 context.Background(),
 		oneHotEncodings:     make(map[string]map[string]int),
 		oneHotSizes:         make(map[string]int),
@@ -657,14 +657,14 @@ func NewMLTrainer() *MLTrainer {
 }
 
 // WithContext sets the context for the trainer
-func (t *MLTrainer) WithContext(ctx context.Context) *MLTrainer {
+func (t *NeuralNetworkTrainer) WithContext(ctx context.Context) *NeuralNetworkTrainer {
 	t.ctx = ctx
 
 	return t
 }
 
 // SetFeatureEncodingType sets the encoding type for a specific feature
-func (t *MLTrainer) SetFeatureEncodingType(featureName string, encodingType StringEncodingType) {
+func (t *NeuralNetworkTrainer) SetFeatureEncodingType(featureName string, encodingType StringEncodingType) {
 	if t.featureEncodingType == nil {
 		t.featureEncodingType = make(map[string]StringEncodingType)
 	}
@@ -673,7 +673,7 @@ func (t *MLTrainer) SetFeatureEncodingType(featureName string, encodingType Stri
 }
 
 // SetEmbeddingSize sets the size of embeddings for string features
-func (t *MLTrainer) SetEmbeddingSize(size int) {
+func (t *NeuralNetworkTrainer) SetEmbeddingSize(size int) {
 	if size > 0 {
 		t.embeddingSize = size
 	}
@@ -681,7 +681,7 @@ func (t *MLTrainer) SetEmbeddingSize(size int) {
 
 // GetFeatureEncodingType returns the encoding type for a specific feature
 // If no encoding type is set, it defaults to OneHotEncoding
-func (t *MLTrainer) GetFeatureEncodingType(featureName string) StringEncodingType {
+func (t *NeuralNetworkTrainer) GetFeatureEncodingType(featureName string) StringEncodingType {
 	if t.featureEncodingType == nil {
 		return OneHotEncoding
 	}
@@ -694,7 +694,7 @@ func (t *MLTrainer) GetFeatureEncodingType(featureName string) StringEncodingTyp
 }
 
 // generateEmbedding generates a fixed-size embedding for a string value
-func (t *MLTrainer) generateEmbedding(value string) []float64 {
+func (t *NeuralNetworkTrainer) generateEmbedding(value string) []float64 {
 	// Initialize embedding vector with zeros
 	embedding := make([]float64, t.embeddingSize)
 
@@ -756,7 +756,7 @@ func (t *MLTrainer) generateEmbedding(value string) []float64 {
 
 // getOrCreateOneHotEncoding returns the one-hot encoding size and index for a categorical feature value
 // If the feature or value hasn't been seen before, it creates a new encoding
-func (t *MLTrainer) getOrCreateOneHotEncoding(featureName string, value string) (int, int) {
+func (t *NeuralNetworkTrainer) getOrCreateOneHotEncoding(featureName string, value string) (int, int) {
 	// Initialize maps if they don't exist
 	if t.oneHotEncodings == nil {
 		t.oneHotEncodings = make(map[string]map[string]int)
@@ -795,7 +795,7 @@ func (t *MLTrainer) getOrCreateOneHotEncoding(featureName string, value string) 
 }
 
 // InitModel initializes the neural network model
-func (t *MLTrainer) InitModel() {
+func (t *NeuralNetworkTrainer) InitModel() {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "init_model_start",
 	)
@@ -938,12 +938,12 @@ func (t *MLTrainer) InitModel() {
 }
 
 // LoadModelFromRedis loads a previously trained model from Redis
-func (t *MLTrainer) LoadModelFromRedis() error {
+func (t *NeuralNetworkTrainer) LoadModelFromRedis() error {
 	return t.LoadModelFromRedisWithKey(getMLRedisKeyPrefix() + "model")
 }
 
 // LoadModelFromRedisWithKey loads a previously trained model from Redis using the specified key
-func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
+func (t *NeuralNetworkTrainer) LoadModelFromRedisWithKey(key string) error {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Get the model data from Redis
@@ -1299,7 +1299,7 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 			defer cancel()
 
 			// Create a temporary trainer with the adjusted model
-			tempTrainer := &MLTrainer{
+			tempTrainer := &NeuralNetworkTrainer{
 				ctx:                 saveCtx,
 				model:               nn,
 				oneHotEncodings:     t.oneHotEncodings,
@@ -1420,7 +1420,7 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 }
 
 // SaveModelToRedis saves the trained neural network model to Redis
-func (t *MLTrainer) SaveModelToRedis() error {
+func (t *NeuralNetworkTrainer) SaveModelToRedis() error {
 	return t.SaveModelToRedisWithKey(getMLRedisKeyPrefix() + "model")
 }
 
@@ -1728,7 +1728,7 @@ func SetLastTrainingTime(ctx context.Context) error {
 }
 
 // SaveModelToRedisWithKey saves the trained neural network model to Redis using the specified key
-func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
+func (t *NeuralNetworkTrainer) SaveModelToRedisWithKey(key string) error {
 	if t.model == nil {
 		return fmt.Errorf("no model to save")
 	}
@@ -1859,7 +1859,7 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 
 // GetTrainingDataFromRedis retrieves the stored training data from Redis
 // with balanced ratio of successful and failed login attempts
-func (t *MLTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, error) {
+func (t *NeuralNetworkTrainer) GetTrainingDataFromRedis(maxSamples int) ([]TrainingData, error) {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "get_training_data_start",
 		"max_samples", maxSamples,
@@ -2031,7 +2031,7 @@ func balanceTrainingData(successfulSamples, failedSamples []TrainingData, maxSam
 }
 
 // PrepareTrainingData converts the raw training data into features and labels for the neural network
-func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]float64) {
+func (t *NeuralNetworkTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]float64) {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "prepare_training_data_start",
 		"data_samples", len(data),
@@ -2223,7 +2223,7 @@ func normalizeInputs(inputs []float64) []float64 {
 }
 
 // TrainWithStoredData retrieves training data from Redis and trains the model
-func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
+func (t *NeuralNetworkTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "train_with_stored_data_start",
 		"max_samples", maxSamples,
@@ -2314,7 +2314,7 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 }
 
 // GetModel returns the trained neural network model
-func (t *MLTrainer) GetModel() *NeuralNetwork {
+func (t *NeuralNetworkTrainer) GetModel() *NeuralNetwork {
 	return t.model
 }
 
@@ -2508,7 +2508,7 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 
 var (
 	// Global model trainer
-	globalTrainer *MLTrainer
+	globalTrainer *NeuralNetworkTrainer
 
 	// RWMutex to protect access to globalTrainer
 	globalTrainerMutex sync.RWMutex
@@ -2538,7 +2538,7 @@ var (
 // initializeModelAndTrainedFlag initializes and verifies the ML model and its trained status flag.
 // It attempts to load a pre-trained model and trained flag from Redis, or initializes with defaults if unavailable.
 // Returns true if the model was successfully loaded from Redis, otherwise false.
-func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool {
+func initializeModelAndTrainedFlag(ctx context.Context, trainer *NeuralNetworkTrainer) bool {
 	// Initialize modelTrained flag to false
 	modelTrainedMutex.Lock()
 	modelTrained = false
@@ -3074,6 +3074,7 @@ func performScheduledTraining(ctx context.Context) {
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Skipping scheduled training - cannot determine last training time",
 		)
+
 		return
 	} else if !lastTrainingTime.IsZero() {
 		// If last training was less than 12 hours ago, skip this training cycle
@@ -3442,13 +3443,14 @@ func getModelUpdateStoreKey() string {
 // while the instance was down and processes them.
 // This function is called during initialization to ensure that instances that were down
 // when notifications were published can still process them when they come back up.
-func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
+func checkForMissedModelUpdates(ctx context.Context, trainer *NeuralNetworkTrainer) {
 	// Get Redis client
 	redisClient := rediscli.GetClient().GetReadHandle()
 	if redisClient == nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Failed to get Redis client for checking missed model updates",
 		)
+
 		return
 	}
 
@@ -3458,6 +3460,7 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time during missed update check: %v", err),
 		)
+
 		// Continue with a zero time, which will process all notifications
 		lastTrainingTime = time.Time{}
 	}
@@ -3484,6 +3487,7 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to get missed model update notifications: %v", err),
 		)
+
 		return
 	}
 
@@ -3491,6 +3495,7 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "No missed model update notifications found",
 		)
+
 		return
 	}
 
@@ -3507,6 +3512,7 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to parse missed model update notification: %v", err),
 				"notification", notificationJSON,
 			)
+
 			continue
 		}
 
@@ -3517,6 +3523,7 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 					"action", "skip_own_missed_model_update",
 					"instance", instanceName,
 				)
+
 				continue
 			}
 		}
@@ -3530,11 +3537,13 @@ func checkForMissedModelUpdates(ctx context.Context, trainer *MLTrainer) {
 					"update_time", updateTime.Format(time.RFC3339),
 					"last_training_time", lastTrainingTime.Format(time.RFC3339),
 				)
+
 				level.Info(log.Logger).Log(
 					definitions.LogKeyMsg, "Skipping missed model update - our model is more recent",
 					"update_time", updateTime.Format(time.RFC3339),
 					"our_time", lastTrainingTime.Format(time.RFC3339),
 				)
+
 				continue
 			}
 		}
@@ -3679,7 +3688,7 @@ func GetAdditionalFeaturesRedisKey() string {
 // GetFeatureListRedisKey returns the Redis key for the canonical list of dynamic features
 // This key is shared across all instances to ensure all instances have access to the same canonical list
 func GetFeatureListRedisKey() string {
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:dynamic_features:list"
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:common:additional_features:list"
 }
 
 // ResetModelToCanonicalFeatures resets the model to use only the features in the canonical list
@@ -3931,12 +3940,12 @@ func getModelTrainedRedisKey() string {
 }
 
 // SaveAdditionalFeaturesToRedis saves a model with additional features to a separate Redis key
-func (t *MLTrainer) SaveAdditionalFeaturesToRedis() error {
+func (t *NeuralNetworkTrainer) SaveAdditionalFeaturesToRedis() error {
 	return t.SaveModelToRedisWithKey(GetAdditionalFeaturesRedisKey())
 }
 
 // LoadAdditionalFeaturesFromRedis loads a model with additional features from a separate Redis key
-func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
+func (t *NeuralNetworkTrainer) LoadAdditionalFeaturesFromRedis() error {
 	return t.LoadModelFromRedisWithKey(GetAdditionalFeaturesRedisKey())
 }
 
@@ -4275,10 +4284,39 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 							return
 						}
 
+						// Try to acquire the distributed training lock
+						// Use a reasonable timeout to prevent deadlocks (30 minutes should be enough for training)
+						lockAcquired, lockErr := AcquireTrainingLock(d.ctx, 30*time.Minute)
+						if lockErr != nil {
+							level.Error(log.Logger).Log(
+								definitions.LogKeyMsg, fmt.Sprintf("Failed to acquire training lock: %v", lockErr),
+							)
+
+							return
+						}
+
+						if !lockAcquired {
+							level.Info(log.Logger).Log(
+								definitions.LogKeyMsg, "Skipping training after feature reinitialization - another instance is already training",
+							)
+
+							return
+						}
+
+						// We have the lock, proceed with training
 						if err := localTrainer.TrainWithStoredData(1000, 20); err != nil {
 							level.Error(log.Logger).Log(
 								definitions.LogKeyMsg, fmt.Sprintf("Failed to train model after reinitializing for additional features: %v", err),
 							)
+
+							// Release the lock since training failed
+							if releaseErr := ReleaseTrainingLock(d.ctx); releaseErr != nil {
+								level.Error(log.Logger).Log(
+									definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
+								)
+							}
+
+							return
 						} else {
 							// Reset the model to use the canonical features from Redis
 							if err := ResetModelToCanonicalFeatures(context.Background()); err != nil {
@@ -4304,6 +4342,13 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 									)
 								}
 							}
+						}
+
+						// Release the training lock
+						if releaseErr := ReleaseTrainingLock(d.ctx); releaseErr != nil {
+							level.Error(log.Logger).Log(
+								definitions.LogKeyMsg, fmt.Sprintf("Failed to release training lock: %v", releaseErr),
+							)
 						}
 					}()
 				}
@@ -5558,11 +5603,7 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 			level.Error(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to get last training time: %v", err),
 			)
-			// Skip training if we can't determine the last training time
-			// This prevents training loops during system restarts or Redis connectivity issues
-			level.Info(log.Logger).Log(
-				definitions.LogKeyMsg, "Skipping feedback-triggered training - cannot determine last training time",
-			)
+
 			return
 		} else if !lastTrainingTime.IsZero() {
 			// If last training was less than 3 hours ago, skip this training
@@ -5578,6 +5619,7 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 					"time_since", timeSinceLastTraining.String(),
 					"min_interval", minInterval.String(),
 				)
+
 				return
 			}
 
