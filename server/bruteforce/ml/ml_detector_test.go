@@ -160,7 +160,7 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 	// Set up expectations for SaveModelToRedis
 	// The model is saved as a JSON string using SET
 	// Use a matcher that accepts any string for the model data
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.Regexp().ExpectSet(modelKey, `.*`, 30*24*time.Hour).SetVal("OK")
 
 	// Save the model
@@ -279,7 +279,7 @@ func TestMLTrainer_LoadModelBackwardCompatibility(t *testing.T) {
 	// Set up expectations for LoadModelFromRedis
 	// The model is loaded as a JSON string using GET
 	// Provide a JSON model structure WITHOUT bias terms to test backward compatibility
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).SetVal(`{"input_size":6,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6],"learning_rate":0.01,"activation_function":"sigmoid"}`)
 
 	// Load the model
@@ -461,7 +461,7 @@ func TestInitMLSystem(t *testing.T) {
 
 	// Set up expectations for InitMLSystem
 	// Expect GET to try loading the model from Redis
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).RedisNil()
 
 	// Initialize ML system
@@ -627,7 +627,7 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up expectations for LoadModelFromRedis - return nil to simulate no saved model
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).RedisNil()
 
 	// Create a global trainer for the test
@@ -675,7 +675,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		rediscli.NewTestClient(db)
 
 		// Set up expectations for LoadModelFromRedis - return nil to simulate no saved model
-		modelKey := getMLRedisKeyPrefix() + "model"
+		modelKey := getMLGlobalKeyPrefix() + "model"
 		mock.ExpectGet(modelKey).RedisNil()
 
 		// Create a detector with a model
@@ -783,7 +783,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		assert.NoError(t, err, "Failed to serialize model")
 
 		// Set up expectations for LoadModelFromRedis
-		modelKey := getMLRedisKeyPrefix() + "model"
+		modelKey := getMLGlobalKeyPrefix() + "model"
 		mock.ExpectGet(modelKey).SetVal(string(jsonData))
 
 		// No need to set up expectations for TrainWithStoredData and SaveModelToRedis
