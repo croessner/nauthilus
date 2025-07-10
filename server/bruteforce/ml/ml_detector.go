@@ -1531,11 +1531,13 @@ func AcquireTrainingLock(ctx context.Context, duration time.Duration) (bool, err
 		return false, fmt.Errorf("failed to get Redis client for training lock")
 	}
 
-	// Generate a unique lock value (instance name + timestamp)
-	lockValue := config.GetFile().GetServer().GetInstanceName() + ":" + strconv.FormatInt(time.Now().Unix(), 10)
+	// Generate a unique lock value (instance name + timestamp + random number for uniqueness)
+	instanceName := config.GetFile().GetServer().GetInstanceName()
+	lockValue := instanceName + ":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ":" + strconv.FormatInt(rand.Int63(), 10)
 
 	// Try to set the key only if it doesn't exist (NX) with an expiration (EX)
-	key := getMLRedisKeyPrefix() + "training:lock"
+	// Use the global prefix for cluster-wide locking
+	key := getMLGlobalKeyPrefix() + "training:lock"
 	success, err := redisClient.SetNX(ctx, key, lockValue, duration).Result()
 
 	if err != nil {
@@ -1545,7 +1547,8 @@ func AcquireTrainingLock(ctx context.Context, duration time.Duration) (bool, err
 	if success {
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Acquired distributed training lock",
-			"instance", config.GetFile().GetServer().GetInstanceName(),
+			"instance", instanceName,
+			"token", lockValue,
 			"expires_in", duration.String(),
 		)
 	} else {
@@ -1582,7 +1585,7 @@ func ReleaseTrainingLock(ctx context.Context) error {
 	}
 
 	// Get the current lock holder
-	key := getMLRedisKeyPrefix() + "training:lock"
+	key := getMLGlobalKeyPrefix() + "training:lock"
 	currentHolder, err := redisClient.Get(ctx, key).Result()
 
 	if err != nil {
@@ -1594,16 +1597,44 @@ func ReleaseTrainingLock(ctx context.Context) error {
 	}
 
 	// Check if the current instance is the lock holder
-	// Note: We only check the instance name part, not the timestamp
-	if strings.HasPrefix(currentHolder, config.GetFile().GetServer().GetInstanceName()+":") {
-		// Release the lock
-		if err := redisClient.Del(ctx, key).Err(); err != nil {
-			return fmt.Errorf("failed to release training lock: %w", err)
+	// We check if the lock value starts with our instance name
+	instanceName := config.GetFile().GetServer().GetInstanceName()
+	if strings.HasPrefix(currentHolder, instanceName+":") {
+		// Release the lock using a Lua script for atomic check-and-delete
+		// This ensures we only delete the lock if it still has our value
+		script := `
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		else
+			return 0
+		end
+		`
+
+		// Execute the script
+		result, err := redisClient.Eval(ctx, script, []string{key}, currentHolder).Result()
+		if err != nil {
+			return fmt.Errorf("failed to execute lock release script: %w", err)
 		}
 
+		// Check if the lock was released
+		if result.(int64) == 1 {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Released distributed training lock",
+				"instance", instanceName,
+				"token", currentHolder,
+			)
+		} else {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to release distributed training lock - value changed",
+				"instance", instanceName,
+				"expected_token", currentHolder,
+			)
+		}
+	} else {
 		level.Info(log.Logger).Log(
-			definitions.LogKeyMsg, "Released distributed training lock",
-			"instance", config.GetFile().GetServer().GetInstanceName(),
+			definitions.LogKeyMsg, "Not releasing training lock - owned by different instance",
+			"current_holder", currentHolder,
+			"our_instance", instanceName,
 		)
 	}
 
@@ -1629,8 +1660,8 @@ func GetLastTrainingTime(ctx context.Context) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("failed to get Redis client for last training time")
 	}
 
-	// Get the last training timestamp
-	key := getMLRedisKeyPrefix() + "last:training:time"
+	// Get the last training timestamp using the global prefix
+	key := getMLGlobalKeyPrefix() + "last:training:time"
 	timestampStr, err := redisClient.Get(ctx, key).Result()
 
 	if err != nil {
@@ -1673,8 +1704,8 @@ func SetLastTrainingTime(ctx context.Context) error {
 		return fmt.Errorf("failed to get Redis client for setting last training time")
 	}
 
-	// Set the current time as the last training timestamp
-	key := getMLRedisKeyPrefix() + "last:training:time"
+	// Set the current time as the last training timestamp using the global prefix
+	key := getMLGlobalKeyPrefix() + "last:training:time"
 	timestamp := time.Now().Unix()
 
 	if err := redisClient.Set(ctx, key, strconv.FormatInt(timestamp, 10), 0).Err(); err != nil {
@@ -1683,7 +1714,8 @@ func SetLastTrainingTime(ctx context.Context) error {
 
 	// Increment the training counter and set expiration to 24 hours
 	// This counter is used to detect training loops
-	counterKey := getMLRedisKeyPrefix() + "training:counter"
+	// Use the global prefix for cluster-wide loop detection
+	counterKey := getMLGlobalKeyPrefix() + "training:counter"
 	count, err := redisClient.Incr(ctx, counterKey).Result()
 	if err != nil {
 		level.Error(log.Logger).Log(
@@ -1722,6 +1754,7 @@ func SetLastTrainingTime(ctx context.Context) error {
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, "Updated last training timestamp",
 		"timestamp", time.Unix(timestamp, 0).Format(time.RFC3339),
+		"instance", config.GetFile().GetServer().GetInstanceName(),
 	)
 
 	return nil
@@ -3418,6 +3451,14 @@ func getMLRedisKeyPrefix() string {
 	instanceName := config.GetFile().GetServer().GetInstanceName()
 
 	return config.GetFile().GetServer().GetRedis().GetPrefix() + "ml:" + instanceName + ":trained:"
+}
+
+// getMLGlobalKeyPrefix returns the Redis key prefix for global ML operations
+// This prefix is shared across all instances for cluster-wide coordination
+const mlGlobalPrefix = "ml:global:"
+
+func getMLGlobalKeyPrefix() string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + mlGlobalPrefix
 }
 
 // getLearningModeUpdateChannel returns a common channel name for learning mode updates
