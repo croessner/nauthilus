@@ -827,6 +827,119 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 	}
 }
 
+func TestRedisZRemRangeByRank(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         string
+		start       int64
+		stop        int64
+		expectedRes lua.LValue
+		expectedErr lua.LValue
+		setupMock   func(mock redismock.ClientMock, key string, start, stop int64)
+	}{
+		{
+			name:        "RemoveRangeWithExistingMembers",
+			key:         "key1",
+			start:       0,
+			stop:        2,
+			expectedRes: lua.LNumber(3),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, start, stop int64) {
+				mock.ExpectZRemRangeByRank(key, start, stop).SetVal(3)
+			},
+		},
+		{
+			name:        "RemoveRangeWithNoMembers",
+			key:         "key2",
+			start:       10,
+			stop:        20,
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, start, stop int64) {
+				mock.ExpectZRemRangeByRank(key, start, stop).SetVal(0)
+			},
+		},
+		{
+			name:        "RemoveRangeFromNonExistentKey",
+			key:         "key3",
+			start:       0,
+			stop:        -1,
+			expectedRes: lua.LNumber(0),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, start, stop int64) {
+				mock.ExpectZRemRangeByRank(key, start, stop).SetVal(0)
+			},
+		},
+		{
+			name:        "RemoveNegativeRange",
+			key:         "key4",
+			start:       -3,
+			stop:        -1,
+			expectedRes: lua.LNumber(3),
+			expectedErr: lua.LNil,
+			setupMock: func(mock redismock.ClientMock, key string, start, stop int64) {
+				mock.ExpectZRemRangeByRank(key, start, stop).SetVal(3)
+			},
+		},
+		{
+			name:        "RedisError",
+			key:         "key5",
+			start:       0,
+			stop:        10,
+			expectedRes: lua.LNil,
+			expectedErr: lua.LString("context deadline exceeded"),
+			setupMock: func(mock redismock.ClientMock, key string, start, stop int64) {
+				mock.ExpectZRemRangeByRank(key, start, stop).SetErr(context.DeadlineExceeded)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			rediscli.NewTestClient(db)
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock, tt.key, tt.start, tt.stop)
+			}
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			L.SetGlobal("start", lua.LNumber(tt.start))
+			L.SetGlobal("stop", lua.LNumber(tt.stop))
+
+			err := L.DoString(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_zremrangebyrank("default", key, start, stop)`)
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedRes.Type() || gotResult.String() != tt.expectedRes.String() {
+				t.Errorf("redis_zremrangebyrank() gotResult = %s, want %s", gotResult, tt.expectedRes)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("mock expectations were not met: %v", err)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
 func TestRedisZRank(t *testing.T) {
 	tests := []struct {
 		name        string
