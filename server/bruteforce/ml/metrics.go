@@ -214,3 +214,38 @@ func (m *MLMetrics) RecordNeuronActivation(layer string, neuronIndex int, activa
 func (m *MLMetrics) RecordWeightValue(fromLayer string, fromIndex int, toLayer string, toIndex int, weight float64) {
 	m.weightValues.WithLabelValues(fromLayer, strconv.Itoa(fromIndex), toLayer, strconv.Itoa(toIndex)).Set(weight)
 }
+
+// recordWeightMetrics records the current weight and bias values as Prometheus metrics
+func (nn *NeuralNetwork) recordWeightMetrics() {
+	metrics := GetMLMetrics()
+
+	// Record weights between input and hidden layers
+	for i := 0; i < nn.hiddenSize; i++ {
+		for j := 0; j < nn.inputSize; j++ {
+			weightIndex := i*nn.inputSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("input", j, "hidden", i, nn.weights[weightIndex])
+			}
+		}
+
+		// Record hidden layer bias
+		if i < len(nn.hiddenBias) {
+			metrics.RecordWeightValue("bias", 0, "hidden", i, nn.hiddenBias[i])
+		}
+	}
+
+	// Record weights between hidden and output layers
+	for i := 0; i < nn.outputSize; i++ {
+		for j := 0; j < nn.hiddenSize; j++ {
+			weightIndex := nn.inputSize*nn.hiddenSize + i*nn.hiddenSize + j
+			if weightIndex < len(nn.weights) {
+				metrics.RecordWeightValue("hidden", j, "output", i, nn.weights[weightIndex])
+			}
+		}
+
+		// Record output layer bias
+		if i < len(nn.outputBias) {
+			metrics.RecordWeightValue("bias", 0, "output", i, nn.outputBias[i])
+		}
+	}
+}
