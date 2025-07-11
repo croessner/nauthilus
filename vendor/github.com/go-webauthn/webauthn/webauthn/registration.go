@@ -21,7 +21,7 @@ type RegistrationOption func(*protocol.PublicKeyCredentialCreationOptions)
 
 // BeginRegistration generates a new set of registration data to be sent to the client and authenticator.
 func (webauthn *WebAuthn) BeginRegistration(user User, opts ...RegistrationOption) (creation *protocol.CredentialCreation, session *SessionData, err error) {
-	return webauthn.BeginMediatedRegistration(user, "", opts...)
+	return webauthn.BeginMediatedRegistration(user, protocol.MediationDefault, opts...)
 }
 
 // BeginMediatedRegistration is similar to BeginRegistration however it also allows specifying a credential mediation requirement.
@@ -101,6 +101,7 @@ func (webauthn *WebAuthn) BeginMediatedRegistration(user User, mediation protoco
 		UserID:           user.WebAuthnID(),
 		UserVerification: creation.Response.AuthenticatorSelection.UserVerification,
 		CredParams:       creation.Response.Parameters,
+		Mediation:        creation.Mediation,
 	}
 
 	if webauthn.Config.Timeouts.Registration.Enforce {
@@ -211,8 +212,14 @@ func WithRegistrationRelyingPartyName(name string) RegistrationOption {
 
 // FinishRegistration takes the response from the authenticator and client and verify the credential against the user's
 // credentials and session data.
-func (webauthn *WebAuthn) FinishRegistration(user User, session SessionData, response *http.Request) (*Credential, error) {
-	parsedResponse, err := protocol.ParseCredentialCreationResponse(response)
+//
+// As with all Finish functions this function requires a *http.Request but you can perform the same steps with the
+// protocol.ParseCredentialCreationResponseBody or protocol.ParseCredentialCreationResponseBytes which require an
+// io.Reader or byte array respectively, you can also use an arbitrary *protocol.ParsedCredentialCreationData which is
+// returned from all of these functions i.e. by implementing a custom parser. The User, *SessionData, and
+// *protocol.ParsedCredentialCreationData can then be used with the CreateCredential function.
+func (webauthn *WebAuthn) FinishRegistration(user User, session SessionData, request *http.Request) (credential *Credential, err error) {
+	parsedResponse, err := protocol.ParseCredentialCreationResponse(request)
 	if err != nil {
 		return nil, err
 	}
@@ -221,6 +228,9 @@ func (webauthn *WebAuthn) FinishRegistration(user User, session SessionData, res
 }
 
 // CreateCredential verifies a parsed response against the user's credentials and session data.
+//
+// If you wish to skip performing the step required to parse the *protocol.ParsedCredentialCreationData and
+// you're using net/http then you can use FinishRegistration instead.
 func (webauthn *WebAuthn) CreateCredential(user User, session SessionData, parsedResponse *protocol.ParsedCredentialCreationData) (credential *Credential, err error) {
 	if !bytes.Equal(user.WebAuthnID(), session.UserID) {
 		return nil, protocol.ErrBadRequest.WithDetails("ID mismatch for User and Session")
@@ -231,10 +241,11 @@ func (webauthn *WebAuthn) CreateCredential(user User, session SessionData, parse
 	}
 
 	shouldVerifyUser := session.UserVerification == protocol.VerificationRequired
+	shouldVerifyUserPresence := session.Mediation != protocol.MediationConditional
 
 	var clientDataHash []byte
 
-	if clientDataHash, err = parsedResponse.Verify(session.Challenge, shouldVerifyUser, webauthn.Config.RPID, webauthn.Config.RPOrigins, webauthn.Config.RPTopOrigins, webauthn.Config.RPTopOriginVerificationMode, webauthn.Config.MDS, session.CredParams); err != nil {
+	if clientDataHash, err = parsedResponse.Verify(session.Challenge, shouldVerifyUser, shouldVerifyUserPresence, webauthn.Config.RPID, webauthn.Config.RPOrigins, webauthn.Config.RPTopOrigins, webauthn.Config.RPTopOriginVerificationMode, webauthn.Config.MDS, session.CredParams); err != nil {
 		return nil, err
 	}
 
