@@ -57,10 +57,11 @@ local function notify_administrators(subject, metrics)
 
     local notify_logs = {}
     notify_logs.caller = N .. ".lua"
+    notify_logs.ts = nauthilus_util.get_current_timestamp()
     notify_logs.level = "warning"
+    notify_logs.session = request.session
     notify_logs.message = subject
     notify_logs.metrics = metrics
-    notify_logs.timestamp = os.time()
 
     nauthilus_util.print_result({ log_format = "json" }, notify_logs)
 
@@ -451,6 +452,7 @@ function nauthilus_call_action(request)
         local severe_logs = {}
         severe_logs.caller = N .. ".lua"
         severe_logs.level = "warning"
+        severe_logs.session = request.session
         severe_logs.message = "Severe threat detected, implementing strict measures"
         severe_logs.threat_level = threat_level
         severe_logs.metrics = metrics
@@ -468,6 +470,7 @@ function nauthilus_call_action(request)
         local high_logs = {}
         high_logs.caller = N .. ".lua"
         high_logs.level = "warning"
+        high_logs.session = request.session
         high_logs.message = "High threat detected, implementing moderate measures"
         high_logs.threat_level = threat_level
         high_logs.metrics = metrics
@@ -485,6 +488,7 @@ function nauthilus_call_action(request)
         local moderate_logs = {}
         moderate_logs.caller = N .. ".lua"
         moderate_logs.level = "warning"
+        moderate_logs.session = request.session
         moderate_logs.message = "Moderate threat detected, implementing light measures"
         moderate_logs.threat_level = threat_level
         moderate_logs.metrics = metrics
@@ -500,6 +504,7 @@ function nauthilus_call_action(request)
         local normal_logs = {}
         normal_logs.caller = N .. ".lua"
         normal_logs.level = "info"
+        normal_logs.session = request.session
         normal_logs.message = "Normal operation, no special measures needed"
         normal_logs.threat_level = threat_level
         normal_logs.metrics = metrics

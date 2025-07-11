@@ -292,6 +292,87 @@ func TrainNeuralNetwork(ctx *gin.Context) lua.LGFunction {
 	}
 }
 
+// ResetNeuralNetwork returns a Lua function that resets the neural network model to use only the canonical features.
+// This is useful for fixing issues where the model's input size has grown too large.
+// Returns a boolean indicating success and an error message if the operation failed.
+func ResetNeuralNetwork(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Log the reset request
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Neural network reset requested via Lua",
+		)
+
+		// Reset the model
+		err := ml.ResetModelToCanonicalFeatures(ctx)
+		if err != nil {
+			// Push false and error message
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		// Push true and nil error
+		L.Push(lua.LBool(true))
+		L.Push(lua.LNil)
+
+		return 2
+	}
+}
+
+// RemoveFeaturesFromRedisLua returns a Lua function that removes the specified features from the canonical list in Redis.
+// This is useful for removing features that are no longer needed or were added by mistake.
+// The function accepts a table of feature names to remove.
+// Returns a boolean indicating success and an error message if the operation failed.
+func RemoveFeaturesFromRedisLua(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		// Check if we have a table as the first argument
+		luaTable := L.CheckTable(1)
+		if luaTable == nil {
+			L.RaiseError("expected table of feature names as argument")
+
+			return 0
+		}
+
+		// Convert Lua table to Go slice
+		featuresToRemove := make([]string, 0)
+		luaTable.ForEach(func(_, value lua.LValue) {
+			if valueStr, ok := value.(lua.LString); ok {
+				featuresToRemove = append(featuresToRemove, string(valueStr))
+			}
+		})
+
+		// Check if we have any features to remove
+		if len(featuresToRemove) == 0 {
+			L.RaiseError("no features to remove provided")
+
+			return 0
+		}
+
+		// Log the remove request
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Removing features from canonical list requested via Lua",
+			"features", featuresToRemove,
+		)
+
+		// Remove the features
+		err := ml.RemoveFeaturesFromRedis(ctx, featuresToRemove)
+		if err != nil {
+			// Push false and error message
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		// Push true and nil error
+		L.Push(lua.LBool(true))
+		L.Push(lua.LNil)
+
+		return 2
+	}
+}
+
 // LoaderModNeural loads Lua functions for neural network integration and returns them as a Lua module.
 func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
@@ -299,11 +380,13 @@ func LoaderModNeural(ctx *gin.Context) lua.LGFunction {
 		provideFeedback := ProvideFeedback(ctx)
 
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnAddAdditionalFeatures: AddAdditionalFeatures(ctx),
-			definitions.LuaFnTrainNeuralNetwork:    TrainNeuralNetwork(ctx),
-			definitions.LuaFnSetLearningMode:       SetLearningMode(ctx),
-			definitions.LuaFNGetLearningMode:       GetLearningMode,
-			definitions.LuaFnProvideFeedback:       provideFeedback,
+			definitions.LuaFnAddAdditionalFeatures:   AddAdditionalFeatures(ctx),
+			definitions.LuaFnTrainNeuralNetwork:      TrainNeuralNetwork(ctx),
+			definitions.LuaFnSetLearningMode:         SetLearningMode(ctx),
+			definitions.LuaFNGetLearningMode:         GetLearningMode,
+			definitions.LuaFnProvideFeedback:         provideFeedback,
+			definitions.LuaFnResetNeuralNetwork:      ResetNeuralNetwork(ctx),
+			definitions.LuaFnRemoveFeaturesFromRedis: RemoveFeaturesFromRedisLua(ctx),
 		})
 
 		L.Push(mod)

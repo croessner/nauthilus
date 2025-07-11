@@ -51,7 +51,9 @@ function nauthilus_call_neural_network(request)
     local logs = {}
 
     logs.caller = N .. ".lua"
+    logs.ts = nauthilus_util.get_current_timestamp()
     logs.level = "info"
+    logs.session = request.session
 
     -- For non-authenticated users, we still need to get the country code
 
@@ -133,7 +135,7 @@ function nauthilus_call_neural_network(request)
         -- Add country code as a feature for non-authenticated users
         -- Using the actual country code retrieved from the GeoIP service
         local additional_features_one_hot = {
-            identifier = identifier,
+            -- identifier = identifier, -- Commented out: User agent or client ID is too general and can vary widely even for legitimate users
         }
 
         local additional_features_embedding = {

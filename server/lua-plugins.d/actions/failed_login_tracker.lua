@@ -78,6 +78,7 @@ function nauthilus_call_action(request)
         local logs = {}
         logs.caller = N .. ".lua"
         logs.level = "info"
+        logs.session = request.session
 
         if not request.account or request.account == "" then
             logs.message = "Failed login tracked for username: " .. username

@@ -1316,11 +1316,14 @@ const (
 	// LuaFnRedisZRemRangeByScore is a Lua function constant used to remove range of members in a sorted set by their score.
 	LuaFnRedisZRemRangeByScore = "redis_zremrangebyscore"
 
-	// LuaFNRedisZRemRangeByRank represents the Redis Lua script function name for removing elements by rank in a sorted set.
-	LuaFNRedisZRemRangeByRank = "redis_zremrangebyrank"
+	// LuaFnRedisZRemRangeByRank is a Lua function constant used to remove range of members in a sorted set by their rank.
+	LuaFnRedisZRemRangeByRank = "redis_zremrangebyrank"
 
 	// LuaFnRedisZRank is a constant defining the Redis command "ZRank" for retrieving the rank of a member in a sorted set.
 	LuaFnRedisZRank = "redis_zrank"
+
+	// LuaFnRedisZRevRank is a constant defining the Redis command "ZRevRank" for retrieving the rank of a member in a sorted set, with the scores ordered from high to low.
+	LuaFnRedisZRevRank = "redis_zrevrank"
 
 	// LuaFnRedisZCount is a constant defining the Redis command "ZCount" for counting the number of members in a sorted set with scores between min and max.
 	LuaFnRedisZCount = "redis_zcount"
@@ -1470,6 +1473,9 @@ const (
 	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
 	LuaFnAddAdditionalFeatures = "add_additional_features"
 
+	// LuaFnRemoveFeaturesFromRedis represents the function name for "remove_features_from_redis" in Lua
+	LuaFnRemoveFeaturesFromRedis = "remove_features_from_redis"
+
 	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
 	LuaFnTrainNeuralNetwork = "train_neural_network"
 
@@ -1481,6 +1487,9 @@ const (
 
 	// LuaFNGetLearningMode is a constant string representing the Lua function name for retrieving the learning mode state.
 	LuaFNGetLearningMode = "get_learning_mode"
+
+	// LuaFnResetNeuralNetwork represents the function name for "reset_neural_network" in Lua
+	LuaFnResetNeuralNetwork = "reset_neural_network"
 
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"

@@ -222,6 +222,7 @@ function nauthilus_run_hook(logging, session)
 
     result.level = "info"
     result.caller = N .. ".lua"
+    result.ts = nauthilus_util.get_current_timestamp()
     result.session = session
 
     -- Get Redis connection

@@ -441,3 +441,73 @@ func TestRedisSCard(t *testing.T) {
 		})
 	}
 }
+
+// TestRedisSAddWithCustomHandle tests the RedisSAdd function with a custom connection handle
+func TestRedisSAddWithCustomHandle(t *testing.T) {
+	tests := []struct {
+		name          string
+		key           string
+		values        []any
+		expectedCount lua.LValue
+		expectedErr   lua.LValue
+		setupMock     func(mock redismock.ClientMock)
+	}{
+		{
+			name:          "AddNewValuesWithCustomHandle",
+			key:           "existingKey",
+			values:        []any{"val1", "val2"},
+			expectedCount: lua.LNumber(2),
+			expectedErr:   lua.LNil,
+			setupMock: func(mock redismock.ClientMock) {
+				mock.ExpectSAdd("existingKey", []any{"val1", "val2"}).SetVal(2)
+			},
+		},
+	}
+
+	L := lua.NewState()
+
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.setupMock(mock)
+
+			// Create a userdata with the Redis client
+			ud := L.NewUserData()
+			ud.Value = db
+			L.SetMetatable(ud, L.GetTypeMetatable("redis_client"))
+			L.SetGlobal("custom_handle", ud)
+
+			L.SetGlobal("key", lua.LString(tt.key))
+
+			valueStr := ""
+			for _, v := range tt.values {
+				valueStr += fmt.Sprintf(", %s", formatLuaValue(v))
+			}
+
+			// Use the custom handle instead of "default"
+			err := L.DoString(fmt.Sprintf(`local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_sadd(custom_handle, key%s)`, valueStr))
+			if err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			if gotResult.Type() != tt.expectedCount.Type() && gotResult.String() != tt.expectedCount.String() {
+				t.Errorf("nauthilus.redis_sadd() with custom handle gotResult = %d, want %d", gotResult, tt.expectedCount)
+			}
+
+			gotErr := L.GetGlobal("err")
+
+			checkLuaError(t, gotErr, tt.expectedErr)
+
+			mock.ClearExpect()
+		})
+	}
+}

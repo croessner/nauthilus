@@ -160,7 +160,7 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 	// Set up expectations for SaveModelToRedis
 	// The model is saved as a JSON string using SET
 	// Use a matcher that accepts any string for the model data
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.Regexp().ExpectSet(modelKey, `.*`, 30*24*time.Hour).SetVal("OK")
 
 	// Save the model
@@ -180,7 +180,9 @@ func TestMLTrainer_LoadSaveModel(t *testing.T) {
 	assert.Equal(t, 6, trainer.model.inputSize, "Model input size should be 6")
 	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
 	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
-	assert.Equal(t, 6, len(trainer.model.weights), "Model should have 6 weights")
+	// For a neural network with 6 input neurons, 10 hidden neurons, and 1 output neuron,
+	// the number of weights should be 6*10 + 10*1 = 70
+	assert.Equal(t, 70, len(trainer.model.weights), "Model should have 70 weights (6*10 + 10*1)")
 
 	// Verify bias terms were loaded correctly
 	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
@@ -239,7 +241,9 @@ func TestMLTrainer_LoadSaveAdditionalFeaturesModel(t *testing.T) {
 	assert.Equal(t, 8, trainer.model.inputSize, "Model input size should be 8")
 	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
 	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
-	assert.Equal(t, 8, len(trainer.model.weights), "Model should have 8 weights")
+	// For a neural network with 8 input neurons, 10 hidden neurons, and 1 output neuron,
+	// the number of weights should be 8*10 + 10*1 = 90
+	assert.Equal(t, 90, len(trainer.model.weights), "Model should have 90 weights (8*10 + 10*1)")
 
 	// Verify bias terms were loaded correctly
 	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
@@ -275,7 +279,7 @@ func TestMLTrainer_LoadModelBackwardCompatibility(t *testing.T) {
 	// Set up expectations for LoadModelFromRedis
 	// The model is loaded as a JSON string using GET
 	// Provide a JSON model structure WITHOUT bias terms to test backward compatibility
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).SetVal(`{"input_size":6,"hidden_size":10,"output_size":1,"weights":[0.1,0.2,0.3,0.4,0.5,0.6],"learning_rate":0.01,"activation_function":"sigmoid"}`)
 
 	// Load the model
@@ -286,7 +290,9 @@ func TestMLTrainer_LoadModelBackwardCompatibility(t *testing.T) {
 	assert.Equal(t, 6, trainer.model.inputSize, "Model input size should be 6")
 	assert.Equal(t, 10, trainer.model.hiddenSize, "Model hidden size should be 10")
 	assert.Equal(t, 1, trainer.model.outputSize, "Model output size should be 1")
-	assert.Equal(t, 6, len(trainer.model.weights), "Model should have 6 weights")
+	// For a neural network with 6 input neurons, 10 hidden neurons, and 1 output neuron,
+	// the number of weights should be 6*10 + 10*1 = 70
+	assert.Equal(t, 70, len(trainer.model.weights), "Model should have 70 weights (6*10 + 10*1)")
 
 	// Verify bias terms were initialized correctly (backward compatibility)
 	assert.Equal(t, 10, len(trainer.model.hiddenBias), "Model should have 10 hidden bias terms")
@@ -455,7 +461,7 @@ func TestInitMLSystem(t *testing.T) {
 
 	// Set up expectations for InitMLSystem
 	// Expect GET to try loading the model from Redis
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).RedisNil()
 
 	// Initialize ML system
@@ -621,7 +627,7 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up expectations for LoadModelFromRedis - return nil to simulate no saved model
-	modelKey := getMLRedisKeyPrefix() + "model"
+	modelKey := getMLGlobalKeyPrefix() + "model"
 	mock.ExpectGet(modelKey).RedisNil()
 
 	// Create a global trainer for the test
@@ -629,7 +635,7 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
 	// Create a trainer with a model
-	globalTrainer = &MLTrainer{
+	globalTrainer = &NeuralNetworkTrainer{
 		ctx:   ctx,
 		model: NewNeuralNetwork(6, 1),
 	}
@@ -669,7 +675,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		rediscli.NewTestClient(db)
 
 		// Set up expectations for LoadModelFromRedis - return nil to simulate no saved model
-		modelKey := getMLRedisKeyPrefix() + "model"
+		modelKey := getMLGlobalKeyPrefix() + "model"
 		mock.ExpectGet(modelKey).RedisNil()
 
 		// Create a detector with a model
@@ -694,7 +700,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
 		// Create a trainer with context to avoid nil pointer in goroutine
-		globalTrainer = &MLTrainer{
+		globalTrainer = &NeuralNetworkTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
 		}
@@ -777,7 +783,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		assert.NoError(t, err, "Failed to serialize model")
 
 		// Set up expectations for LoadModelFromRedis
-		modelKey := getMLRedisKeyPrefix() + "model"
+		modelKey := getMLGlobalKeyPrefix() + "model"
 		mock.ExpectGet(modelKey).SetVal(string(jsonData))
 
 		// No need to set up expectations for TrainWithStoredData and SaveModelToRedis
@@ -787,7 +793,7 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		originalGlobalTrainer := globalTrainer
 		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
 
-		globalTrainer = &MLTrainer{
+		globalTrainer = &NeuralNetworkTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
 		}
