@@ -557,8 +557,28 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 			// Get the canonical list of features from Redis
 			canonicalFeatures, err := GetDynamicFeaturesFromRedis(ctx)
 			if err == nil && len(canonicalFeatures) > 0 {
-				// Calculate expected input size: 6 standard features + canonical features
-				expectedInputSize := 6 + len(canonicalFeatures)
+				// Create a temporary trainer to calculate neuron counts
+				tempTrainer := NewMLTrainer().WithContext(ctx)
+
+				// Calculate the expected input size: 6 standard features + neurons for canonical features
+				expectedInputSize := 6
+				additionalNeuronCount := 0
+
+				// Calculate the actual neuron count for each feature
+				for _, featureName := range canonicalFeatures {
+					neuronCount := tempTrainer.calculateFeatureNeuronCount(featureName)
+					additionalNeuronCount += neuronCount
+
+					util.DebugModule(definitions.DbgNeural,
+						"action", "calculate_feature_neurons",
+						"feature_name", featureName,
+						"encoding_type", tempTrainer.GetFeatureEncodingType(featureName),
+						"neuron_count", neuronCount,
+					)
+				}
+
+				// Add the total neuron count to the input size
+				expectedInputSize += additionalNeuronCount
 
 				// If the model's input size is smaller than expected, we need to create a new model
 				if model.inputSize < expectedInputSize {
@@ -566,6 +586,7 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 						definitions.LogKeyMsg, fmt.Sprintf("Model input size (%d) is smaller than expected (%d) based on canonical features. Creating new model.",
 							model.inputSize, expectedInputSize),
 						"canonical_features_count", len(canonicalFeatures),
+						"additional_neurons_count", additionalNeuronCount,
 						definitions.LogKeyGUID, guid,
 					)
 
