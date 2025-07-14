@@ -826,3 +826,9 @@ func (m *MLBucketManager) GetBruteForceName() string {
 	// Default fallback (should not happen if flags are set correctly)
 	return m.BucketManager.GetBruteForceName()
 }
+
+// GetMLProbability returns the probability value from the ML prediction.
+// If ML prediction has not been done or ML is not activated, it returns 0.0.
+func (m *MLBucketManager) GetMLProbability() float64 {
+	return m.mlProbability
+}
