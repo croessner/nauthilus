@@ -70,6 +70,9 @@ func setupTestConfig(enableML bool) {
 	// Shutdown any existing ML system to avoid race conditions
 	// This is called after setting up the configuration to avoid panic
 	ShutdownMLSystem()
+
+	// Set NAUTHILUS_TESTING environment variable to prevent goroutines from starting
+	os.Setenv("NAUTHILUS_TESTING", "1")
 }
 
 func TestNeuralNetwork_Train(t *testing.T) {
@@ -625,14 +628,14 @@ func TestGetBruteForceMLDetector(t *testing.T) {
 	mock.ExpectGet(modelKey).RedisNil()
 
 	// Create a global trainer for the test
-	originalGlobalTrainer := globalTrainer
-	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+	originalTrainer := mlSystem.GetTrainer()
+	defer func() { mlSystem.SetTrainer(originalTrainer) }() // Restore after test
 
 	// Create a trainer with a model
-	globalTrainer = &MLTrainer{
+	mlSystem.SetTrainer(&MLTrainer{
 		ctx:   ctx,
 		model: NewNeuralNetwork(6, 1),
-	}
+	})
 
 	// Get a detector
 	detector := GetBruteForceMLDetector(ctx, "test-guid", "127.0.0.1", "testuser")
@@ -690,14 +693,14 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		}
 
 		// Create a global trainer for the test
-		originalGlobalTrainer := globalTrainer
-		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+		originalTrainer := mlSystem.GetTrainer()
+		defer func() { mlSystem.SetTrainer(originalTrainer) }() // Restore after test
 
 		// Create a trainer with context to avoid nil pointer in goroutine
-		globalTrainer = &MLTrainer{
+		mlSystem.SetTrainer(&MLTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
-		}
+		})
 
 		// No need to set up expectations for TrainWithStoredData and SaveModelToRedis
 		// since we're skipping training during tests
@@ -784,13 +787,13 @@ func TestBruteForceMLDetector_SetAdditionalFeatures(t *testing.T) {
 		// since we're skipping training during tests
 
 		// Create a global trainer for the test
-		originalGlobalTrainer := globalTrainer
-		defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+		originalTrainer := mlSystem.GetTrainer()
+		defer func() { mlSystem.SetTrainer(originalTrainer) }() // Restore after test
 
-		globalTrainer = &MLTrainer{
+		mlSystem.SetTrainer(&MLTrainer{
 			ctx:   context.Background(),
 			model: detector.model,
-		}
+		})
 
 		// Remember the original weights for the first 6 input neurons
 		originalWeights := make([]float64, len(detector.model.weights))
@@ -1283,8 +1286,8 @@ func TestMixedEncodingTypes(t *testing.T) {
 	nn := NewNeuralNetwork(17, 1)
 
 	// Create a global trainer for the test
-	originalGlobalTrainer := globalTrainer
-	defer func() { globalTrainer = originalGlobalTrainer }() // Restore after test
+	originalTrainer := mlSystem.GetTrainer()
+	defer func() { mlSystem.SetTrainer(originalTrainer) }() // Restore after test
 
 	// Create a trainer with context
 	trainer := NewMLTrainer().WithContext(ctx)
@@ -1301,7 +1304,7 @@ func TestMixedEncodingTypes(t *testing.T) {
 	trainer.getOrCreateOneHotEncoding("one_hot_feature", "value3") // Index 2
 
 	// Set the global trainer
-	globalTrainer = trainer
+	mlSystem.SetTrainer(trainer)
 
 	// Create a detector with the model
 	detector := &BruteForceMLDetector{

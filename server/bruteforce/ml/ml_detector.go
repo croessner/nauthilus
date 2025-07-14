@@ -2156,11 +2156,17 @@ func (s *MLSystem) SetSchedulerStarted(started bool) {
 
 // GetStopChan returns the channel used to signal training goroutines to stop
 func (s *MLSystem) GetStopChan() chan struct{} {
+	s.schedulerMu.Lock()
+	defer s.schedulerMu.Unlock()
+
 	return s.stopChan
 }
 
 // SetStopChan sets the channel used to signal training goroutines to stop
 func (s *MLSystem) SetStopChan(stopChan chan struct{}) {
+	s.schedulerMu.Lock()
+	defer s.schedulerMu.Unlock()
+
 	s.stopChan = stopChan
 }
 
@@ -2592,31 +2598,49 @@ func InitMLSystem(ctx context.Context) error {
 		// Initialize model and trained flag
 		initializeModelAndTrainedFlag(ctx, trainer)
 
+		// Check if we're in testing mode
+		inTestingMode := os.Getenv("NAUTHILUS_TESTING") == "1"
+
 		// Start scheduled training
 		stopChan := make(chan struct{})
 		mlSystem.SetStopChan(stopChan)
 
-		// Start model update subscriber
-		go modelUpdateSubscriber(ctx, stopChan)
+		// Only start goroutines if not in testing mode
+		if !inTestingMode {
+			// Start model update subscriber
+			go modelUpdateSubscriber(ctx, stopChan)
 
-		// Start learning mode update subscriber
-		go learningModeUpdateSubscriber(ctx, stopChan)
+			// Start learning mode update subscriber
+			go learningModeUpdateSubscriber(ctx, stopChan)
 
-		// Start scheduled training
-		go scheduledTraining(ctx, stopChan)
+			// Start scheduled training
+			go scheduledTraining(ctx, stopChan)
 
-		mlSystem.SetSchedulerStarted(true)
+			mlSystem.SetSchedulerStarted(true)
+
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, "Started ML model training scheduler",
+			)
+		} else {
+			// In testing mode, just set the trainer without starting goroutines
+			util.DebugModule(definitions.DbgNeural,
+				"action", "init_ml_system_testing_mode",
+				"message", "Skipping goroutine initialization in testing mode",
+			)
+		}
 
 		// Set the trainer in the MLSystem
 		mlSystem.SetTrainer(trainer)
 
+		// Get scheduler status directly for debug log
+		mlSystem.schedulerMu.Lock()
+		schedulerStarted := mlSystem.schedulerStarted
+		mlSystem.schedulerMu.Unlock()
+
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_ml_system_complete",
-			"scheduler_started", mlSystem.IsSchedulerStarted(),
-		)
-
-		level.Info(log.Logger).Log(
-			definitions.LogKeyMsg, "Started ML model training scheduler",
+			"scheduler_started", schedulerStarted,
+			"testing_mode", inTestingMode,
 		)
 	})
 
@@ -2628,17 +2652,22 @@ func InitMLSystem(ctx context.Context) error {
 func ShutdownMLSystem() {
 	// Shutdown using the new MLSystem struct
 	mlSystem.schedulerMu.Lock()
-	defer mlSystem.schedulerMu.Unlock()
 
-	if mlSystem.IsSchedulerStarted() && mlSystem.GetStopChan() != nil {
+	// Access schedulerStarted directly to avoid deadlock
+	// since we already hold the lock
+	schedulerStarted := mlSystem.schedulerStarted
+	stopChan := mlSystem.stopChan
+
+	if schedulerStarted && stopChan != nil {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "shutdown_ml_system_stop_scheduler",
-			"scheduler_started", mlSystem.IsSchedulerStarted(),
+			"scheduler_started", schedulerStarted,
 		)
 
-		close(mlSystem.GetStopChan())
+		close(stopChan)
 
-		mlSystem.SetSchedulerStarted(false)
+		// Set schedulerStarted to false directly
+		mlSystem.schedulerStarted = false
 
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Stopped ML model training scheduler",
@@ -2646,14 +2675,16 @@ func ShutdownMLSystem() {
 	} else {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "shutdown_ml_system_no_scheduler",
-			"scheduler_started", mlSystem.IsSchedulerStarted(),
-			"stop_channel_nil", mlSystem.GetStopChan() == nil,
+			"scheduler_started", schedulerStarted,
+			"stop_channel_nil", stopChan == nil,
 		)
 	}
 
-	// Clear trainer in MLSystem
+	// Clear trainer and stop channel
 	mlSystem.SetTrainer(nil)
-	mlSystem.SetStopChan(nil)
+	mlSystem.stopChan = nil
+
+	mlSystem.schedulerMu.Unlock()
 }
 
 // BruteForceMLDetector implements machine learning based brute force detection
@@ -3090,9 +3121,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 					definitions.LogKeyMsg, fmt.Sprintf("Reinitialized neural network model to handle %d additional features (new input size: %d)", len(features), expectedInputSize),
 				)
 
+				isTestingMode := os.Getenv("NAUTHILUS_TESTING") == "1"
+
 				// Schedule a training to optimize the new weights
 				// Skip training during tests to avoid Redis errors
-				if os.Getenv("NAUTHILUS_TESTING") != "1" {
+				if !isTestingMode {
 					go func() {
 						// Get the trainer
 						localTrainer := mlSystem.GetTrainer()
