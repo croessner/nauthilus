@@ -650,7 +650,7 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 	}
 
 	// Ensure the ML system is initialized
-	if globalTrainer == nil {
+	if mlSystem.GetTrainer() == nil {
 		if err := InitMLSystem(m.ctx); err != nil {
 			return fmt.Errorf("failed to initialize ML system: %w", err)
 		}
@@ -661,14 +661,20 @@ func (m *MLBucketManager) TrainModel(maxSamples, epochs int) error {
 		definitions.LogKeyMsg, fmt.Sprintf("Manually triggering ML model training with %d samples for %d epochs", maxSamples, epochs),
 	)
 
-	// Use the global trainer instead of the detector
-	err := globalTrainer.TrainWithStoredData(maxSamples, epochs)
+	// Get the trainer
+	trainer := mlSystem.GetTrainer()
+	if trainer == nil {
+		return fmt.Errorf("cannot train model: trainer is nil after initialization")
+	}
+
+	// Train the model
+	err := trainer.TrainWithStoredData(maxSamples, epochs)
 	if err != nil {
 		return err
 	}
 
 	// Save the trained model to Redis
-	return globalTrainer.SaveModelToRedis()
+	return trainer.SaveModelToRedis()
 }
 
 // RecordLoginFeature records a login feature for ML training

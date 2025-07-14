@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -1869,12 +1870,11 @@ func (t *MLTrainer) TrainWithStoredData(maxSamples int, epochs int) error {
 		definitions.LogKeyMsg, fmt.Sprintf("Model training completed successfully in %.2f seconds", trainingDuration),
 	)
 
-	// Set the modelTrained flag if we have enough data
+	// Set the trained flag if we have enough data
 	// We consider the model trained if we have at least 100 samples
 	if len(trainingData) >= 100 {
-		modelTrainedMutex.Lock()
-		modelTrained = true
-		modelTrainedMutex.Unlock()
+		// Set the trained flag
+		mlSystem.SetTrained(true)
 
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Model is now considered trained with real data",
@@ -2084,43 +2084,120 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 	return nil
 }
 
-var (
-	// Global model trainer
-	globalTrainer *MLTrainer
+// MLSystem encapsulates the machine learning system state and provides thread-safe access
+type MLSystem struct {
+	// Trainer is the global model trainer
+	trainer *MLTrainer
 
-	// RWMutex to protect access to globalTrainer
-	globalTrainerMutex sync.RWMutex
+	// trainerMu protects access to trainer
+	trainerMu sync.RWMutex
 
-	// Channel to signal training goroutine to stop
-	stopTrainingChan chan struct{}
+	// stopChan signals training goroutines to stop
+	stopChan chan struct{}
 
-	// Initialization synchronization
+	// initOnce ensures initialization happens only once
 	initOnce sync.Once
 
-	// Mutex for thread-safe shutdown
-	shutdownMutex sync.Mutex
-
-	// Flag to track if the scheduler is running
+	// schedulerStarted tracks if the scheduler is running
 	schedulerStarted bool
 
-	// modelDryRun determines if the model operations should execute in dry-run mode without making actual changes.
-	modelDryRun bool
+	// schedulerMu protects access to schedulerStarted and shutdown operations
+	schedulerMu sync.Mutex
 
-	// Flag to track if the model has been trained with real data
-	modelTrained bool
+	// dryRun determines if model operations execute without making actual changes
+	dryRun atomic.Bool
 
-	// Mutex to protect access to modelTrained flag
-	modelTrainedMutex sync.RWMutex
-)
+	// trained tracks if the model has been trained with real data
+	trained atomic.Bool
+}
+
+// NewMLSystem creates a new MLSystem instance
+func NewMLSystem() *MLSystem {
+	system := &MLSystem{}
+
+	// Initialize atomic fields with default values
+	system.dryRun.Store(false)
+	system.trained.Store(false)
+
+	return system
+}
+
+// GetTrainer returns the global model trainer in a thread-safe manner
+func (s *MLSystem) GetTrainer() *MLTrainer {
+	s.trainerMu.RLock()
+	defer s.trainerMu.RUnlock()
+
+	return s.trainer
+}
+
+// SetTrainer sets the global model trainer in a thread-safe manner
+func (s *MLSystem) SetTrainer(trainer *MLTrainer) {
+	s.trainerMu.Lock()
+	defer s.trainerMu.Unlock()
+
+	s.trainer = trainer
+}
+
+// IsSchedulerStarted returns true if the scheduler is running
+func (s *MLSystem) IsSchedulerStarted() bool {
+	s.schedulerMu.Lock()
+	defer s.schedulerMu.Unlock()
+
+	return s.schedulerStarted
+}
+
+// SetSchedulerStarted sets the scheduler started flag
+func (s *MLSystem) SetSchedulerStarted(started bool) {
+	s.schedulerMu.Lock()
+	defer s.schedulerMu.Unlock()
+
+	s.schedulerStarted = started
+}
+
+// GetStopChan returns the channel used to signal training goroutines to stop
+func (s *MLSystem) GetStopChan() chan struct{} {
+	return s.stopChan
+}
+
+// SetStopChan sets the channel used to signal training goroutines to stop
+func (s *MLSystem) SetStopChan(stopChan chan struct{}) {
+	s.stopChan = stopChan
+}
+
+// IsDryRun returns true if the model is in dry-run mode
+func (s *MLSystem) IsDryRun() bool {
+	return s.dryRun.Load()
+}
+
+// SetDryRun sets the dry-run mode
+func (s *MLSystem) SetDryRun(dryRun bool) {
+	s.dryRun.Store(dryRun)
+}
+
+// IsTrained returns true if the model has been trained with real data
+func (s *MLSystem) IsTrained() bool {
+	return s.trained.Load()
+}
+
+// SetTrained sets the trained flag
+func (s *MLSystem) SetTrained(trained bool) {
+	s.trained.Store(trained)
+}
+
+// IsLearningMode returns true if the model is in learning mode (not trained or in dry-run)
+func (s *MLSystem) IsLearningMode() bool {
+	return !s.trained.Load() || s.dryRun.Load()
+}
+
+// Global instance of MLSystem
+var mlSystem = NewMLSystem()
 
 // initializeModelAndTrainedFlag initializes and verifies the ML model and its trained status flag.
 // It attempts to load a pre-trained model and trained flag from Redis, or initializes with defaults if unavailable.
 // Returns true if the model was successfully loaded from Redis, otherwise false.
 func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool {
-	// Initialize modelTrained flag to false
-	modelTrainedMutex.Lock()
-	modelTrained = false
-	modelTrainedMutex.Unlock()
+	// Initialize trained flag to false
+	mlSystem.SetTrained(false)
 
 	// Try to load a previously trained model first
 	modelLoadedFromRedis := false
@@ -2147,9 +2224,8 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 			// Get a sample of training data to check if we have enough
 			trainingData, err := trainer.GetTrainingDataFromRedis(100)
 			if err == nil && len(trainingData) >= 100 {
-				modelTrainedMutex.Lock()
-				modelTrained = true
-				modelTrainedMutex.Unlock()
+				// Set the trained flag
+				mlSystem.SetTrained(true)
 
 				level.Info(log.Logger).Log(
 					definitions.LogKeyMsg, "Loaded model is considered trained with real data",
@@ -2165,9 +2241,7 @@ func initializeModelAndTrainedFlag(ctx context.Context, trainer *MLTrainer) bool
 		}
 	} else {
 		// Flag was loaded successfully, log the current state
-		modelTrainedMutex.RLock()
-		isModelTrained := modelTrained
-		modelTrainedMutex.RUnlock()
+		isModelTrained := mlSystem.IsTrained()
 
 		if isModelTrained {
 			level.Info(log.Logger).Log(
@@ -2245,9 +2319,7 @@ func modelUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			)
 
 			// Reload model
-			globalTrainerMutex.RLock()
-			localTrainer := globalTrainer
-			globalTrainerMutex.RUnlock()
+			localTrainer := mlSystem.GetTrainer()
 
 			if localTrainer != nil {
 				if loadErr := localTrainer.LoadModelFromRedis(); loadErr != nil {
@@ -2344,9 +2416,7 @@ func learningModeUpdateSubscriber(ctx context.Context, stopChan chan struct{}) {
 			)
 
 			// Update learning mode
-			modelTrainedMutex.Lock()
-			modelDryRun = learningMode
-			modelTrainedMutex.Unlock()
+			mlSystem.SetDryRun(learningMode)
 
 			// Save the updated flag to Redis
 			if err := SaveModelTrainedFlagToRedis(ctx); err != nil {
@@ -2438,10 +2508,8 @@ func performScheduledTraining(ctx context.Context) {
 		definitions.LogKeyMsg, "Starting scheduled model training",
 	)
 
-	// Acquire write lock before training
-	globalTrainerMutex.RLock()
-	localTrainer := globalTrainer
-	globalTrainerMutex.RUnlock()
+	// Get the trainer
+	localTrainer := mlSystem.GetTrainer()
 
 	// Train with the last 5000 samples for 50 epochs
 	trainErr := localTrainer.TrainWithStoredData(5000, 50)
@@ -2516,7 +2584,8 @@ func InitMLSystem(ctx context.Context) error {
 
 	var err error
 
-	initOnce.Do(func() {
+	// Initialize using the new MLSystem struct
+	mlSystem.initOnce.Do(func() {
 		// Create a new trainer
 		trainer := NewMLTrainer().WithContext(ctx)
 
@@ -2525,7 +2594,7 @@ func InitMLSystem(ctx context.Context) error {
 
 		// Start scheduled training
 		stopChan := make(chan struct{})
-		stopTrainingChan = stopChan
+		mlSystem.SetStopChan(stopChan)
 
 		// Start model update subscriber
 		go modelUpdateSubscriber(ctx, stopChan)
@@ -2536,16 +2605,14 @@ func InitMLSystem(ctx context.Context) error {
 		// Start scheduled training
 		go scheduledTraining(ctx, stopChan)
 
-		schedulerStarted = true
+		mlSystem.SetSchedulerStarted(true)
 
-		// Acquire write lock before setting globalTrainer
-		globalTrainerMutex.Lock()
-		globalTrainer = trainer
-		globalTrainerMutex.Unlock()
+		// Set the trainer in the MLSystem
+		mlSystem.SetTrainer(trainer)
 
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_ml_system_complete",
-			"scheduler_started", schedulerStarted,
+			"scheduler_started", mlSystem.IsSchedulerStarted(),
 		)
 
 		level.Info(log.Logger).Log(
@@ -2559,19 +2626,19 @@ func InitMLSystem(ctx context.Context) error {
 // ShutdownMLSystem properly cleans up the ML system
 // This should be called during application shutdown
 func ShutdownMLSystem() {
-	shutdownMutex.Lock()
+	// Shutdown using the new MLSystem struct
+	mlSystem.schedulerMu.Lock()
+	defer mlSystem.schedulerMu.Unlock()
 
-	defer shutdownMutex.Unlock()
-
-	if schedulerStarted && stopTrainingChan != nil {
+	if mlSystem.IsSchedulerStarted() && mlSystem.GetStopChan() != nil {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "shutdown_ml_system_stop_scheduler",
-			"scheduler_started", schedulerStarted,
+			"scheduler_started", mlSystem.IsSchedulerStarted(),
 		)
 
-		close(stopTrainingChan)
+		close(mlSystem.GetStopChan())
 
-		schedulerStarted = false
+		mlSystem.SetSchedulerStarted(false)
 
 		level.Info(log.Logger).Log(
 			definitions.LogKeyMsg, "Stopped ML model training scheduler",
@@ -2579,17 +2646,14 @@ func ShutdownMLSystem() {
 	} else {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "shutdown_ml_system_no_scheduler",
-			"scheduler_started", schedulerStarted,
-			"stop_channel_nil", stopTrainingChan == nil,
+			"scheduler_started", mlSystem.IsSchedulerStarted(),
+			"stop_channel_nil", mlSystem.GetStopChan() == nil,
 		)
 	}
 
-	// Clear global variables
-	globalTrainerMutex.Lock()
-	globalTrainer = nil
-	globalTrainerMutex.Unlock()
-
-	stopTrainingChan = nil
+	// Clear trainer in MLSystem
+	mlSystem.SetTrainer(nil)
+	mlSystem.SetStopChan(nil)
 }
 
 // BruteForceMLDetector implements machine learning based brute force detection
@@ -2605,11 +2669,7 @@ type BruteForceMLDetector struct {
 
 // IsLearningMode returns true if the model is still in learning mode
 func (d *BruteForceMLDetector) IsLearningMode() bool {
-	modelTrainedMutex.RLock()
-	isModelTrained := modelTrained && !modelDryRun
-	modelTrainedMutex.RUnlock()
-
-	return !isModelTrained
+	return mlSystem.IsLearningMode()
 }
 
 // PublishLearningModeUpdate publishes a message to notify other instances that the learning mode has changed.
@@ -2668,9 +2728,8 @@ func PublishLearningModeUpdate(ctx context.Context, enabled bool) error {
 // SetLearningMode updates the learning mode state for the model based on the given boolean flag and persists the change.
 // Returns the updated learning mode state and an error if the operation fails.
 func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
-	modelTrainedMutex.Lock()
-	modelDryRun = enabled
-	modelTrainedMutex.Unlock()
+	// Set the dry-run mode
+	mlSystem.SetDryRun(enabled)
 
 	// Save the updated flag to Redis
 	err := SaveModelTrainedFlagToRedis(ctx)
@@ -2698,9 +2757,8 @@ func SetLearningMode(ctx context.Context, enabled bool) (bool, error) {
 
 // GetLearningMode determines if the system is in learning mode, based on training status and dry-run configuration.
 func GetLearningMode() bool {
-	modelTrainedMutex.RLock()
-	enabled := !modelTrained || modelDryRun
-	modelTrainedMutex.RUnlock()
+	// Use the new MLSystem struct
+	enabled := mlSystem.IsLearningMode()
 
 	// Also check if dry run is enabled in the configuration
 	return enabled || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
@@ -2748,10 +2806,9 @@ func (t *MLTrainer) LoadAdditionalFeaturesFromRedis() error {
 // SaveModelTrainedFlagToRedis saves the model trained flag to Redis
 // SaveModelTrainedFlagToRedis saves the model trained flag to Redis
 func SaveModelTrainedFlagToRedis(ctx context.Context) error {
-	modelTrainedMutex.RLock()
-	isModelTrained := modelTrained
-	isModelDryRun := modelDryRun
-	modelTrainedMutex.RUnlock()
+	// Get the trained and dry-run flags
+	isModelTrained := mlSystem.IsTrained()
+	isModelDryRun := mlSystem.IsDryRun()
 
 	defer util.DebugModule(definitions.DbgNeural,
 		"action", "save_model_trained_flag",
@@ -2768,6 +2825,7 @@ func SaveModelTrainedFlagToRedis(ctx context.Context) error {
 	if isModelTrained {
 		flags["trained"] = "1"
 	}
+
 	if isModelDryRun {
 		flags["dry_run"] = "1"
 	}
@@ -2813,10 +2871,9 @@ func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// Key doesn't exist, model is not trained
-			modelTrainedMutex.Lock()
-			modelTrained = false
-			modelDryRun = false
-			modelTrainedMutex.Unlock()
+			// Set the trained and dry-run flags to false
+			mlSystem.SetTrained(false)
+			mlSystem.SetDryRun(false)
 
 			return nil
 		}
@@ -2826,10 +2883,9 @@ func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
 
 	// If the hash map is empty, set default values
 	if len(flags) == 0 {
-		modelTrainedMutex.Lock()
-		modelTrained = false
-		modelDryRun = false
-		modelTrainedMutex.Unlock()
+		// Set the trained and dry-run flags to false
+		mlSystem.SetTrained(false)
+		mlSystem.SetDryRun(false)
 
 		return nil
 	}
@@ -2849,10 +2905,9 @@ func LoadModelTrainedFlagFromRedis(ctx context.Context) error {
 	isModelTrained = trainedValue == "1"
 	isModelDryRun = dryRunValue == "1"
 
-	modelTrainedMutex.Lock()
-	modelTrained = isModelTrained
-	modelDryRun = isModelDryRun
-	modelTrainedMutex.Unlock()
+	// Set the trained and dry-run flags
+	mlSystem.SetTrained(isModelTrained)
+	mlSystem.SetDryRun(isModelDryRun)
 
 	return nil
 }
@@ -2872,10 +2927,8 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 		// For string features, we need to account for embedding size if embedding encoding is used
 		expectedInputSize := 6
 
-		// Get the global trainer to access embedding size
-		globalTrainerMutex.RLock()
-		trainer := globalTrainer
-		globalTrainerMutex.RUnlock()
+		// Get the trainer to access embedding size
+		trainer := mlSystem.GetTrainer()
 
 		// Calculate expected input size based on feature types and encoding preferences
 		for key, value := range features {
@@ -2920,9 +2973,7 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 			)
 
 			// We need to reinitialize the global model to handle the new features
-			globalTrainerMutex.RLock()
-			trainerExists := globalTrainer != nil
-			globalTrainerMutex.RUnlock()
+			trainerExists := mlSystem.GetTrainer() != nil
 
 			if trainerExists {
 				// Create a new model with the correct input size
@@ -3025,12 +3076,11 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 					}
 				}
 
-				// Update the global trainer's model
-				globalTrainerMutex.Lock()
-				if globalTrainer != nil {
-					globalTrainer.model = newModel
+				// Update the trainer's model
+				trainer = mlSystem.GetTrainer()
+				if trainer != nil {
+					trainer.model = newModel
 				}
-				globalTrainerMutex.Unlock()
 
 				// Update this detector's model
 				d.model = newModel
@@ -3044,10 +3094,8 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 				// Skip training during tests to avoid Redis errors
 				if os.Getenv("NAUTHILUS_TESTING") != "1" {
 					go func() {
-						// Get a local copy of globalTrainer
-						globalTrainerMutex.RLock()
-						localTrainer := globalTrainer
-						globalTrainerMutex.RUnlock()
+						// Get the trainer
+						localTrainer := mlSystem.GetTrainer()
 
 						if localTrainer == nil {
 							level.Error(log.Logger).Log(
@@ -3110,10 +3158,8 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		definitions.LogKeyUsername, username,
 	)
 
-	// Acquire read lock to check if globalTrainer is nil
-	globalTrainerMutex.RLock()
-	trainerIsNil := globalTrainer == nil
-	globalTrainerMutex.RUnlock()
+	// Check if the trainer is nil
+	trainerIsNil := mlSystem.GetTrainer() == nil
 
 	// Ensure the ML system is initialized
 	if trainerIsNil {
@@ -3137,12 +3183,10 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		}
 	}
 
-	// Acquire read lock to check if globalTrainer is still nil after initialization
-	globalTrainerMutex.RLock()
-	trainerIsStillNil := globalTrainer == nil
-	globalTrainerMutex.RUnlock()
+	// Check if the trainer is still nil after initialization
+	trainerIsStillNil := mlSystem.GetTrainer() == nil
 
-	// If globalTrainer is still nil after initialization, create a default model
+	// If the trainer is still nil after initialization, create a default model
 	var model *NeuralNetwork
 	if trainerIsStillNil {
 		util.DebugModule(definitions.DbgNeural,
@@ -3154,10 +3198,11 @@ func GetBruteForceMLDetector(ctx context.Context, guid, clientIP, username strin
 		// Create a default model with 6 input neurons (standard features)
 		model = NewNeuralNetwork(6, 1)
 	} else {
-		// Get the model from the global trainer
-		globalTrainerMutex.RLock()
-		model = globalTrainer.GetModel()
-		globalTrainerMutex.RUnlock()
+		// Get the model from the trainer
+		trainer := mlSystem.GetTrainer()
+		if trainer != nil {
+			model = trainer.GetModel()
+		}
 	}
 
 	// Get encoding type preferences from the context if they exist
@@ -3405,10 +3450,8 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 					inputs = append(inputs, 0.0)
 				}
 			case string:
-				// Get the global trainer to access encodings
-				globalTrainerMutex.RLock()
-				trainer := globalTrainer
-				globalTrainerMutex.RUnlock()
+				// Get the trainer to access encodings
+				trainer := mlSystem.GetTrainer()
 
 				if trainer != nil {
 					// Check the encoding type for this feature
@@ -3646,9 +3689,7 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	)
 
 	// Check if the model has been trained with real data
-	modelTrainedMutex.RLock()
-	isModelTrained := modelTrained
-	modelTrainedMutex.RUnlock()
+	isModelTrained := mlSystem.IsTrained()
 
 	// Get threshold from configuration, handling nil case
 	threshold := 0.7 // Default threshold
@@ -4088,10 +4129,8 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 		// Use a background context for the retraining
 		bgCtx := context.Background()
 
-		// Get the global trainer
-		globalTrainerMutex.RLock()
-		trainer := globalTrainer
-		globalTrainerMutex.RUnlock()
+		// Get the trainer
+		trainer := mlSystem.GetTrainer()
 
 		if trainer == nil {
 			level.Error(log.Logger).Log(
@@ -4241,15 +4280,12 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 				definitions.LogKeyMsg, "Model successfully retrained with feedback data",
 			)
 
-			// Set the modelTrained flag if it's not already set
-			modelTrainedMutex.RLock()
-			isModelTrained := modelTrained
-			modelTrainedMutex.RUnlock()
+			// Set the trained flag if it's not already set
+			isModelTrained := mlSystem.IsTrained()
 
 			if !isModelTrained {
-				modelTrainedMutex.Lock()
-				modelTrained = true
-				modelTrainedMutex.Unlock()
+				// Set the trained flag
+				mlSystem.SetTrained(true)
 
 				level.Info(log.Logger).Log(
 					definitions.LogKeyMsg, "Model is now considered trained with feedback data",
