@@ -41,6 +41,7 @@ type MLBucketManager struct {
 	additionalFeatures map[string]any
 	noAuth             bool
 	mlDetected         bool
+	staticDetected     bool
 
 	// Fields to store ML prediction results to avoid duplicate predictions
 	mlPredictionDone  bool
@@ -232,6 +233,7 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 		staticScore := 0.0
 		if staticRuleTriggered {
 			staticScore = 1.0
+			m.staticDetected = true
 		}
 
 		mlScore := probability // ML already gives us a probability between 0 and 1
@@ -474,6 +476,7 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 				staticScore := 0.0
 				if ruleTriggered {
 					staticScore = 1.0
+					m.staticDetected = true
 				}
 
 				mlScore := probability // ML already gives us a probability between 0 and 1
@@ -796,16 +799,30 @@ func (m *MLBucketManager) RecordSuccessfulLogin() {
 	}
 }
 
-// GetBruteForceName returns the name of the brute force detection mechanism, using ML if detected, or fallback otherwise.
+// GetBruteForceName returns the name of the brute force detection mechanism.
+// There are three possible scenarios:
+// 1. Only the static bucket system triggered - use the bucket name that triggered the system
+// 2. Only the neural network triggered - use "neural_network" as the bucket name
+// 3. Both systems triggered - use a combination of the bucket name and "neural_network"
 func (m *MLBucketManager) GetBruteForceName() string {
-	if m.mlDetected {
+	// Case 1: Only static bucket system triggered
+	if m.staticDetected && !m.mlDetected {
+		return m.BucketManager.GetBruteForceName()
+	}
+
+	// Case 2: Only neural network triggered
+	if m.mlDetected && !m.staticDetected {
+		return "neural_network"
+	}
+
+	// Case 3: Both systems triggered
+	if m.mlDetected && m.staticDetected {
 		bucketName := m.BucketManager.GetBruteForceName()
 		if bucketName != "" {
 			return bucketName + ",neural_network"
 		}
-
-		return "neural_network"
 	}
 
+	// Default fallback (should not happen if flags are set correctly)
 	return m.BucketManager.GetBruteForceName()
 }
