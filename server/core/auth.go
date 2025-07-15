@@ -1529,7 +1529,7 @@ func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 // Return values:
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
-func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
+func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
 	var (
 		passDBResult *PassDBResult
 		err          error
@@ -1546,7 +1546,7 @@ func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) 
 				break
 			}
 		} else {
-			err = processPassDBResult(passDBResult, a, passDB)
+			err = processPassDBResult(ctx, passDBResult, a, passDB)
 			if err != nil || a.UserFound {
 				break
 			}
@@ -1634,7 +1634,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthStat
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
-func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
+func processPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
 	if passDBResult == nil {
 		return errors.ErrNoPassDBResult
 	}
@@ -1647,7 +1647,7 @@ func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *Pa
 		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
 	)
 
-	updateAuthentication(auth, passDBResult, passDB)
+	updateAuthentication(ctx, auth, passDBResult, passDB)
 
 	return nil
 }
@@ -1656,7 +1656,7 @@ func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *Pa
 // It checks if each field in passDBResult is not nil and if it is not nil, it updates the corresponding field in the AuthState struct.
 // It also updates the SourcePassDBBackend and UsedPassDBBackend fields of the AuthState struct with the values from passDBResult.Backend and passDB.backend respectively.
 // It returns the updated PassDBResult struct.
-func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
+func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
 	if passDBResult.UserFound {
 		auth.UserFound = true
 
@@ -1689,7 +1689,7 @@ func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *P
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
 		if auth.HTTPClientContext != nil {
 			// Set AdditionalFeatures in the gin.Context
-			auth.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 		}
 	}
 }
@@ -2090,8 +2090,8 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
-func (a *AuthState) processVerifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
-	passDBResult, err := a.verifyPassword(passDBs)
+func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
+	passDBResult, err := a.verifyPassword(ctx, passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
 
@@ -2395,7 +2395,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		err          error
 	)
 
-	if passDBResult, err = a.processVerifyPassword(passDBs); err != nil {
+	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
 		return definitions.AuthResultTempFail
 	}
 
@@ -2416,7 +2416,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 				}
 			}
 
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
+			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 
 		authResult = definitions.AuthResultOK
@@ -3556,10 +3556,10 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 	return subject, claims
 }
 
-// generateLocalChacheKey generates a string key used for caching the AuthState object in the local cache.
+// generateLocalCacheKey generates a string key used for caching the AuthState object in the local cache.
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
-func (a *AuthState) generateLocalChacheKey() string {
+func (a *AuthState) generateLocalCacheKey() string {
 	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
@@ -3575,7 +3575,7 @@ func (a *AuthState) generateLocalChacheKey() string {
 	)
 }
 
-// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalChacheKey() as the key.
+// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.
 // If the object is found in the cache, it updates the fields of the current AuthState object with the cached values.
 // It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
 // If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the AuthState object.
@@ -3586,10 +3586,10 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		return false
 	}
 
-	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
+	if value, found := localcache.LocalCache.Get(a.generateLocalCacheKey()); found {
 		passDBResult := value.(*PassDBResult)
 
-		updateAuthentication(a, passDBResult, &PassDBMap{
+		updateAuthentication(ctx, a, passDBResult, &PassDBMap{
 			backend: definitions.BackendLocalCache,
 			fn:      nil,
 		})

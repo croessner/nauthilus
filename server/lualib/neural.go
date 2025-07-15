@@ -51,13 +51,6 @@ func AddAdditionalFeatures(ctx *gin.Context) lua.LGFunction {
 			if keyStr, ok := key.(lua.LString); ok {
 				keyStrVal := string(keyStr)
 
-				// Skip ClientIP and Username as per requirements
-				if keyStrVal == "ClientIP" || keyStrVal == "client_ip" ||
-					keyStrVal == "Username" || keyStrVal == "username" {
-					// Skip these fields
-					return
-				}
-
 				// Convert Lua value to Go value using convert package
 				goValue := convert.LuaValueToGo(value)
 				features[keyStrVal] = goValue
