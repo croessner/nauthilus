@@ -2958,6 +2958,14 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 		// For string features, we need to account for embedding size if embedding encoding is used
 		expectedInputSize := 6
 
+		// Log the current model input size
+		util.DebugModule(definitions.DbgNeural,
+			"action", "set_additional_features_current_model",
+			"current_input_size", d.model.inputSize,
+			"additional_features_count", len(features),
+			definitions.LogKeyGUID, d.guid,
+		)
+
 		// Get the trainer to access embedding size
 		trainer := mlSystem.GetTrainer()
 
@@ -2993,8 +3001,9 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 			}
 		}
 
-		// If the model's input size is smaller than what we need, we need to reinitialize
-		if d.model.inputSize < expectedInputSize {
+		// If the model's input size is different from what we need, we need to reinitialize
+		// This ensures the model is updated when new features are added or removed
+		if d.model.inputSize != expectedInputSize {
 			util.DebugModule(definitions.DbgNeural,
 				"action", "reinitialize_model_for_additional_features",
 				"current_input_size", d.model.inputSize,
@@ -3704,6 +3713,17 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		"normalized_descriptions", strings.Join(normalizedDescriptions, ", "),
 		definitions.LogKeyGUID, d.guid,
 	)
+
+	// Check if we have more inputs than the model expects and truncate if necessary
+	if len(normalizedInputs) > d.model.inputSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "predict_inputs_truncated",
+			"original_input_count", len(normalizedInputs),
+			"truncated_input_count", d.model.inputSize,
+			definitions.LogKeyGUID, d.guid,
+		)
+		normalizedInputs = normalizedInputs[:d.model.inputSize]
+	}
 
 	// Make prediction
 	outputs := d.model.FeedForward(normalizedInputs)
