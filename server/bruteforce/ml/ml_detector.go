@@ -795,7 +795,7 @@ func (t *MLTrainer) getOrCreateOneHotEncoding(featureName string, value string) 
 	return t.oneHotSizes[featureName], newIndex
 }
 
-// InitModel initializes the neural network model
+// InitModel initializes the neural network model with appropriate input size, accounting for additional features if available.
 func (t *MLTrainer) InitModel() {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "init_model_start",

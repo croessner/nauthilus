@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 )
 
@@ -124,7 +125,7 @@ func logBruteForceDebug(auth *AuthState) {
 // CheckBruteForce checks if a client is triggering brute force detection based on predefined rules and configurations.
 // It evaluates conditions like authentication state, IP whitelisting, protocol enforcement, and bucket rate limits.
 // Returns true if brute force detection is triggered, and false otherwise.
-func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
+func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	var (
 		ruleTriggered bool
 		message       string
@@ -281,10 +282,8 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		}
 
 		// Check if additional features are available from the Context
-		if a.Context != nil {
-			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-				bm = bm.WithAdditionalFeatures(features)
-			}
+		if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+			bm = bm.WithAdditionalFeatures(features)
 		}
 	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
@@ -349,7 +348,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 }
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
-func (a *AuthState) UpdateBruteForceBucketsCounter() {
+func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	var bm bruteforce.BucketManager
 
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
@@ -437,10 +436,8 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		}
 
 		// Check if additional features are available from the Context
-		if a.Context != nil {
-			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-				mlBM = mlBM.WithAdditionalFeatures(features)
-			}
+		if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+			mlBM = mlBM.WithAdditionalFeatures(features)
 		}
 
 		// Record the login attempt for ML training when a feature is triggered

@@ -305,7 +305,7 @@ type State interface {
 	PreproccessAuthRequest(ctx *gin.Context) bool
 
 	// UpdateBruteForceBucketsCounter increments counters to track brute-force attack attempts for the associated client IP.
-	UpdateBruteForceBucketsCounter()
+	UpdateBruteForceBucketsCounter(ctx *gin.Context)
 
 	// HandleAuthentication processes the primary authentication logic based on the request context and service parameters.
 	HandleAuthentication(ctx *gin.Context)
@@ -1155,7 +1155,7 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 
 		// Record successful login for ML training if ML is enabled
 		if config.GetEnvironment().GetExperimentalML() {
-			mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			mlBM := ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).
 				WithUsername(a.Username).WithPassword(a.Password)
 
 			// Set NoAuth flag
@@ -1174,10 +1174,8 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 			}
 
 			// Check if additional features are available from the Context
-			if a.Context != nil {
-				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-					mlBM = mlBM.WithAdditionalFeatures(features)
-				}
+			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+				mlBM = mlBM.WithAdditionalFeatures(features)
 			}
 
 			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
@@ -2410,10 +2408,8 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
 			// Get AdditionalFeatures from the gin.Context and add them to the PassDBResult before caching
-			if a.HTTPClientContext != nil {
-				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-					passDBResult.AdditionalFeatures = features
-				}
+			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+				passDBResult.AdditionalFeatures = features
 			}
 
 			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
@@ -2421,7 +2417,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 		authResult = definitions.AuthResultOK
 	} else {
-		a.UpdateBruteForceBucketsCounter()
+		a.UpdateBruteForceBucketsCounter(ctx)
 
 		authResult = definitions.AuthResultFail
 	}
@@ -3615,8 +3611,8 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.GetFromLocalCache(ctx); !found {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
-		if a.CheckBruteForce() {
-			a.UpdateBruteForceBucketsCounter()
+		if a.CheckBruteForce(ctx) {
+			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
 			a.PostLuaAction(result)
 			PutPassDBResultToPool(result)

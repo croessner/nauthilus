@@ -481,8 +481,8 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
-		if auth.CheckBruteForce() {
-			auth.UpdateBruteForceBucketsCounter()
+		if auth.CheckBruteForce(ctx) {
+			auth.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(result)
 			PutPassDBResultToPool(result)

@@ -473,7 +473,7 @@ func handleAuthFailureAndRedirect(ctx *gin.Context, auth *AuthState) {
 
 	auth.ClientIP = ctx.GetString(definitions.CtxClientIPKey)
 
-	auth.UpdateBruteForceBucketsCounter()
+	auth.UpdateBruteForceBucketsCounter(ctx)
 
 	sessionCleanupTOTP(ctx)
 

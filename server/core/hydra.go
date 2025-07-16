@@ -846,18 +846,18 @@ func (a *ApiConfig) initialize() {
 // Dependencies:
 // - `handleLoginSkip` method
 // - `handleLoginNoSkip` method
-func (a *ApiConfig) handleLogin(skip bool) {
+func (a *ApiConfig) handleLogin(ctx *gin.Context, skip bool) {
 	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
 
 	if skip {
-		a.handleLoginSkip()
+		a.handleLoginSkip(ctx)
 	} else {
 		a.handleLoginNoSkip()
 	}
 }
 
 // handleLoginSkip processes the login request when skip is true.
-func (a *ApiConfig) handleLoginSkip() {
+func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 	var (
 		err           error
 		acceptRequest *openapi.OAuth2RedirectTo
@@ -886,7 +886,7 @@ func (a *ApiConfig) handleLoginSkip() {
 	} else {
 		auth.SetClientIP(a.ctx.GetString(definitions.CtxClientIPKey))
 
-		auth.UpdateBruteForceBucketsCounter()
+		auth.UpdateBruteForceBucketsCounter(ctx)
 		a.ctx.AbortWithError(http.StatusInternalServerError, errors.ErrUnknownCause)
 
 		return
@@ -1142,7 +1142,7 @@ func LoginGETHandler(ctx *gin.Context) {
 
 	apiConfig.clientName = oauth2Client.GetClientName()
 
-	apiConfig.handleLogin(apiConfig.loginRequest.GetSkip())
+	apiConfig.handleLogin(ctx, apiConfig.loginRequest.GetSkip())
 }
 
 // initializeAuthLogin initializes the AuthState struct with the necessary information for logging in.
@@ -1604,11 +1604,11 @@ func (a *ApiConfig) processAuthFailLogin(auth State, authResult definitions.Auth
 }
 
 // logFailedLoginAndRedirect logs a failed login attempt and redirects the user to a login page with an error message.
-func (a *ApiConfig) logFailedLoginAndRedirect(auth State) {
+func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 	loginChallenge := a.ctx.PostForm("ory.hydra.login_challenge")
 	auth.SetClientIP(a.ctx.GetString(definitions.CtxClientIPKey))
 
-	auth.UpdateBruteForceBucketsCounter()
+	auth.UpdateBruteForceBucketsCounter(ctx)
 
 	a.ctx.Redirect(
 		http.StatusFound,
@@ -1794,7 +1794,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 				}
 			}
 
-			apiConfig.logFailedLoginAndRedirect(auth)
+			apiConfig.logFailedLoginAndRedirect(ctx, auth)
 
 			return
 		default:

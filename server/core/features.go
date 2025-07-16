@@ -461,7 +461,7 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 		}
 
 		if triggered {
-			a.processFeatureAction(definitions.FeatureLua, definitions.LuaActionLua, definitions.LuaActionLuaName)
+			a.processFeatureAction(ctx, definitions.FeatureLua, definitions.LuaActionLua, definitions.LuaActionLuaName)
 		}
 
 		if abortFeatures {
@@ -477,10 +477,10 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 
 // checkTLSEncryptionFeature determines if the TLS encryption feature should be processed for the current authentication state.
 // It uses a whitelist check to decide if the feature action needs to be executed based on the current auth state.
-func (a *AuthState) checkTLSEncryptionFeature() (triggered bool) {
+func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool) {
 	checkFunc := func() {
 		if triggered = a.FeatureTLSEncryption(); triggered {
-			a.processFeatureAction(definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
+			a.processFeatureAction(ctx, definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
 		}
 	}
 
@@ -491,7 +491,7 @@ func (a *AuthState) checkTLSEncryptionFeature() (triggered bool) {
 
 // checkRelayDomainsFeature evaluates if the relay domains feature should be activated for the given AuthState instance.
 // It checks if the client is whitelisted and processes the feature action accordingly.
-func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
+func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) {
 	isWhitelisted := func() bool {
 		relayDomains := config.GetFile().GetRelayDomains()
 		if relayDomains == nil {
@@ -504,7 +504,7 @@ func (a *AuthState) checkRelayDomainsFeature() (triggered bool) {
 
 	checkFunc := func() {
 		if triggered = a.FeatureRelayDomains(); triggered {
-			a.processFeatureAction(definitions.FeatureRelayDomains, definitions.LuaActionRelayDomains, definitions.LuaActionRelayDomainsName)
+			a.processFeatureAction(ctx, definitions.FeatureRelayDomains, definitions.LuaActionRelayDomains, definitions.LuaActionRelayDomainsName)
 		}
 	}
 
@@ -534,7 +534,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 			return
 		}
 
-		a.processFeatureAction(definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
+		a.processFeatureAction(ctx, definitions.FeatureRBL, definitions.LuaActionRBL, definitions.LuaActionRBLName)
 	}
 
 	a.checkFeatureWithWhitelist(definitions.FeatureRBL, isWhitelisted, checkFunc)
@@ -544,12 +544,12 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 
 // processFeatureAction updates the feature and increments the brute force counter if learning is enabled for the feature.
 // It executes a specified Lua action using the provided action name.
-func (a *AuthState) processFeatureAction(featureName string, luaAction definitions.LuaAction, luaActionName string) {
+func (a *AuthState) processFeatureAction(ctx *gin.Context, featureName string, luaAction definitions.LuaAction, luaActionName string) {
 	a.FeatureName = featureName
 
 	bruteForce := config.GetFile().GetBruteForce()
 	if bruteForce != nil && bruteForce.LearnFromFeature(featureName) {
-		a.UpdateBruteForceBucketsCounter()
+		a.UpdateBruteForceBucketsCounter(ctx)
 	}
 
 	a.performAction(luaAction, luaActionName)
@@ -645,11 +645,11 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 		return definitions.AuthResultOK
 	}
 
-	if a.checkTLSEncryptionFeature() {
+	if a.checkTLSEncryptionFeature(ctx) {
 		return definitions.AuthResultFeatureTLS
 	}
 
-	if a.checkRelayDomainsFeature() {
+	if a.checkRelayDomainsFeature(ctx) {
 		return definitions.AuthResultFeatureRelayDomain
 	}
 
