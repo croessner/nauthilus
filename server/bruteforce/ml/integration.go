@@ -98,17 +98,6 @@ func (m *MLBucketManager) WithUsername(username string) bruteforce.BucketManager
 	m.username = username
 	m.BucketManager = m.BucketManager.WithUsername(username)
 
-	// Initialize ML detector if we have both username and clientIP and experimental_ml is enabled
-	if m.username != "" && m.clientIP != "" && m.mlDetector == nil && config.GetEnvironment().GetExperimentalML() {
-		// Use the singleton pattern to get the detector
-		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
-
-		// Pass any additional features to the detector if detector was created
-		if m.mlDetector != nil && m.additionalFeatures != nil {
-			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
-		}
-	}
-
 	return m
 }
 
@@ -705,13 +694,40 @@ func (m *MLBucketManager) RecordLoginFeature() {
 		return
 	}
 
+	// Initialize ML detector if needed
+	if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
+		// Use the singleton pattern to get the detector
+		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+		// Log that we had to initialize the detector
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "initialize_ml_detector_for_login_feature",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+	}
+
 	// Record the login attempt for future ML training
 	if m.mlDetector != nil {
+		// Ensure additional features are set on the detector before collecting features
+		if m.additionalFeatures != nil {
+			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
+		}
+
 		features, err := m.mlDetector.CollectFeatures()
 		if err == nil {
 			// This is a triggered feature, so it's a failed login
 			_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
 		}
+	} else {
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "skip_record_login_feature",
+			"reason", "ml_detector_not_initialized",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
 	}
 }
 

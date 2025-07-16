@@ -2115,7 +2115,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
-func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
+func (a *AuthState) processUserFound(ctx *gin.Context, passDBResult *PassDBResult) (accountName string, err error) {
 	var bm bruteforce.BucketManager
 
 	if a.UserFound {
@@ -2144,6 +2144,11 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 				// Set the OIDC Client ID if available
 				if a.OIDCCID != "" {
 					bm = bm.WithOIDCCID(a.OIDCCID)
+				}
+
+				// Check if additional features are available from the Context
+				if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+					bm = bm.WithAdditionalFeatures(features)
 				}
 			} else {
 				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
@@ -2264,7 +2269,7 @@ func (a *AuthState) processCacheUserLoginOk(accountName string) error {
 }
 
 // processCacheUserLoginFail processes the cache update when a user login fails. It logs the event and updates the failure counter.
-func (a *AuthState) processCacheUserLoginFail(accountName string) {
+func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName string) {
 	var bm bruteforce.BucketManager
 
 	util.DebugModule(
@@ -2277,47 +2282,22 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 
 	// Increase counters
 	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
 			WithPassword(a.Password).
 			WithAccountName(accountName)
-
-		// Set NoAuth flag
-		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-			mlManager.SetNoAuth(a.NoAuth)
-		}
-
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			bm = bm.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
 	} else {
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
 			WithPassword(a.Password).
 			WithAccountName(accountName)
-
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			bm = bm.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
 	}
 
 	bm.SaveFailedPasswordCounterInRedis()
 }
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
-func (a *AuthState) processCache(authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
 	var bm bruteforce.BucketManager
 
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
@@ -2327,7 +2307,7 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 				return err
 			}
 		} else {
-			a.processCacheUserLoginFail(accountName)
+			a.processCacheUserLoginFail(ctx, accountName)
 		}
 
 		if config.GetEnvironment().GetExperimentalML() {
@@ -2349,6 +2329,11 @@ func (a *AuthState) processCache(authenticated bool, accountName string, useCach
 			// Set the OIDC Client ID if available
 			if a.OIDCCID != "" {
 				bm = bm.WithOIDCCID(a.OIDCCID)
+			}
+
+			// Check if additional features are available from the Context
+			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
+				bm = bm.WithAdditionalFeatures(features)
 			}
 		} else {
 			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
@@ -2397,11 +2382,11 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
-	if accountName, err = a.processUserFound(passDBResult); err != nil {
+	if accountName, err = a.processUserFound(ctx, passDBResult); err != nil {
 		return definitions.AuthResultTempFail
 	}
 
-	if err = a.processCache(passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
+	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
 		return definitions.AuthResultTempFail
 	}
 

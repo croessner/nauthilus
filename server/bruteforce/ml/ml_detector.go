@@ -636,68 +636,135 @@ const (
 	EmbeddingEncoding StringEncodingType = "embedding"
 )
 
-// MLTrainer handles the training of the ML model without requiring request-specific parameters
-type MLTrainer struct {
-	ctx                 context.Context
-	model               *NeuralNetwork
-	oneHotEncodings     map[string]map[string]int     // Maps feature name -> (value -> index)
-	oneHotSizes         map[string]int                // Maps feature name -> number of possible values
-	featureEncodingType map[string]StringEncodingType // Maps feature name -> encoding type (one-hot or embedding)
-	embeddingSize       int                           // Size of embeddings for string features
+// StandardFeatures defines the names of the standard features
+var StandardFeatures = []string{
+	"TimeBetweenAttempts",
+	"FailedAttemptsLastHour",
+	"DifferentUsernames",
+	"DifferentPasswords",
+	"TimeOfDay",
+	"SuspiciousNetwork",
 }
 
-// NewMLTrainer creates a new ML trainer with a default context
-func NewMLTrainer() *MLTrainer {
-	return &MLTrainer{
-		ctx:                 context.Background(),
-		oneHotEncodings:     make(map[string]map[string]int),
-		oneHotSizes:         make(map[string]int),
-		featureEncodingType: make(map[string]StringEncodingType),
-		embeddingSize:       8, // Default embedding size
+// FeatureType represents the type of a feature
+type FeatureType int
+
+const (
+	// NumericFeature represents a numeric feature (float64, int, etc.)
+	NumericFeature FeatureType = iota
+
+	// BooleanFeature represents a boolean feature
+	BooleanFeature
+
+	// StringFeature represents a string feature that needs encoding
+	StringFeature
+)
+
+// FeatureInfo stores information about a feature
+type FeatureInfo struct {
+	Name         string
+	Type         FeatureType
+	EncodingType StringEncodingType // Only used for string features
+	Size         int                // Number of neurons needed for this feature
+}
+
+// FeatureProcessor handles the processing and encoding of features
+type FeatureProcessor struct {
+	// Maps feature name to its information
+	featureInfoMap map[string]FeatureInfo
+
+	// Maps feature name -> (value -> index) for one-hot encoding
+	oneHotEncodings map[string]map[string]int
+
+	// Maps feature name -> number of possible values for one-hot encoding
+	oneHotSizes map[string]int
+
+	// Size of embeddings for string features
+	embeddingSize int
+}
+
+// NewFeatureProcessor creates a new feature processor
+func NewFeatureProcessor() *FeatureProcessor {
+	return &FeatureProcessor{
+		featureInfoMap:  make(map[string]FeatureInfo),
+		oneHotEncodings: make(map[string]map[string]int),
+		oneHotSizes:     make(map[string]int),
+		embeddingSize:   8, // Default embedding size
 	}
 }
 
-// WithContext sets the context for the trainer
-func (t *MLTrainer) WithContext(ctx context.Context) *MLTrainer {
-	t.ctx = ctx
-
-	return t
+// RegisterStandardFeatures registers the standard features
+func (fp *FeatureProcessor) RegisterStandardFeatures() {
+	for _, name := range StandardFeatures {
+		fp.featureInfoMap[name] = FeatureInfo{
+			Name: name,
+			Type: NumericFeature,
+			Size: 1,
+		}
+	}
 }
 
-// SetFeatureEncodingType sets the encoding type for a specific feature
-func (t *MLTrainer) SetFeatureEncodingType(featureName string, encodingType StringEncodingType) {
-	if t.featureEncodingType == nil {
-		t.featureEncodingType = make(map[string]StringEncodingType)
+// RegisterFeature registers a feature with the processor
+func (fp *FeatureProcessor) RegisterFeature(name string, featureType FeatureType, encodingType StringEncodingType) {
+	size := 1 // Default size for numeric and boolean features
+
+	if featureType == StringFeature {
+		if encodingType == EmbeddingEncoding {
+			size = fp.embeddingSize
+		} else {
+			// For one-hot encoding, size will be updated as values are seen
+			if _, exists := fp.oneHotSizes[name]; !exists {
+				fp.oneHotSizes[name] = 0
+			}
+
+			size = fp.oneHotSizes[name]
+		}
 	}
 
-	t.featureEncodingType[featureName] = encodingType
+	fp.featureInfoMap[name] = FeatureInfo{
+		Name:         name,
+		Type:         featureType,
+		EncodingType: encodingType,
+		Size:         size,
+	}
+}
+
+// GetFeatureInfo returns information about a feature
+func (fp *FeatureProcessor) GetFeatureInfo(name string) (FeatureInfo, bool) {
+	info, exists := fp.featureInfoMap[name]
+
+	return info, exists
+}
+
+// GetTotalInputSize returns the total number of input neurons needed
+func (fp *FeatureProcessor) GetTotalInputSize() int {
+	total := 0
+	for _, info := range fp.featureInfoMap {
+		total += info.Size
+	}
+
+	return total
 }
 
 // SetEmbeddingSize sets the size of embeddings for string features
-func (t *MLTrainer) SetEmbeddingSize(size int) {
+func (fp *FeatureProcessor) SetEmbeddingSize(size int) {
 	if size > 0 {
-		t.embeddingSize = size
+		fp.embeddingSize = size
+
+		// Update sizes for existing string features with embedding encoding
+		for name, info := range fp.featureInfoMap {
+			if info.Type == StringFeature && info.EncodingType == EmbeddingEncoding {
+				info.Size = size
+				fp.featureInfoMap[name] = info
+			}
+		}
 	}
 }
 
-// GetFeatureEncodingType returns the encoding type for a specific feature
-// If no encoding type is set, it defaults to OneHotEncoding
-func (t *MLTrainer) GetFeatureEncodingType(featureName string) StringEncodingType {
-	if t.featureEncodingType == nil {
-		return OneHotEncoding
-	}
-
-	if encodingType, exists := t.featureEncodingType[featureName]; exists {
-		return encodingType
-	}
-
-	return OneHotEncoding
-}
-
-// generateEmbedding generates a fixed-size embedding for a string value
-func (t *MLTrainer) generateEmbedding(value string) []float64 {
+// GenerateEmbedding generates a fixed-size embedding for a string value
+func (fp *FeatureProcessor) GenerateEmbedding(value string) []float64 {
 	// Initialize embedding vector with zeros
-	embedding := make([]float64, t.embeddingSize)
+	embedding := make([]float64, fp.embeddingSize)
 
 	// If string is empty, return zero embedding
 	if len(value) == 0 {
@@ -708,7 +775,7 @@ func (t *MLTrainer) generateEmbedding(value string) []float64 {
 	// This approach ensures that similar strings produce similar embeddings
 	for i, char := range value {
 		// Use character value and position to influence all dimensions of the embedding
-		for j := 0; j < t.embeddingSize; j++ {
+		for j := 0; j < fp.embeddingSize; j++ {
 			// Different formula for each dimension to create varied embeddings
 			switch j % 4 {
 			case 0:
@@ -746,53 +813,229 @@ func (t *MLTrainer) generateEmbedding(value string) []float64 {
 	util.DebugModule(definitions.DbgNeural,
 		"action", "generate_embedding",
 		"value", value,
-		"embedding_size", t.embeddingSize,
+		"embedding_size", fp.embeddingSize,
 		"embedding_vector", embedding,
-		"vector_sum", sum,
-		"magnitude", math.Sqrt(sum),
 	)
 
 	return embedding
 }
 
-// getOrCreateOneHotEncoding returns the one-hot encoding size and index for a categorical feature value
-// If the feature or value hasn't been seen before, it creates a new encoding
-func (t *MLTrainer) getOrCreateOneHotEncoding(featureName string, value string) (int, int) {
+// GetOrCreateOneHotEncoding gets or creates a one-hot encoding for a string value
+func (fp *FeatureProcessor) GetOrCreateOneHotEncoding(featureName string, value string) (int, int) {
 	// Initialize maps if they don't exist
-	if t.oneHotEncodings == nil {
-		t.oneHotEncodings = make(map[string]map[string]int)
-	}
-
-	if t.oneHotSizes == nil {
-		t.oneHotSizes = make(map[string]int)
-	}
-
-	// Check if we've seen this feature before
-	if _, exists := t.oneHotEncodings[featureName]; !exists {
-		t.oneHotEncodings[featureName] = make(map[string]int)
-		t.oneHotSizes[featureName] = 0
+	if fp.oneHotEncodings[featureName] == nil {
+		fp.oneHotEncodings[featureName] = make(map[string]int)
+		fp.oneHotSizes[featureName] = 0
 	}
 
 	// Check if we've seen this value before
-	if index, exists := t.oneHotEncodings[featureName][value]; exists {
-		return t.oneHotSizes[featureName], index
+	if index, exists := fp.oneHotEncodings[featureName][value]; exists {
+		return fp.oneHotSizes[featureName], index
 	}
 
-	// Add new value
-	newIndex := t.oneHotSizes[featureName]
+	// This is a new value, assign it the next index
+	newIndex := fp.oneHotSizes[featureName]
+	fp.oneHotEncodings[featureName][value] = newIndex
+	fp.oneHotSizes[featureName]++
 
-	t.oneHotEncodings[featureName][value] = newIndex
-	t.oneHotSizes[featureName]++
+	// Update the size in the feature info
+	if info, exists := fp.featureInfoMap[featureName]; exists && info.EncodingType == OneHotEncoding {
+		info.Size = fp.oneHotSizes[featureName]
+		fp.featureInfoMap[featureName] = info
+	}
 
 	util.DebugModule(definitions.DbgNeural,
-		"action", "new_categorical_value",
+		"action", "create_one_hot_encoding",
 		"feature", featureName,
 		"value", value,
 		"index", newIndex,
-		"total_values", t.oneHotSizes[featureName],
+		"total_values", fp.oneHotSizes[featureName],
 	)
 
-	return t.oneHotSizes[featureName], newIndex
+	return fp.oneHotSizes[featureName], newIndex
+}
+
+// convertToFloat64 converts a value to float64
+func (fp *FeatureProcessor) convertToFloat64(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case string:
+		// Try to convert string to float
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		} else {
+			// If string can't be converted to float, use a hash
+			hash := util.GetHash(v)
+			if len(hash) > 8 {
+				hash = hash[:8]
+			}
+			if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
+				return float64(hashInt%1000) / 1000.0
+			}
+		}
+	}
+
+	return 0.5 // Default for unknown types
+}
+
+// convertToBool converts a value to a boolean (0.0 or 1.0)
+func (fp *FeatureProcessor) convertToBool(value any) float64 {
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return 1.0
+		}
+
+		return 0.0
+	case string:
+		lower := strings.ToLower(v)
+		if lower == "true" || lower == "yes" || lower == "1" {
+			return 1.0
+		}
+
+		return 0.0
+	case float64, float32, int, int64:
+		numValue := fp.convertToFloat64(v)
+		if numValue != 0 {
+			return 1.0
+		}
+
+		return 0.0
+	}
+
+	return 0.0 // Default for unknown types
+}
+
+// convertToString converts a value to string
+func (fp *FeatureProcessor) convertToString(value any) string {
+	if str, ok := value.(string); ok {
+		return str
+	}
+
+	return fmt.Sprintf("%v", value)
+}
+
+// ProcessFeature processes a feature value and returns the encoded values
+func (fp *FeatureProcessor) ProcessFeature(name string, value any) []float64 {
+	info, exists := fp.featureInfoMap[name]
+	if !exists {
+		// Feature not registered, register it with default settings
+		featureType := NumericFeature
+		switch value.(type) {
+		case string:
+			featureType = StringFeature
+			fp.RegisterFeature(name, featureType, OneHotEncoding)
+		case bool:
+			featureType = BooleanFeature
+			fp.RegisterFeature(name, featureType, OneHotEncoding)
+		default:
+			fp.RegisterFeature(name, featureType, OneHotEncoding)
+		}
+		info, _ = fp.featureInfoMap[name]
+	}
+
+	switch info.Type {
+	case NumericFeature:
+		return []float64{fp.convertToFloat64(value)}
+	case BooleanFeature:
+		return []float64{fp.convertToBool(value)}
+	case StringFeature:
+		strValue := fp.convertToString(value)
+
+		// Apply encoding
+		if info.EncodingType == EmbeddingEncoding {
+			// Use embedding encoding
+			return fp.GenerateEmbedding(strValue)
+		} else {
+			// Use one-hot encoding
+			size, index := fp.GetOrCreateOneHotEncoding(name, strValue)
+			result := make([]float64, size)
+			for i := 0; i < size; i++ {
+				if i == index {
+					result[i] = 1.0
+				} else {
+					result[i] = 0.0
+				}
+			}
+			return result
+		}
+	}
+
+	// Default fallback
+	return []float64{0.5}
+}
+
+// MLTrainer handles the training of the ML model without requiring request-specific parameters
+type MLTrainer struct {
+	ctx              context.Context
+	model            *NeuralNetwork
+	featureProcessor *FeatureProcessor // Handles feature processing and encoding
+}
+
+// NewMLTrainer creates a new ML trainer with a default context
+func NewMLTrainer() *MLTrainer {
+	fp := NewFeatureProcessor()
+	fp.RegisterStandardFeatures()
+
+	return &MLTrainer{
+		ctx:              context.Background(),
+		featureProcessor: fp,
+	}
+}
+
+// WithContext sets the context for the trainer
+func (t *MLTrainer) WithContext(ctx context.Context) *MLTrainer {
+	t.ctx = ctx
+
+	return t
+}
+
+// SetFeatureEncodingType sets the encoding type for a specific feature
+func (t *MLTrainer) SetFeatureEncodingType(featureName string, encodingType StringEncodingType) {
+	// Check if the feature is already registered
+	if info, exists := t.featureProcessor.GetFeatureInfo(featureName); exists {
+		// Update the encoding type
+		info.EncodingType = encodingType
+		t.featureProcessor.featureInfoMap[featureName] = info
+	} else {
+		// Register the feature with default type (will be updated when actual value is seen)
+		t.featureProcessor.RegisterFeature(featureName, NumericFeature, encodingType)
+	}
+}
+
+// SetEmbeddingSize sets the size of embeddings for string features
+func (t *MLTrainer) SetEmbeddingSize(size int) {
+	if size > 0 {
+		t.featureProcessor.SetEmbeddingSize(size)
+	}
+}
+
+// GetFeatureEncodingType returns the encoding type for a specific feature
+// If no encoding type is set, it defaults to OneHotEncoding
+func (t *MLTrainer) GetFeatureEncodingType(featureName string) StringEncodingType {
+	if info, exists := t.featureProcessor.GetFeatureInfo(featureName); exists {
+		return info.EncodingType
+	}
+
+	return OneHotEncoding
+}
+
+// generateEmbedding generates a fixed-size embedding for a string value
+func (t *MLTrainer) generateEmbedding(value string) []float64 {
+	return t.featureProcessor.GenerateEmbedding(value)
+}
+
+// getOrCreateOneHotEncoding returns the one-hot encoding size and index for a categorical feature value
+// If the feature or value hasn't been seen before, it creates a new encoding
+func (t *MLTrainer) getOrCreateOneHotEncoding(featureName string, value string) (int, int) {
+	return t.featureProcessor.GetOrCreateOneHotEncoding(featureName, value)
 }
 
 // InitModel initializes the neural network model with appropriate input size, accounting for additional features if available.
@@ -801,20 +1044,38 @@ func (t *MLTrainer) InitModel() {
 		"action", "init_model_start",
 	)
 
-	// Default input size is 6 for the standard features
-	inputSize := 6
+	// Ensure the feature processor has registered the standard features
+	if len(t.featureProcessor.featureInfoMap) == 0 {
+		t.featureProcessor.RegisterStandardFeatures()
+	}
 
 	// Check if we have any training data with additional features
 	trainingData, err := t.GetTrainingDataFromRedis(1)
 	if err == nil && len(trainingData) > 0 && trainingData[0].Features != nil &&
 		trainingData[0].Features.AdditionalFeatures != nil && len(trainingData[0].Features.AdditionalFeatures) > 0 {
-		// Add the number of additional features to the input size
-		inputSize += len(trainingData[0].Features.AdditionalFeatures)
+
+		// Register additional features from training data
+		for featureName, value := range trainingData[0].Features.AdditionalFeatures {
+			// Determine feature type and encoding
+			featureType := NumericFeature
+			encodingType := OneHotEncoding
+
+			// Determine feature type based on value
+			switch value.(type) {
+			case string:
+				featureType = StringFeature
+			case bool:
+				featureType = BooleanFeature
+			}
+
+			// Register the feature with the processor
+			t.featureProcessor.RegisterFeature(featureName, featureType, encodingType)
+		}
 
 		util.DebugModule(definitions.DbgNeural,
 			"action", "init_model_with_additional_features_from_training",
 			"additional_features_count", len(trainingData[0].Features.AdditionalFeatures),
-			"total_input_size", inputSize,
+			"registered_features", len(t.featureProcessor.featureInfoMap),
 		)
 	}
 
@@ -822,36 +1083,40 @@ func (t *MLTrainer) InitModel() {
 	// This ensures we account for newly added Lua features that haven't been saved to training data yet
 	if t.ctx != nil {
 		if additionalFeatures, ok := t.ctx.Value(definitions.CtxAdditionalFeaturesKey).(map[string]any); ok && len(additionalFeatures) > 0 {
-			// If we have additional features from context, ensure they're counted in the input size
-			// We need to check if these features are already counted from training data
-			if err != nil || len(trainingData) == 0 || trainingData[0].Features == nil ||
-				trainingData[0].Features.AdditionalFeatures == nil {
-				// No training data features, add all context features
-				inputSize += len(additionalFeatures)
+			// Register additional features from context
+			for featureName, value := range additionalFeatures {
+				// Skip if already registered
+				if _, exists := t.featureProcessor.featureInfoMap[featureName]; exists {
+					continue
+				}
+
+				// Determine feature type and encoding
+				featureType := NumericFeature
+				encodingType := OneHotEncoding
+
+				// Determine feature type based on value
+				switch value.(type) {
+				case string:
+					featureType = StringFeature
+				case bool:
+					featureType = BooleanFeature
+				}
+
+				// Register the feature with the processor
+				t.featureProcessor.RegisterFeature(featureName, featureType, encodingType)
 
 				util.DebugModule(definitions.DbgNeural,
-					"action", "init_model_with_additional_features_from_context",
-					"additional_features_count", len(additionalFeatures),
-					"total_input_size", inputSize,
+					"action", "init_model_with_additional_feature_from_context",
+					"feature_name", featureName,
+					"feature_type", featureType,
+					"encoding_type", encodingType,
 				)
-			} else {
-				// We have both training data features and context features
-				// Count any context features not in training data
-				for featureName := range additionalFeatures {
-					if _, exists := trainingData[0].Features.AdditionalFeatures[featureName]; !exists {
-						// This feature is in context but not in training data, add it to input size
-						inputSize++
-
-						util.DebugModule(definitions.DbgNeural,
-							"action", "init_model_with_additional_feature_from_context",
-							"feature_name", featureName,
-							"total_input_size", inputSize,
-						)
-					}
-				}
 			}
 		}
 	}
+
+	// Get the total input size from the feature processor
+	inputSize := t.featureProcessor.GetTotalInputSize()
 
 	// Create a neural network with the appropriate number of input neurons,
 	// 8 hidden neurons, and 1 output neuron (probability of brute force)
@@ -862,6 +1127,7 @@ func (t *MLTrainer) InitModel() {
 		"input_size", inputSize,
 		"hidden_size", t.model.hiddenSize,
 		"output_size", 1,
+		"registered_features", len(t.featureProcessor.featureInfoMap),
 	)
 }
 
@@ -915,18 +1181,10 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		return fmt.Errorf("failed to deserialize model: %w", err)
 	}
 
-	// Get activation function from config or use default if not in the model data
+	// Use the activation function from the model data or default to sigmoid
 	activationFunction := modelData.ActivationFunction
 	if activationFunction == "" {
-		// For backward compatibility with models saved before this change
-		nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
-		if nnConfig != nil {
-			activationFunction = nnConfig.ActivationFunction
-		}
-
-		if activationFunction == "" {
-			activationFunction = "sigmoid" // Default to sigmoid if not specified
-		}
+		activationFunction = "sigmoid" // Default to sigmoid if not specified
 	}
 
 	util.DebugModule(definitions.DbgNeural,
@@ -954,42 +1212,8 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
-	// Initialize bias terms if they're not present in the loaded model (backward compatibility)
-	if len(nn.hiddenBias) != nn.hiddenSize {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "initialize_missing_hidden_bias",
-			"reason", "backward_compatibility",
-			"expected_size", nn.hiddenSize,
-			"actual_size", len(nn.hiddenBias),
-		)
-
-		nn.hiddenBias = make([]float64, nn.hiddenSize)
-		// Initialize with small random values
-		for i := range nn.hiddenBias {
-			nn.hiddenBias[i] = (nn.rng.Float64() - 0.5) * 0.1
-		}
-	}
-
-	if len(nn.outputBias) != nn.outputSize {
-		util.DebugModule(definitions.DbgNeural,
-			"action", "initialize_missing_output_bias",
-			"reason", "backward_compatibility",
-			"expected_size", nn.outputSize,
-			"actual_size", len(nn.outputBias),
-		)
-
-		nn.outputBias = make([]float64, nn.outputSize)
-		// Initialize with small random values
-		for i := range nn.outputBias {
-			nn.outputBias[i] = (nn.rng.Float64() - 0.5) * 0.1
-		}
-	}
-
 	// Replace the current model
 	t.model = nn
-
-	// Record network structure metrics
-	GetMLMetrics().RecordNetworkStructure(nn.inputSize, nn.hiddenSize, nn.outputSize)
 
 	// Try to load encodings configuration if it exists
 	encodingsKey := key + "_encodings"
@@ -1005,57 +1229,45 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 		}
 
 		if err := json.Unmarshal(encodingsJSON, &encodingsData); err == nil {
-			// Replace the current encodings
-			t.oneHotEncodings = encodingsData.OneHotEncodings
-			t.oneHotSizes = encodingsData.OneHotSizes
-
-			// Load embedding configurations if they exist
-			if encodingsData.FeatureEncodingType != nil {
-				t.featureEncodingType = encodingsData.FeatureEncodingType
-			}
-
 			// Load embedding size if it's valid
 			if encodingsData.EmbeddingSize > 0 {
-				t.embeddingSize = encodingsData.EmbeddingSize
+				t.featureProcessor.SetEmbeddingSize(encodingsData.EmbeddingSize)
+			}
+
+			// Load feature encoding types
+			if encodingsData.FeatureEncodingType != nil {
+				for featureName, encodingType := range encodingsData.FeatureEncodingType {
+					// Register the feature with the processor
+					t.featureProcessor.RegisterFeature(featureName, StringFeature, encodingType)
+				}
+			}
+
+			// Load one-hot encodings
+			if encodingsData.OneHotEncodings != nil {
+				for featureName, valueMap := range encodingsData.OneHotEncodings {
+					for value := range valueMap {
+						// This will recreate the one-hot encoding in the feature processor
+						t.featureProcessor.GetOrCreateOneHotEncoding(featureName, value)
+					}
+				}
 			}
 
 			util.DebugModule(definitions.DbgNeural,
 				"action", "load_encodings_configuration",
 				"key", encodingsKey,
-				"one_hot_features_count", len(t.oneHotEncodings),
-				"feature_encoding_types_count", len(t.featureEncodingType),
-				"embedding_size", t.embeddingSize,
+				"one_hot_features_count", len(encodingsData.OneHotEncodings),
+				"feature_encoding_types_count", len(encodingsData.FeatureEncodingType),
+				"embedding_size", encodingsData.EmbeddingSize,
+				"registered_features", len(t.featureProcessor.featureInfoMap),
 			)
 
 			level.Info(log.Logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Encodings configuration loaded from Redis successfully (key: %s)", encodingsKey),
 			)
 		} else {
-			// Try to load legacy one-hot encodings format for backward compatibility
-			var legacyEncodingsData struct {
-				OneHotEncodings map[string]map[string]int `json:"one_hot_encodings"`
-				OneHotSizes     map[string]int            `json:"one_hot_sizes"`
-			}
-
-			if err := json.Unmarshal(encodingsJSON, &legacyEncodingsData); err == nil {
-				// Replace the current encodings
-				t.oneHotEncodings = legacyEncodingsData.OneHotEncodings
-				t.oneHotSizes = legacyEncodingsData.OneHotSizes
-
-				util.DebugModule(definitions.DbgNeural,
-					"action", "load_legacy_one_hot_encodings",
-					"key", encodingsKey,
-					"features_count", len(t.oneHotEncodings),
-				)
-
-				level.Info(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Legacy one-hot encodings loaded from Redis successfully (key: %s)", encodingsKey),
-				)
-			} else {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to deserialize encodings configuration: %v", err),
-				)
-			}
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to deserialize encodings configuration: %v", err),
+			)
 		}
 	} else if !errors.Is(err, redis.Nil) {
 		// Log warning but don't fail if encodings can't be loaded
@@ -1067,6 +1279,24 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	level.Info(log.Logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Model loaded from Redis successfully (key: %s)", key),
 	)
+
+	// Record network structure metrics with the actual input size needed for the feature processor
+	// This ensures the metrics reflect the correct input size when using the feature processor
+	actualInputSize := t.featureProcessor.GetTotalInputSize()
+	if actualInputSize > t.model.inputSize {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "update_network_structure_metrics",
+			"model_input_size", t.model.inputSize,
+			"actual_input_size", actualInputSize,
+			"difference", actualInputSize-t.model.inputSize,
+		)
+
+		// Update the metrics with the actual input size
+		GetMLMetrics().RecordNetworkStructure(actualInputSize, t.model.hiddenSize, t.model.outputSize)
+	} else {
+		// Use the model's input size if it's already large enough
+		GetMLMetrics().RecordNetworkStructure(t.model.inputSize, t.model.hiddenSize, t.model.outputSize)
+	}
 
 	return nil
 }
@@ -1381,8 +1611,28 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 	}
 
 	// Save encodings configuration if they exist
-	if (t.oneHotEncodings != nil && len(t.oneHotEncodings) > 0) ||
-		(t.featureEncodingType != nil && len(t.featureEncodingType) > 0) {
+	if t.featureProcessor != nil && len(t.featureProcessor.featureInfoMap) > 0 {
+		// Extract one-hot encodings from the feature processor
+		oneHotEncodings := make(map[string]map[string]int)
+		oneHotSizes := make(map[string]int)
+		featureEncodingType := make(map[string]StringEncodingType)
+
+		// Populate the maps from the feature processor
+		for name, info := range t.featureProcessor.featureInfoMap {
+			featureEncodingType[name] = info.EncodingType
+
+			if info.Type == StringFeature && info.EncodingType == OneHotEncoding {
+				// Copy one-hot encodings
+				if t.featureProcessor.oneHotEncodings[name] != nil {
+					oneHotEncodings[name] = make(map[string]int)
+					for value, index := range t.featureProcessor.oneHotEncodings[name] {
+						oneHotEncodings[name][value] = index
+					}
+					oneHotSizes[name] = t.featureProcessor.oneHotSizes[name]
+				}
+			}
+		}
+
 		// Create a serializable representation of the encodings configuration
 		encodingsData := struct {
 			OneHotEncodings     map[string]map[string]int     `json:"one_hot_encodings"`
@@ -1390,10 +1640,10 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 			FeatureEncodingType map[string]StringEncodingType `json:"feature_encoding_type"`
 			EmbeddingSize       int                           `json:"embedding_size"`
 		}{
-			OneHotEncodings:     t.oneHotEncodings,
-			OneHotSizes:         t.oneHotSizes,
-			FeatureEncodingType: t.featureEncodingType,
-			EmbeddingSize:       t.embeddingSize,
+			OneHotEncodings:     oneHotEncodings,
+			OneHotSizes:         oneHotSizes,
+			FeatureEncodingType: featureEncodingType,
+			EmbeddingSize:       t.featureProcessor.embeddingSize,
 		}
 
 		// Serialize the encodings to JSON
@@ -1418,10 +1668,10 @@ func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "save_encodings_configuration",
 			"key", encodingsKey,
-			"one_hot_features_count", len(t.oneHotEncodings),
-			"feature_encoding_types_count", len(t.featureEncodingType),
-			"embedding_size", t.embeddingSize,
-			"data_size", len(encodingsJSON),
+			"one_hot_features_count", len(oneHotEncodings),
+			"feature_encoding_types_count", len(featureEncodingType),
+			"embedding_size", t.featureProcessor.embeddingSize,
+			"registered_features", len(t.featureProcessor.featureInfoMap),
 		)
 
 		level.Info(log.Logger).Log(
@@ -1631,15 +1881,16 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 			continue
 		}
 
-		// Start with standard features
-		featureVector := []float64{
-			sample.Features.TimeBetweenAttempts,
-			sample.Features.FailedAttemptsLastHour,
-			sample.Features.DifferentUsernames,
-			sample.Features.DifferentPasswords,
-			sample.Features.TimeOfDay,
-			sample.Features.SuspiciousNetwork,
-		}
+		// Process features using the feature processor
+		var featureVector []float64
+
+		// Add standard features in the correct order
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("TimeBetweenAttempts", sample.Features.TimeBetweenAttempts)...)
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("FailedAttemptsLastHour", sample.Features.FailedAttemptsLastHour)...)
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("DifferentUsernames", sample.Features.DifferentUsernames)...)
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("DifferentPasswords", sample.Features.DifferentPasswords)...)
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("TimeOfDay", sample.Features.TimeOfDay)...)
+		featureVector = append(featureVector, t.featureProcessor.ProcessFeature("SuspiciousNetwork", sample.Features.SuspiciousNetwork)...)
 
 		// Add additional features if they exist
 		if sample.Features.AdditionalFeatures != nil && len(sample.Features.AdditionalFeatures) > 0 {
@@ -1661,70 +1912,15 @@ func (t *MLTrainer) PrepareTrainingData(data []TrainingData) ([][]float64, [][]f
 			for _, key := range keys {
 				value := sample.Features.AdditionalFeatures[key]
 
-				// Process the value based on its type
-				switch v := value.(type) {
-				case float64:
-					featureVector = append(featureVector, v)
-				case float32:
-					featureVector = append(featureVector, float64(v))
-				case int:
-					featureVector = append(featureVector, float64(v))
-				case int64:
-					featureVector = append(featureVector, float64(v))
-				case bool:
-					if v {
-						featureVector = append(featureVector, 1.0)
-					} else {
-						featureVector = append(featureVector, 0.0)
-					}
-				case string:
-					// Check the encoding type for this feature
-					encodingType := t.GetFeatureEncodingType(key)
-
-					if encodingType == EmbeddingEncoding {
-						// Use embedding encoding for this feature
-						embedding := t.generateEmbedding(v)
-						featureVector = append(featureVector, embedding...)
-
-						util.DebugModule(definitions.DbgNeural,
-							"action", "prepare_training_data_embedding",
-							"key", key,
-							"value", v,
-							"embedding_size", len(embedding),
-							"sample_index", i,
-						)
-					} else {
-						// For categorical string values, use one-hot encoding (default)
-						// Get or create the one-hot encoding for this feature
-						oneHotValues, oneHotIndex := t.getOrCreateOneHotEncoding(key, v)
-
-						// Add one-hot encoded values to the feature vector
-						for j := 0; j < oneHotValues; j++ {
-							if j == oneHotIndex {
-								featureVector = append(featureVector, 1.0)
-							} else {
-								featureVector = append(featureVector, 0.0)
-							}
-						}
-
-						util.DebugModule(definitions.DbgNeural,
-							"action", "one_hot_encoding",
-							"key", key,
-							"value", v,
-							"one_hot_values", oneHotValues,
-							"one_hot_index", oneHotIndex,
-							"sample_index", i,
-						)
-					}
-				default:
-					// For other types, use a default value
-					featureVector = append(featureVector, 0.5)
-				}
+				// Process the feature using the feature processor
+				processedValues := t.featureProcessor.ProcessFeature(key, value)
+				featureVector = append(featureVector, processedValues...)
 
 				util.DebugModule(definitions.DbgNeural,
 					"action", "prepare_training_data_additional_feature",
 					"key", key,
 					"value", value,
+					"processed_values", fmt.Sprintf("%v", processedValues),
 					"sample_index", i,
 				)
 			}
@@ -2065,14 +2261,11 @@ func RecordLoginResult(ctx context.Context, success bool, features *LoginFeature
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Get the maximum number of training records from config or use default
-	maxRecords := int64(10000) // Default value for backward compatibility
+	// Get the maximum number of training records from config
+	maxRecords := int64(10000) // Default value
 	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
-	if nnConfig != nil {
-		configMaxRecords := nnConfig.GetMaxTrainingRecords()
-		if configMaxRecords > 0 {
-			maxRecords = int64(configMaxRecords)
-		}
+	if nnConfig != nil && nnConfig.GetMaxTrainingRecords() > 0 {
+		maxRecords = int64(nnConfig.GetMaxTrainingRecords())
 	}
 
 	// Trim the list to keep only the last maxRecords entries
@@ -2954,44 +3147,47 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 
 	// Check if we need to reinitialize the model due to new additional features
 	if d.model != nil && features != nil && len(features) > 0 {
-		// Calculate the expected input size based on standard features (6) plus additional features
-		// For string features, we need to account for embedding size if embedding encoding is used
-		expectedInputSize := 6
-
-		// Get the trainer to access embedding size
+		// Get the trainer to access feature processor
 		trainer := mlSystem.GetTrainer()
 
-		// Calculate expected input size based on feature types and encoding preferences
+		// Create a temporary feature processor to calculate the expected input size
+		tempProcessor := NewFeatureProcessor()
+		tempProcessor.RegisterStandardFeatures()
+
+		// Register additional features with the temporary processor
 		for key, value := range features {
-			if _, isString := value.(string); isString {
-				// Check if we have an encoding preference for this feature
-				encodingType := "one-hot" // Default to one-hot
-				if encodingTypes != nil {
-					if et, ok := encodingTypes[key]; ok {
-						encodingType = et
+			// Determine feature type and encoding
+			featureType := NumericFeature
+			encodingType := OneHotEncoding
+
+			// Check if we have an encoding preference for this feature
+			if encodingTypes != nil {
+				if et, ok := encodingTypes[key]; ok {
+					if et == "embedding" {
+						encodingType = EmbeddingEncoding
 					}
 				}
+			}
 
-				if encodingType == "embedding" && trainer != nil {
-					// For embedding encoding, add the embedding size
-					expectedInputSize += trainer.embeddingSize
+			// Determine feature type based on value
+			switch value.(type) {
+			case string:
+				featureType = StringFeature
+			case bool:
+				featureType = BooleanFeature
+			}
 
-					// Set the encoding type in the trainer
-					trainer.SetFeatureEncodingType(key, EmbeddingEncoding)
-				} else {
-					// For one-hot encoding, add 1 (we'll expand it later in Predict)
-					expectedInputSize += 1
+			// Register the feature with the processor
+			tempProcessor.RegisterFeature(key, featureType, encodingType)
 
-					// Set the encoding type in the trainer if it exists
-					if trainer != nil {
-						trainer.SetFeatureEncodingType(key, OneHotEncoding)
-					}
-				}
-			} else {
-				// For non-string features, add 1
-				expectedInputSize += 1
+			// Also register with the trainer's feature processor if it exists
+			if trainer != nil {
+				trainer.featureProcessor.RegisterFeature(key, featureType, encodingType)
 			}
 		}
+
+		// Calculate the expected input size using the feature processor
+		expectedInputSize := tempProcessor.GetTotalInputSize()
 
 		// If the model's input size is smaller than what we need, we need to reinitialize
 		if d.model.inputSize < expectedInputSize {
@@ -3115,6 +3311,9 @@ func (d *BruteForceMLDetector) SetAdditionalFeatures(features map[string]any) {
 
 				// Update this detector's model
 				d.model = newModel
+
+				// Record network structure metrics with the new input size
+				GetMLMetrics().RecordNetworkStructure(expectedInputSize, newModel.hiddenSize, newModel.outputSize)
 
 				level.Info(log.Logger).Log(
 					definitions.LogKeyGUID, d.guid,
@@ -3437,15 +3636,28 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		return false, 0, err
 	}
 
-	// Start with standard features
-	inputs := []float64{
-		features.TimeBetweenAttempts,
-		features.FailedAttemptsLastHour,
-		features.DifferentUsernames,
-		features.DifferentPasswords,
-		features.TimeOfDay,
-		features.SuspiciousNetwork,
+	// Get the trainer to access feature processor
+	trainer := mlSystem.GetTrainer()
+
+	// Create a temporary feature processor if the trainer doesn't have one
+	var featureProcessor *FeatureProcessor
+	if trainer != nil && trainer.featureProcessor != nil {
+		featureProcessor = trainer.featureProcessor
+	} else {
+		featureProcessor = NewFeatureProcessor()
+		featureProcessor.RegisterStandardFeatures()
 	}
+
+	// Process standard features
+	var inputs []float64
+
+	// Add standard features in the correct order
+	inputs = append(inputs, featureProcessor.ProcessFeature("TimeBetweenAttempts", features.TimeBetweenAttempts)...)
+	inputs = append(inputs, featureProcessor.ProcessFeature("FailedAttemptsLastHour", features.FailedAttemptsLastHour)...)
+	inputs = append(inputs, featureProcessor.ProcessFeature("DifferentUsernames", features.DifferentUsernames)...)
+	inputs = append(inputs, featureProcessor.ProcessFeature("DifferentPasswords", features.DifferentPasswords)...)
+	inputs = append(inputs, featureProcessor.ProcessFeature("TimeOfDay", features.TimeOfDay)...)
+	inputs = append(inputs, featureProcessor.ProcessFeature("SuspiciousNetwork", features.SuspiciousNetwork)...)
 
 	// Add additional features if they exist
 	if features.AdditionalFeatures != nil && len(features.AdditionalFeatures) > 0 {
@@ -3466,142 +3678,15 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 		for _, key := range keys {
 			value := features.AdditionalFeatures[key]
 
-			// Process the value based on its type
-			switch v := value.(type) {
-			case float64:
-				inputs = append(inputs, v)
-			case float32:
-				inputs = append(inputs, float64(v))
-			case int:
-				inputs = append(inputs, float64(v))
-			case int64:
-				inputs = append(inputs, float64(v))
-			case bool:
-				if v {
-					inputs = append(inputs, 1.0)
-				} else {
-					inputs = append(inputs, 0.0)
-				}
-			case string:
-				// Get the trainer to access encodings
-				trainer := mlSystem.GetTrainer()
-
-				if trainer != nil {
-					// Check the encoding type for this feature
-					encodingType := trainer.GetFeatureEncodingType(key)
-
-					if encodingType == EmbeddingEncoding {
-						// Use embedding encoding for this feature
-						embedding := trainer.generateEmbedding(v)
-						inputs = append(inputs, embedding...)
-
-						util.DebugModule(definitions.DbgNeural,
-							"action", "predict_embedding",
-							"key", key,
-							"value", v,
-							"embedding_size", len(embedding),
-							definitions.LogKeyGUID, d.guid,
-						)
-					} else {
-						// Use one-hot encoding for this feature (default)
-						if trainer.oneHotEncodings != nil {
-							// Check if we've seen this feature before
-							if featureEncodings, exists := trainer.oneHotEncodings[key]; exists {
-								// Check if we've seen this value before
-								if index, exists := featureEncodings[v]; exists {
-									// Add one-hot encoded values to the feature vector
-									for j := 0; j < trainer.oneHotSizes[key]; j++ {
-										if j == index {
-											inputs = append(inputs, 1.0)
-										} else {
-											inputs = append(inputs, 0.0)
-										}
-									}
-
-									util.DebugModule(definitions.DbgNeural,
-										"action", "predict_one_hot_encoding",
-										"key", key,
-										"value", v,
-										"one_hot_values", trainer.oneHotSizes[key],
-										"one_hot_index", index,
-										definitions.LogKeyGUID, d.guid,
-									)
-								} else {
-									// Value not seen during training, use a default value
-									// Add zeros for all possible values of this feature
-									for j := 0; j < trainer.oneHotSizes[key]; j++ {
-										inputs = append(inputs, 0.0)
-									}
-
-									util.DebugModule(definitions.DbgNeural,
-										"action", "predict_one_hot_encoding_unknown_value",
-										"key", key,
-										"value", v,
-										"one_hot_values", trainer.oneHotSizes[key],
-										definitions.LogKeyGUID, d.guid,
-									)
-								}
-							} else {
-								// Feature not seen during training, use a default value
-								inputs = append(inputs, 0.5)
-
-								util.DebugModule(definitions.DbgNeural,
-									"action", "predict_unknown_categorical_feature",
-									"key", key,
-									"value", v,
-									definitions.LogKeyGUID, d.guid,
-								)
-							}
-						} else {
-							// Fallback to old method if one-hot encoding is not available
-							hash := util.GetHash(v)
-							if len(hash) > 8 {
-								hash = hash[:8]
-							}
-
-							if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
-								inputs = append(inputs, float64(hashInt%1000)/1000.0)
-							} else {
-								inputs = append(inputs, 0.5)
-							}
-
-							util.DebugModule(definitions.DbgNeural,
-								"action", "predict_fallback_hash",
-								"key", key,
-								"value", v,
-								definitions.LogKeyGUID, d.guid,
-							)
-						}
-					}
-				} else {
-					// Fallback to old method if trainer is not available
-					hash := util.GetHash(v)
-					if len(hash) > 8 {
-						hash = hash[:8]
-					}
-
-					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
-						inputs = append(inputs, float64(hashInt%1000)/1000.0)
-					} else {
-						inputs = append(inputs, 0.5)
-					}
-
-					util.DebugModule(definitions.DbgNeural,
-						"action", "predict_fallback_hash",
-						"key", key,
-						"value", v,
-						definitions.LogKeyGUID, d.guid,
-					)
-				}
-			default:
-				// For other types, use a default value
-				inputs = append(inputs, 0.5)
-			}
+			// Process the feature using the feature processor
+			processedValues := featureProcessor.ProcessFeature(key, value)
+			inputs = append(inputs, processedValues...)
 
 			util.DebugModule(definitions.DbgNeural,
 				"action", "predict_additional_feature",
 				"key", key,
 				"value", value,
+				"processed_values", fmt.Sprintf("%v", processedValues),
 				definitions.LogKeyGUID, d.guid,
 			)
 		}
@@ -3637,50 +3722,8 @@ func (d *BruteForceMLDetector) Predict() (bool, float64, error) {
 	// Record additional features
 	if features.AdditionalFeatures != nil {
 		for key, value := range features.AdditionalFeatures {
-			// Convert the value to float64
-			var floatValue float64
-			switch v := value.(type) {
-			case float64:
-				floatValue = v
-			case float32:
-				floatValue = float64(v)
-			case int:
-				floatValue = float64(v)
-			case int64:
-				floatValue = float64(v)
-			case bool:
-				if v {
-					floatValue = 1.0
-				} else {
-					floatValue = 0.0
-				}
-			case string:
-				// Try to convert string to float
-				if f, err := strconv.ParseFloat(v, 64); err == nil {
-					floatValue = f
-				} else {
-					// If string can't be converted to float, use a hash of the string
-					// normalized to [0,1]
-					hash := util.GetHash(v)
-					// Use the first 8 characters of the hash as a hex number
-					if len(hash) > 8 {
-						hash = hash[:8]
-					}
-
-					// Convert hex to int
-					if hashInt, err := strconv.ParseInt(hash, 16, 64); err == nil {
-						// Normalize to [0,1]
-						floatValue = float64(hashInt%1000) / 1000.0
-					} else {
-						// Fallback
-						floatValue = 0.5
-					}
-				}
-			default:
-				// For other types, use a default value
-				floatValue = 0.5
-			}
-
+			// Convert the value to float64 using the helper method
+			floatValue := featureProcessor.convertToFloat64(value)
 			metrics.RecordFeatureValue("additional_"+key, floatValue)
 		}
 	}
@@ -4141,14 +4184,11 @@ func RecordFeedback(ctx context.Context, isBruteForce bool, features *LoginFeatu
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Get the maximum number of training records from config or use default
-	maxRecords := int64(10000) // Default value for backward compatibility
+	// Get the maximum number of training records from config
+	maxRecords := int64(10000) // Default value
 	nnConfig := config.GetFile().GetBruteForce().GetNeuralNetwork()
-	if nnConfig != nil {
-		configMaxRecords := nnConfig.GetMaxTrainingRecords()
-		if configMaxRecords > 0 {
-			maxRecords = int64(configMaxRecords)
-		}
+	if nnConfig != nil && nnConfig.GetMaxTrainingRecords() > 0 {
+		maxRecords = int64(nnConfig.GetMaxTrainingRecords())
 	}
 
 	// Trim the list to keep only the last maxRecords entries

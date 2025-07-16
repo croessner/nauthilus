@@ -92,7 +92,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 			LuaAction:     definitions.LuaActionBruteForce,
 			Context:       a.Context,
 			FinishedChan:  finished,
-			HTTPRequest:   a.HTTPClientContext.Request,
+			HTTPRequest:   nil, // We don't have access to the gin.Context here, so we can't use its Request
 			CommonRequest: commonRequest,
 		}
 
@@ -256,7 +256,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			}
 
 			// Collect additional features
-			err := featureRequest.CollectAdditionalFeatures(a.HTTPClientContext)
+			err := featureRequest.CollectAdditionalFeatures(ctx)
 			if err != nil {
 				level.Warn(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
@@ -274,7 +274,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			lualib.PutCommonRequest(commonRequest)
 		}
 
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP)
 
 		// Set NoAuth flag
 		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
@@ -286,7 +286,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			bm = bm.WithAdditionalFeatures(features)
 		}
 	} else {
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+		bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
 	}
 
 	// Set the protocol on the bucket manager
@@ -328,7 +328,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
-	accountName := backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx, a.Username, *a.GUID)
 
 	bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
@@ -417,37 +417,35 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	if config.GetEnvironment().GetExperimentalML() {
-		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).WithPassword(a.Password)
 
 		// Set NoAuth flag
-		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
 			mlManager.SetNoAuth(a.NoAuth)
 		}
 
 		// Set the protocol if available
 		if a.Protocol != nil && a.Protocol.Get() != "" {
-			mlBM = mlBM.WithProtocol(a.Protocol.Get())
+			bm = bm.WithProtocol(a.Protocol.Get())
 		}
 
 		// Set the OIDC Client ID if available
 		if a.OIDCCID != "" {
-			mlBM = mlBM.WithOIDCCID(a.OIDCCID)
+			bm = bm.WithOIDCCID(a.OIDCCID)
 		}
 
 		// Check if additional features are available from the Context
 		if features := lualib.GetAdditionalFeatures(ctx); features != nil {
-			mlBM = mlBM.WithAdditionalFeatures(features)
+			bm = bm.WithAdditionalFeatures(features)
 		}
 
 		// Record the login attempt for ML training when a feature is triggered
-		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
+		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
 			mlManager.RecordLoginFeature()
 		}
-
-		bm = mlBM
 	} else {
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
+		bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
 
 		// Set the protocol if available
 		if a.Protocol != nil && a.Protocol.Get() != "" {
