@@ -661,6 +661,17 @@ func setupRedis(ctx context.Context) {
 			go core.UpdateRedisPoolStats()
 			go rediscli.UpdateRedisServerMetrics(ctx)
 
+			// Upload all Lua scripts to Redis at startup
+			go func() {
+				err := rediscli.UploadAllScripts(ctx)
+				if err != nil {
+					level.Warn(log.Logger).Log(
+						definitions.LogKeyMsg, "Failed to upload all Redis Lua scripts at startup",
+						"error", err,
+					)
+				}
+			}()
+
 			return
 		}
 
