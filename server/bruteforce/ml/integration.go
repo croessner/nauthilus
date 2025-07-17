@@ -449,6 +449,17 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 					definitions.LogKeyGUID, m.guid,
 					"action", "process_learning_mode_static_only",
 					"rule_triggered", ruleTriggered,
+					"ml_probability", probability,
+				)
+
+				// Log ml_probability even in learning mode
+				level.Info(log.Logger).Log(
+					definitions.LogKeyGUID, m.guid,
+					definitions.LogKeyBruteForce, "Neural network in learning mode",
+					definitions.LogKeyUsername, m.username,
+					definitions.LogKeyClientIP, m.clientIP,
+					"ml_probability", probability,
+					"learning_mode", true,
 				)
 
 				// If rule is triggered, update the message to indicate we're using static rules
