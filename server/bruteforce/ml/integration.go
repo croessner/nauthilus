@@ -159,6 +159,20 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 		staticMessage = *message
 	}
 
+	// Initialize ML detector if needed
+	if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
+		// Use the singleton pattern to get the detector
+		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+		// Log that we had to initialize the detector
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "initialize_ml_detector_for_bucket_check",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
+	}
+
 	// Only proceed with ML if experimental_ml is enabled and we have a detector
 	if !withError && m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
 		// Check if the model is in learning mode
@@ -352,6 +366,20 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 			"respecting_already_triggered", true,
 		)
 
+		// Initialize ML detector if needed
+		if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
+			// Use the singleton pattern to get the detector
+			m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+			// Log that we had to initialize the detector
+			util.DebugModule(definitions.DbgNeural,
+				definitions.LogKeyGUID, m.guid,
+				"action", "initialize_ml_detector_for_process_brute_force",
+				"client_ip", m.clientIP,
+				"username", m.username,
+			)
+		}
+
 		// Collect features for ML training even when already triggered
 		if m.mlDetector != nil {
 			features, err := m.mlDetector.CollectFeatures()
@@ -371,6 +399,20 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 
 		// Always process as triggered when alreadyTriggered is true
 		return m.BucketManager.ProcessBruteForce(true, alreadyTriggered, rule, network, message, setter)
+	}
+
+	// Initialize ML detector if needed
+	if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
+		// Use the singleton pattern to get the detector
+		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
+
+		// Log that we had to initialize the detector
+		util.DebugModule(definitions.DbgNeural,
+			definitions.LogKeyGUID, m.guid,
+			"action", "initialize_ml_detector_for_process_brute_force_main",
+			"client_ip", m.clientIP,
+			"username", m.username,
+		)
 	}
 
 	// Process with ML if available
