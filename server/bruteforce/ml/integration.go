@@ -614,62 +614,6 @@ func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool
 						)
 					}
 				}
-
-				// For backward compatibility and to ensure ML still has the final say in some cases,
-				// we'll override the weighted decision in extreme cases
-
-				// If ML is very confident (probability > 0.9) it's a brute force attack, always trigger
-				if isBruteForce && probability > 0.9 && !ruleTriggered {
-					ruleTriggered = true
-					m.mlDetected = true
-
-					// Only update message if it's not already set by CheckBucketOverLimit
-					if message == "" {
-						message = fmt.Sprintf("ML override: High confidence brute force detection (probability: %.2f)", probability)
-					}
-
-					util.DebugModule(definitions.DbgNeural,
-						definitions.LogKeyGUID, m.guid,
-						"action", "process_ml_high_confidence_override",
-						"weighted_decision", false,
-						"ml_probability", probability,
-						"final_decision", true,
-					)
-
-					level.Info(log.Logger).Log(
-						definitions.LogKeyGUID, m.guid,
-						definitions.LogKeyBruteForce, message,
-						definitions.LogKeyUsername, m.username,
-						definitions.LogKeyClientIP, m.clientIP,
-						"probability", probability,
-					)
-				}
-
-				// If ML is very confident (probability < 0.1) it's NOT a brute force attack, never trigger
-				if !isBruteForce && probability < 0.1 && ruleTriggered {
-					ruleTriggered = false
-
-					// Only update message if it's not already set by CheckBucketOverLimit
-					if message == "" {
-						message = fmt.Sprintf("ML override: High confidence that this is not a brute force attack (probability: %.2f)", probability)
-					}
-
-					util.DebugModule(definitions.DbgNeural,
-						definitions.LogKeyGUID, m.guid,
-						"action", "process_ml_high_confidence_override",
-						"weighted_decision", true,
-						"ml_probability", probability,
-						"final_decision", false,
-					)
-
-					level.Info(log.Logger).Log(
-						definitions.LogKeyGUID, m.guid,
-						definitions.LogKeyBruteForce, message,
-						definitions.LogKeyUsername, m.username,
-						definitions.LogKeyClientIP, m.clientIP,
-						"probability", probability,
-					)
-				}
 			}
 		}
 	}
