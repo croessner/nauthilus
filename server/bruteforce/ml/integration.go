@@ -164,12 +164,18 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 		// Use the singleton pattern to get the detector
 		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
 
+		// If we have additional features, set them on the detector
+		if m.additionalFeatures != nil {
+			m.mlDetector.SetAdditionalFeatures(m.additionalFeatures)
+		}
+
 		// Log that we had to initialize the detector
 		util.DebugModule(definitions.DbgNeural,
 			definitions.LogKeyGUID, m.guid,
 			"action", "initialize_ml_detector_for_bucket_check",
 			"client_ip", m.clientIP,
 			"username", m.username,
+			"has_additional_features", m.additionalFeatures != nil,
 		)
 	}
 
