@@ -274,7 +274,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			lualib.PutCommonRequest(commonRequest)
 		}
 
-		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP)
+		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).WithUsername(a.Username)
 
 		// Set NoAuth flag
 		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
@@ -330,7 +330,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	accountName := backend.GetUserAccountFromCache(ctx, a.Username, *a.GUID)
 
-	bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
+	bm.WithPassword(a.Password).WithAccountName(accountName)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()

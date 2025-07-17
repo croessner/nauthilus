@@ -290,11 +290,6 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 				"ml_probability", probability,
 				"weighted_score", weightedScore,
 			)
-
-			// Use the first rule for processing
-			if len(rules) > 0 {
-				ruleNumber = 0
-			}
 		} else {
 			// Weighted score is below threshold, don't trigger
 			ruleTriggered = false
