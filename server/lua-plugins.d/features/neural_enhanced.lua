@@ -13,6 +13,44 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+-- This script collects and adds enhanced features to the neural network for brute-force detection.
+-- The features are grouped into two categories:
+--
+-- 1. Global metrics (controlled by NAUTHILUS_INCLUDE_GLOBAL_METRICS environment variable):
+--    - global_auth_rate: Authentication attempts per minute
+--    - global_unique_ip_rate: New unique IPs per minute
+--    - global_ip_user_ratio: Ratio of unique IPs to unique usernames
+--
+-- 2. Account-specific metrics (controlled by NAUTHILUS_INCLUDE_ACCOUNT_METRICS environment variable):
+--    - account_targeting_score: How targeted an account is compared to others
+--    - account_unique_ip_rate: New unique IPs per minute for a specific account
+--    - account_fail_ratio: Normalized ratio of failed attempts for an account
+--    - top_failed_login_score: Score based on the account's rank in the top-100 failed logins list
+--
+-- By default, both groups of metrics are included if the environment variables are not set.
+-- To disable a group of metrics, set the corresponding environment variable to "false".
+-- For example: NAUTHILUS_INCLUDE_GLOBAL_METRICS=false
+--
+-- POTENTIAL CONCERNS FOR BRUTE-FORCE DETECTION EFFICIENCY:
+--
+-- Global metrics concerns:
+-- - global_auth_rate: May be influenced by legitimate traffic spikes (e.g., after maintenance windows
+--   or during peak hours), potentially causing false positives during high-traffic periods.
+-- - global_unique_ip_rate: In environments with many users behind NAT or proxies, this metric might
+--   not accurately reflect attack patterns as many legitimate users share the same IP.
+-- - global_ip_user_ratio: Can be skewed in environments with shared workstations or terminal servers
+--   where many users authenticate from the same IP addresses.
+--
+-- Account-specific metrics concerns:
+-- - account_targeting_score: May not be effective for detecting distributed low-and-slow attacks
+--   that deliberately keep below detection thresholds.
+-- - account_unique_ip_rate: Could generate false positives for legitimate users who frequently
+--   change networks (e.g., mobile users, travelers, or users with unstable connections).
+-- - account_fail_ratio: Might not detect sophisticated attacks that use correct credentials
+--   obtained through other means (e.g., phishing, credential stuffing with known valid credentials).
+-- - top_failed_login_score: Could miss attacks on accounts that aren't in the top-100 failed logins,
+--   especially in large environments with many authentication attempts.
+
 local N = "neural_enhanced"
 
 local nauthilus_util = require("nauthilus_util")
@@ -143,16 +181,36 @@ function nauthilus_call_neural_network(request)
     local normalized_account_unique_ip_rate = math.min(1.0, account_unique_ip_rate / max_unique_ip_rate_account)
     -- account_fail_ratio is already normalized to [0, 1]
 
-    -- Add these features to the neural network
-    local additional_features_one_hot = {
-        global_auth_rate = normalized_global_auth_rate,
-        global_unique_ip_rate = normalized_global_unique_ip_rate,
-        global_ip_user_ratio = normalized_global_ip_user_ratio,
-        account_targeting_score = normalized_account_targeting_score,
-        account_unique_ip_rate = normalized_account_unique_ip_rate,
-        account_fail_ratio = account_fail_ratio,
-        top_failed_login_score = top_failed_login_score
-    }
+    -- Check environment variables for feature inclusion
+    local include_global_metrics = os.getenv("NAUTHILUS_INCLUDE_GLOBAL_METRICS")
+    local include_account_metrics = os.getenv("NAUTHILUS_INCLUDE_ACCOUNT_METRICS")
+
+    -- Default to including all metrics if environment variables are not set
+    if include_global_metrics == nil then
+        include_global_metrics = "true"
+    end
+
+    if include_account_metrics == nil then
+        include_account_metrics = "true"
+    end
+
+    -- Add these features to the neural network based on environment variables
+    local additional_features_one_hot = {}
+
+    -- Add global metrics if enabled
+    if include_global_metrics == "true" then
+        additional_features_one_hot.global_auth_rate = normalized_global_auth_rate
+        additional_features_one_hot.global_unique_ip_rate = normalized_global_unique_ip_rate
+        additional_features_one_hot.global_ip_user_ratio = normalized_global_ip_user_ratio
+    end
+
+    -- Add account-specific metrics if enabled
+    if include_account_metrics == "true" then
+        additional_features_one_hot.account_targeting_score = normalized_account_targeting_score
+        additional_features_one_hot.account_unique_ip_rate = normalized_account_unique_ip_rate
+        additional_features_one_hot.account_fail_ratio = account_fail_ratio
+        additional_features_one_hot.top_failed_login_score = top_failed_login_score
+    end
 
     -- Add to neural network using one-hot encoding
     nauthilus_neural.add_additional_features(additional_features_one_hot, "one-hot")
@@ -162,34 +220,52 @@ function nauthilus_call_neural_network(request)
     logs.caller = N .. ".lua"
     logs.level = "info"
     logs.message = "Enhanced neural features added"
-    logs.global_auth_rate = global_auth_rate
-    logs.global_unique_ip_rate = global_unique_ip_rate
-    logs.global_ip_user_ratio = global_ip_user_ratio
-    logs.account_targeting_score = account_targeting_score
-    logs.account_unique_ip_rate = account_unique_ip_rate
-    logs.account_fail_ratio = account_fail_ratio
-    logs.top_failed_login_score = top_failed_login_score
-    logs.normalized_global_auth_rate = normalized_global_auth_rate
-    logs.normalized_global_unique_ip_rate = normalized_global_unique_ip_rate
-    logs.normalized_global_ip_user_ratio = normalized_global_ip_user_ratio
-    logs.normalized_account_targeting_score = normalized_account_targeting_score
-    logs.normalized_account_unique_ip_rate = normalized_account_unique_ip_rate
+    logs.include_global_metrics = include_global_metrics
+    logs.include_account_metrics = include_account_metrics
+
+    -- Log global metrics
+    if include_global_metrics == "true" then
+        logs.global_auth_rate = global_auth_rate
+        logs.global_unique_ip_rate = global_unique_ip_rate
+        logs.global_ip_user_ratio = global_ip_user_ratio
+        logs.normalized_global_auth_rate = normalized_global_auth_rate
+        logs.normalized_global_unique_ip_rate = normalized_global_unique_ip_rate
+        logs.normalized_global_ip_user_ratio = normalized_global_ip_user_ratio
+    end
+
+    -- Log account-specific metrics
+    if include_account_metrics == "true" then
+        logs.account_targeting_score = account_targeting_score
+        logs.account_unique_ip_rate = account_unique_ip_rate
+        logs.account_fail_ratio = account_fail_ratio
+        logs.top_failed_login_score = top_failed_login_score
+        logs.normalized_account_targeting_score = normalized_account_targeting_score
+        logs.normalized_account_unique_ip_rate = normalized_account_unique_ip_rate
+    end
 
     nauthilus_util.print_result({ log_format = "json" }, logs)
 
     -- Add to custom log for monitoring
-    nauthilus_builtin.custom_log_add(N .. "_global_auth_rate", global_auth_rate)
-    nauthilus_builtin.custom_log_add(N .. "_global_unique_ip_rate", global_unique_ip_rate)
-    nauthilus_builtin.custom_log_add(N .. "_global_ip_user_ratio", global_ip_user_ratio)
-    nauthilus_builtin.custom_log_add(N .. "_account_targeting_score", account_targeting_score)
-    nauthilus_builtin.custom_log_add(N .. "_account_unique_ip_rate", account_unique_ip_rate)
-    nauthilus_builtin.custom_log_add(N .. "_account_fail_ratio", account_fail_ratio)
-    nauthilus_builtin.custom_log_add(N .. "_top_failed_login_score", top_failed_login_score)
-    nauthilus_builtin.custom_log_add(N .. "_normalized_global_auth_rate", normalized_global_auth_rate)
-    nauthilus_builtin.custom_log_add(N .. "_normalized_global_unique_ip_rate", normalized_global_unique_ip_rate)
-    nauthilus_builtin.custom_log_add(N .. "_normalized_global_ip_user_ratio", normalized_global_ip_user_ratio)
-    nauthilus_builtin.custom_log_add(N .. "_normalized_account_targeting_score", normalized_account_targeting_score)
-    nauthilus_builtin.custom_log_add(N .. "_normalized_account_unique_ip_rate", normalized_account_unique_ip_rate)
+
+    -- Log global metrics to custom log if enabled
+    if include_global_metrics == "true" then
+        nauthilus_builtin.custom_log_add(N .. "_global_auth_rate", global_auth_rate)
+        nauthilus_builtin.custom_log_add(N .. "_global_unique_ip_rate", global_unique_ip_rate)
+        nauthilus_builtin.custom_log_add(N .. "_global_ip_user_ratio", global_ip_user_ratio)
+        nauthilus_builtin.custom_log_add(N .. "_normalized_global_auth_rate", normalized_global_auth_rate)
+        nauthilus_builtin.custom_log_add(N .. "_normalized_global_unique_ip_rate", normalized_global_unique_ip_rate)
+        nauthilus_builtin.custom_log_add(N .. "_normalized_global_ip_user_ratio", normalized_global_ip_user_ratio)
+    end
+
+    -- Log account-specific metrics to custom log if enabled
+    if include_account_metrics == "true" then
+        nauthilus_builtin.custom_log_add(N .. "_account_targeting_score", account_targeting_score)
+        nauthilus_builtin.custom_log_add(N .. "_account_unique_ip_rate", account_unique_ip_rate)
+        nauthilus_builtin.custom_log_add(N .. "_account_fail_ratio", account_fail_ratio)
+        nauthilus_builtin.custom_log_add(N .. "_top_failed_login_score", top_failed_login_score)
+        nauthilus_builtin.custom_log_add(N .. "_normalized_account_targeting_score", normalized_account_targeting_score)
+        nauthilus_builtin.custom_log_add(N .. "_normalized_account_unique_ip_rate", normalized_account_unique_ip_rate)
+    end
 
     return
 end
