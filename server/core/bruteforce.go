@@ -304,10 +304,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			// Add ML probability to additional logs if ML is activated
 			if config.GetEnvironment().GetExperimentalML() {
 				mlProb := mlBM.GetMLProbability()
-				if mlProb > 0 {
-					a.AdditionalLogs = append(a.AdditionalLogs, "ml_probability")
-					a.AdditionalLogs = append(a.AdditionalLogs, fmt.Sprintf("%.2f", mlProb))
-				}
+
+				a.AdditionalLogs = append(a.AdditionalLogs, "ml_probability")
+				a.AdditionalLogs = append(a.AdditionalLogs, fmt.Sprintf("%.2f", mlProb))
 			}
 
 			mlBM.Close()

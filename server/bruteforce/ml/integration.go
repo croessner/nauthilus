@@ -43,13 +43,10 @@ type MLBucketManager struct {
 	mlDetected         bool
 	staticDetected     bool
 
-	// Fields to store ML prediction results to avoid duplicate predictions
-	mlPredictionDone  bool
-	mlIsBruteForce    bool
-	mlProbability     float64
-	mlPredictionError error
+	// Used for logging purposes
+	mlProbability float64
 
-	// Weights for decision making
+	// Weights for decision-making
 	staticWeight float64
 	mlWeight     float64
 }
@@ -208,24 +205,21 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 				*message = "Static brute force detection triggered (neural network in learning mode)"
 			}
 
-			// Store the ML prediction result for later use in ProcessBruteForce
-			// We still need to make the prediction to collect data for training
-			isBruteForce, probability, err := m.mlDetector.Predict()
-			m.mlPredictionDone = true
-			m.mlIsBruteForce = isBruteForce
+			_, probability, err := m.mlDetector.Predict()
 			m.mlProbability = probability
-			m.mlPredictionError = err
+
+			if err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, m.guid,
+					definitions.LogKeyMsg, fmt.Sprintf("ML prediction error: %v", err),
+				)
+			}
 
 			return withError, ruleTriggered, ruleNumber
 		}
 
-		// Store the ML prediction result for later use in ProcessBruteForce
-		// to avoid duplicate predictions
 		isBruteForce, probability, err := m.mlDetector.Predict()
-		m.mlPredictionDone = true
-		m.mlIsBruteForce = isBruteForce
 		m.mlProbability = probability
-		m.mlPredictionError = err
 
 		if err != nil {
 			level.Error(log.Logger).Log(
@@ -245,7 +239,7 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 			m.staticDetected = true
 		}
 
-		mlScore := probability // ML already gives us a probability between 0 and 1
+		mlScore := probability // ML already gives us a probability
 
 		// Calculate weighted score
 		weightedScore := (staticScore * m.staticWeight) + (mlScore * m.mlWeight)
@@ -353,273 +347,6 @@ func (m *MLBucketManager) CheckBucketOverLimit(rules []config.BruteForceRule, ne
 	}
 
 	return withError, ruleTriggered, ruleNumber
-}
-
-// ProcessBruteForce handles the result of brute force detection
-func (m *MLBucketManager) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
-	// If alreadyTriggered is true, we must always respect it and block the request
-	if alreadyTriggered {
-		// Log that we're respecting alreadyTriggered
-		util.DebugModule(definitions.DbgNeural,
-			definitions.LogKeyGUID, m.guid,
-			"action", "process_brute_force",
-			"already_triggered", alreadyTriggered,
-			"respecting_already_triggered", true,
-		)
-
-		// Initialize ML detector if needed
-		if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
-			// Use the singleton pattern to get the detector
-			m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
-
-			// Log that we had to initialize the detector
-			util.DebugModule(definitions.DbgNeural,
-				definitions.LogKeyGUID, m.guid,
-				"action", "initialize_ml_detector_for_process_brute_force",
-				"client_ip", m.clientIP,
-				"username", m.username,
-			)
-		}
-
-		// Collect features for ML training even when already triggered
-		if m.mlDetector != nil {
-			features, err := m.mlDetector.CollectFeatures()
-			if err == nil {
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "record_login_attempt_already_triggered",
-					"client_ip", m.clientIP,
-					"username", m.username,
-					"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
-				)
-
-				// Record this as a failed login for ML training
-				_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
-			}
-		}
-
-		// Always process as triggered when alreadyTriggered is true
-		return m.BucketManager.ProcessBruteForce(true, alreadyTriggered, rule, network, message, setter)
-	}
-
-	// Initialize ML detector if needed
-	if m.mlDetector == nil && m.username != "" && m.clientIP != "" {
-		// Use the singleton pattern to get the detector
-		m.mlDetector = GetBruteForceMLDetector(m.ctx, m.guid, m.clientIP, m.username)
-
-		// Log that we had to initialize the detector
-		util.DebugModule(definitions.DbgNeural,
-			definitions.LogKeyGUID, m.guid,
-			"action", "initialize_ml_detector_for_process_brute_force_main",
-			"client_ip", m.clientIP,
-			"username", m.username,
-		)
-	}
-
-	// Process with ML if available
-	if m.mlDetector != nil && config.GetEnvironment().GetExperimentalML() {
-		// Check if the model is in learning mode
-		isLearningMode := m.mlDetector.IsLearningMode() || config.GetFile().GetBruteForce().GetNeuralNetwork().GetDryRun()
-
-		// Log the state before ML processing
-		util.DebugModule(definitions.DbgNeural,
-			definitions.LogKeyGUID, m.guid,
-			"action", "process_brute_force_ml",
-			"rule_triggered", ruleTriggered,
-			"learning_mode", isLearningMode,
-		)
-
-		// First, collect features for ML processing
-		features, err := m.mlDetector.CollectFeatures()
-		if err == nil {
-			// Use the stored ML prediction if available, otherwise make a new prediction
-			isBruteForce := false
-			probability := 0.0
-			predErr := error(nil)
-
-			if m.mlPredictionDone {
-				// Use the stored prediction from CheckBucketOverLimit
-				isBruteForce = m.mlIsBruteForce
-				probability = m.mlProbability
-				predErr = m.mlPredictionError
-
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "using_stored_ml_prediction",
-					"is_brute_force", isBruteForce,
-					"probability", probability,
-					"error", predErr,
-				)
-			} else {
-				// Make a new prediction if one wasn't already made
-				isBruteForce, probability, predErr = m.mlDetector.Predict()
-
-				// Store the prediction for potential future use
-				m.mlPredictionDone = true
-				m.mlIsBruteForce = isBruteForce
-				m.mlProbability = probability
-				m.mlPredictionError = predErr
-
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "making_new_ml_prediction",
-					"is_brute_force", isBruteForce,
-					"probability", probability,
-					"error", predErr,
-				)
-			}
-
-			// Record login result for ML training if a rule was triggered or ML detected brute force
-			if ruleTriggered || (predErr == nil && isBruteForce) {
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "record_login_attempt",
-					"client_ip", m.clientIP,
-					"username", m.username,
-					"rule_triggered", ruleTriggered,
-					"ml_detected", isBruteForce,
-					"additional_features", fmt.Sprintf("%+v", features.AdditionalFeatures),
-				)
-
-				_ = RecordLoginResult(m.ctx, false, features, m.clientIP, m.username, m.guid)
-			}
-
-			// If the model is in learning mode, use only static rules
-			if isLearningMode {
-				// In learning mode, we don't modify the ruleTriggered flag
-				// We just log that we're using static rules only
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "process_learning_mode_static_only",
-					"rule_triggered", ruleTriggered,
-					"ml_probability", probability,
-				)
-
-				// Log ml_probability even in learning mode
-				level.Info(log.Logger).Log(
-					definitions.LogKeyGUID, m.guid,
-					definitions.LogKeyBruteForce, "Neural network in learning mode",
-					definitions.LogKeyUsername, m.username,
-					definitions.LogKeyClientIP, m.clientIP,
-					"ml_probability", probability,
-					"learning_mode", true,
-				)
-
-				// If rule is triggered, update the message to indicate we're using static rules
-				if ruleTriggered && message == "" {
-					message = "Static brute force detection triggered (neural network in learning mode)"
-				}
-
-				return m.BucketManager.ProcessBruteForce(ruleTriggered, alreadyTriggered, rule, network, message, setter)
-			}
-
-			if predErr == nil {
-				// Calculate weighted decision
-				// Convert boolean values to numeric scores
-				staticScore := 0.0
-				if ruleTriggered {
-					staticScore = 1.0
-					m.staticDetected = true
-				}
-
-				mlScore := probability // ML already gives us a probability between 0 and 1
-
-				// Calculate weighted score
-				weightedScore := (staticScore * m.staticWeight) + (mlScore * m.mlWeight)
-
-				// Log the weighted decision calculation
-				util.DebugModule(definitions.DbgNeural,
-					definitions.LogKeyGUID, m.guid,
-					"action", "process_weighted_decision_calculation",
-					"static_score", staticScore,
-					"static_weight", m.staticWeight,
-					"ml_score", mlScore,
-					"ml_weight", m.mlWeight,
-					"weighted_score", weightedScore,
-					"threshold", m.threshold,
-				)
-
-				// Determine if this should trigger based on the weighted score
-				// If the weighted score is above the threshold, trigger
-				if weightedScore >= m.threshold {
-					ruleTriggered = true
-					m.mlDetected = true
-
-					// Only update message if it's not already set by CheckBucketOverLimit
-					if message == "" {
-						message = fmt.Sprintf("Weighted brute force detection triggered (score: %.2f, threshold: %.2f)",
-							weightedScore, m.threshold)
-					}
-
-					util.DebugModule(definitions.DbgNeural,
-						definitions.LogKeyGUID, m.guid,
-						"action", "process_post_weighted_decision",
-						"static_rule_triggered", staticScore > 0,
-						"ml_rule_triggered", isBruteForce,
-						"weighted_score", weightedScore,
-						"threshold", m.threshold,
-						"final_rule_triggered", ruleTriggered,
-					)
-
-					level.Info(log.Logger).Log(
-						definitions.LogKeyGUID, m.guid,
-						definitions.LogKeyBruteForce, message,
-						definitions.LogKeyUsername, m.username,
-						definitions.LogKeyClientIP, m.clientIP,
-						"static_triggered", staticScore > 0,
-						"ml_probability", probability,
-						"weighted_score", weightedScore,
-					)
-				} else {
-					// Weighted score is below threshold, don't trigger
-					ruleTriggered = false
-
-					// If static rules triggered but weighted decision says no, log this override
-					if staticScore > 0 {
-						// Only update message if it's not already set by CheckBucketOverLimit
-						if message == "" {
-							message = fmt.Sprintf("Weighted decision overrode static brute force detection (score: %.2f, threshold: %.2f)",
-								weightedScore, m.threshold)
-						}
-
-						util.DebugModule(definitions.DbgNeural,
-							definitions.LogKeyGUID, m.guid,
-							"action", "process_post_weighted_decision",
-							"static_rule_triggered", true,
-							"ml_rule_triggered", isBruteForce,
-							"weighted_score", weightedScore,
-							"threshold", m.threshold,
-							"final_rule_triggered", ruleTriggered,
-						)
-
-						level.Info(log.Logger).Log(
-							definitions.LogKeyGUID, m.guid,
-							definitions.LogKeyBruteForce, message,
-							definitions.LogKeyUsername, m.username,
-							definitions.LogKeyClientIP, m.clientIP,
-							"static_triggered", true,
-							"ml_probability", probability,
-							"weighted_score", weightedScore,
-						)
-					} else {
-						// Neither static rules nor weighted decision triggered
-						util.DebugModule(definitions.DbgNeural,
-							definitions.LogKeyGUID, m.guid,
-							"action", "process_post_weighted_decision",
-							"static_rule_triggered", false,
-							"ml_rule_triggered", isBruteForce,
-							"weighted_score", weightedScore,
-							"threshold", m.threshold,
-							"final_rule_triggered", ruleTriggered,
-						)
-					}
-				}
-			}
-		}
-	}
-
-	// Use the standard processing with potentially updated ruleTriggered flag
-	return m.BucketManager.ProcessBruteForce(ruleTriggered, alreadyTriggered, rule, network, message, setter)
 }
 
 // Close cleans up resources when the MLBucketManager is no longer needed
