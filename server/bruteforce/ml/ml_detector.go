@@ -1245,9 +1245,38 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 			// Load one-hot encodings
 			if encodingsData.OneHotEncodings != nil {
 				for featureName, valueMap := range encodingsData.OneHotEncodings {
-					for value := range valueMap {
-						// This will recreate the one-hot encoding in the feature processor
-						t.featureProcessor.GetOrCreateOneHotEncoding(featureName, value)
+					// Initialize maps if they don't exist
+					if t.featureProcessor.oneHotEncodings[featureName] == nil {
+						t.featureProcessor.oneHotEncodings[featureName] = make(map[string]int)
+						t.featureProcessor.oneHotSizes[featureName] = 0
+					}
+
+					// Load the exact mapping from Redis to ensure consistency
+					for value, index := range valueMap {
+						t.featureProcessor.oneHotEncodings[featureName][value] = index
+						// Update the size if this index is larger than current size
+						if index+1 > t.featureProcessor.oneHotSizes[featureName] {
+							t.featureProcessor.oneHotSizes[featureName] = index + 1
+						}
+					}
+
+					// Update the size in the feature info
+					if info, exists := t.featureProcessor.featureInfoMap[featureName]; exists && info.EncodingType == OneHotEncoding {
+						info.Size = t.featureProcessor.oneHotSizes[featureName]
+						t.featureProcessor.featureInfoMap[featureName] = info
+					}
+				}
+			}
+
+			// Also load one-hot sizes directly to ensure consistency
+			if encodingsData.OneHotSizes != nil {
+				for featureName, size := range encodingsData.OneHotSizes {
+					t.featureProcessor.oneHotSizes[featureName] = size
+
+					// Update the size in the feature info
+					if info, exists := t.featureProcessor.featureInfoMap[featureName]; exists && info.EncodingType == OneHotEncoding {
+						info.Size = size
+						t.featureProcessor.featureInfoMap[featureName] = info
 					}
 				}
 			}
@@ -1283,20 +1312,62 @@ func (t *MLTrainer) LoadModelFromRedisWithKey(key string) error {
 	// Record network structure metrics with the actual input size needed for the feature processor
 	// This ensures the metrics reflect the correct input size when using the feature processor
 	actualInputSize := t.featureProcessor.GetTotalInputSize()
-	if actualInputSize > t.model.inputSize {
+	if actualInputSize != t.model.inputSize {
 		util.DebugModule(definitions.DbgNeural,
-			"action", "update_network_structure_metrics",
+			"action", "input_size_mismatch_detected",
 			"model_input_size", t.model.inputSize,
 			"actual_input_size", actualInputSize,
 			"difference", actualInputSize-t.model.inputSize,
 		)
 
-		// Update the metrics with the actual input size
-		GetMLMetrics().RecordNetworkStructure(actualInputSize, t.model.hiddenSize, t.model.outputSize)
-	} else {
-		// Use the model's input size if it's already large enough
-		GetMLMetrics().RecordNetworkStructure(t.model.inputSize, t.model.hiddenSize, t.model.outputSize)
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Input size mismatch detected: model=%d, actual=%d. Recreating model with correct input size.",
+				t.model.inputSize, actualInputSize),
+		)
+
+		// Create a new neural network with the correct input size but preserve other parameters
+		newModel := &NeuralNetwork{
+			inputSize:          actualInputSize,
+			hiddenSize:         t.model.hiddenSize,
+			outputSize:         t.model.outputSize,
+			learningRate:       t.model.learningRate,
+			activationFunction: t.model.activationFunction,
+			rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
+		}
+
+		// Initialize weights and biases for the new model
+		// We can't reuse the old weights because the dimensions are different
+		hiddenLayerSize := newModel.hiddenSize
+		inputLayerSize := newModel.inputSize
+		outputLayerSize := newModel.outputSize
+
+		// Initialize weights with small random values
+		newModel.weights = make([]float64, inputLayerSize*hiddenLayerSize)
+		for i := range newModel.weights {
+			newModel.weights[i] = (newModel.rng.Float64() - 0.5) * 0.1
+		}
+
+		// Initialize biases
+		newModel.hiddenBias = make([]float64, hiddenLayerSize)
+		for i := range newModel.hiddenBias {
+			newModel.hiddenBias[i] = (newModel.rng.Float64() - 0.5) * 0.1
+		}
+
+		newModel.outputBias = make([]float64, outputLayerSize)
+		for i := range newModel.outputBias {
+			newModel.outputBias[i] = (newModel.rng.Float64() - 0.5) * 0.1
+		}
+
+		// Replace the model with the new one
+		t.model = newModel
+
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Model recreated with correct input size: %d", actualInputSize),
+		)
 	}
+
+	// Update the metrics with the actual input size
+	GetMLMetrics().RecordNetworkStructure(t.model.inputSize, t.model.hiddenSize, t.model.outputSize)
 
 	return nil
 }
@@ -1540,6 +1611,18 @@ func SetLastTrainingTime(ctx context.Context) error {
 func (t *MLTrainer) SaveModelToRedisWithKey(key string) error {
 	if t.model == nil {
 		return fmt.Errorf("no model to save")
+	}
+
+	// Check if the model's input size matches the actual input size needed
+	actualInputSize := t.featureProcessor.GetTotalInputSize()
+	if actualInputSize != t.model.inputSize {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Input size mismatch detected before saving: model=%d, actual=%d. Updating model input size.",
+				t.model.inputSize, actualInputSize),
+		)
+
+		// Update the model's input size to match the actual input size
+		t.model.inputSize = actualInputSize
 	}
 
 	// Create a serializable representation of the model
