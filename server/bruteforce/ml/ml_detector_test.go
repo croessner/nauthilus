@@ -1013,20 +1013,23 @@ func TestNeuralNetwork_FeedForwardEdgeCases(t *testing.T) {
 	t.Run("Input size mismatch", func(t *testing.T) {
 		// Create a neural network with 6 input neurons and 1 output neuron
 		nn := NewNeuralNetwork(6, 1)
+		originalInputSize := nn.inputSize
 
 		// Test with too few inputs
 		inputs := []float64{0.1, 0.2, 0.3, 0.4, 0.5} // Only 5 inputs, but network expects 6
 		outputs := nn.FeedForward(inputs)
-		assert.Len(t, outputs, 1, "Should return a default output array of length 1")
-		assert.Equal(t, 0.5, outputs[0], "Should return default value 0.5 for insufficient inputs")
+		assert.Len(t, outputs, 1, "Should return an output array of length 1")
+		// The model should adapt to the new input size
+		assert.Equal(t, 5, nn.inputSize, "Model should adapt to the new input size")
+		assert.NotEqual(t, originalInputSize, nn.inputSize, "Input size should be updated")
 
-		// Test with too many inputs - now the network should use the first 6 inputs and ignore the rest
-		inputs = []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7} // 7 inputs, but network expects 6
+		// Test with more inputs
+		inputs = []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7} // 7 inputs
 		outputs = nn.FeedForward(inputs)
 		assert.Len(t, outputs, 1, "Should return an output array of length 1")
-		assert.NotEqual(t, 0.5, outputs[0], "Should not return default value 0.5 for extra inputs")
+		assert.Equal(t, 7, nn.inputSize, "Model should adapt to the new input size")
 
-		// Test with empty inputs
+		// Test with empty inputs - this is an edge case that should still return a default value
 		inputs = []float64{}
 		outputs = nn.FeedForward(inputs)
 		assert.Len(t, outputs, 1, "Should return a default output array of length 1")

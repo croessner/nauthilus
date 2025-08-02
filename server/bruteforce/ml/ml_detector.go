@@ -523,41 +523,52 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		"input_size", len(inputs),
 	)
 
-	if len(inputs) < nn.inputSize {
-		// Handle error: not enough inputs for the network
-		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Not enough inputs: expected at least %d, got %d", nn.inputSize, len(inputs)),
-		)
-
+	// Handle empty inputs as a special case
+	if len(inputs) == 0 {
 		util.DebugModule(definitions.DbgNeural,
 			"action", "feed_forward_error",
-			"reason", "insufficient_inputs",
-			"input_size", len(inputs),
-			"expected_input_size", nn.inputSize,
+			"reason", "empty_inputs",
+			"input_size", 0,
 		)
-
 		// Return a default value
 		return []float64{0.5}
 	}
 
-	// If there are more inputs than expected, log a warning but continue with the first nn.inputSize inputs
-	if len(inputs) > nn.inputSize {
+	// If the input size doesn't match the expected size, update the model's input size
+	// This ensures the model adapts to the correct input size calculated by the FeatureProcessor
+	if len(inputs) != nn.inputSize {
 		util.DebugModule(definitions.DbgNeural,
-			"action", "feed_forward_warning",
-			"reason", "extra_inputs",
-			"input_size", len(inputs),
-			"using_input_size", nn.inputSize,
+			"action", "feed_forward_input_size_mismatch",
+			"actual_input_size", len(inputs),
+			"model_input_size", nn.inputSize,
+			"updating_model_input_size", true,
 		)
+
+		// Update the model's input size to match the actual input size
+		nn.inputSize = len(inputs)
+
+		// Reinitialize weights with the new input size
+		oldWeights := nn.weights
+		nn.weights = make([]float64, nn.inputSize*nn.hiddenSize+nn.hiddenSize*nn.outputSize)
+
+		// Initialize new weights with small random values
+		for i := range nn.weights {
+			nn.weights[i] = (nn.rng.Float64() - 0.5) * 0.1
+		}
+
+		// Copy over the hidden-to-output weights which are still valid
+		hiddenOutputOffset := nn.inputSize * nn.hiddenSize
+		oldHiddenOutputOffset := len(oldWeights) - (nn.hiddenSize * nn.outputSize)
+		if oldHiddenOutputOffset >= 0 && oldHiddenOutputOffset < len(oldWeights) {
+			copy(nn.weights[hiddenOutputOffset:], oldWeights[oldHiddenOutputOffset:])
+		}
 	}
 
 	// Implement a simple feed-forward neural network with one hidden layer
 	// 1. Calculate hidden layer activations
 
-	// Use the actual number of inputs, but limit to nn.inputSize to match the weights
+	// Use the actual number of inputs, which now matches nn.inputSize
 	actualInputSize := len(inputs)
-	if actualInputSize > nn.inputSize {
-		actualInputSize = nn.inputSize
-	}
 
 	hiddenActivations := make([]float64, nn.hiddenSize)
 	for i := 0; i < nn.hiddenSize; i++ {
