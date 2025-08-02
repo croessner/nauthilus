@@ -384,7 +384,7 @@ func (b *BruteForceRule) GetFilterByOIDCCID() []string {
 type NeuralNetwork struct {
 	DryRun             bool    `mapstructure:"dry_run" validate:"omitempty"`
 	MaxTrainingRecords int32   `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
-	HiddenNeurons      int     `mapstructure:"hidden_neurons" validate:"omitempty,min=8,max=20"`
+	HiddenNeurons      int     `mapstructure:"hidden_neurons" validate:"omitempty,min=2,max=1024"`
 	ActivationFunction string  `mapstructure:"activation_function" validate:"omitempty,oneof=sigmoid tanh relu leaky_relu"`
 	StaticWeight       float64 `mapstructure:"static_weight" validate:"omitempty,min=0,max=1"`
 	MLWeight           float64 `mapstructure:"ml_weight" validate:"omitempty,min=0,max=1"`
