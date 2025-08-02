@@ -562,6 +562,9 @@ func (nn *NeuralNetwork) FeedForward(inputs []float64) []float64 {
 		if oldHiddenOutputOffset >= 0 && oldHiddenOutputOffset < len(oldWeights) {
 			copy(nn.weights[hiddenOutputOffset:], oldWeights[oldHiddenOutputOffset:])
 		}
+
+		// Update metrics to reflect the new network structure
+		GetMLMetrics().RecordNetworkStructure(nn.inputSize, nn.hiddenSize, nn.outputSize)
 	}
 
 	// Implement a simple feed-forward neural network with one hidden layer
