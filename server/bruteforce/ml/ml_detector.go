@@ -835,17 +835,128 @@ func (fp *FeatureProcessor) GenerateEmbedding(value string) []float64 {
 }
 
 // GetOrCreateOneHotEncoding gets or creates a one-hot encoding for a string value
+// It first loads the current map from Redis, then compares, and only saves if needed
+// This ensures consistency across multiple instances
 func (fp *FeatureProcessor) GetOrCreateOneHotEncoding(featureName string, value string) (int, int) {
+	ctx := context.Background()
+
 	// Initialize maps if they don't exist
 	if fp.oneHotEncodings[featureName] == nil {
 		fp.oneHotEncodings[featureName] = make(map[string]int)
 		fp.oneHotSizes[featureName] = 0
 	}
 
-	// Check if we've seen this value before
+	// Check if we've seen this value before in local cache
 	if index, exists := fp.oneHotEncodings[featureName][value]; exists {
 		return fp.oneHotSizes[featureName], index
 	}
+
+	// Acquire a lock for reading/writing one-hot encodings
+	lockAcquired, lockErr := AcquireTrainingLock(ctx, 1*time.Minute)
+	if lockErr != nil {
+		util.DebugModule(definitions.DbgNeural,
+			"action", "one_hot_encoding_lock_error",
+			"feature", featureName,
+			"value", value,
+			"error", lockErr,
+		)
+		// Continue with local operation if lock fails
+	} else if lockAcquired {
+		// Ensure the lock is released when we're done
+		defer func() {
+			if releaseErr := ReleaseTrainingLock(ctx); releaseErr != nil {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "one_hot_encoding_release_lock_error",
+					"feature", featureName,
+					"value", value,
+					"error", releaseErr,
+				)
+			}
+		}()
+
+		// Try to load encodings from Redis
+		encodingsKey := getMLRedisKeyPrefix() + "model_encodings"
+		encodingsJSON, err := rediscli.GetClient().GetReadHandle().Get(ctx, encodingsKey).Bytes()
+
+		if err == nil {
+			// Deserialize the encodings
+			var encodingsData struct {
+				OneHotEncodings map[string]map[string]int `json:"one_hot_encodings"`
+				OneHotSizes     map[string]int            `json:"one_hot_sizes"`
+			}
+
+			// Use jsoniter without decimal truncation for ML package
+			var json = jsoniter.Config{
+				EscapeHTML:                    true,
+				SortMapKeys:                   true,
+				ValidateJsonRawMessage:        true,
+				MarshalFloatWith6Digits:       false,
+				ObjectFieldMustBeSimpleString: true,
+			}.Froze()
+
+			if err := json.Unmarshal(encodingsJSON, &encodingsData); err == nil {
+				// Update local maps with Redis data
+				if encodingsData.OneHotEncodings != nil && encodingsData.OneHotEncodings[featureName] != nil {
+					// Check if the value exists in Redis
+					if index, exists := encodingsData.OneHotEncodings[featureName][value]; exists {
+						// Update local cache with the value from Redis
+						fp.oneHotEncodings[featureName][value] = index
+
+						// Update the size if needed
+						if encodingsData.OneHotSizes != nil && encodingsData.OneHotSizes[featureName] > fp.oneHotSizes[featureName] {
+							fp.oneHotSizes[featureName] = encodingsData.OneHotSizes[featureName]
+						}
+
+						// Update the size in the feature info
+						if info, exists := fp.featureInfoMap[featureName]; exists && info.EncodingType == OneHotEncoding {
+							info.Size = fp.oneHotSizes[featureName]
+							fp.featureInfoMap[featureName] = info
+						}
+
+						util.DebugModule(definitions.DbgNeural,
+							"action", "found_one_hot_encoding_in_redis",
+							"feature", featureName,
+							"value", value,
+							"index", index,
+							"total_values", fp.oneHotSizes[featureName],
+						)
+
+						return fp.oneHotSizes[featureName], index
+					} else {
+						// Update local cache with all values from Redis
+						for val, idx := range encodingsData.OneHotEncodings[featureName] {
+							fp.oneHotEncodings[featureName][val] = idx
+						}
+
+						// Update the size
+						if encodingsData.OneHotSizes != nil && encodingsData.OneHotSizes[featureName] > 0 {
+							fp.oneHotSizes[featureName] = encodingsData.OneHotSizes[featureName]
+						}
+					}
+				}
+			} else {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "one_hot_encoding_unmarshal_error",
+					"feature", featureName,
+					"value", value,
+					"error", err,
+				)
+			}
+		} else if !errors.Is(err, redis.Nil) {
+			util.DebugModule(definitions.DbgNeural,
+				"action", "one_hot_encoding_redis_error",
+				"feature", featureName,
+				"value", value,
+				"error", err,
+			)
+		}
+	}
+
+	// At this point, we've either:
+	// 1. Failed to acquire the lock
+	// 2. Acquired the lock but failed to load from Redis
+	// 3. Loaded from Redis but the value wasn't found
+	// In all cases, we need to create a new encoding
 
 	// This is a new value, assign it the next index
 	newIndex := fp.oneHotSizes[featureName]
@@ -856,6 +967,67 @@ func (fp *FeatureProcessor) GetOrCreateOneHotEncoding(featureName string, value 
 	if info, exists := fp.featureInfoMap[featureName]; exists && info.EncodingType == OneHotEncoding {
 		info.Size = fp.oneHotSizes[featureName]
 		fp.featureInfoMap[featureName] = info
+	}
+
+	// If we have the lock, save the updated encodings to Redis
+	if lockAcquired {
+		// Extract one-hot encodings from the feature processor
+		oneHotEncodings := make(map[string]map[string]int)
+		oneHotSizes := make(map[string]int)
+
+		// Copy one-hot encodings for this feature
+		oneHotEncodings[featureName] = make(map[string]int)
+		for val, idx := range fp.oneHotEncodings[featureName] {
+			oneHotEncodings[featureName][val] = idx
+		}
+		oneHotSizes[featureName] = fp.oneHotSizes[featureName]
+
+		// Create a serializable representation of the encodings
+		encodingsData := struct {
+			OneHotEncodings map[string]map[string]int `json:"one_hot_encodings"`
+			OneHotSizes     map[string]int            `json:"one_hot_sizes"`
+		}{
+			OneHotEncodings: oneHotEncodings,
+			OneHotSizes:     oneHotSizes,
+		}
+
+		// Use jsoniter without decimal truncation for ML package
+		var json = jsoniter.Config{
+			EscapeHTML:                    true,
+			SortMapKeys:                   true,
+			ValidateJsonRawMessage:        true,
+			MarshalFloatWith6Digits:       false,
+			ObjectFieldMustBeSimpleString: true,
+		}.Froze()
+
+		// Serialize the encodings to JSON
+		encodingsJSON, err := json.Marshal(encodingsData)
+		if err == nil {
+			// Save to Redis
+			encodingsKey := getMLRedisKeyPrefix() + "model_encodings"
+			err = rediscli.GetClient().GetWriteHandle().Set(
+				ctx,
+				encodingsKey,
+				encodingsJSON,
+				30*24*time.Hour, // 30 days TTL
+			).Err()
+
+			if err != nil {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "one_hot_encoding_save_error",
+					"feature", featureName,
+					"value", value,
+					"error", err,
+				)
+			} else {
+				util.DebugModule(definitions.DbgNeural,
+					"action", "one_hot_encoding_saved_to_redis",
+					"feature", featureName,
+					"value", value,
+					"index", newIndex,
+				)
+			}
+		}
 	}
 
 	util.DebugModule(definitions.DbgNeural,
