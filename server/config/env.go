@@ -68,9 +68,6 @@ type Environment interface {
 	// GetDevMode indicates whether the application is in developer mode.
 	GetDevMode() bool
 
-	// GetExperimentalML indicates whether experimental machine learning features are enabled.
-	GetExperimentalML() bool
-
 	// GetMaxActionWorkers returns the maximum number of simultaneous action workers.
 	GetMaxActionWorkers() uint16
 
@@ -106,9 +103,6 @@ type EnvironmentSettings struct {
 
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
-
-	// ExperimentalML indicates whether experimental machine learning features are enabled within the application.
-	ExperimentalML bool
 
 	// MaxActionWorkers is the maximum number of action workers that can be run simultaneously.
 	MaxActionWorkers uint16
@@ -200,14 +194,6 @@ func (env *EnvironmentSettings) GetDevMode() bool {
 	return env.DevMode
 }
 
-func (env *EnvironmentSettings) GetExperimentalML() bool {
-	if env == nil {
-		return false
-	}
-
-	return env.ExperimentalML
-}
-
 // GetMaxActionWorkers retrieves the maximum number of action workers allowed from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetMaxActionWorkers() uint16 {
 	if env == nil {
@@ -237,7 +223,6 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("nginx_wait_delay", definitions.WaitDelay)
 	viper.SetDefault("max_login_attempts", definitions.MaxLoginAttempts)
 	viper.SetDefault("developer_mode", false)
-	viper.SetDefault("experimental_ml", false)
 	viper.SetDefault("max_action_workers", definitions.MaxActionWorkers)
 	viper.SetDefault("lua_script_timeout", definitions.LuaMaxExecutionTime)
 }
@@ -370,7 +355,6 @@ func (env *EnvironmentSettings) setConfigFromEnvVars() {
 	env.POP3BackendAddress = viper.GetString("pop3_backend_address")
 	env.POP3BackendPort = viper.GetInt("pop3_backend_port")
 	env.DevMode = viper.GetBool("developer_mode")
-	env.ExperimentalML = viper.GetBool("experimental_ml")
 }
 
 // setConfigWaitDelay sets the WaitDelay field based on the "wait_delay" configuration value from viper.
