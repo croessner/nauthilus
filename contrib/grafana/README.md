@@ -8,44 +8,10 @@ This directory contains Grafana dashboard configurations for monitoring Nauthilu
 
 General Nauthilus metrics dashboard.
 
-### 2. nauthilus-ml.json
-
-Machine Learning metrics dashboard for monitoring the neural network used for brute force detection.
-
-### 3. nauthilus-distributed-brute-force.json
-
-Dashboard for monitoring distributed brute force attack detection metrics. This dashboard visualizes metrics collected by the global pattern monitoring system, which is designed to detect distributed brute force attacks that use many unique IP addresses with few attempts per IP.
-
-## Distributed Brute Force Dashboard
-
-The distributed brute force dashboard provides visualization for metrics related to detecting distributed brute force attacks. It includes:
-
-### Current Metrics
-- Authentication attempts in different time windows (1m, 5m, 15m, 1h)
-- Unique IPs in different time windows
-- Unique users in different time windows
-- Key indicators for distributed brute force attacks (1h window)
-
-### Derived Metrics
-- Attempts per IP: A low value combined with a high number of unique IPs can indicate a distributed brute force attack
-- Attempts per user: A high value can indicate a targeted brute force attack
-- IPs per user: A high value can indicate a distributed brute force attack targeting specific users
-
-### Historical Metrics
-- Historical authentication attempts per hour
-- Historical unique IPs per hour
-- Historical derived metrics (attempts per IP, attempts per user, IPs per user)
-
-### Report Metrics
-- Threat Levels: Maximum and average threat levels from security reports
-- Security Events by Severity: Count of severe, high, and moderate security events
-- Event Count and Report Generations: Total number of security events and report generation count
-
 ## Installation
 
-1. Import the dashboard JSON files into your Grafana instance.
+1. Import the dashboard JSON file(s) into your Grafana instance.
 2. Configure the Prometheus data source to point to your Nauthilus Prometheus endpoint.
-3. Ensure that the experimental_ml environment variable is set to enable the ML metrics collection.
 
 ## Requirements
 
@@ -83,61 +49,6 @@ If you want to have multiple instances of the same dashboard (e.g., to compare c
    - Leave it as is if you want to replace an existing dashboard
 4. Change the dashboard title to something distinctive
 5. Save the file and import it as described above
-
-## Machine Learning Dashboard
-
-The Machine Learning dashboard (`nauthilus-ml.json`) provides comprehensive visualizations for monitoring the neural network used in Nauthilus's brute force detection system.
-
-### Dashboard Sections
-
-1. **Neural Network Structure**
-   - Visualizes the size of each layer (input, hidden, output) in the neural network
-
-2. **Training Metrics**
-   - Training Error: Shows the error rate during training over time
-   - Training Progress: Displays the current epoch in the training process
-   - Training Samples Used: Shows the number of samples used for training
-   - Training Duration: Visualizes the duration of training operations
-
-3. **Prediction Metrics**
-   - Brute Force Prediction Confidence: Gauge showing the confidence level of brute force predictions
-   - Prediction Results: Pie chart showing the distribution of true/false predictions
-   - Prediction Duration: Graph showing the time taken to make predictions
-
-4. **Feature Metrics**
-   - Feature Values: Time series of the values of features used in predictions
-
-5. **Neuron Activation Metrics**
-   - Hidden Layer Neuron Activations: Heatmap showing activation values of neurons in the hidden layer
-   - Output Layer Neuron Activations: Bar gauge showing activation values of neurons in the output layer
-
-### Using the Dashboard
-
-- The dashboard auto-refreshes every 5 seconds by default
-- Time range can be adjusted using the time picker at the top right
-- Hover over any panel for more detailed information
-- Click on panel titles to see panel options and edit if needed
-
-### Interpreting the Data
-
-1. **Network Structure**
-   - Larger layer sizes may indicate more complex models that can capture more patterns but might be slower to train
-
-2. **Training Metrics**
-   - Decreasing error rates indicate the model is learning effectively
-   - Stable or increasing error rates might indicate overfitting or other training issues
-
-3. **Prediction Metrics**
-   - High confidence with correct predictions indicates a well-trained model
-   - Low confidence or incorrect predictions may indicate the model needs more training or refinement
-
-4. **Feature Values**
-   - Unusual spikes or patterns in feature values might indicate anomalies or attacks
-   - Consistent patterns can help understand normal behavior
-
-5. **Neuron Activations**
-   - Diverse activation patterns indicate the network is using its capacity effectively
-   - Dead neurons (consistently low activation) might indicate training issues
 
 ## Grafana 11.x Compatibility
 

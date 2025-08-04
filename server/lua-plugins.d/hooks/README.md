@@ -57,58 +57,6 @@ Manages Dovecot authentication sessions, cleaning up expired sessions and mainta
 The plugin runs automatically when triggered by Dovecot session events. You can configure it through environment variables:
 - `CUSTOM_REDIS_POOL_NAME`: The name of the Redis pool to use (defaults to "default" if not specified)
 
-### learning-mode.lua
-Implements a learning mode for the Nauthilus system to establish baseline behavior patterns before enabling full security measures.
-
-**Features:**
-- Collects authentication patterns during a learning period
-- Establishes normal behavior baselines for users and the system
-- Generates recommended security thresholds based on observed patterns
-- Provides detailed reports on learning progress
-- Transitions smoothly from learning to enforcement mode
-
-**Usage:**
-Access the plugin through HTTP requests with the following query parameters:
-- `enabled=true|false|1|0`: Enables or disables learning mode
-
-Example: `https://nauthilus-server/api/v1/custom/learning-mode?enabled=true`
-
-### neural-feedback.lua
-Collects feedback on neural network predictions to improve the accuracy of the machine learning models.
-
-**Features:**
-- Tracks true positives, false positives, true negatives, and false negatives
-- Provides feedback mechanisms for administrators to correct misclassifications
-- Calculates precision, recall, and F1 scores for model evaluation
-- Stores feedback data for model retraining
-- Generates performance reports for the neural network models
-
-**Usage:**
-Access the plugin through HTTP requests with the following query parameters:
-- `is_brute_force=true|false|1|0`: Indicates whether the authentication attempt was a brute force attack
-- `request_id=<id>`: The ID of the authentication request
-- `client_ip=<ip>`: The client IP address
-- `username=<username>`: The username being authenticated
-
-Example: `https://nauthilus-server/api/v1/custom/neural-feedback?is_brute_force=true&request_id=12345&client_ip=192.168.1.1&username=testuser`
-
-### train-neural-network.lua
-Trains or retrains the neural network models used for anomaly detection based on collected data and feedback.
-
-**Features:**
-- Processes historical authentication data for training
-- Incorporates feedback from the neural-feedback hook
-- Supports incremental training to update existing models
-- Provides detailed training metrics and progress reports
-- Automatically deploys new models when training is complete
-
-**Usage:**
-Access the plugin through HTTP requests with the following query parameters:
-- `epochs=<number>`: Number of training epochs (default: 50)
-- `samples=<number>`: Maximum number of samples to use for training (default: 5000)
-
-Example: `https://nauthilus-server/api/v1/custom/train-neural-network?epochs=100&samples=10000`
-
 ## Configuring Hooks in nauthilus.yml
 
 To use the hooks in this directory, you need to configure them in your nauthilus.yml configuration file. Hooks are configured in the `lua.custom_hooks` section of the configuration file.

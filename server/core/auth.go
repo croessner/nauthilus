@@ -33,7 +33,6 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -305,7 +304,7 @@ type State interface {
 	PreproccessAuthRequest(ctx *gin.Context) bool
 
 	// UpdateBruteForceBucketsCounter increments counters to track brute-force attack attempts for the associated client IP.
-	UpdateBruteForceBucketsCounter()
+	UpdateBruteForceBucketsCounter(ctx *gin.Context)
 
 	// HandleAuthentication processes the primary authentication logic based on the request context and service parameters.
 	HandleAuthentication(ctx *gin.Context)
@@ -1152,39 +1151,6 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 		if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
 			return
 		}
-
-		// Record successful login for ML training if ML is enabled
-		if config.GetEnvironment().GetExperimentalML() {
-			mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).WithPassword(a.Password)
-
-			// Set NoAuth flag
-			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-				mlManager.SetNoAuth(a.NoAuth)
-			}
-
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				mlBM = mlBM.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				mlBM = mlBM.WithOIDCCID(a.OIDCCID)
-			}
-
-			// Check if additional features are available from the Context
-			if a.Context != nil {
-				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-					mlBM = mlBM.WithAdditionalFeatures(features)
-				}
-			}
-
-			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-				// Create a new method in MLBucketManager to record successful logins
-				mlManager.RecordSuccessfulLogin()
-			}
-		}
 	}
 }
 
@@ -1529,7 +1495,7 @@ func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 // Return values:
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
-func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
+func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
 	var (
 		passDBResult *PassDBResult
 		err          error
@@ -1546,7 +1512,7 @@ func (a *AuthState) verifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) 
 				break
 			}
 		} else {
-			err = processPassDBResult(passDBResult, a, passDB)
+			err = processPassDBResult(ctx, passDBResult, a, passDB)
 			if err != nil || a.UserFound {
 				break
 			}
@@ -1634,7 +1600,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthStat
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
-func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
+func processPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
 	if passDBResult == nil {
 		return errors.ErrNoPassDBResult
 	}
@@ -1647,7 +1613,7 @@ func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *Pa
 		"passdb_result", fmt.Sprintf("%+v", *passDBResult),
 	)
 
-	updateAuthentication(auth, passDBResult, passDB)
+	updateAuthentication(ctx, auth, passDBResult, passDB)
 
 	return nil
 }
@@ -1656,7 +1622,7 @@ func processPassDBResult(passDBResult *PassDBResult, auth *AuthState, passDB *Pa
 // It checks if each field in passDBResult is not nil and if it is not nil, it updates the corresponding field in the AuthState struct.
 // It also updates the SourcePassDBBackend and UsedPassDBBackend fields of the AuthState struct with the values from passDBResult.Backend and passDB.backend respectively.
 // It returns the updated PassDBResult struct.
-func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
+func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassDBResult, passDB *PassDBMap) {
 	if passDBResult.UserFound {
 		auth.UserFound = true
 
@@ -1689,7 +1655,7 @@ func updateAuthentication(auth *AuthState, passDBResult *PassDBResult, passDB *P
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
 		if auth.HTTPClientContext != nil {
 			// Set AdditionalFeatures in the gin.Context
-			auth.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 		}
 	}
 }
@@ -2090,8 +2056,8 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
-func (a *AuthState) processVerifyPassword(passDBs []*PassDBMap) (*PassDBResult, error) {
-	passDBResult, err := a.verifyPassword(passDBs)
+func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
+	passDBResult, err := a.verifyPassword(ctx, passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
 
@@ -2117,7 +2083,7 @@ func (a *AuthState) processVerifyPassword(passDBs []*PassDBMap) (*PassDBResult, 
 
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
-func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
+func (a *AuthState) processUserFound(ctx *gin.Context, passDBResult *PassDBResult) (accountName string, err error) {
 	var bm bruteforce.BucketManager
 
 	if a.UserFound {
@@ -2127,41 +2093,19 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			if config.GetEnvironment().GetExperimentalML() {
-				bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-					WithUsername(a.Username).
-					WithPassword(a.Password).
-					WithAccountName(accountName)
+			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).
+				WithPassword(a.Password).
+				WithAccountName(accountName)
 
-				// Set NoAuth flag
-				if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-					mlManager.SetNoAuth(a.NoAuth)
-				}
+			// Set the protocol if available
+			if a.Protocol != nil && a.Protocol.Get() != "" {
+				bm = bm.WithProtocol(a.Protocol.Get())
+			}
 
-				// Set the protocol if available
-				if a.Protocol != nil && a.Protocol.Get() != "" {
-					bm = bm.WithProtocol(a.Protocol.Get())
-				}
-
-				// Set the OIDC Client ID if available
-				if a.OIDCCID != "" {
-					bm = bm.WithOIDCCID(a.OIDCCID)
-				}
-			} else {
-				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-					WithUsername(a.Username).
-					WithPassword(a.Password).
-					WithAccountName(accountName)
-
-				// Set the protocol if available
-				if a.Protocol != nil && a.Protocol.Get() != "" {
-					bm = bm.WithProtocol(a.Protocol.Get())
-				}
-
-				// Set the OIDC Client ID if available
-				if a.OIDCCID != "" {
-					bm = bm.WithOIDCCID(a.OIDCCID)
-				}
+			// Set the OIDC Client ID if available
+			if a.OIDCCID != "" {
+				bm = bm.WithOIDCCID(a.OIDCCID)
 			}
 
 			bm.ProcessPWHist()
@@ -2266,7 +2210,7 @@ func (a *AuthState) processCacheUserLoginOk(accountName string) error {
 }
 
 // processCacheUserLoginFail processes the cache update when a user login fails. It logs the event and updates the failure counter.
-func (a *AuthState) processCacheUserLoginFail(accountName string) {
+func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName string) {
 	var bm bruteforce.BucketManager
 
 	util.DebugModule(
@@ -2278,27 +2222,28 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 	)
 
 	// Increase counters
-	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-			WithUsername(a.Username).
-			WithPassword(a.Password).
-			WithAccountName(accountName)
+	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
+		WithUsername(a.Username).
+		WithPassword(a.Password).
+		WithAccountName(accountName)
 
-		// Set NoAuth flag
-		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-			mlManager.SetNoAuth(a.NoAuth)
+	bm.SaveFailedPasswordCounterInRedis()
+}
+
+// processCache updates the relevant user cache entries based on authentication results from password databases.
+func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+	var bm bruteforce.BucketManager
+
+	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
+		if authenticated {
+			err := a.processCacheUserLoginOk(accountName)
+			if err != nil {
+				return err
+			}
+		} else {
+			a.processCacheUserLoginFail(ctx, accountName)
 		}
 
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			bm = bm.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
-	} else {
 		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
 			WithUsername(a.Username).
 			WithPassword(a.Password).
@@ -2312,61 +2257,6 @@ func (a *AuthState) processCacheUserLoginFail(accountName string) {
 		// Set the OIDC Client ID if available
 		if a.OIDCCID != "" {
 			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
-	}
-
-	bm.SaveFailedPasswordCounterInRedis()
-}
-
-// processCache updates the relevant user cache entries based on authentication results from password databases.
-func (a *AuthState) processCache(authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
-	var bm bruteforce.BucketManager
-
-	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
-		if authenticated {
-			err := a.processCacheUserLoginOk(accountName)
-			if err != nil {
-				return err
-			}
-		} else {
-			a.processCacheUserLoginFail(accountName)
-		}
-
-		if config.GetEnvironment().GetExperimentalML() {
-			bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).
-				WithPassword(a.Password).
-				WithAccountName(accountName)
-
-			// Set NoAuth flag
-			if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-				mlManager.SetNoAuth(a.NoAuth)
-			}
-
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				bm = bm.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				bm = bm.WithOIDCCID(a.OIDCCID)
-			}
-		} else {
-			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).
-				WithPassword(a.Password).
-				WithAccountName(accountName)
-
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				bm = bm.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				bm = bm.WithOIDCCID(a.OIDCCID)
-			}
 		}
 
 		bm.LoadAllPasswordHistories()
@@ -2395,33 +2285,26 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		err          error
 	)
 
-	if passDBResult, err = a.processVerifyPassword(passDBs); err != nil {
+	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
 		return definitions.AuthResultTempFail
 	}
 
-	if accountName, err = a.processUserFound(passDBResult); err != nil {
+	if accountName, err = a.processUserFound(ctx, passDBResult); err != nil {
 		return definitions.AuthResultTempFail
 	}
 
-	if err = a.processCache(passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
+	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
 		return definitions.AuthResultTempFail
 	}
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			// Get AdditionalFeatures from the gin.Context and add them to the PassDBResult before caching
-			if a.HTTPClientContext != nil {
-				if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-					passDBResult.AdditionalFeatures = features
-				}
-			}
-
-			localcache.LocalCache.Set(a.generateLocalChacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
+			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 
 		authResult = definitions.AuthResultOK
 	} else {
-		a.UpdateBruteForceBucketsCounter()
+		a.UpdateBruteForceBucketsCounter(ctx)
 
 		authResult = definitions.AuthResultFail
 	}
@@ -3556,10 +3439,10 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 	return subject, claims
 }
 
-// generateLocalChacheKey generates a string key used for caching the AuthState object in the local cache.
+// generateLocalCacheKey generates a string key used for caching the AuthState object in the local cache.
 // The key is constructed by concatenating the Username, Password and  Service values using a null character ('\0')
 // as a separator.
-func (a *AuthState) generateLocalChacheKey() string {
+func (a *AuthState) generateLocalCacheKey() string {
 	return fmt.Sprintf("%s\000%s\000%s\000%s\000%s",
 		a.Username,
 		a.Password,
@@ -3575,7 +3458,7 @@ func (a *AuthState) generateLocalChacheKey() string {
 	)
 }
 
-// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalChacheKey() as the key.
+// GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.
 // If the object is found in the cache, it updates the fields of the current AuthState object with the cached values.
 // It also sets the a.GUID field with the original value to avoid losing the GUID from the previous object.
 // If the a.HTTPClientContext field is not nil, it sets it to nil and restores it after updating the AuthState object.
@@ -3586,10 +3469,10 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		return false
 	}
 
-	if value, found := localcache.LocalCache.Get(a.generateLocalChacheKey()); found {
+	if value, found := localcache.LocalCache.Get(a.generateLocalCacheKey()); found {
 		passDBResult := value.(*PassDBResult)
 
-		updateAuthentication(a, passDBResult, &PassDBMap{
+		updateAuthentication(ctx, a, passDBResult, &PassDBMap{
 			backend: definitions.BackendLocalCache,
 			fn:      nil,
 		})
@@ -3615,8 +3498,8 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	if found := a.GetFromLocalCache(ctx); !found {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
-		if a.CheckBruteForce() {
-			a.UpdateBruteForceBucketsCounter()
+		if a.CheckBruteForce(ctx) {
+			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
 			a.PostLuaAction(result)
 			PutPassDBResultToPool(result)

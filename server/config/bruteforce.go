@@ -32,7 +32,6 @@ type BruteForceSection struct {
 	MinToleratePercent uint8            `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	MaxToleratePercent uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	ScaleFactor        float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
-	NeuralNetwork      NeuralNetwork    `mapstructure:"neural_network" validate:"omitempty"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -164,16 +163,6 @@ func (b *BruteForceSection) GetIPWhitelist() []string {
 	}
 
 	return b.IPWhitelist
-}
-
-// GetNeuralNetwork retrieves a pointer to the NeuralNetwork configuration from the ServerSection instance.
-// Returns an empty NeuralNetwork if the BruteForceSection is nil.
-func (s *BruteForceSection) GetNeuralNetwork() *NeuralNetwork {
-	if s == nil {
-		return &NeuralNetwork{}
-	}
-
-	return &s.NeuralNetwork
 }
 
 // GetBuckets retrieves the list of brute force rules from the BruteForceSection.
@@ -378,75 +367,4 @@ func (b *BruteForceRule) GetFilterByOIDCCID() []string {
 	}
 
 	return b.FilterByOIDCCID
-}
-
-// NeuralNetwork represents the configuration for the neural network machine learning system.
-type NeuralNetwork struct {
-	DryRun             bool    `mapstructure:"dry_run" validate:"omitempty"`
-	MaxTrainingRecords int32   `mapstructure:"max_training_records" validate:"omitempty,gte=1000,lte=100000"`
-	HiddenNeurons      int     `mapstructure:"hidden_neurons" validate:"omitempty,min=8,max=20"`
-	ActivationFunction string  `mapstructure:"activation_function" validate:"omitempty,oneof=sigmoid tanh relu leaky_relu"`
-	StaticWeight       float64 `mapstructure:"static_weight" validate:"omitempty,min=0,max=1"`
-	MLWeight           float64 `mapstructure:"ml_weight" validate:"omitempty,min=0,max=1"`
-	Threshold          float64 `mapstructure:"threshold" validate:"omitempty,min=0,max=1"`
-	LearningRate       float64 `mapstructure:"learning_rate" validate:"omitempty,min=0.001,max=0.1"`
-}
-
-// GetMaxTrainingRecords retrieves the maximum number of training records to keep for the neural network.
-func (n *NeuralNetwork) GetMaxTrainingRecords() int32 {
-	if n == nil {
-		return 10000 // Default value
-	}
-
-	return n.MaxTrainingRecords
-}
-
-// GetStaticWeight retrieves the weight for static rules in the weighted decision.
-// Returns 0.4 as default if not set.
-func (n *NeuralNetwork) GetStaticWeight() float64 {
-	if n == nil || n.StaticWeight == 0 {
-		return 0.4 // Default value
-	}
-
-	return n.StaticWeight
-}
-
-// GetMLWeight retrieves the weight for ML in the weighted decision.
-// Returns 0.6 as default if not set.
-func (n *NeuralNetwork) GetMLWeight() float64 {
-	if n == nil || n.MLWeight == 0 {
-		return 0.6 // Default value
-	}
-
-	return n.MLWeight
-}
-
-// GetThreshold retrieves the threshold for the weighted decision.
-// Returns 0.7 as default if not set.
-func (n *NeuralNetwork) GetThreshold() float64 {
-	if n == nil || n.Threshold == 0 {
-		return 0.7 // Default value
-	}
-
-	return n.Threshold
-}
-
-// GetLearningRate retrieves the learning rate for the neural network.
-// Returns 0.01 as default if not set.
-func (n *NeuralNetwork) GetLearningRate() float64 {
-	if n == nil || n.LearningRate == 0 {
-		return 0.01 // Default value
-	}
-
-	return n.LearningRate
-}
-
-// GetDryRun retrieves the dry-run flag for the neural network.
-// Returns false as default if the receiver is nil.
-func (n *NeuralNetwork) GetDryRun() bool {
-	if n == nil {
-		return false
-	}
-
-	return n.DryRun
 }

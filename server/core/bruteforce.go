@@ -22,15 +22,14 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 )
 
@@ -91,7 +90,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 			LuaAction:     definitions.LuaActionBruteForce,
 			Context:       a.Context,
 			FinishedChan:  finished,
-			HTTPRequest:   a.HTTPClientContext.Request,
+			HTTPRequest:   nil, // We don't have access to the gin.Context here, so we can't use its Request
 			CommonRequest: commonRequest,
 		}
 
@@ -124,7 +123,7 @@ func logBruteForceDebug(auth *AuthState) {
 // CheckBruteForce checks if a client is triggering brute force detection based on predefined rules and configurations.
 // It evaluates conditions like authentication state, IP whitelisting, protocol enforcement, and bucket rate limits.
 // Returns true if brute force detection is triggered, and false otherwise.
-func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
+func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	var (
 		ruleTriggered bool
 		message       string
@@ -198,97 +197,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		return false
 	}
 
-	if config.GetEnvironment().GetExperimentalML() {
-		// Collect additional features from Lua scripts before creating the ML bucket manager
-		if config.GetFile().HaveLuaFeatures() {
-			// Get a CommonRequest from the pool
-			commonRequest := lualib.GetCommonRequest()
-
-			// Set the fields
-			commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-			commonRequest.Repeating = false     // unavailable
-			commonRequest.UserFound = false     // unavailable,
-			commonRequest.Authenticated = false // unavailable
-			commonRequest.NoAuth = a.NoAuth
-			commonRequest.BruteForceCounter = 0 // unavailable
-			commonRequest.Service = a.Service
-			commonRequest.Session = *a.GUID
-			commonRequest.ClientIP = a.ClientIP
-			commonRequest.ClientPort = a.XClientPort
-			commonRequest.ClientNet = "" // unavailable
-			commonRequest.ClientHost = a.ClientHost
-			commonRequest.ClientID = a.XClientID
-			commonRequest.UserAgent = *a.UserAgent
-			commonRequest.LocalIP = a.XLocalIP
-			commonRequest.LocalPort = a.XPort
-			commonRequest.Username = a.Username
-			commonRequest.Account = ""      // unavailable
-			commonRequest.AccountField = "" // unavailable
-			commonRequest.UniqueUserID = "" // unavailable
-			commonRequest.DisplayName = ""  // unavailable
-			commonRequest.Password = a.Password
-			commonRequest.Protocol = a.Protocol.String()
-			commonRequest.OIDCCID = a.OIDCCID
-			commonRequest.BruteForceName = "" // unavailable
-			commonRequest.FeatureName = "brute_force"
-			commonRequest.StatusMessage = &a.StatusMessage
-			commonRequest.XSSL = a.XSSL
-			commonRequest.XSSLSessionID = a.XSSLSessionID
-			commonRequest.XSSLClientVerify = a.XSSLClientVerify
-			commonRequest.XSSLClientDN = a.XSSLClientDN
-			commonRequest.XSSLClientCN = a.XSSLClientCN
-			commonRequest.XSSLIssuer = a.XSSLIssuer
-			commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
-			commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
-			commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
-			commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
-			commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
-			commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
-			commonRequest.XSSLProtocol = a.XSSLProtocol
-			commonRequest.XSSLCipher = a.XSSLCipher
-			commonRequest.SSLSerial = a.SSLSerial
-			commonRequest.SSLFingerprint = a.SSLFingerprint
-
-			featureRequest := feature.Request{
-				Context:       a.Context,
-				CommonRequest: commonRequest,
-			}
-
-			// Collect additional features
-			err := featureRequest.CollectAdditionalFeatures(a.HTTPClientContext)
-			if err != nil {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyGUID, a.GUID,
-					definitions.LogKeyBruteForce, "Failed to collect additional features",
-					"error", err)
-			}
-
-			if featureRequest.Logs != nil {
-				for index := range *featureRequest.Logs {
-					a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
-				}
-			}
-
-			// Return the CommonRequest to the pool
-			lualib.PutCommonRequest(commonRequest)
-		}
-
-		bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
-
-		// Set NoAuth flag
-		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
-			mlBM.SetNoAuth(a.NoAuth)
-		}
-
-		// Check if additional features are available from the Context
-		if a.Context != nil {
-			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-				bm = bm.WithAdditionalFeatures(features)
-			}
-		}
-	} else {
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
-	}
+	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
 
 	// Set the protocol on the bucket manager
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -299,12 +208,6 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 	if a.OIDCCID != "" {
 		bm = bm.WithOIDCCID(a.OIDCCID)
 	}
-
-	defer func() {
-		if mlBM, ok := bm.(*ml.MLBucketManager); ok {
-			mlBM.Close()
-		}
-	}()
 
 	network := &net.IPNet{}
 
@@ -320,9 +223,9 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 		}
 	}
 
-	accountName := backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx, a.Username, *a.GUID)
 
-	bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
+	bm.WithPassword(a.Password).WithAccountName(accountName)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
@@ -340,7 +243,7 @@ func (a *AuthState) CheckBruteForce() (blockClientIP bool) {
 }
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
-func (a *AuthState) UpdateBruteForceBucketsCounter() {
+func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	var bm bruteforce.BucketManager
 
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
@@ -408,50 +311,16 @@ func (a *AuthState) UpdateBruteForceBucketsCounter() {
 		break
 	}
 
-	if config.GetEnvironment().GetExperimentalML() {
-		mlBM := ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-			WithUsername(a.Username).WithPassword(a.Password)
+	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
 
-		// Set NoAuth flag
-		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-			mlManager.SetNoAuth(a.NoAuth)
-		}
+	// Set the protocol if available
+	if a.Protocol != nil && a.Protocol.Get() != "" {
+		bm = bm.WithProtocol(a.Protocol.Get())
+	}
 
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			mlBM = mlBM.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			mlBM = mlBM.WithOIDCCID(a.OIDCCID)
-		}
-
-		// Check if additional features are available from the Context
-		if a.Context != nil {
-			if features := lualib.GetAdditionalFeatures(a.HTTPClientContext); features != nil {
-				mlBM = mlBM.WithAdditionalFeatures(features)
-			}
-		}
-
-		// Record the login attempt for ML training when a feature is triggered
-		if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-			mlManager.RecordLoginFeature()
-		}
-
-		bm = mlBM
-	} else {
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP)
-
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			bm = bm.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
+	// Set the OIDC Client ID if available
+	if a.OIDCCID != "" {
+		bm = bm.WithOIDCCID(a.OIDCCID)
 	}
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {

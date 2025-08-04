@@ -20,13 +20,11 @@ Nauthilus currently implements several brute force protection mechanisms:
 
 1. **Static IP-based Protection**: Blocks IP addresses that exceed a configured threshold of failed attempts
 2. **Adaptive Toleration**: Dynamically adjusts tolerance thresholds based on successful authentication volume
-3. **Neural Network Detection**: Uses machine learning to identify potential brute force attacks based on various features
 
 While these mechanisms are effective against traditional brute force attacks, they have limitations when facing distributed attacks:
 
 - **IP-based Protection**: Ineffective when each IP makes only 1-2 attempts
 - **Adaptive Toleration**: Still primarily focused on individual IP behavior
-- **Neural Network**: Currently not optimized to detect patterns across multiple IPs
 
 ## Enhanced Detection Strategy
 
@@ -34,7 +32,6 @@ To effectively detect and mitigate distributed brute force attacks, we propose a
 
 1. **Global Pattern Recognition**: Detecting abnormal authentication patterns across the entire system
 2. **Account-Centric Monitoring**: Focusing on unusual activity targeting specific accounts
-3. **Real-time Anomaly Detection**: Using machine learning to identify deviations from normal behavior
 4. **Dynamic Response Mechanisms**: Implementing adaptive countermeasures based on threat severity
 
 ### 1. Global Pattern Recognition
@@ -150,36 +147,6 @@ The existing neural network can be enhanced to detect distributed brute force at
 2. **Temporal Pattern Analysis**: Analyze patterns over time to detect unusual spikes
 3. **Account-Specific Features**: Include features related to account targeting patterns
 
-#### Enhanced Features for Neural Network
-
-```go
-package ml
-
-// Additional features for the neural network
-type EnhancedLoginFeatures struct {
-    // Existing features
-    TimeBetweenAttempts    float64
-    FailedAttemptsLastHour float64
-    DifferentUsernames     float64
-    DifferentPasswords     float64
-    TimeOfDay              float64
-    SuspiciousNetwork      float64
-
-    // New global features
-    GlobalAuthRate         float64 // Authentication attempts per minute system-wide
-    GlobalUniqueIPRate     float64 // New unique IPs per minute system-wide
-    GlobalIPUserRatio      float64 // Ratio of unique IPs to unique usernames
-
-    // New account-specific features
-    AccountTargetingScore  float64 // How targeted is this account compared to others
-    AccountUniqueIPRate    float64 // Rate of unique IPs attempting to access this account
-    AccountFailRatio       float64 // Ratio of failed to successful attempts for this account
-
-    // Additional features
-    AdditionalFeatures     map[string]any
-}
-```
-
 ### 4. Dynamic Response Mechanisms
 
 Based on the detected threat level, implement dynamic response mechanisms:
@@ -230,12 +197,6 @@ end
 2. **Distributed State**: Store global state information in Redis for cluster-wide visibility
 3. **Historical Patterns**: Maintain historical pattern data in Redis for anomaly detection
 
-### Neural Network Integration
-
-1. **Feature Enhancement**: Add new features to the existing neural network
-2. **Model Retraining**: Retrain the model with new features and labeled attack data
-3. **Feedback Loop**: Implement a feedback loop to continuously improve detection accuracy
-
 ## Implementation Plan
 
 ### Phase 1: Monitoring and Data Collection
@@ -247,11 +208,6 @@ end
 2. ✅ Collect baseline data for normal authentication patterns
    - Historical metrics are stored in Redis with hourly granularity
    - Metrics include attempts, unique IPs, unique users, and derived ratios
-3. ✅ Develop visualization tools for monitoring global authentication metrics
-   - Implemented in `server/bruteforce/ml/distributed_brute_force_metrics.go`
-   - Exposes Redis metrics as Prometheus metrics
-   - Created Grafana dashboard in `contrib/grafana/nauthilus-distributed-brute-force.json`
-   - Metrics include authentication attempts, unique IPs, unique users, and derived ratios
 
 ### Phase 2: Detection Mechanisms
 
@@ -259,11 +215,7 @@ end
    - Implemented in `server/lua-plugins.d/filters/account_centric_monitoring.lua`
    - Tracks IPs attempting to access specific accounts
    - Detects when many unique IPs target a single account
-2. ✅ Enhance the neural network with new features
-   - Implemented in `server/lua-plugins.d/features/neural_enhanced.lua`
-   - Adds global and account-specific features to the neural network
-   - Features include global auth rate, IP-user ratio, and account targeting score
-3. ✅ Develop anomaly detection algorithms for global patterns
+2. ✅ Develop anomaly detection algorithms for global patterns
    - Implemented as part of the dynamic response mechanism
    - Detects sudden spikes in authentication attempts and unique IPs
 
@@ -282,20 +234,6 @@ end
    - Provides tools to simulate distributed attacks and verify detection
    - Includes comprehensive testing functionality with detailed reporting
 
-### Phase 4: Continuous Improvement
-
-1. ✅ Implement feedback loops for detection accuracy
-   - The neural network can be retrained with new data
-   - Implemented feedback mechanism in `server/lualib/feedback.go`
-   - Created Lua hook for feedback in `server/lua-plugins.d/hooks/neural-feedback.lua`
-   - Added automatic retraining when sufficient feedback samples are collected
-   - Feedback is prioritized in training to improve detection accuracy
-2. ✅ Develop adaptive thresholds based on historical data
-   - Threat levels are calculated based on historical patterns
-   - Sudden changes from baseline trigger higher threat levels
-3. ⏳ Create reporting tools for security analysis
-   - Metrics and threat levels are logged for analysis
-
 ## Implementation Status
 
 The distributed brute force detection and mitigation system has been implemented with the following components:
@@ -312,19 +250,14 @@ The distributed brute force detection and mitigation system has been implemented
    - Identifies accounts under distributed brute force attack
    - Uses atomic Redis operations to prevent race conditions
 
-3. **Enhanced Neural Network** (`server/lua-plugins.d/features/neural_enhanced.lua`)
-   - Adds global and account-specific features to the neural network
-   - Improves detection of distributed attacks with new metrics
-   - Integrates with existing neural network infrastructure
-
-4. **Dynamic Response Mechanisms** (`server/lua-plugins.d/actions/dynamic_response.lua`)
+3. **Dynamic Response Mechanisms** (`server/lua-plugins.d/actions/dynamic_response.lua`)
    - Calculates threat levels based on multiple factors
    - Applies different countermeasures based on threat severity
    - Implements progressive security measures like captcha, rate limiting, and geographic filtering
    - Uses atomic Redis operations to prevent race conditions
    - Sends email notifications to administrators about detected threats
 
-5. **Redis Lua Scripts for Atomic Operations** (`server/lua-plugins.d/init/init_neural.lua`)
+4. **Redis Lua Scripts for Atomic Operations** (`server/lua-plugins.d/init/init_neural.lua`)
    - Implements Redis Lua scripts for atomic operations to prevent race conditions
    - Ensures data consistency in high-concurrency scenarios
    - Provides better performance by reducing the number of Redis round-trips

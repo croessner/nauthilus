@@ -60,7 +60,6 @@ func main() {
 
 	inititalizeBruteForceTolerate(ctx)
 	initializeHTTPClients()
-	initializeMLMetrics(ctx)
 	core.InitPassDBResultPool()
 	setupWorkers(ctx, store, actionWorkers)
 	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)

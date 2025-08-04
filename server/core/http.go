@@ -32,7 +32,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -481,8 +480,8 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		// Store remote client IP into connection context. It can be used for brute force updates.
 		ctx.Set(definitions.CtxClientIPKey, clientIP)
 
-		if auth.CheckBruteForce() {
-			auth.UpdateBruteForceBucketsCounter()
+		if auth.CheckBruteForce(ctx) {
+			auth.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(result)
 			PutPassDBResultToPool(result)
@@ -1023,32 +1022,6 @@ func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
 		regGroup.GET("/register/begin", BeginRegistration)
 		regGroup.POST("/register/finish", FinishRegistration)
 	}
-}
-
-// setupSecurityReportsEndpoints sets up the endpoints for security reports with appropriate authentication
-func setupSecurityReportsEndpoints(router *gin.Engine) {
-	// Check if experimental ML is enabled
-	if !config.GetEnvironment().GetExperimentalML() {
-		return
-	}
-
-	// Create a router group for security reports
-	securityGroup := router.Group("/api/security")
-
-	// Apply authentication middleware based on configuration
-	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-		securityGroup.Use(BasicAuthMiddleware())
-	}
-
-	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-		securityGroup.Use(JWTAuthMiddleware())
-	}
-
-	// Get the reports instance
-	reports := ml.GetDistributedBruteForceReports()
-
-	// Register HTTP handlers with the security group
-	securityGroup.GET("/reports", reports.HandleReportsRequest)
 }
 
 // waitForShutdown is a function that waits for the context to be done, then shuts down the provided http.GetServer().
@@ -1615,12 +1588,6 @@ func HTTPApp(ctx context.Context) {
 	httpServer := setupHTTPServer(router)
 
 	setupRouter(router)
-
-	// Initialize distributed brute force reports
-	ml.InitDistributedBruteForceReports()
-
-	// Setup security reports endpoints
-	setupSecurityReportsEndpoints(router)
 
 	go waitForShutdown(httpServer, ctx)
 
