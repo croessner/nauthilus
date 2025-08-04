@@ -141,6 +141,8 @@ end
 
 ### 3. Real-time Anomaly Detection with Neural Network
 
+> **Note:** The Neural Network functionality has been dropped in version 1.8.0 and is no longer available.
+
 The existing neural network can be enhanced to detect distributed brute force attacks by:
 
 1. **Adding Global Features**: Incorporate system-wide metrics into the neural network
@@ -440,6 +442,8 @@ server:
 
 ### Neural Network Configuration
 
+> **Note:** The Neural Network functionality has been dropped in version 1.8.0 and is no longer available.
+
 To optimize the neural network for distributed brute force detection, configure the neural network settings in the `nauthilus.yml` file:
 
 ```yaml
@@ -485,7 +489,7 @@ After deployment, monitor the system's performance and adjust the configuration 
 
 1. **Threshold Tuning**: Adjust the thresholds in the account_centric_monitoring.lua script (threshold_unique_ips and threshold_ip_to_fail_ratio) based on your environment.
 
-2. **Neural Network Tuning**: Adjust the neural network parameters in the nauthilus.yml file to optimize detection accuracy.
+2. **Neural Network Tuning**: ~~Adjust the neural network parameters in the nauthilus.yml file to optimize detection accuracy.~~ (Note: Neural Network functionality has been dropped in version 1.8.0)
 
 3. **Redis Performance**: Monitor Redis performance and adjust connection pool settings if needed.
 
@@ -495,6 +499,6 @@ After deployment, monitor the system's performance and adjust the configuration 
 
 Distributed brute force attacks represent a sophisticated threat that requires a multi-layered defense strategy. By combining global pattern recognition, account-centric monitoring, real-time anomaly detection, and dynamic response mechanisms, Nauthilus can effectively detect and mitigate these attacks.
 
-The implemented approach leverages Nauthilus's existing strengths—Lua extensibility, Redis integration, and neural network capabilities—while adding new dimensions of analysis that focus on system-wide patterns and account-specific behaviors.
+The implemented approach leverages Nauthilus's existing strengths—Lua extensibility and Redis integration—while adding new dimensions of analysis that focus on system-wide patterns and account-specific behaviors. Note that neural network capabilities mentioned in this document are no longer available as of version 1.8.0.
 
 With these enhancements, Nauthilus is now able to detect and respond to distributed brute force attacks that would otherwise bypass traditional IP-based protection mechanisms. The system provides a comprehensive defense against sophisticated attackers using large pools of IP addresses to conduct brute force attacks.
