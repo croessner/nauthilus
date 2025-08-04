@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
@@ -294,8 +293,6 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 
 	statsTicker.Stop()
 	ngxMonitoringTicker.Stop()
-
-	ml.ShutdownMLSystem()
 }
 
 // handleUsr1Signal listens for SIGUSR1 signals to trigger server restarts for updating or refreshing server processes.
@@ -969,21 +966,6 @@ func initializeHTTPClients() {
 	filter.InitHTTPClient()
 	feature.InitHTTPClient()
 	hook.InitHTTPClient()
-	ml.InitHTTPClient()
-}
-
-// initializeMLMetrics initializes and logs the status of the ML system during application startup.
-func initializeMLMetrics(ctx context.Context) {
-	// Initialize ML system
-	if err := ml.InitMLSystem(ctx); err != nil {
-		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, "Failed to initialize ML system",
-			definitions.LogKeyMsg, err,
-		)
-	}
-
-	// Initialize distributed brute force metrics
-	ml.InitDistributedBruteForceMetrics()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.

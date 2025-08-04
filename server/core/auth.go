@@ -33,7 +33,6 @@ import (
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -1152,37 +1151,6 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 		if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
 			return
 		}
-
-		// Record successful login for ML training if ML is enabled
-		if config.GetEnvironment().GetExperimentalML() {
-			mlBM := ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).WithPassword(a.Password)
-
-			// Set NoAuth flag
-			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-				mlManager.SetNoAuth(a.NoAuth)
-			}
-
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				mlBM = mlBM.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				mlBM = mlBM.WithOIDCCID(a.OIDCCID)
-			}
-
-			// Check if additional features are available from the Context
-			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
-				mlBM = mlBM.WithAdditionalFeatures(features)
-			}
-
-			if mlManager, ok := mlBM.(*ml.MLBucketManager); ok {
-				// Create a new method in MLBucketManager to record successful logins
-				mlManager.RecordSuccessfulLogin()
-			}
-		}
 	}
 }
 
@@ -2125,46 +2093,19 @@ func (a *AuthState) processUserFound(ctx *gin.Context, passDBResult *PassDBResul
 		}
 
 		if !passDBResult.Authenticated {
-			if config.GetEnvironment().GetExperimentalML() {
-				bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-					WithUsername(a.Username).
-					WithPassword(a.Password).
-					WithAccountName(accountName)
+			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+				WithUsername(a.Username).
+				WithPassword(a.Password).
+				WithAccountName(accountName)
 
-				// Set NoAuth flag
-				if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-					mlManager.SetNoAuth(a.NoAuth)
-				}
+			// Set the protocol if available
+			if a.Protocol != nil && a.Protocol.Get() != "" {
+				bm = bm.WithProtocol(a.Protocol.Get())
+			}
 
-				// Set the protocol if available
-				if a.Protocol != nil && a.Protocol.Get() != "" {
-					bm = bm.WithProtocol(a.Protocol.Get())
-				}
-
-				// Set the OIDC Client ID if available
-				if a.OIDCCID != "" {
-					bm = bm.WithOIDCCID(a.OIDCCID)
-				}
-
-				// Check if additional features are available from the Context
-				if features := lualib.GetAdditionalFeatures(ctx); features != nil {
-					bm = bm.WithAdditionalFeatures(features)
-				}
-			} else {
-				bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-					WithUsername(a.Username).
-					WithPassword(a.Password).
-					WithAccountName(accountName)
-
-				// Set the protocol if available
-				if a.Protocol != nil && a.Protocol.Get() != "" {
-					bm = bm.WithProtocol(a.Protocol.Get())
-				}
-
-				// Set the OIDC Client ID if available
-				if a.OIDCCID != "" {
-					bm = bm.WithOIDCCID(a.OIDCCID)
-				}
+			// Set the OIDC Client ID if available
+			if a.OIDCCID != "" {
+				bm = bm.WithOIDCCID(a.OIDCCID)
 			}
 
 			bm.ProcessPWHist()
@@ -2281,17 +2222,10 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters
-	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(ctx, *a.GUID, a.ClientIP).
-			WithUsername(a.Username).
-			WithPassword(a.Password).
-			WithAccountName(accountName)
-	} else {
-		bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
-			WithUsername(a.Username).
-			WithPassword(a.Password).
-			WithAccountName(accountName)
-	}
+	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
+		WithUsername(a.Username).
+		WithPassword(a.Password).
+		WithAccountName(accountName)
 
 	bm.SaveFailedPasswordCounterInRedis()
 }
@@ -2310,46 +2244,19 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 			a.processCacheUserLoginFail(ctx, accountName)
 		}
 
-		if config.GetEnvironment().GetExperimentalML() {
-			bm = ml.NewMLBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).
-				WithPassword(a.Password).
-				WithAccountName(accountName)
+		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			WithUsername(a.Username).
+			WithPassword(a.Password).
+			WithAccountName(accountName)
 
-			// Set NoAuth flag
-			if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-				mlManager.SetNoAuth(a.NoAuth)
-			}
+		// Set the protocol if available
+		if a.Protocol != nil && a.Protocol.Get() != "" {
+			bm = bm.WithProtocol(a.Protocol.Get())
+		}
 
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				bm = bm.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				bm = bm.WithOIDCCID(a.OIDCCID)
-			}
-
-			// Check if additional features are available from the Context
-			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
-				bm = bm.WithAdditionalFeatures(features)
-			}
-		} else {
-			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
-				WithUsername(a.Username).
-				WithPassword(a.Password).
-				WithAccountName(accountName)
-
-			// Set the protocol if available
-			if a.Protocol != nil && a.Protocol.Get() != "" {
-				bm = bm.WithProtocol(a.Protocol.Get())
-			}
-
-			// Set the OIDC Client ID if available
-			if a.OIDCCID != "" {
-				bm = bm.WithOIDCCID(a.OIDCCID)
-			}
+		// Set the OIDC Client ID if available
+		if a.OIDCCID != "" {
+			bm = bm.WithOIDCCID(a.OIDCCID)
 		}
 
 		bm.LoadAllPasswordHistories()
@@ -2392,11 +2299,6 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			// Get AdditionalFeatures from the gin.Context and add them to the PassDBResult before caching
-			if features := lualib.GetAdditionalFeatures(ctx); features != nil {
-				passDBResult.AdditionalFeatures = features
-			}
-
 			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 

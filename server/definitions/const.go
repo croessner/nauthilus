@@ -692,9 +692,6 @@ const (
 	// CtxAdditionalFeaturesKey is the key used to store additional features in the lualib.Context
 	CtxAdditionalFeaturesKey = "additional_features"
 
-	// CtxFeatureEncodingTypeKey is the key used to store feature encoding type preferences in the lualib.Context
-	CtxFeatureEncodingTypeKey = "feature_encoding_type"
-
 	// CtxCSRFTokenKey is used as a key to store the session's CSRF token in session.Store
 	CtxCSRFTokenKey = "csrf"
 
@@ -1466,21 +1463,6 @@ const (
 
 	// LuaFnBfIsIPAddressBlocked determines if a given IP address is blocked due to brute force or other security rules.
 	LuaFnBfIsIPAddressBlocked = "is_ip_address_blocked"
-
-	// LuaFnAddAdditionalFeatures represents the function name for "add_additional_features" in Lua
-	LuaFnAddAdditionalFeatures = "add_additional_features"
-
-	// LuaFnTrainNeuralNetwork represents the function name for "train_neural_network" in Lua
-	LuaFnTrainNeuralNetwork = "train_neural_network"
-
-	// LuaFnProvideFeedback represents the function name for "provide_feedback" in Lua
-	LuaFnProvideFeedback = "provide_feedback"
-
-	// LuaFnSetLearningMode represents the function name for "set_learning_mode" in Lua
-	LuaFnSetLearningMode = "set_learning_mode"
-
-	// LuaFNGetLearningMode is a constant string representing the Lua function name for retrieving the learning mode state.
-	LuaFNGetLearningMode = "get_learning_mode"
 
 	// LuaFnDNSResolve represents the Lua function name for resolving DNS queries.
 	LuaFnDNSResolve = "resolve"

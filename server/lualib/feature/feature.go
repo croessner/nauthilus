@@ -173,9 +173,6 @@ func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string
 		} else {
 			L.RaiseError("LDAP backend not activated")
 		}
-	case definitions.LuaModNeural:
-		// XXX: It will only have an effect in nauthilus_call_neural_network!
-		L.PreloadModule(definitions.LuaModNeural, lualib.LoaderModNeural(ctx))
 	default:
 		return
 	}

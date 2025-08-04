@@ -24,7 +24,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/ml"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -876,16 +875,7 @@ func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, er
 func createBucketManager(ctx context.Context, guid string, ipAddress string, protocol string, oidcCID string) bruteforce.BucketManager {
 	var bm bruteforce.BucketManager
 
-	if config.GetEnvironment().GetExperimentalML() {
-		bm = ml.NewMLBucketManager(ctx, guid, ipAddress)
-
-		// Set NoAuth flag to false for administrative operations
-		if mlManager, ok := bm.(*ml.MLBucketManager); ok {
-			mlManager.SetNoAuth(false)
-		}
-	} else {
-		bm = bruteforce.NewBucketManager(ctx, guid, ipAddress)
-	}
+	bm = bruteforce.NewBucketManager(ctx, guid, ipAddress)
 
 	// Set the protocol if specified
 	if protocol != "" {
