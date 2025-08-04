@@ -84,10 +84,6 @@ type BucketManager interface {
 	// WithOIDCCID sets the OIDC Client ID for the BucketManager instance and returns the updated BucketManager.
 	WithOIDCCID(oidcCID string) BucketManager
 
-	// WithAdditionalFeatures sets additional features for the BucketManager instance and returns the updated BucketManager.
-	// These features can be used by ML-based detection systems to enhance their prediction capabilities.
-	WithAdditionalFeatures(features map[string]any) BucketManager
-
 	// LoadAllPasswordHistories retrieves all recorded password history entries for further processing or analysis.
 	LoadAllPasswordHistories()
 
@@ -268,14 +264,6 @@ func (bm *bucketManagerImpl) WithPassword(password string) BucketManager {
 // WithAccountName sets the account name for the bucket manager and returns the modified BucketManager instance.
 func (bm *bucketManagerImpl) WithAccountName(accountName string) BucketManager {
 	bm.accountName = accountName
-
-	return bm
-}
-
-// WithAdditionalFeatures sets additional features for the bucket manager and returns the modified BucketManager instance.
-// These features can be used by ML-based detection systems to enhance their prediction capabilities.
-func (bm *bucketManagerImpl) WithAdditionalFeatures(features map[string]any) BucketManager {
-	bm.additionalFeatures = features
 
 	return bm
 }
