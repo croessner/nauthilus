@@ -361,12 +361,31 @@ func GetUserAccountFromCache(ctx context.Context, username string, guid string) 
 	var err error
 
 	accountName, err = LookupUserAccountFromRedis(ctx, username)
-	if err != nil || accountName == "" {
-		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-		}
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+	}
 
+	if accountName == "" {
 		return ""
+	}
+
+	return accountName
+}
+
+// ResolveAccountIdentifier resolves an identifier that may be either a username or an account name.
+// It first tries to look up a mapping in the USER hash; if not found, it treats the identifier as an account name.
+func ResolveAccountIdentifier(ctx context.Context, identifier string, guid string) (accountName string) {
+	var err error
+
+	// Try to resolve username -> account name mapping
+	accountName, err = LookupUserAccountFromRedis(ctx, identifier)
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+	}
+
+	// If no mapping exists, assume the provided identifier is already an account name
+	if accountName == "" {
+		accountName = identifier
 	}
 
 	return accountName

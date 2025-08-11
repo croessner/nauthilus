@@ -487,6 +487,11 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 				return false
 			} else if !needEnforce {
+				// Even if we skip further brute-force computation (e.g., repeating wrong password),
+				// we still want to track the affected account for observability and unlock workflows.
+				// Also ensure we learn the user's IP for this account so unlock can find the related buckets.
+				bm.ProcessPWHist()
+				bm.updateAffectedAccount()
 				stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
 
 				return false
@@ -848,12 +853,14 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		} else if bm.passwordHistory == nil {
 			level.Info(log.Logger).Log(
 				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "No negative password cache present",
+				definitions.LogKeyMsg, "No negative password cache present; enforcing brute force computation",
 				definitions.LogKeyUsername, bm.username,
 				definitions.LogKeyClientIP, bm.clientIP,
 			)
 
-			return false, nil
+			// If there is no negative password cache yet, we must enforce computation
+			// so that initial attempts can still trigger brute force logic.
+			return true, nil
 		}
 	}
 

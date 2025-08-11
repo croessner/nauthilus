@@ -584,7 +584,8 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		userKeys      config.StringSet
 	)
 
-	if accountName = backend.GetUserAccountFromCache(ctx, userCmd.User, guid); accountName == "" {
+	// Accept either a username (resolved via USER hash) or a direct account name
+	if accountName = backend.ResolveAccountIdentifier(ctx, userCmd.User, guid); accountName == "" {
 		return nil, true
 	}
 
