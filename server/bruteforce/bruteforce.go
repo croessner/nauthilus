@@ -196,7 +196,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	}
 
 	// Add protocol information to the key if the rule has FilterByProtocol specified
-	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
+	if len(rule.GetFilterByProtocol()) > 0 && bm.protocol != "" {
 		// Check if the current protocol is in the FilterByProtocol list
 		protocolMatched := false
 		for _, p := range rule.FilterByProtocol {
@@ -213,7 +213,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	}
 
 	// Add OIDC Client ID information to the key if the rule has FilterByOIDCCID specified
-	if len(rule.FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
 		// Check if the current OIDC Client ID is in the FilterByOIDCCID list
 		oidcCIDMatched := false
 		for _, cid := range rule.FilterByOIDCCID {
