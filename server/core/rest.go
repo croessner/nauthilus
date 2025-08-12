@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 
@@ -584,7 +585,8 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 		userKeys      config.StringSet
 	)
 
-	if accountName = backend.GetUserAccountFromCache(ctx, userCmd.User, guid); accountName == "" {
+	// Accept either a username (resolved via USER hash) or a direct account name
+	if accountName = backend.ResolveAccountIdentifier(ctx, userCmd.User, guid); accountName == "" {
 		return nil, true
 	}
 
@@ -890,125 +892,128 @@ func createBucketManager(ctx context.Context, guid string, ipAddress string, pro
 	return bm
 }
 
-func processBruteForceRules(ctx *gin.Context, ipCmd *FlushRuleCmd, guid string) (bool, []string, error) {
-	var (
-		removedKeys []string
-		bm          bruteforce.BucketManager
-	)
+// isRuleApplicable determines if a brute force rule is applicable based on IP version and rule name criteria.
+func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *FlushRuleCmd) bool {
+	if r.IPv4 != isIPv4 {
+		return false
+	}
 
-	ruleFlushError := false
+	return cmd.RuleName == "*" || r.Name == cmd.RuleName
+}
 
-	for _, rule := range config.GetFile().GetBruteForceRules() {
-		if rule.Name == ipCmd.RuleName || ipCmd.RuleName == "*" {
-			// Create a bucket manager with the current settings
-			bm = createBucketManager(ctx, guid, ipCmd.IPAddress, ipCmd.Protocol, ipCmd.OIDCCID)
+// iterateCombinations processes combinations of protocols and OIDC Client IDs defined in a brute force rule.
+// It iterates through the Cartesian product of protocol and OIDC CID filters, applying the rule's logic.
+// If no protocol filters are set, it iterates only through OIDC CIDs as a fallback.
+// Adds a final safety net to ensure every protocol in the configuration file is processed.
+// Returns a slice of removed entries and an error if any issues occur.
+func iterateCombinations(ctx *gin.Context, guid string, cmd *FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
+	// 1) Cartesian product of FilterByProtocol × FilterByOIDCCID
+	for _, proto := range rule.FilterByProtocol {
+		oidcCids := rule.FilterByOIDCCID
+		if len(oidcCids) == 0 {
+			oidcCids = []string{""} // protocol-only variant
+		}
 
-			// Delete the IP from the brute force Redis hash
-			if removedKey, err := bm.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
-				ruleFlushError = true
-
-				return ruleFlushError, removedKeys, err
-			} else if removedKey != "" {
-				removedKeys = append(removedKeys, removedKey)
-			}
-
-			// Try to get the key with the current protocol and OIDC CID settings
-			if key := bm.GetBruteForceBucketRedisKey(&rule); key != "" {
-				if removedKey, err := deleteKeyIfExists(ctx, key, guid); err != nil {
-					ruleFlushError = true
-
-					return ruleFlushError, removedKeys, err
-				} else if removedKey != "" {
-					removedKeys = append(removedKeys, removedKey)
-				}
-			} else if len(rule.FilterByProtocol) > 0 || len(rule.FilterByOIDCCID) > 0 {
-				// If the key was not found and the rule has protocol or OIDC CID filters,
-				// we need to try all possible combinations of protocol and OIDC CID values
-
-				// Try with each protocol in the filter
-				for _, protocol := range rule.FilterByProtocol {
-					// Try with each OIDC CID in the filter
-					if len(rule.FilterByOIDCCID) > 0 {
-						for _, oidcCID := range rule.FilterByOIDCCID {
-							// Create a bucket manager with this combination
-							bmWithBoth := createBucketManager(ctx, guid, ipCmd.IPAddress, protocol, oidcCID)
-
-							// Delete the IP from the brute force Redis hash with this combination
-							if removedKey, err := bmWithBoth.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
-								ruleFlushError = true
-
-								return ruleFlushError, removedKeys, err
-							} else if removedKey != "" {
-								removedKeys = append(removedKeys, removedKey)
-							}
-
-							// Try to get the key with this combination
-							if key := bmWithBoth.GetBruteForceBucketRedisKey(&rule); key != "" {
-								if removedKey, err := deleteKeyIfExists(ctx, key, guid); err != nil {
-									ruleFlushError = true
-
-									return ruleFlushError, removedKeys, err
-								} else if removedKey != "" {
-									removedKeys = append(removedKeys, removedKey)
-								}
-							}
-						}
-					} else {
-						// Try with just the protocol
-						bmWithProtocol := createBucketManager(ctx, guid, ipCmd.IPAddress, protocol, "")
-
-						// Delete the IP from the brute force Redis hash with just the protocol
-						if removedKey, err := bmWithProtocol.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
-							ruleFlushError = true
-
-							return ruleFlushError, removedKeys, err
-						} else if removedKey != "" {
-							removedKeys = append(removedKeys, removedKey)
-						}
-
-						// Try to get the key with just the protocol
-						if key := bmWithProtocol.GetBruteForceBucketRedisKey(&rule); key != "" {
-							if removedKey, err := deleteKeyIfExists(ctx, key, guid); err != nil {
-								ruleFlushError = true
-
-								return ruleFlushError, removedKeys, err
-							} else if removedKey != "" {
-								removedKeys = append(removedKeys, removedKey)
-							}
-						}
-					}
-				}
-
-				// If there are no protocols in the filter but there are OIDC CIDs, try with each OIDC CID
-				if len(rule.FilterByProtocol) == 0 && len(rule.FilterByOIDCCID) > 0 {
-					for _, oidcCID := range rule.FilterByOIDCCID {
-						// Create a bucket manager with just the OIDC CID
-						bmWithOIDCCID := createBucketManager(ctx, guid, ipCmd.IPAddress, "", oidcCID)
-
-						// Delete the IP from the brute force Redis hash with just the OIDC CID
-						if removedKey, err := bmWithOIDCCID.DeleteIPBruteForceRedis(&rule, ipCmd.RuleName); err != nil {
-							ruleFlushError = true
-
-							return ruleFlushError, removedKeys, err
-						} else if removedKey != "" {
-							removedKeys = append(removedKeys, removedKey)
-						}
-
-						// Try to get the key with just the OIDC CID
-						if key := bmWithOIDCCID.GetBruteForceBucketRedisKey(&rule); key != "" {
-							if removedKey, err := deleteKeyIfExists(ctx, key, guid); err != nil {
-								ruleFlushError = true
-
-								return ruleFlushError, removedKeys, err
-							} else if removedKey != "" {
-								removedKeys = append(removedKeys, removedKey)
-							}
-						}
-					}
-				}
+		for _, cid := range oidcCids {
+			bm := createBucketManager(ctx, guid, cmd.IPAddress, proto, cid)
+			var err error
+			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
+				return removed, err
 			}
 		}
 	}
 
-	return ruleFlushError, removedKeys, nil
+	// 2) OIDC-CID only (when no protocol filters are present)
+	if len(rule.FilterByProtocol) == 0 {
+		for _, cid := range rule.FilterByOIDCCID {
+			bm := createBucketManager(ctx, guid, cmd.IPAddress, "", cid)
+
+			var err error
+			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
+				return removed, err
+			}
+		}
+	}
+
+	// 3) Safety net: iterate over every configured protocol
+	for _, proto := range config.GetFile().GetAllProtocols() {
+		bm := createBucketManager(ctx, guid, cmd.IPAddress, proto, "")
+
+		var err error
+		if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
+			return removed, err
+		}
+	}
+
+	return removed, nil
+}
+
+// flushForBucket deletes brute force data for a specific rule and updates the list of removed keys. Returns updated keys and error.
+func flushForBucket(ctx *gin.Context, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string, removed []string) ([]string, error) {
+	if key, err := bm.DeleteIPBruteForceRedis(rule, ruleName); err != nil {
+		return removed, err
+	} else if key != "" {
+		removed = append(removed, key)
+	}
+
+	if bucketKey := bm.GetBruteForceBucketRedisKey(rule); bucketKey != "" {
+		var err error
+		if removed, err = flushKey(ctx, bucketKey, bm.GetBruteForceName(), removed); err != nil {
+			return removed, err
+		}
+	}
+
+	return removed, nil
+}
+
+// flushKey deletes a Redis key if it exists, appends the removed key to a list, and returns the updated list with an error if any.
+func flushKey(ctx *gin.Context, key string, guid string, removed []string) ([]string, error) {
+	if rm, err := deleteKeyIfExists(ctx, key, guid); err != nil {
+		return removed, err
+	} else if rm != "" {
+		removed = append(removed, rm)
+	}
+
+	return removed, nil
+}
+
+// processBruteForceRules processes and flushes brute force rules based on the provided command and context.
+// It evaluates rule applicability, flushes matched rules, and removes derived and tolerable combinations.
+func processBruteForceRules(ctx *gin.Context, cmd *FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
+	var trSuffixes = []string{":P", ":N"}
+
+	// Detect address family once – saves many To4() calls later
+	ip := net.ParseIP(cmd.IPAddress)
+	isIPv4 := ip.To4() != nil
+
+	// Phase 1: pre-filter rules that could possibly match
+	for _, rule := range config.GetFile().GetBruteForceRules() {
+		if !isRuleApplicable(rule, isIPv4, cmd) {
+			continue
+		}
+
+		// Phase 2: flush the exact combination given by the user
+		bm := createBucketManager(ctx, guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
+		if removed, err = flushForBucket(ctx, bm, &rule, cmd.RuleName, removed); err != nil {
+			return true, removed, err
+		}
+
+		// Phase 3: flush all derived combinations (rule filters + safety net)
+		if removed, err = iterateCombinations(ctx, guid, cmd, &rule, removed); err != nil {
+			return true, removed, err
+		}
+	}
+
+	// Phase 4: always drop tolerate-bucket keys for the IP
+	base := config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + cmd.IPAddress
+	if removed, err = flushKey(ctx, base, guid, removed); err != nil {
+		return true, removed, err
+	}
+	for _, s := range trSuffixes {
+		if removed, err = flushKey(ctx, base+s, guid, removed); err != nil {
+			return true, removed, err
+		}
+	}
+
+	return false, removed, nil
 }

@@ -196,7 +196,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	}
 
 	// Add protocol information to the key if the rule has FilterByProtocol specified
-	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
+	if len(rule.GetFilterByProtocol()) > 0 && bm.protocol != "" {
 		// Check if the current protocol is in the FilterByProtocol list
 		protocolMatched := false
 		for _, p := range rule.FilterByProtocol {
@@ -213,7 +213,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	}
 
 	// Add OIDC Client ID information to the key if the rule has FilterByOIDCCID specified
-	if len(rule.FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
 		// Check if the current OIDC Client ID is in the FilterByOIDCCID list
 		oidcCIDMatched := false
 		for _, cid := range rule.FilterByOIDCCID {
@@ -487,6 +487,11 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 				return false
 			} else if !needEnforce {
+				// Even if we skip further brute-force computation (e.g., repeating wrong password),
+				// we still want to track the affected account for observability and unlock workflows.
+				// Also ensure we learn the user's IP for this account so unlock can find the related buckets.
+				bm.ProcessPWHist()
+				bm.updateAffectedAccount()
 				stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
 
 				return false
@@ -848,12 +853,14 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		} else if bm.passwordHistory == nil {
 			level.Info(log.Logger).Log(
 				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "No negative password cache present",
+				definitions.LogKeyMsg, "No negative password cache present; enforcing brute force computation",
 				definitions.LogKeyUsername, bm.username,
 				definitions.LogKeyClientIP, bm.clientIP,
 			)
 
-			return false, nil
+			// If there is no negative password cache yet, we must enforce computation
+			// so that initial attempts can still trigger brute force logic.
+			return true, nil
 		}
 	}
 
