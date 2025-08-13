@@ -1009,6 +1009,7 @@ func processBruteForceRules(ctx *gin.Context, cmd *FlushRuleCmd, guid string) (h
 	if removed, err = flushKey(ctx, base, guid, removed); err != nil {
 		return true, removed, err
 	}
+
 	for _, s := range trSuffixes {
 		if removed, err = flushKey(ctx, base+s, guid, removed); err != nil {
 			return true, removed, err
