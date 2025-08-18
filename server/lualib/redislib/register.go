@@ -74,6 +74,9 @@ func LoaderModRedis(ctx context.Context) lua.LGFunction {
 			definitions.LuaFnRedisMSet:                 RedisMSet(ctx),
 			definitions.LuaFnRedisKeys:                 RedisKeys(ctx),
 			definitions.LuaFnRedisScan:                 RedisScan(ctx),
+			definitions.LuaFnRedisPFAdd:                RedisPFAdd(ctx),
+			definitions.LuaFnRedisPFCount:              RedisPFCount(ctx),
+			definitions.LuaFnRedisPFMerge:              RedisPFMerge(ctx),
 		})
 
 		L.Push(mod)

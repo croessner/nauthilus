@@ -1370,6 +1370,15 @@ const (
 	// LuaFnRedisScan is a constant defining the Redis command "SCAN" for incrementally iterating over keys.
 	LuaFnRedisScan = "redis_scan"
 
+	// LuaFnRedisPFAdd represents the Lua function name for the Redis HyperLogLog PFADD command. Added in version 1.8.4
+	LuaFnRedisPFAdd = "redis_pfadd"
+
+	// LuaFnRedisPFCount represents the Lua function name for the Redis HyperLogLog PFCOUNT command. Added in version 1.8.4
+	LuaFnRedisPFCount = "redis_pfcount"
+
+	// LuaFnRedisPFMerge represents the Lua function name for the Redis HyperLogLog PFMERGE command. Added in version 1.8.4
+	LuaFnRedisPFMerge = "redis_pfmerge"
+
 	// LuaFnApplyBackendResult applies changes to the backend result from a former authentication process.
 	LuaFnApplyBackendResult = "apply_backend_result"
 
