@@ -495,8 +495,17 @@ const (
 	// RedisPwHashKey represents the key used for password history in Redis.
 	RedisPwHashKey = "PW_HIST"
 
+	// RedisPwHistTotalKey represents the key used for storing total counts for password history scopes in Redis.
+	// The full key is constructed similarly to PW_HIST but with this different prefix and the same suffix.
+	// Example: <prefix> + RedisPwHistTotalKey + ":<account>:<ip>" or ":<ip>"
+	RedisPwHistTotalKey = "pw_hist_total"
+
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
 	RedisPWHistIPsKey = "PW_HIST_IPS"
+
+	// RedisPWHistMetaKey represents the key prefix used for storing metadata (like protocol and OIDC client ID)
+	// associated with an IP seen in PW_HIST. The full key is constructed as <prefix> + RedisPWHistMetaKey + ":" + <ip>.
+	RedisPWHistMetaKey = "PW_HIST_META"
 
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
@@ -1391,6 +1400,10 @@ const (
 
 	// LuaFnWaitRandom represents the constant value for the Lua function name "wait_random".
 	LuaFnWaitRandom = "wait_random"
+
+	// LuaFnGeneratePasswordHash is the function name for generating a Redis-compatible password hash
+	// used by Nauthilus (util.GetHash(util.PreparePassword(password))).
+	LuaFnGeneratePasswordHash = "generate_password_hash"
 
 	// LuaFnCreateSummaryVec represents the identifier for creating a Prometheus SummaryVec.
 	LuaFnCreateSummaryVec = "create_summary_vec"

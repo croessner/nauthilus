@@ -166,7 +166,7 @@ func TestBruteForceLogic(t *testing.T) {
 			WithPassword(password).
 			WithAccountName(accountName)
 
-		// Bucket with account informtion
+		// Account-scoped PW_HIST contains the counter for this password
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -175,16 +175,15 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s:%s", accountName, testIPAddress)).
 			SetVal(map[string]string{hashedPW: "100"})
 
-		// Bucket without account informtion
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
-				":%s", testIPAddress)).
-			SetVal(map[string]string{hashedPW: "100"})
+		// Totals: use only new PW_HIST_TOTAL counters (legacy fallback removed)
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+		).SetVal("100")
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s", testIPAddress),
+		).RedisNil()
 
-		// Bucket with account informtion - defer
+		// Bucket with account information - defer (LoadAllPasswordHistories)
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -193,7 +192,7 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s:%s", accountName, testIPAddress)).
 			SetVal(map[string]string{hashedPW: "101"})
 
-		// Bucket without account informtion - defer
+		// Bucket without account information - defer (LoadAllPasswordHistories)
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -253,7 +252,7 @@ func TestBruteForceLogic(t *testing.T) {
 			WithPassword(password).
 			WithAccountName(accountName)
 
-		// Bucket with account informtion
+		// Account-scoped PW_HIST contains the counter for this password
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -262,17 +261,13 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s:%s", accountName, testIPAddress)).
 			SetVal(map[string]string{hashedPW: "100"})
 
-		// Bucket without account informtion
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
-				":%s", testIPAddress)).
-			SetVal(map[string]string{
-				hashedPW:    "100",
-				"otherHash": "1",
-			})
+		// Totals indicate not repeating (sum > counter)
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+		).SetVal("100")
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s", testIPAddress),
+		).SetVal("1")
 
 		// Affected accounts aren't set
 		mock.ExpectSIsMember(
@@ -373,7 +368,7 @@ func TestBruteForceLogic(t *testing.T) {
 			WithPassword(password).
 			WithAccountName(accountName)
 
-		// Bucket with account informtion
+		// Account-scoped PW_HIST contains the counter for this password
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -382,30 +377,17 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s:%s", accountName, testIPAddress)).
 			SetVal(map[string]string{hashedPW: "100"})
 
-		// Bucket without account informtion
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(
-				":%s", testIPAddress)).
-			SetVal(map[string]string{
-				hashedPW:    "100",
-				"otherHash": "1",
-			})
+		// Totals: repeating true (sum == counter)
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+		).SetVal("100")
+		mock.ExpectGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s", testIPAddress),
+		).RedisNil()
 
-		// Get the current map with negative and positive counters
-		mock.ExpectHGetAll(
-			config.GetFile().
-				GetServer().
-				GetRedis().
-				GetPrefix() + "bf:TR:" + testIPAddress).
-			SetVal(map[string]string{
-				"positive": "100",
-				"negative": "5",
-			})
+		// No TR counters expected in this branch because repeating-wrong-password skips further brute-force computation
 
-		// Bucket with account informtion - defer
+		// Bucket with account information - defer
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -414,7 +396,7 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s:%s", accountName, testIPAddress)).
 			SetVal(map[string]string{hashedPW: "101"})
 
-		// Bucket without account informtion - defer
+		// Bucket without account information - defer
 		mock.ExpectHGetAll(
 			config.GetFile().
 				GetServer().
@@ -461,6 +443,236 @@ func TestBruteForceLogic(t *testing.T) {
 
 			assert.Equal(t, 2, len(*passwordHistory), "The password history should contain two entries")
 		}
+
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestBruteForceFilters(t *testing.T) {
+	db, mock := redismock.NewClientMock()
+	rediscli.NewTestClient(db)
+
+	feature := config.Feature{}
+	feature.Set("brute_force")
+
+	backend := config.Backend{}
+	backend.Set("cache")
+
+	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+	config.SetTestFile(&config.FileSettings{
+		Server: &config.ServerSection{
+			Features: []*config.Feature{&feature},
+			Backends: []*config.Backend{&backend},
+			Redis: config.Redis{
+				Prefix: "nt_",
+			}},
+		BruteForce: &config.BruteForceSection{
+			Buckets: []config.BruteForceRule{
+				{
+					Name:             "filtered",
+					Period:           time.Hour,
+					CIDR:             24,
+					IPv4:             true,
+					IPv6:             false,
+					FailedRequests:   5,
+					FilterByProtocol: []string{"imap"},
+					FilterByOIDCCID:  []string{"cid123"},
+				},
+			},
+		},
+	})
+
+	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+
+	t.Run("Bucket key includes protocol and OIDC when filters configured and context provided", func(t *testing.T) {
+		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
+			WithProtocol("imap").
+			WithOIDCCID("cid123")
+
+		rule := config.GetFile().GetBruteForceRules()[0]
+		key := bm.GetBruteForceBucketRedisKey(&rule)
+
+		// Expected network for 10.0.1.2/24 is 10.0.1.0/24
+		expected := config.GetFile().GetServer().GetRedis().GetPrefix() +
+			"bf:" + fmt.Sprintf("%.0f:%d:%d:%s:%s:%s:oidc:%s",
+			rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, "4", "10.0.1.0/24", "imap", "cid123")
+
+		assert.Equal(t, expected, key, "Key should include protocol and OIDC parts when filters match and context is provided")
+	})
+
+	t.Run("Bucket key reconstructs filters from Redis metadata when context missing", func(t *testing.T) {
+		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2")
+		rule := config.GetFile().GetBruteForceRules()[0]
+
+		// loadPWHistFiltersIfMissing will try IP-specific meta first
+		metaKeyIP := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + "10.0.1.2"
+		mock.ExpectHGetAll(metaKeyIP).SetVal(map[string]string{
+			"protocol": "imap",
+			"oidc_cid": "cid123",
+		})
+
+		key := bm.GetBruteForceBucketRedisKey(&rule)
+
+		expected := config.GetFile().GetServer().GetRedis().GetPrefix() +
+			"bf:" + fmt.Sprintf("%.0f:%d:%d:%s:%s:%s:oidc:%s",
+			rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, "4", "10.0.1.0/24", "imap", "cid123")
+
+		assert.Equal(t, expected, key, "Key should reconstruct protocol and OIDC parts from PW_HIST_META")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("CheckRepeatingBruteForcer respects protocol filter and uses cached pre-result", func(t *testing.T) {
+		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").WithProtocol("imap")
+		rule := config.GetFile().GetBruteForceRules()[0]
+
+		// Pre-result (cache) lookup uses BRUTEFORCE hash with the matching network key
+		_, network, _ := net.ParseCIDR("10.0.1.0/24")
+		mock.ExpectHGet(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
+			network.String(),
+		).SetVal(rule.Name)
+
+		var message string
+		var netPtr *net.IPNet
+
+		withError, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(
+			[]config.BruteForceRule{rule}, &netPtr, &message)
+
+		assert.False(t, withError)
+		assert.True(t, alreadyTriggered)
+		assert.Equal(t, 0, ruleNumber)
+		assert.Contains(t, message, "cached result")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestBruteForceFiltersNonMatching(t *testing.T) {
+	db, mock := redismock.NewClientMock()
+	rediscli.NewTestClient(db)
+
+	feature := config.Feature{}
+	feature.Set("brute_force")
+
+	backend := config.Backend{}
+	backend.Set("cache")
+
+	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+	config.SetTestFile(&config.FileSettings{
+		Server: &config.ServerSection{
+			Features: []*config.Feature{&feature},
+			Backends: []*config.Backend{&backend},
+			Redis: config.Redis{
+				Prefix: "nt_",
+			}},
+		BruteForce: &config.BruteForceSection{
+			Buckets: []config.BruteForceRule{
+				{
+					Name:             "filtered",
+					Period:           time.Hour,
+					CIDR:             24,
+					IPv4:             true,
+					IPv6:             false,
+					FailedRequests:   5,
+					FilterByProtocol: []string{"imap"},
+				},
+			},
+		},
+	})
+
+	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+
+	t.Run("Key should not include non-matching protocol and rule should not match", func(t *testing.T) {
+		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
+			WithProtocol("smtp") // not in FilterByProtocol
+
+		rule := config.GetFile().GetBruteForceRules()[0]
+
+		key := bm.GetBruteForceBucketRedisKey(&rule)
+		// No protocol suffix because it does not match rule filter
+		expected := config.GetFile().GetServer().GetRedis().GetPrefix() +
+			"bf:" + fmt.Sprintf("%.0f:%d:%d:%s:%s",
+			rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, "4", "10.0.1.0/24")
+		assert.Equal(t, expected, key)
+
+		var msg string
+		var netPtr *net.IPNet
+		withErr, triggered, rn := bm.CheckBucketOverLimit([]config.BruteForceRule{rule}, &netPtr, &msg)
+		assert.False(t, withErr)
+		assert.False(t, triggered)
+		assert.Equal(t, 0, rn) // iterated 0th rule but skipped, not triggered
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestSaveFailedPasswordCounterTotals(t *testing.T) {
+	db, mock := redismock.NewClientMock()
+	rediscli.NewTestClient(db)
+
+	feature := config.Feature{}
+	feature.Set("brute_force")
+
+	backend := config.Backend{}
+	backend.Set("cache")
+
+	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
+	config.SetTestFile(&config.FileSettings{
+		Server: &config.ServerSection{
+			Features: []*config.Feature{&feature},
+			Backends: []*config.Backend{&backend},
+			Redis: config.Redis{
+				Prefix: "nt_",
+			}},
+		BruteForce: &config.BruteForceSection{
+			Buckets: []config.BruteForceRule{
+				{
+					Name:           "testbucket",
+					Period:         time.Hour,
+					CIDR:           16,
+					IPv4:           true,
+					IPv6:           false,
+					FailedRequests: 10,
+				},
+			},
+		},
+	})
+
+	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+
+	t.Run("Write path increments total counters for both scopes", func(t *testing.T) {
+		const password = "<PASSWORD>"
+		const accountName = "testaccount"
+		const testIPAddress = "192.168.1.1"
+
+		hashedPW := util.GetHash(util.PreparePassword(password))
+
+		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+			WithUsername("testuser").
+			WithPassword(password).
+			WithAccountName(accountName)
+
+		// SaveFailedPasswordCounterInRedis will check HLEN limits first
+		mock.ExpectHLen(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+		).SetVal(1)
+
+		// Then it will increment account-specific scope and its total
+		mock.ExpectHIncrBy(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+			hashedPW, 1).SetVal(4)
+		mock.ExpectExpire(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
+		mock.ExpectIncr(
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress)).
+			SetVal(4)
+		mock.ExpectExpire(
+			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHistTotalKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
+
+		mock.MatchExpectationsInOrder(true)
+
+		// Execute the write path directly
+		bm.SaveFailedPasswordCounterInRedis()
 
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})

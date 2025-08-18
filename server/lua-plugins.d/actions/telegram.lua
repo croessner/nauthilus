@@ -24,6 +24,10 @@ function nauthilus_call_action(request)
 
     local nauthilus_util = require("nauthilus_util")
 
+    -- Go-backed password module
+    dynamic_loader("nauthilus_password")
+    local nauthilus_password = require("nauthilus_password")
+
     dynamic_loader("nauthilus_context")
     local nauthilus_context = require("nauthilus_context")
 
@@ -32,6 +36,7 @@ function nauthilus_call_action(request)
     local headline = "Information"
     local log_prefix = ""
     local brute_force_bucket = "n/a"
+    local password_hash = "n/a"
     local ts
 
     -- Get result table
@@ -90,7 +95,8 @@ function nauthilus_call_action(request)
         pwnd_info = pwnd
     end
 
-    if send_message then
+    -- Only send if request.account is set
+    if send_message and request.account and request.account ~= "" then
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
@@ -123,7 +129,13 @@ function nauthilus_call_action(request)
 
         local account = request.account
         if account == "" then
+            -- this branch shouldn't happen due to the gate, but keep fallback for safety
             account = "n/a"
+        end
+
+        -- Compute password hash if password is present
+        if request.password and request.password ~= "" then
+            password_hash = nauthilus_password.generate_password_hash(request.password)
         end
 
         local unique_user_id = request.unique_user_id
@@ -157,13 +169,14 @@ function nauthilus_call_action(request)
         values.username = username
         values.pwnd_info = pwnd_info
         values.brute_force_bucket = brute_force_bucket
+        values.password_hash = password_hash
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })
         local _, err_bat = bot:sendMessage({
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
-            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}", values)
+            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPASSWORD HASH {{password_hash}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
