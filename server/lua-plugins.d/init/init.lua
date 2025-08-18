@@ -107,6 +107,13 @@ function nauthilus_run_hook(logging)
         nauthilus_prometheus.create_histogram_vec("neural_duration_seconds", "HTTP request to the neural service", { "http" })
     end
 
+    -- failed_login_hotspot.lua
+    nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_user_score", "Failed login ZSET score for username", { "username" })
+    nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_user_rank", "Rank within top failed-logins for username (lower is hotter)", { "username" })
+    nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_top_score", "Top-N failed login scores snapshot", { "rank", "username" })
+    nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_topn_size", "Size of Top-N snapshot for failed logins", { })
+    nauthilus_prometheus.create_counter_vec("failed_login_hotspot_count", "Count of failed-login hotspot triggers", { "state" })
+
     result.status = "finished"
 
     if logging.log_level == "debug" or logging.log_level == "info" then
