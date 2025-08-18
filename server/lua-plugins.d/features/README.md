@@ -34,3 +34,44 @@ Monitors global authentication patterns across the entire system to detect anoma
 The plugin runs automatically on each authentication attempt. It stores metrics in Redis using keys with the prefix `ntc:multilayer:global:`. You can optionally configure a custom Redis pool using the `CUSTOM_REDIS_POOL_NAME` environment variable.
 
 The metrics collected by this plugin are used by other components like the dynamic_response.lua action plugin to detect and respond to suspicious activity.
+
+### failed_login_hotspot.lua
+Derives a feature signal from the Redis ZSET `ntc:top_failed_logins` (maintained by actions/failed_login_tracker.lua). This plugin is read-only against Redis and enriches the runtime table (rt) so downstream actions can react.
+
+**What it does:**
+- Looks up the current failed-login count (ZSCORE) and rank (ZREVRANK) for the request.username
+- Exposes Prometheus metrics:
+  - `failed_login_hotspot_user_score{username=...}` (gauge)
+  - `failed_login_hotspot_user_rank{username=...}` (gauge, when rank is known)
+  - `failed_login_hotspot_top_score{rank=...,username=...}` (gauge for a small Top‑N snapshot)
+  - `failed_login_hotspot_topn_size` (gauge)
+  - `failed_login_hotspot_count{state="hot"}` (counter, increments when hotspot triggers)
+- Enriches the result table (rt):
+  - `rt.failed_login_info = { username, new_count, rank, recognized_account }`
+  - Sets `rt.feature_failed_login_hotspot = true` and `rt.failed_login_hot = true` when the hotspot condition is met
+- Adds custom logs for correlation: `failed_login_username`, `failed_login_count`, `failed_login_rank`
+
+**Hotspot condition (defaults, configurable):**
+- Username score >= `FAILED_LOGIN_HOT_THRESHOLD` (default: 10)
+- And the username is within Top‑K by rank (`FAILED_LOGIN_TOP_K`, default: 20). If rank is not available (e.g., trimmed), the threshold alone can mark it as hot.
+
+**Environment variables:**
+- `FAILED_LOGIN_HOT_THRESHOLD` (number, default: 10)
+- `FAILED_LOGIN_TOP_K` (number, default: 20)
+- `FAILED_LOGIN_SNAPSHOT_SEC` (number, default: 30) – rate-limit for the Top‑N snapshot
+- `FAILED_LOGIN_SNAPSHOT_TOPN` (number, default: 10) – how many top usernames to snapshot
+- `CUSTOM_REDIS_POOL_NAME` (optional) – use a non-default Redis pool
+
+**Configuration (nauthilus.yml):**
+```yaml
+lua:
+  features:
+    - name: "failed_login_hotspot"
+      script_path: "/etc/nauthilus/lua-plugins.d/features/failed_login_hotspot.lua"
+```
+
+**Downstream integration:**
+- actions/analytics.lua increments `analytics_count{feature="failed_login_hotspot"}` when the feature flag is present in rt.
+- actions/telegram.lua sends a compact alert when `rt.feature_failed_login_hotspot` is set. It includes `failed_login_count` and `failed_login_rank` (if known) alongside the usual session/account context.
+
+Note: This feature relies on the post-action `failed_login_tracker.lua` to maintain `ntc:top_failed_logins`. Ensure that action is enabled so the ZSET is populated.

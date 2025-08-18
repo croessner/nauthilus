@@ -59,6 +59,11 @@ function nauthilus_call_action(request)
         if rt.filter_geoippolicyd then
             nauthilus_prometheus.increment_counter(N .. "_count", { feature = "geoip" })
         end
+
+        -- feature_failed_login_hotspot
+        if rt.feature_failed_login_hotspot then
+            nauthilus_prometheus.increment_counter(N .. "_count", { feature = "failed_login_hotspot" })
+        end
     end
 
     rt.post_analytics = true
