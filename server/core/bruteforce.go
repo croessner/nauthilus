@@ -197,7 +197,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP)
 
 	// Set the protocol on the bucket manager
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -223,9 +223,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
-	accountName := backend.GetUserAccountFromCache(ctx, a.Username, *a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
 
-	bm.WithPassword(a.Password).WithAccountName(accountName)
+	bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
@@ -311,7 +311,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		break
 	}
 
-	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP)
 
 	// Set the protocol if available
 	if a.Protocol != nil && a.Protocol.Get() != "" {

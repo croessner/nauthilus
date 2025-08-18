@@ -1367,11 +1367,8 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
 
-		if a.PasswordHistory != nil {
-			ctx.JSON(a.StatusCodeFail, *a.PasswordHistory)
-		} else {
-			ctx.JSON(a.StatusCodeFail, nil)
-		}
+		// Do not include password history in responses; always return JSON null on failure
+		ctx.JSON(a.StatusCodeFail, nil)
 	default:
 		ctx.String(a.StatusCodeFail, a.StatusMessage)
 	}
@@ -1396,8 +1393,6 @@ func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 // AuthFail handles the failure of authentication.
 // It increases the login attempts, sets failure headers on the context, and performs login attempt processing.
 func (a *AuthState) AuthFail(ctx *gin.Context) {
-	setHeaderHeaders(ctx, a)
-
 	a.increaseLoginAttempts()
 	a.setFailureHeaders(ctx)
 	a.loginAttemptProcessing(ctx)
@@ -2083,7 +2078,7 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
-func (a *AuthState) processUserFound(ctx *gin.Context, passDBResult *PassDBResult) (accountName string, err error) {
+func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
 	var bm bruteforce.BucketManager
 
 	if a.UserFound {
@@ -2222,7 +2217,7 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters
-	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)
@@ -2289,7 +2284,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
-	if accountName, err = a.processUserFound(ctx, passDBResult); err != nil {
+	if accountName, err = a.processUserFound(passDBResult); err != nil {
 		return definitions.AuthResultTempFail
 	}
 

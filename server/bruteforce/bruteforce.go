@@ -479,7 +479,6 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		defer setter()
 		defer bm.LoadAllPasswordHistories()
-		defer bm.SaveFailedPasswordCounterInRedis()
 
 		logBucketRuleDebug(bm, network, rule)
 
@@ -497,11 +496,9 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 				return false
 			} else if !needEnforce {
-				// Even if we skip further brute-force computation (e.g., repeating wrong password),
-				// we still want to track the affected account for observability and unlock workflows.
-				// Also ensure we learn the user's IP for this account so unlock can find the related buckets.
+				// Repeating wrong password (or similar) detected: skip brute-force enforcement.
+				// We still learn the user's IP for later unlock operations, but do not mark the account as affected.
 				bm.ProcessPWHist()
-				bm.updateAffectedAccount()
 				stats.GetMetrics().GetBruteForceHits().WithLabelValues(rule.Name).Inc()
 
 				return false
@@ -521,6 +518,11 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		if ruleTriggered {
 			bm.setPreResultBruteForceRedis(rule)
 		}
+
+		// For pre-blocked requests, authentication will not run and thus
+		// processCacheUserLoginFail will not increment counters. Ensure we
+		// count this failed attempt exactly once here.
+		bm.SaveFailedPasswordCounterInRedis()
 
 		logBucketMatchingRule(bm, network, rule, message)
 
@@ -914,9 +916,11 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 			return false, nil
 		}
 
-		// Compute total via O(1) counters across both scopes
+		// Compute total via O(1) counters across both scopes, but avoid double counting.
+		// If both totals exist for the same account+IP, they represent the same stream of events.
+		// Therefore, use the maximum of the two instead of the sum.
 		total := uint(0)
-		readTotals := func(key string) {
+		readAndMax := func(key string) {
 			if key == "" {
 				return
 			}
@@ -925,22 +929,30 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 			if val, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, key).Result(); err == nil {
 				if n, convErr := strconv.Atoi(val); convErr == nil {
-					total += uint(n)
+					if uint(n) > total {
+						total = uint(n)
+					}
 				}
 			} else if !errors2.Is(err, redis.Nil) {
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 			}
 		}
 
-		readTotals(bm.getPasswordHistoryTotalRedisKey(true))
-		readTotals(bm.getPasswordHistoryTotalRedisKey(false))
+		readAndMax(bm.getPasswordHistoryTotalRedisKey(true))
+		readAndMax(bm.getPasswordHistoryTotalRedisKey(false))
 
 		// Legacy fallback removed: only totals-based method is used
 		if total == counter {
+			// Prefer explicit username, fall back to accountName for logging
+			userForLog := bm.username
+			if userForLog == "" {
+				userForLog = bm.accountName
+			}
+
 			level.Info(log.Logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyBruteForce, "Repeating wrong password",
-				definitions.LogKeyUsername, bm.username,
+				definitions.LogKeyUsername, userForLog,
 				definitions.LogKeyClientIP, bm.clientIP,
 				"counter", counter,
 			)
@@ -1033,18 +1045,19 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 // getPasswordHistoryRedisHashKey generates the Redis hash key for password history storage based on username and client IP.
 func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
 	if withUsername {
-		if bm.username == "" {
-			// Skip processing if username is empty
-			level.Debug(log.Logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Skipping getPasswordHistoryRedisHashKey: username is empty",
-			)
-
-			return ""
-		}
-
+		// Prefer explicit accountName; if absent, fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
+			if bm.username == "" {
+				// Skip if neither account nor username is available
+				level.Debug(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Skipping getPasswordHistoryRedisHashKey: no accountName or username",
+				)
+
+				return ""
+			}
+
 			accountName = bm.username
 		}
 
@@ -1066,17 +1079,18 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 // getPasswordHistoryTotalRedisKey generates the Redis key for the total counter for password history.
 func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) (key string) {
 	if withUsername {
-		if bm.username == "" {
-			level.Debug(log.Logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "Skipping getPasswordHistoryTotalRedisKey: username is empty",
-			)
-
-			return ""
-		}
-
+		// Prefer explicit accountName; if absent, fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
+			if bm.username == "" {
+				level.Debug(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Skipping getPasswordHistoryTotalRedisKey: no accountName or username",
+				)
+
+				return ""
+			}
+
 			accountName = bm.username
 		}
 
