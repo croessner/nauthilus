@@ -2217,7 +2217,7 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters
-	bm = bruteforce.NewBucketManager(ctx, *a.GUID, a.ClientIP).
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)

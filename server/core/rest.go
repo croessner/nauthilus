@@ -932,7 +932,7 @@ func iterateCombinations(ctx *gin.Context, guid string, cmd *FlushRuleCmd, rule 
 		}
 
 		for _, cid := range oidcCids {
-			bm := createBucketManager(ctx, guid, cmd.IPAddress, proto, cid)
+			bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, proto, cid)
 			var err error
 			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
 				return removed, err
@@ -943,7 +943,7 @@ func iterateCombinations(ctx *gin.Context, guid string, cmd *FlushRuleCmd, rule 
 	// 2) OIDC-CID only (when no protocol filters are present)
 	if len(rule.FilterByProtocol) == 0 {
 		for _, cid := range rule.FilterByOIDCCID {
-			bm := createBucketManager(ctx, guid, cmd.IPAddress, "", cid)
+			bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, "", cid)
 
 			var err error
 			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
@@ -954,7 +954,7 @@ func iterateCombinations(ctx *gin.Context, guid string, cmd *FlushRuleCmd, rule 
 
 	// 3) Safety net: iterate over every configured protocol
 	for _, proto := range config.GetFile().GetAllProtocols() {
-		bm := createBucketManager(ctx, guid, cmd.IPAddress, proto, "")
+		bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, proto, "")
 
 		var err error
 		if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
@@ -985,7 +985,7 @@ func flushForBucket(ctx *gin.Context, bm bruteforce.BucketManager, rule *config.
 
 // flushKey deletes a Redis key if it exists, appends the removed key to a list, and returns the updated list with an error if any.
 func flushKey(ctx *gin.Context, key string, guid string, removed []string) ([]string, error) {
-	if rm, err := deleteKeyIfExists(ctx, key, guid); err != nil {
+	if rm, err := deleteKeyIfExists(ctx.Request.Context(), key, guid); err != nil {
 		return removed, err
 	} else if rm != "" {
 		removed = append(removed, rm)
@@ -1010,7 +1010,7 @@ func processBruteForceRules(ctx *gin.Context, cmd *FlushRuleCmd, guid string) (h
 		}
 
 		// Phase 2: flush the exact combination given by the user
-		bm := createBucketManager(ctx, guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
+		bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
 		if removed, err = flushForBucket(ctx, bm, &rule, cmd.RuleName, removed); err != nil {
 			return true, removed, err
 		}
