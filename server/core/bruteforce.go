@@ -225,7 +225,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	accountName := backend.GetUserAccountFromCache(ctx, a.Username, *a.GUID)
 
-	bm.WithPassword(a.Password).WithAccountName(accountName)
+	bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
