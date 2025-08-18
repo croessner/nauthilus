@@ -319,10 +319,12 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
+
 	var (
 		ruleName string
 		err      error
 	)
+
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
@@ -396,7 +398,9 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
+
 	var err error
+
 	matchedAnyRule := false
 
 	for ruleNumber = range rules {
@@ -676,15 +680,22 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 
 		// Use pipelining for write operations to reduce network round trips
 		_, err := rediscli.ExecuteWritePipeline(bm.ctx, func(pipe redis.Pipeliner) error {
-			// We can increment a key/value, even it never existed before.
+			// We can increment a key/value, even if it never existed before.
 			pipe.HIncrBy(bm.ctx, keys[index], passwordHash, 1)
-			pipe.Expire(bm.ctx, keys[index], config.GetFile().GetServer().Redis.NegCacheTTL)
+			pipe.Expire(bm.ctx, keys[index], config.GetFile().GetServer().GetRedis().GetNegCacheTTL())
+
+			// Also maintain a total counter for O(1) reads later
+			totalKey := bm.getPasswordHistoryTotalRedisKey(index == 0)
+			if totalKey != "" {
+				pipe.Incr(bm.ctx, totalKey)
+				pipe.Expire(bm.ctx, totalKey, config.GetFile().GetServer().GetRedis().GetNegCacheTTL())
+			}
 
 			return nil
 		})
 
-		// Count as two Redis operations for metrics
-		stats.GetMetrics().GetRedisWriteCounter().Add(2)
+		// Count as four Redis operations for metrics (HINCRBY, EXPIRE, INCR, EXPIRE)
+		stats.GetMetrics().GetRedisWriteCounter().Add(4)
 
 		if err != nil {
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
@@ -717,7 +728,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
 	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
 		protocolMatched := false
-		for _, p := range rule.FilterByProtocol {
+		for _, p := range rule.GetFilterByProtocol() {
 			if p == bm.protocol {
 				protocolMatched = true
 
@@ -732,7 +743,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	}
 
 	// If the rule has FilterByOIDCCID specified, we need to check if the current OIDC Client ID matches
-	if len(rule.FilterByOIDCCID) > 0 && bm.oidcCID != "" {
+	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
 		oidcCIDMatched := false
 		for _, cid := range rule.FilterByOIDCCID {
 			if cid == bm.oidcCID {
@@ -876,6 +887,7 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 // It returns true if the password repetition exceeds the predefined threshold; otherwise, it returns false.
 // The method also logs attempts that meet the brute force detection criteria.
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
+	// Load account-scoped PW_HIST to obtain the current password's counter
 	if key := bm.getPasswordHistoryRedisHashKey(true); key != "" {
 		bm.loadPasswordHistoryFromRedis(key)
 	}
@@ -902,28 +914,38 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 			return false, nil
 		}
 
-		if key := bm.getPasswordHistoryRedisHashKey(false); key != "" {
-			bm.loadPasswordHistoryFromRedis(key)
+		// Compute total via O(1) counters across both scopes
+		total := uint(0)
+		readTotals := func(key string) {
+			if key == "" {
+				return
+			}
+
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
+			if val, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, key).Result(); err == nil {
+				if n, convErr := strconv.Atoi(val); convErr == nil {
+					total += uint(n)
+				}
+			} else if !errors2.Is(err, redis.Nil) {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			}
 		}
 
-		if bm.passwordHistory != nil {
-			totalPasswordCounter := uint(0)
+		readTotals(bm.getPasswordHistoryTotalRedisKey(true))
+		readTotals(bm.getPasswordHistoryTotalRedisKey(false))
 
-			for _, partialCounter := range *bm.passwordHistory {
-				totalPasswordCounter += partialCounter
-			}
+		// Legacy fallback removed: only totals-based method is used
+		if total == counter {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyBruteForce, "Repeating wrong password",
+				definitions.LogKeyUsername, bm.username,
+				definitions.LogKeyClientIP, bm.clientIP,
+				"counter", counter,
+			)
 
-			if totalPasswordCounter == counter {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyBruteForce, "Repeating wrong password",
-					definitions.LogKeyUsername, bm.username,
-					definitions.LogKeyClientIP, bm.clientIP,
-					"counter", counter,
-				)
-
-				return true, nil
-			}
+			return true, nil
 		}
 	}
 
@@ -1036,6 +1058,38 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 		definitions.LogKeyGUID, bm.guid,
 		definitions.LogKeyClientIP, bm.clientIP,
 		"key", key,
+	)
+
+	return
+}
+
+// getPasswordHistoryTotalRedisKey generates the Redis key for the total counter for password history.
+func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) (key string) {
+	if withUsername {
+		if bm.username == "" {
+			level.Debug(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Skipping getPasswordHistoryTotalRedisKey: username is empty",
+			)
+
+			return ""
+		}
+
+		accountName := bm.accountName
+		if accountName == "" {
+			accountName = bm.username
+		}
+
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, bm.clientIP)
+	} else {
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + bm.clientIP
+	}
+
+	util.DebugModule(
+		definitions.DbgBf,
+		definitions.LogKeyGUID, bm.guid,
+		definitions.LogKeyClientIP, bm.clientIP,
+		"total_key", key,
 	)
 
 	return
