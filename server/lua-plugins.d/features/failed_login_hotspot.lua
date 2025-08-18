@@ -47,21 +47,22 @@ local function maybe_snapshot_topN(client, now)
     end
 
     -- Pull small top-N for metrics; keep it cheap
-    local entries = nauthilus_redis.redis_zrevrange_withscores(client, ZKEY, 0, SNAPSHOT_TOPN - 1)
-    if entries and #entries > 0 then
-        for i = 1, #entries, 2 do
-            local uname = entries[i]
-            local score = tonumber(entries[i+1]) or 0
-            local rank = math.floor((i + 1) / 2) - 1  -- i=1 -> rank 0
+    local members = nauthilus_redis.redis_zrevrange(client, ZKEY, 0, SNAPSHOT_TOPN - 1)
+    if members and nauthilus_util.is_table(members) and #members > 0 then
+        for i = 1, #members do
+            local uname = members[i]
+            local sc = nauthilus_redis.redis_zscore(client, ZKEY, uname)
+            local score = tonumber(sc) or 0
+            local rank = i - 1 -- i=1 -> rank 0
             nauthilus_prometheus.set_gauge(N .. "_top_score", score, { rank = tostring(rank), username = uname })
         end
-        nauthilus_prometheus.set_gauge(N .. "_topn_size", #entries / 2, {})
+        nauthilus_prometheus.set_gauge(N .. "_topn_size", #members, {})
     else
         nauthilus_prometheus.set_gauge(N .. "_topn_size", 0, {})
     end
 
     -- store gate, short TTL is fine
-    nauthilus_redis.redis_setex(client, gate_key, SNAPSHOT_EVERY_SEC, tostring(now))
+    nauthilus_redis.redis_set(client, gate_key, tostring(now), SNAPSHOT_EVERY_SEC)
 end
 
 function nauthilus_call_feature(request)
