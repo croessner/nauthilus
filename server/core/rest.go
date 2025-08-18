@@ -677,6 +677,23 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 		for _, ip := range ips {
 			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
 			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + ip)
+			// Also remove the PW_HIST meta key for this IP (protocol/oidc persistence)
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + ip)
+
+			// Remove network-scoped PW_HIST meta keys for this IP for all matching brute-force rules
+			parsed := net.ParseIP(ip)
+			if parsed != nil {
+				for _, rule := range config.GetFile().GetBruteForceRules() {
+					// Respect IPv4/IPv6 flags
+					if (parsed.To4() != nil && !rule.IPv4) || (parsed.To4() == nil && !rule.IPv6) {
+						continue
+					}
+					_, network, nerr := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, rule.CIDR))
+					if nerr == nil && network != nil {
+						userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String())
+					}
+				}
+			}
 		}
 	}
 

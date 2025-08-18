@@ -498,6 +498,10 @@ const (
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
 	RedisPWHistIPsKey = "PW_HIST_IPS"
 
+	// RedisPWHistMetaKey represents the key prefix used for storing metadata (like protocol and OIDC client ID)
+	// associated with an IP seen in PW_HIST. The full key is constructed as <prefix> + RedisPWHistMetaKey + ":" + <ip>.
+	RedisPWHistMetaKey = "PW_HIST_META"
+
 	// RedisAffectedAccountsKey represents the key used for storing affected user accounts in Redis.
 	RedisAffectedAccountsKey = "AFFECTED_ACCOUNTS"
 

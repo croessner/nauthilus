@@ -174,6 +174,8 @@ func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
 
 // GetBruteForceBucketRedisKey generates a Redis key for brute force protection based on the given rule configuration.
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
+	// Try to reconstruct filters from PW_HIST metadata if they are missing
+	bm.loadPWHistFiltersIfMissing()
 	var ipProto string
 	var protocolPart string
 	var oidcCIDPart string
@@ -315,6 +317,8 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 // CheckRepeatingBruteForcer checks a set of brute force rules against a given network and updates the message if triggered.
 // Returns whether an error occurred, if a rule was already triggered, and the triggering rule index.
 func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+	// Ensure protocol/OIDC context is present when checking rules
+	bm.loadPWHistFiltersIfMissing()
 	var (
 		ruleName string
 		err      error
@@ -390,6 +394,8 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 // CheckBucketOverLimit evaluates brute force rules for a given network to detect potential brute force attacks.
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+	// Ensure protocol/OIDC context is present when checking rules
+	bm.loadPWHistFiltersIfMissing()
 	var err error
 	matchedAnyRule := false
 
@@ -559,8 +565,37 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	_, err = rediscli.ExecuteWritePipeline(bm.ctx, func(pipe redis.Pipeliner) error {
+		// 1) store IP in PW_HIST_IPS set
 		pipe.SAdd(bm.ctx, key, bm.clientIP)
 		pipe.Expire(bm.ctx, key, config.GetFile().GetServer().Redis.NegCacheTTL)
+
+		// 2) persist optional filters for this IP so a later request can reconstruct them
+		fields := make(map[string]any)
+		if bm.protocol != "" {
+			fields["protocol"] = bm.protocol
+		}
+
+		if bm.oidcCID != "" {
+			fields["oidc_cid"] = bm.oidcCID
+		}
+
+		if len(fields) > 0 {
+			// 2a) Persist under the IP-specific meta key
+			metaKeyIP := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
+			pipe.HSet(bm.ctx, metaKeyIP, fields)
+			pipe.Expire(bm.ctx, metaKeyIP, config.GetFile().GetServer().Redis.NegCacheTTL)
+
+			// 2b) Also persist under network-based meta keys for all matching brute-force rules
+			for i := range config.GetFile().GetBruteForceRules() {
+				rule := config.GetFile().GetBruteForceRules()[i]
+				// Reuse bm.getNetwork to respect IPv4/IPv6 flags and CIDR
+				if network, err := bm.getNetwork(&rule); err == nil && network != nil {
+					metaKeyNet := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
+					pipe.HSet(bm.ctx, metaKeyNet, fields)
+					pipe.Expire(bm.ctx, metaKeyNet, config.GetFile().GetServer().Redis.NegCacheTTL)
+				}
+			}
+		}
 
 		return nil
 	})
@@ -764,6 +799,78 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 }
 
 var _ BucketManager = (*bucketManagerImpl)(nil)
+
+// loadPWHistFiltersIfMissing tries to restore protocol and OIDC Client ID from Redis metadata
+// for the current client IP or its network buckets, but only if those fields are currently empty.
+// PW_HIST-based flows may not carry protocol/OIDC context, and we must not lose the original
+// bucket filter dimensions. Buckets are CIDR-based, so also consult network-scoped meta keys.
+func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
+	// If both values are already present, nothing to do
+	if bm.protocol != "" && bm.oidcCID != "" {
+		return
+	}
+
+	readOnce := func(key string) map[string]string {
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+		vals, err := rediscli.GetClient().GetReadHandle().HGetAll(bm.ctx, key).Result()
+		if err != nil {
+			if !errors2.Is(err, redis.Nil) {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			}
+
+			return nil
+		}
+
+		if len(vals) == 0 {
+			return nil
+		}
+
+		return vals
+	}
+
+	// 1) Try IP-specific meta
+	ipKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
+	if vals := readOnce(ipKey); vals != nil {
+		if bm.protocol == "" {
+			if p, ok := vals["protocol"]; ok {
+				bm.protocol = p
+			}
+		}
+
+		if bm.oidcCID == "" {
+			if c, ok := vals["oidc_cid"]; ok {
+				bm.oidcCID = c
+			}
+		}
+	}
+
+	// 2) If still missing, try network-scoped meta for any rule matching this IP
+	if bm.protocol == "" || bm.oidcCID == "" {
+		for i := range config.GetFile().GetBruteForceRules() {
+			rule := config.GetFile().GetBruteForceRules()[i]
+			if network, err := bm.getNetwork(&rule); err == nil && network != nil {
+				netKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
+				if vals := readOnce(netKey); vals != nil {
+					if bm.protocol == "" {
+						if p, ok := vals["protocol"]; ok {
+							bm.protocol = p
+						}
+					}
+
+					if bm.oidcCID == "" {
+						if c, ok := vals["oidc_cid"]; ok {
+							bm.oidcCID = c
+						}
+					}
+				}
+			}
+
+			if bm.protocol != "" && bm.oidcCID != "" {
+				break
+			}
+		}
+	}
+}
 
 // isRepeatingWrongPassword checks if the current password has been repeatedly entered incorrectly and may indicate brute force.
 // It returns true if the password repetition exceeds the predefined threshold; otherwise, it returns false.
