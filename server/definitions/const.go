@@ -1401,6 +1401,10 @@ const (
 	// LuaFnWaitRandom represents the constant value for the Lua function name "wait_random".
 	LuaFnWaitRandom = "wait_random"
 
+	// LuaFnGeneratePasswordHash is the function name for generating a Redis-compatible password hash
+	// used by Nauthilus (util.GetHash(util.PreparePassword(password))).
+	LuaFnGeneratePasswordHash = "generate_password_hash"
+
 	// LuaFnCreateSummaryVec represents the identifier for creating a Prometheus SummaryVec.
 	LuaFnCreateSummaryVec = "create_summary_vec"
 

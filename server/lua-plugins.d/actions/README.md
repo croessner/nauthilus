@@ -84,8 +84,20 @@ Sends security notifications and alerts to a Telegram channel or group.
 - Configurable notification levels (critical, warning, info)
 - Supports rich text formatting for better readability
 - Can include detailed metrics and threat information
+- Since v1.8.2: Includes a password hash derived from the provided password when an account is present
+
+**Behavior (v1.8.2):**
+- The plugin only sends a Telegram message if `request.account` is set and non-empty.
+- If a `request.password` is present, the plugin computes a short hash via the Go-backed Lua module `nauthilus_password.generate_password_hash(password)`.
+  - This hash is identical to the one stored/used server-side for Redis password history: `util.GetHash(util.PreparePassword(password))`.
+  - It uses the server's configured nonce internally and returns an 8-character lowercase hex string.
+- The rendered Telegram message includes the field "PASSWORD HASH" along with other context.
 
 **Usage:**
 Configure the plugin through environment variables:
 - `TELEGRAM_PASSWORD`: Your Telegram bot token/password
 - `TELEGRAM_CHAT_ID`: The chat ID to send notifications to
+
+**Compatibility Notes:**
+- Requires Nauthilus v1.8.2+ for the `nauthilus_password.generate_password_hash` function to be available to Lua.
+- The public documentation in the nauthilus_website repository should reflect these changes (v1.8.2).

@@ -18,6 +18,7 @@ package lualib
 import (
 	"bufio"
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"os"
 	"time"
@@ -39,8 +40,9 @@ var exportsModMisc = map[string]lua.LGFunction{
 
 // exportsModPassword is a map of Lua function names to their respective implementations for password-related operations.
 var exportsModPassword = map[string]lua.LGFunction{
-	definitions.LuaFnComparePasswords:    comparePasswords,
-	definitions.LuaFnCheckPasswordPolicy: validatePassword,
+	definitions.LuaFnComparePasswords:     comparePasswords,
+	definitions.LuaFnCheckPasswordPolicy:  validatePassword,
+	definitions.LuaFnGeneratePasswordHash: generatePasswordHash,
 }
 
 // LoaderModMisc registers the miscellaneous module in the Lua state and returns the module table.
@@ -181,12 +183,15 @@ func getCryptoRandomInt(min, max int64) (int64, error) {
 // CompileLua reads the passed lua file from disk and compiles it.
 func CompileLua(filePath string) (*lua.FunctionProto, error) {
 	file, err := os.Open(filePath)
-
-	defer file.Close()
-
 	if err != nil {
 		return nil, err
 	}
+
+	if file == nil {
+		return nil, fmt.Errorf("file %s not found", filePath)
+	}
+
+	defer file.Close()
 
 	reader := bufio.NewReader(file)
 
@@ -238,4 +243,15 @@ func comparePasswords(L *lua.LState) int {
 	}
 
 	return 2
+}
+
+// generatePasswordHash creates the Redis-compatible password hash matching the Go backend behavior.
+// It takes one argument (password string) and returns a lowercase 8-hex-character string.
+func generatePasswordHash(L *lua.LState) int {
+	password := L.CheckString(1)
+
+	hash := util.GetHash(util.PreparePassword(password))
+	L.Push(lua.LString(hash))
+
+	return 1
 }
