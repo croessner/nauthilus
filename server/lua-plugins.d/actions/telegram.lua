@@ -75,6 +75,13 @@ function nauthilus_call_action(request)
             log_prefix = request.feature .. "_"
         end
 
+        -- feature_failed_login_hotspot
+        if rt.feature_failed_login_hotspot and rt.failed_login_info then
+            send_message = true
+            headline = "Failed-Login Hotspot"
+            log_prefix = "failed_login_"
+        end
+
         -- filter_geoippolicyd
         if rt.filter_geoippolicyd then
             send_message = true
@@ -156,6 +163,18 @@ function nauthilus_call_action(request)
         local mustache, err = template.choose("mustache")
         nauthilus_util.if_error_raise(err)
 
+        -- Failed-login hotspot details if present
+        local failed_login_count = "n/a"
+        local failed_login_rank = "n/a"
+        if rt and rt.failed_login_info then
+            if rt.failed_login_info.new_count ~= nil then
+                failed_login_count = tostring(rt.failed_login_info.new_count)
+            end
+            if rt.failed_login_info.rank ~= nil then
+                failed_login_rank = tostring(rt.failed_login_info.rank)
+            end
+        end
+
         -- Template data
         local values = {}
         values.session = request.session
@@ -170,13 +189,15 @@ function nauthilus_call_action(request)
         values.pwnd_info = pwnd_info
         values.brute_force_bucket = brute_force_bucket
         values.password_hash = password_hash
+        values.failed_login_count = failed_login_count
+        values.failed_login_rank = failed_login_rank
 
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { bot = "send" })
         local _, err_bat = bot:sendMessage({
             chat_id = tonumber(os.getenv("TELEGRAM_CHAT_ID")),
-            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPASSWORD HASH {{password_hash}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}", values)
+            text = headline .. mustache:render(":\n\nSESSION {{session}}\nTS {{ts}}\nIP {{client_ip}}\nHOSTNAME {{hostname}}\nPROTOCOL {{proto}}\nDISPLAY_NAME {{display_name}}\nACCOUNT {{account}}\nUNIQUE ID {{unique_user_id}}\nUSERNAME {{username}}\nPASSWORD HASH {{password_hash}}\nPWND INFO {{pwnd_info}}\nBRUTE FORCE BUCKET {{brute_force_bucket}}\nFAILED LOGIN COUNT {{failed_login_count}}\nFAILED LOGIN RANK {{failed_login_rank}}", values)
         })
         nauthilus_prometheus.stop_timer(timer)
         nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
