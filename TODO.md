@@ -475,6 +475,12 @@ Notes:
   - SOFT_DELAY_THRESH_FAIL24 (default 5), SOFT_DELAY_THRESH_FAIL7D (default 10)
 - Redis keys used follow attacker_detection_ideas.md sketches: ntc:hll:acct:<user>:ips:<win>, ntc:z:acct:<user>:fails, ntc:z:spray:pw:<win>
 
+- Phase 3: Protection Mode and Protocol-specific Responses
+  - ✅ NEW: Implement automated per-account protection mode filter (account_protection_mode.lua) with progressive backoff and temporary rejection for failed auths
+  - ✅ NEW: Publish per-account step-up hint flag in Redis (ntc:acct:<user>:stepup) for OIDC/HTTP Step-Up/PoW integration
+  - ✅ Update dynamic_response.lua to honor per-account step-up hint and populate captcha/step-up set for 15 minutes
+  - ✅ Document environment variables and nauthilus.yml wiring guidance in commit message and notes
+
 ## Conclusion
 
 Implementing these recommendations should significantly improve the performance of the Nauthilus authentication system. The focus should be on optimizing the most critical paths first, particularly LDAP connection management and Redis caching, as these are likely to provide the most immediate benefits. Regular performance testing and monitoring should be implemented to measure the impact of these changes and identify further optimization opportunities.

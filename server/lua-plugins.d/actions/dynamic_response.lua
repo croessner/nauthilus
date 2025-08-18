@@ -442,6 +442,25 @@ function nauthilus_call_action(request)
         table.insert(metrics.suspicious_ips, client_ip)
     end
 
+    -- Per-account step-up hint: if a step-up flag exists for this username,
+    -- add the account temporarily to captcha/step-up set to help HTTP/OIDC flows.
+    if username and username ~= "" then
+        local stepup_key = "ntc:acct:" .. username .. ":stepup"
+        local required = nauthilus_redis.redis_hget(custom_pool, stepup_key, "required")
+        if required == "true" then
+            local args = {15 * 60} -- 15 minutes TTL
+            table.insert(args, username)
+            local _, err_script = nauthilus_redis.redis_run_script(
+                custom_pool,
+                "",
+                "SAddMultiExpire",
+                {"ntc:multilayer:global:captcha_accounts"},
+                args
+            )
+            nauthilus_util.if_error_raise(err_script)
+        end
+    end
+
     -- Apply dynamic response based on threat level
     if threat_level >= 0.9 then
         -- Severe threat: Implement strict measures
