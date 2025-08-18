@@ -451,6 +451,30 @@ The following sections indicate which recommendations have been implemented:
   - redis_pfmerge(client_or "default", destKey, sourceKey1, [sourceKey2, ...]) -> ("OK"|nil, err)
   - Include usage examples and notes about Redis Cluster slot constraints for pfmerge.
 
+# Attacker Detection Phases (Status)
+
+The following tracks the implementation of attacker_detection_ideas.md in phases:
+
+- Phase 1: Monitoring and Data Collection — Account-centric long windows and spray tokens
+  - ✅ Implement global pattern monitoring feature (global_pattern_monitoring.lua)
+  - ✅ Implement account-centric monitoring filter (account_centric_monitoring.lua)
+  - ✅ NEW: Implement per-account unique IPs via HLL (24h/7d) feature (account_longwindow_metrics.lua)
+  - ✅ NEW: Implement per-account failures ZSET (7d retention) in the same feature (account_longwindow_metrics.lua)
+  - ✅ NEW: Implement privacy-preserving sprayed password token counters (24h/7d) (account_longwindow_metrics.lua)
+
+- Phase 2: Soft Measures — Non-blocking frictions and admin controls
+  - ✅ Admin hook for metrics/reset (distributed-brute-force-admin.lua)
+  - ✅ Dynamic response action (dynamic_response.lua) for moderate/high threats (non-blocking settings)
+  - ✅ NEW: Implement soft delay action (soft_delay.lua) applying 50–200 ms based on per-account long-window metrics
+  - ✅ Logging for all soft measures ensuring observability
+
+Notes:
+- Environment variables for soft delay:
+  - SOFT_DELAY_MIN_MS (default 50), SOFT_DELAY_MAX_MS (default 200)
+  - SOFT_DELAY_THRESH_UNIQ24 (default 8), SOFT_DELAY_THRESH_UNIQ7D (default 20)
+  - SOFT_DELAY_THRESH_FAIL24 (default 5), SOFT_DELAY_THRESH_FAIL7D (default 10)
+- Redis keys used follow attacker_detection_ideas.md sketches: ntc:hll:acct:<user>:ips:<win>, ntc:z:acct:<user>:fails, ntc:z:spray:pw:<win>
+
 ## Conclusion
 
 Implementing these recommendations should significantly improve the performance of the Nauthilus authentication system. The focus should be on optimizing the most critical paths first, particularly LDAP connection management and Redis caching, as these are likely to provide the most immediate benefits. Regular performance testing and monitoring should be implemented to measure the impact of these changes and identify further optimization opportunities.
