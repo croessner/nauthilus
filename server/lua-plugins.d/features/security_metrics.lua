@@ -108,18 +108,35 @@ function nauthilus_call_feature(request)
 
     -- Per-account gauges (guarded to avoid high cardinality)
     if username ~= "" and should_emit_per_user(client, username) then
-        -- unique IPs per user over 24h and 7d (PFCOUNT)
+        -- unique IPs per user over 24h and 7d (prefer HLL; fallback to multilayer ZSET if HLL unavailable)
         local uniq24 = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:86400")) or 0
         local uniq7d = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:604800")) or 0
+
+        if uniq24 == 0 then
+            uniq24 = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:86400", now - 86400, now)) or 0
+        end
+        if uniq7d == 0 then
+            uniq7d = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:604800", now - 604800, now)) or 0
+        end
 
         prom.set_gauge("security_unique_ips_per_user", uniq24, { username = username, window = "24h" })
         prom.set_gauge("security_unique_ips_per_user", uniq7d, { username = username, window = "7d" })
 
-        -- failures in 1h/24h/7d windows (ZCOUNT)
+        -- failures in 1h/24h/7d windows (prefer account_longwindow ZSET; fallback to multilayer ZSET)
         local zkey = "ntc:z:acct:" .. username .. ":fails"
         local f1h = tonumber(r.redis_zcount(client, zkey, now - 3600, now)) or 0
         local f24 = tonumber(r.redis_zcount(client, zkey, now - 86400, now)) or 0
         local f7d = tonumber(r.redis_zcount(client, zkey, now - 604800, now)) or 0
+
+        if f1h == 0 then
+            f1h = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:3600", now - 3600, now)) or 0
+        end
+        if f24 == 0 then
+            f24 = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:86400", now - 86400, now)) or 0
+        end
+        if f7d == 0 then
+            f7d = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:604800", now - 604800, now)) or 0
+        end
 
         prom.set_gauge("security_account_fail_budget_used", f1h, { username = username, window = "1h" })
         prom.set_gauge("security_account_fail_budget_used", f24, { username = username, window = "24h" })
