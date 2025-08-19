@@ -28,6 +28,59 @@ local prom = require("nauthilus_prometheus")
 dynamic_loader("nauthilus_redis")
 local r = require("nauthilus_redis")
 
+-- Deterministic string hash (djb2) to support stable sampling by username
+local function djb2_hash(s)
+    local hash = 5381
+    for i = 1, #s do
+        local c = string.byte(s, i)
+        hash = (hash * 33 + c)
+        -- keep it in 32-bit range deterministically
+        if hash > 4294967295 then
+            hash = math.fmod(hash, 4294967296)
+        elseif hash < 0 then
+            hash = 4294967296 + math.fmod(hash, 4294967296)
+        end
+    end
+    return hash
+end
+
+-- Decide whether to emit per-user metrics for this username
+-- Rules:
+--  - Only when SECURITY_METRICS_PER_USER_ENABLED=true
+--  - Always emit if account is currently in protection set
+--  - Otherwise, emit if username hashes into the sample bucket defined by SECURITY_METRICS_SAMPLE_RATE (0..1)
+local function should_emit_per_user(client, username)
+    if not username or username == "" then
+        return false
+    end
+
+    local enabled = os.getenv("SECURITY_METRICS_PER_USER_ENABLED")
+    if not enabled or enabled == "" or string.lower(enabled) == "false" or enabled == "0" then
+        return false
+    end
+
+    -- Always include protected accounts (check hash flag set by account_protection_mode)
+    local prot_hash_key = "ntc:acct:" .. username .. ":protection"
+    local prot_active = r.redis_hget(client, prot_hash_key, "active")
+    if prot_active == "true" then
+        return true
+    end
+
+    -- Deterministic sampling
+    local rate = tonumber(os.getenv("SECURITY_METRICS_SAMPLE_RATE") or "0") or 0
+    if rate <= 0 then
+        return false
+    end
+    if rate >= 1 then
+        return true
+    end
+
+    local h = djb2_hash(username)
+    -- map to [0, 1)
+    local frac = (h % 100000) / 100000.0
+    return frac < rate
+end
+
 function nauthilus_call_feature(request)
     if request.no_auth then
         return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
@@ -45,8 +98,8 @@ function nauthilus_call_feature(request)
         nauthilus_util.if_error_raise(err)
     end
 
-    -- Per-account gauges (if username present)
-    if username ~= "" then
+    -- Per-account gauges (guarded to avoid high cardinality)
+    if username ~= "" and should_emit_per_user(client, username) then
         -- unique IPs per user over 24h and 7d (PFCOUNT)
         local uniq24 = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:86400")) or 0
         local uniq7d = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:604800")) or 0
