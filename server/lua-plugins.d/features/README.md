@@ -80,8 +80,8 @@ Note: This feature relies on the post-action `failed_login_tracker.lua` to maint
 Collects and exposes the security_* Prometheus metrics proposed in docs/attacker_detection_ideas.md. This feature is read-only and safe to run in learning mode. It reads per-account and global data from Redis and updates gauges/counters.
 
 **Metrics updated:**
-- `security_unique_ips_per_user{username,window}` (gauge)
-- `security_account_fail_budget_used{username,window}` (gauge)
+- `security_unique_ips_per_user{username,window}` (gauge; emission gated to avoid high cardinality)
+- `security_account_fail_budget_used{username,window}` (gauge; emission gated to avoid high cardinality)
 - `security_global_ips_per_user{window}` (gauge)
 - `security_accounts_in_protection_mode_total` (gauge)
 - `security_slow_attack_suspicions_total` (counter; heuristic)
@@ -90,6 +90,16 @@ Other related metrics are updated in companion plugins:
 - `security_sprayed_password_tokens_total{window}` → features/account_longwindow_metrics.lua
 - `security_stepup_challenges_issued_total` → filters/account_protection_mode.lua
 - `security_pow_challenges_issued_total` → planned when PoW is implemented
+
+**Cardinality controls (environment variables):**
+- `SECURITY_METRICS_PER_USER_ENABLED` (default: false)
+  - When false, per-user security_* metrics are not emitted (no time series per username).
+  - When true, per-user metrics are emitted only for protected users and/or sampled users (see below).
+- `SECURITY_METRICS_SAMPLE_RATE` (default: 0)
+  - Float 0.0–1.0. Deterministic sampling by username hash. For example, 0.01 ≈ 1% of users.
+  - Users currently in protection mode are always emitted regardless of the sample rate.
+
+Protected users are tracked in Redis set `ntc:acct:protection_active` (maintained by filters/account_protection_mode.lua).
 
 **Requirements:**
 - Global windows (24h/7d) provided by features/global_pattern_monitoring.lua
