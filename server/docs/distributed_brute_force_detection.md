@@ -483,6 +483,20 @@ brute_force:
    journalctl -u nauthilus -f
    ```
 
+### Cold-start safety and warm-up gating
+
+When Nauthilus is deployed in a new environment (e.g., first rollout with up to millions of users), the system avoids disruptive global actions until a minimal baseline has been observed. The dynamic_response.lua action implements a warm-up gate:
+
+- It records a first-seen timestamp in Redis and checks minimal baseline metrics.
+- Until all conditions are met, severe/high responses are downgraded to light measures. This prevents system-wide CAPTCHA/rate-limit flips on day 0.
+
+Warm-up is controlled via environment variables (defaults in parentheses):
+- DYNAMIC_RESPONSE_WARMUP_SECONDS (3600): Minimum time since first deployment.
+- DYNAMIC_RESPONSE_WARMUP_MIN_USERS (1000): Minimum unique users observed in the global metrics window.
+- DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS (10000): Minimum total auth attempts observed.
+
+During warm-up, the system still applies account-centric protections and monitoring, and notifies administrators with rate-limited alerts.
+
 ### Monitoring and Tuning
 
 After deployment, monitor the system's performance and adjust the configuration as needed:

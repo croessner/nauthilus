@@ -37,67 +37,79 @@ function nauthilus_call_filter(request)
 
     -- Track account-specific authentication attempts
     local timestamp = os.time()
-    local window = 3600 -- 1 hour window
+    local windows = {3600, 86400, 604800} -- 1h, 24h, 7d windows
     local username = request.username
 
     if not username or username == "" then
         return nauthilus_builtin.FILTER_TRIGGER_NO, nauthilus_builtin.FILTERS_ABORT_NO, nauthilus_builtin.FILTER_RESULT_YES
     end
 
-    -- Track IPs that attempted to access this account using atomic Redis Lua script
-    local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-    local _, err_script = nauthilus_redis.redis_run_script(
-            custom_pool,
-        "", 
-        "ZAddRemExpire", 
-        {ip_key}, 
-        {timestamp, request.client_ip, 0, timestamp - window, window * 2}
-    )
-    nauthilus_util.if_error_raise(err_script)
+    -- Prepare holders for last window metrics (we use the largest window after the loop)
+    local last_unique_ips = 0
+    local last_failed_attempts = 0
+    local last_ip_to_fail_ratio = 0
 
-    -- Track failed attempts for this account using atomic Redis Lua script
-    if not request.authenticated then
-        local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-        local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
+    -- Track IPs that attempted to access this account using atomic Redis Lua script
+    for _, window in ipairs(windows) do
+        local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
         local _, err_script = nauthilus_redis.redis_run_script(
                 custom_pool,
             "", 
             "ZAddRemExpire", 
-            {fail_key}, 
-            {timestamp, fail_id, 0, timestamp - window, window * 2}
+            {ip_key}, 
+            {timestamp, request.client_ip, 0, timestamp - window, window * 2}
+        )
+        nauthilus_util.if_error_raise(err_script)
+
+        -- Track failed attempts for this account using atomic Redis Lua script
+        if not request.authenticated then
+            local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+            local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
+            local _, err_script = nauthilus_redis.redis_run_script(
+                    custom_pool,
+                "", 
+                "ZAddRemExpire", 
+                {fail_key}, 
+                {timestamp, fail_id, 0, timestamp - window, window * 2}
+            )
+            nauthilus_util.if_error_raise(err_script)
+        end
+
+        -- Get unique IPs that attempted to access this account
+        local unique_ips = nauthilus_redis.redis_zcount(custom_pool, ip_key, timestamp - window, timestamp)
+
+        -- Get failed attempts for this account
+        local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+        local failed_attempts = nauthilus_redis.redis_zcount(custom_pool, fail_key, timestamp - window, timestamp)
+
+        -- Calculate the ratio of unique IPs to failed attempts
+        local ip_to_fail_ratio = 0
+        if failed_attempts and failed_attempts > 0 then
+            ip_to_fail_ratio = (tonumber(unique_ips) or 0) / (tonumber(failed_attempts) or 1)
+        end
+
+        -- Update holders for use after loop (take latest window, which is the largest)
+        last_unique_ips = tonumber(unique_ips) or 0
+        last_failed_attempts = tonumber(failed_attempts) or 0
+        last_ip_to_fail_ratio = tonumber(ip_to_fail_ratio) or 0
+
+        -- Store account metrics using atomic Redis Lua script (window-specific)
+        local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics:" .. window
+        local _, err_script = nauthilus_redis.redis_run_script(
+                custom_pool,
+            "", 
+            "HSetMultiExpire", 
+            {account_metrics_key}, 
+            {
+                window * 2, -- Expire after window * 2
+                "unique_ips", unique_ips,
+                "failed_attempts", failed_attempts,
+                "ip_to_fail_ratio", ip_to_fail_ratio,
+                "last_updated", timestamp
+            }
         )
         nauthilus_util.if_error_raise(err_script)
     end
-
-    -- Get unique IPs that attempted to access this account
-    local unique_ips = nauthilus_redis.redis_zcount(custom_pool, ip_key, timestamp - window, timestamp)
-
-    -- Get failed attempts for this account
-    local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-    local failed_attempts = nauthilus_redis.redis_zcount(custom_pool, fail_key, timestamp - window, timestamp)
-
-    -- Calculate the ratio of unique IPs to failed attempts
-    local ip_to_fail_ratio = 0
-    if failed_attempts > 0 then
-        ip_to_fail_ratio = unique_ips / failed_attempts
-    end
-
-    -- Store account metrics using atomic Redis Lua script
-    local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics"
-    local _, err_script = nauthilus_redis.redis_run_script(
-            custom_pool,
-        "", 
-        "HSetMultiExpire", 
-        {account_metrics_key}, 
-        {
-            window * 2, -- Expire after window * 2
-            "unique_ips", unique_ips,
-            "failed_attempts", failed_attempts,
-            "ip_to_fail_ratio", ip_to_fail_ratio,
-            "last_updated", timestamp
-        }
-    )
-    nauthilus_util.if_error_raise(err_script)
 
     -- If many unique IPs are trying to access a single account with few attempts per IP,
     -- this could indicate a distributed brute force attack
@@ -105,7 +117,7 @@ function nauthilus_call_filter(request)
     local threshold_unique_ips = 10
     local threshold_ip_to_fail_ratio = 0.8
 
-    if unique_ips > threshold_unique_ips and ip_to_fail_ratio > threshold_ip_to_fail_ratio then
+    if last_unique_ips > threshold_unique_ips and last_ip_to_fail_ratio > threshold_ip_to_fail_ratio then
         is_suspicious = true
 
         -- Add this account to the list of accounts under distributed attack using atomic Redis Lua script
@@ -125,18 +137,18 @@ function nauthilus_call_filter(request)
         attack_logs.level = "warning"
         attack_logs.message = "Potential distributed brute force attack detected"
         attack_logs.username = username
-        attack_logs.unique_ips = unique_ips
-        attack_logs.failed_attempts = failed_attempts
-        attack_logs.ip_to_fail_ratio = ip_to_fail_ratio
+        attack_logs.unique_ips = last_unique_ips
+        attack_logs.failed_attempts = last_failed_attempts
+        attack_logs.ip_to_fail_ratio = last_ip_to_fail_ratio
 
         nauthilus_util.print_result({ log_format = "json" }, attack_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_attack_detected", "true")
         nauthilus_builtin.custom_log_add(N .. "_username", username)
-        nauthilus_builtin.custom_log_add(N .. "_unique_ips", unique_ips)
-        nauthilus_builtin.custom_log_add(N .. "_failed_attempts", failed_attempts)
-        nauthilus_builtin.custom_log_add(N .. "_ip_to_fail_ratio", ip_to_fail_ratio)
+        nauthilus_builtin.custom_log_add(N .. "_unique_ips", last_unique_ips)
+        nauthilus_builtin.custom_log_add(N .. "_failed_attempts", last_failed_attempts)
+        nauthilus_builtin.custom_log_add(N .. "_ip_to_fail_ratio", last_ip_to_fail_ratio)
     end
 
     -- Add log
@@ -145,9 +157,9 @@ function nauthilus_call_filter(request)
     logs.level = "info"
     logs.message = "Account metrics tracked"
     logs.username = username
-    logs.unique_ips = unique_ips
-    logs.failed_attempts = failed_attempts
-    logs.ip_to_fail_ratio = ip_to_fail_ratio
+    logs.unique_ips = last_unique_ips
+    logs.failed_attempts = last_failed_attempts
+    logs.ip_to_fail_ratio = last_ip_to_fail_ratio
     logs.is_suspicious = is_suspicious
 
     nauthilus_util.print_result({ log_format = "json" }, logs)
