@@ -53,16 +53,77 @@ Nauthilus Security System
 
 -- Notify administrators about the threat
 local function notify_administrators(subject, metrics)
-    -- Log the notification
+    -- Basic toggle to disable alert emails entirely (defaults to enabled)
+    local alerts_enabled_env = os.getenv("ADMIN_ALERTS_ENABLED")
+    local alerts_enabled = true
+    if alerts_enabled_env ~= nil and alerts_enabled_env ~= "" then
+        alerts_enabled = nauthilus_util.toboolean(alerts_enabled_env)
+    end
 
+    -- Resolve Redis client for rate limiting
+    local client = "default"
+    local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
+    if pool_name ~= nil and pool_name ~= "" then
+        local err
+        client, err = nauthilus_redis.get_redis_connection(pool_name)
+        nauthilus_util.if_error_raise(err)
+    end
+
+    local now = os.time()
+
+    -- Evidence-based gating and thresholds to reduce false positives
+    local min_unique_ips = tonumber(os.getenv("ADMIN_ALERT_MIN_UNIQUE_IPS") or "100")
+    local min_ips_per_user = tonumber(os.getenv("ADMIN_ALERT_MIN_IPS_PER_USER") or "2.5")
+    local require_evidence = nauthilus_util.toboolean(os.getenv("ADMIN_ALERT_REQUIRE_EVIDENCE") or "false")
+
+    local uniq_ips = tonumber(metrics.unique_ips or 0) or 0
+    local ips_per_user = tonumber(metrics.ips_per_user or 0) or 0
+
+    local suspicious_regions = (type(metrics.suspicious_regions) == "table") and metrics.suspicious_regions or {}
+    local suspicious_ips = (type(metrics.suspicious_ips) == "table") and metrics.suspicious_ips or {}
+
+    local has_evidence = (suspicious_regions and #suspicious_regions > 0) or (suspicious_ips and #suspicious_ips > 0)
+    local passes_baseline = (ips_per_user >= min_ips_per_user) and (uniq_ips >= min_unique_ips)
+
+    -- Cooldown window per subject to prevent alert storms
+    local cooldown_sec = tonumber(os.getenv("ADMIN_ALERT_COOLDOWN_SECONDS") or "900")
+    local gate_key = "ntc:alerts:last_sent:" .. subject
+    local last_sent = tonumber(nauthilus_redis.redis_get(client, gate_key) or "0")
+    local in_cooldown = (last_sent ~= nil and (now - last_sent) < cooldown_sec)
+
+    -- Decide whether to notify:
+    --  - If alerts disabled -> skip
+    --  - If require_evidence=true and no evidence -> skip
+    --  - If neither passes_baseline nor has_evidence -> skip
+    --  - If within cooldown -> skip
+    local should_notify = alerts_enabled and (not (require_evidence and not has_evidence)) and ((passes_baseline or has_evidence)) and (not in_cooldown)
+
+    -- Log the decision
     local notify_logs = {}
     notify_logs.caller = N .. ".lua"
-    notify_logs.level = "warning"
+    notify_logs.level = should_notify and "warning" or "info"
     notify_logs.message = subject
     notify_logs.metrics = metrics
-    notify_logs.timestamp = os.time()
+    notify_logs.timestamp = now
+    notify_logs.alert_decision = {
+        alerts_enabled = alerts_enabled,
+        require_evidence = require_evidence,
+        min_unique_ips = min_unique_ips,
+        min_ips_per_user = min_ips_per_user,
+        passes_baseline = passes_baseline,
+        has_evidence = has_evidence,
+        cooldown_sec = cooldown_sec,
+        in_cooldown = in_cooldown
+    }
 
     nauthilus_util.print_result({ log_format = "json" }, notify_logs)
+
+    if not should_notify then
+        return
+    end
+
+    -- Mark send time (rate limit)
+    nauthilus_redis.redis_set(client, gate_key, tostring(now), cooldown_sec)
 
     -- Send email notification
     -- Get SMTP configuration from environment variables
@@ -99,23 +160,35 @@ local function notify_administrators(subject, metrics)
     end
 
     -- Prepare template data
-    local timestamp_str = os.date("%Y-%m-%d %H:%M:%S", os.time())
+    local timestamp_str = os.date("%Y-%m-%d %H:%M:%S", now)
 
-    -- Convert metrics table to array of key-value pairs for template
+    -- Convert metrics table to array of key-value pairs for template (skip empties, format numbers)
+    local function format_number(x)
+        if type(x) == "number" then
+            if math.type and math.type(x) == "integer" then
+                return tostring(x)
+            end
+            -- round to 2 decimals
+            return string.format("%.2f", x)
+        end
+        return tostring(x)
+    end
+
     local metrics_array = {}
     for k, v in pairs(metrics) do
         if type(v) == "table" then
-            -- Handle nested tables (like suspicious_regions)
-            local value_str = ""
-            for _, item in ipairs(v) do
-                if value_str ~= "" then
-                    value_str = value_str .. ", "
+            if #v > 0 then
+                local value_str = ""
+                for _, item in ipairs(v) do
+                    if value_str ~= "" then
+                        value_str = value_str .. ", "
+                    end
+                    value_str = value_str .. tostring(item)
                 end
-                value_str = value_str .. tostring(item)
+                table.insert(metrics_array, { key = k, value = value_str })
             end
-            table.insert(metrics_array, {key = k, value = value_str})
-        else
-            table.insert(metrics_array, {key = k, value = tostring(v)})
+        elseif v ~= nil and tostring(v) ~= "" then
+            table.insert(metrics_array, { key = k, value = format_number(v) })
         end
     end
 
@@ -461,8 +534,26 @@ function nauthilus_call_action(request)
         end
     end
 
-    -- Apply dynamic response based on threat level
-    if threat_level >= 0.9 then
+    -- Determine bootstrap/warm-up state to prevent global blast radius on first deployment
+    local now_ts = timestamp
+    local warmup_seconds = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS") or "3600")
+    local warmup_min_users = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS") or "1000")
+    local warmup_min_attempts = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS") or "10000")
+
+    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
+    local first_seen_val = nauthilus_redis.redis_get(custom_pool, first_seen_key)
+    local first_seen_ts = tonumber(first_seen_val or "0") or 0
+    if first_seen_ts == 0 then
+        -- set first seen with TTL 30d (best-effort; not strictly atomic)
+        local _, err_set = nauthilus_redis.redis_set(custom_pool, first_seen_key, tostring(now_ts), 30 * 24 * 3600)
+        nauthilus_util.if_error_raise(err_set)
+        first_seen_ts = now_ts
+    end
+
+    local warmed_up = ((now_ts - first_seen_ts) >= warmup_seconds) and (unique_users >= warmup_min_users) and (attempts >= warmup_min_attempts)
+
+    -- Apply dynamic response based on threat level (with warm-up gating)
+    if threat_level >= 0.9 and warmed_up then
         -- Severe threat: Implement strict measures
         apply_severe_measures(custom_pool, metrics)
 
@@ -480,22 +571,49 @@ function nauthilus_call_action(request)
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
         nauthilus_builtin.custom_log_add(N .. "_response", "severe")
     elseif threat_level >= 0.7 then
-        -- High threat: Implement moderate measures
-        apply_high_measures(custom_pool, metrics)
+        if warmed_up then
+            -- High threat: Implement moderate measures
+            apply_high_measures(custom_pool, metrics)
 
-        -- Log the response
-        local high_logs = {}
-        high_logs.caller = N .. ".lua"
-        high_logs.level = "warning"
-        high_logs.message = "High threat detected, implementing moderate measures"
-        high_logs.threat_level = threat_level
-        high_logs.metrics = metrics
+            -- Log the response
+            local high_logs = {}
+            high_logs.caller = N .. ".lua"
+            high_logs.level = "warning"
+            high_logs.message = "High threat detected, implementing moderate measures"
+            high_logs.threat_level = threat_level
+            high_logs.metrics = metrics
+            high_logs.warmup_gating = false
 
-        nauthilus_util.print_result({ log_format = "json" }, high_logs)
+            nauthilus_util.print_result({ log_format = "json" }, high_logs)
 
-        -- Add to custom log for monitoring
-        nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
-        nauthilus_builtin.custom_log_add(N .. "_response", "high")
+            -- Add to custom log for monitoring
+            nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
+            nauthilus_builtin.custom_log_add(N .. "_response", "high")
+        else
+            -- Cold-start gating: only light measures in warm-up window
+            apply_moderate_measures(custom_pool, metrics)
+
+            local gated_logs = {}
+            gated_logs.caller = N .. ".lua"
+            gated_logs.level = "warning"
+            gated_logs.message = "High threat detected but warm-up gating active; applying light measures"
+            gated_logs.threat_level = threat_level
+            gated_logs.metrics = metrics
+            gated_logs.warmup_gating = true
+            gated_logs.warmup = {
+                warmup_seconds = warmup_seconds,
+                warmup_min_users = warmup_min_users,
+                warmup_min_attempts = warmup_min_attempts,
+                first_seen_ts = first_seen_ts,
+                now_ts = now_ts,
+                unique_users = unique_users,
+                attempts = attempts
+            }
+            nauthilus_util.print_result({ log_format = "json" }, gated_logs)
+
+            nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
+            nauthilus_builtin.custom_log_add(N .. "_response", "moderate")
+        end
     elseif threat_level >= 0.5 then
         -- Moderate threat: Implement light measures
         apply_moderate_measures(custom_pool, metrics)
