@@ -37,7 +37,7 @@ function nauthilus_call_feature(request)
 
     -- Track global authentication metrics in sliding windows
     local timestamp = os.time()
-    local window_sizes = {60, 300, 900, 3600} -- 1min, 5min, 15min, 1hour
+    local window_sizes = {60, 300, 900, 3600, 86400, 604800} -- 1min, 5min, 15min, 1hour, 24h, 7d
     local request_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
 
     for _, window in ipairs(window_sizes) do

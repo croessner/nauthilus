@@ -114,6 +114,17 @@ function nauthilus_run_hook(logging)
     nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_topn_size", "Size of Top-N snapshot for failed logins", { })
     nauthilus_prometheus.create_counter_vec("failed_login_hotspot_count", "Count of failed-login hotspot triggers", { "state" })
 
+    -- security_* metrics from attacker_detection_ideas.md
+    -- Note: For per-user metrics we include a 'username' label to avoid overwriting and to make values inspectable per account.
+    nauthilus_prometheus.create_gauge_vec("security_unique_ips_per_user", "Unique IPs seen per user over time windows", { "username", "window" })
+    nauthilus_prometheus.create_gauge_vec("security_account_fail_budget_used", "Number of failures for user over time windows", { "username", "window" })
+    nauthilus_prometheus.create_gauge_vec("security_global_ips_per_user", "Global ratio of unique IPs to unique users over time windows", { "window" })
+    nauthilus_prometheus.create_gauge_vec("security_accounts_in_protection_mode_total", "Current number of accounts in protection mode", { })
+    nauthilus_prometheus.create_counter_vec("security_sprayed_password_tokens_total", "Count of observed privacy-preserving sprayed password tokens", { "window" })
+    nauthilus_prometheus.create_counter_vec("security_stepup_challenges_issued_total", "Number of step-up challenges issued (hint flags set)", { })
+    nauthilus_prometheus.create_counter_vec("security_pow_challenges_issued_total", "Number of proof-of-work challenges issued", { })
+    nauthilus_prometheus.create_counter_vec("security_slow_attack_suspicions_total", "Heuristic slow-attack suspicions", { })
+
     result.status = "finished"
 
     if logging.log_level == "debug" or logging.log_level == "info" then

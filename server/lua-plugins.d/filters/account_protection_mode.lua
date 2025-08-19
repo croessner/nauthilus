@@ -32,6 +32,9 @@ local nauthilus_util = require("nauthilus_util")
 dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
+dynamic_loader("nauthilus_prometheus")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
@@ -115,6 +118,16 @@ local function record_protection_state(client, username, reason, backoff_level, 
         }
     )
     nauthilus_util.if_error_raise(err)
+
+    -- Maintain a set of accounts currently in protection mode for fast metrics
+    local _, err2 = nauthilus_redis.redis_run_script(
+        client,
+        "",
+        "SAddMultiExpire",
+        {"ntc:acct:protection_active"},
+        {ttl, username}
+    )
+    nauthilus_util.if_error_raise(err2)
 end
 
 local function set_stepup_required(client, username, reason, ttl)
@@ -134,6 +147,9 @@ local function set_stepup_required(client, username, reason, ttl)
         }
     )
     nauthilus_util.if_error_raise(err)
+
+    -- Increment Prometheus counter for Step-Up hints
+    nauthilus_prometheus.increment_counter("security_stepup_challenges_issued_total", { })
 end
 
 function nauthilus_call_filter(request)
@@ -173,6 +189,9 @@ function nauthilus_call_filter(request)
 
         -- Record protection mode
         record_protection_state(client, username, table.concat(m.hits, ","), backoff_level, MODE_TTL)
+
+        -- Count a slow-attack suspicion
+        nauthilus_prometheus.increment_counter("security_slow_attack_suspicions_total", { })
 
         -- For HTTP/OIDC flows: we cannot detect protocol reliably here; set step-up hint flag
         set_stepup_required(client, username, "protection:" .. table.concat(m.hits, ","), MODE_TTL)

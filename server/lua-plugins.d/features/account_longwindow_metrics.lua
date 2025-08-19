@@ -18,6 +18,9 @@ local nauthilus_redis = require("nauthilus_redis")
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
+dynamic_loader("nauthilus_prometheus")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
 -- Helper: set EXPIRE on a key if ttl_seconds > 0
 local function expire_key(client, key, ttl_seconds)
     if ttl_seconds and ttl_seconds > 0 then
@@ -85,6 +88,10 @@ function nauthilus_call_feature(request)
             nauthilus_redis.redis_zadd(client, zkey, now, pw_token)
             nauthilus_redis.redis_zremrangebyscore(client, zkey, 0, now - w)
             expire_key(client, zkey, w * 2)
+
+            -- Increment Prometheus counter for observed spray tokens
+            local label = (w == 86400) and "24h" or "7d"
+            nauthilus_prometheus.increment_counter("security_sprayed_password_tokens_total", { window = label })
         end
     end
 
