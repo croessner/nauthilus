@@ -67,7 +67,15 @@ local function should_emit_per_user(client, username)
     end
 
     -- Deterministic sampling
-    local rate = tonumber(os.getenv("SECURITY_METRICS_SAMPLE_RATE") or "0") or 0
+    local rate_env = os.getenv("SECURITY_METRICS_SAMPLE_RATE")
+    local rate
+    if rate_env == nil or rate_env == "" then
+        -- If per-user metrics are enabled and sample rate is unset, default to 100% sampling
+        rate = 1
+    else
+        rate = tonumber(rate_env) or 0
+    end
+
     if rate <= 0 then
         return false
     end

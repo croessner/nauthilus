@@ -94,9 +94,9 @@ Other related metrics are updated in companion plugins:
 **Cardinality controls (environment variables):**
 - `SECURITY_METRICS_PER_USER_ENABLED` (default: false)
   - When false, per-user security_* metrics are not emitted (no time series per username).
-  - When true, per-user metrics are emitted only for protected users and/or sampled users (see below).
-- `SECURITY_METRICS_SAMPLE_RATE` (default: 0)
-  - Float 0.0–1.0. Deterministic sampling by username hash. For example, 0.01 ≈ 1% of users.
+  - When true, per-user metrics are emitted for protected users and/or sampled users (see below). If `SECURITY_METRICS_SAMPLE_RATE` is unset, it defaults to 100% (1.0) so you immediately see per-user metrics. Set the sample rate explicitly to control cardinality.
+- `SECURITY_METRICS_SAMPLE_RATE` (default: unset → treated as 1.0 when per-user metrics are enabled)
+  - Float 0.0–1.0. Deterministic sampling by username hash. For example, 0.01 ≈ 1% of users. Set to `0` to disable per-user emission except for users currently in protection mode.
   - Users currently in protection mode are always emitted regardless of the sample rate.
 
 Protected users are tracked in Redis set `ntc:acct:protection_active` (maintained by filters/account_protection_mode.lua).
