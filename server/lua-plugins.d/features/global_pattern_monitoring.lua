@@ -40,6 +40,9 @@ function nauthilus_call_feature(request)
     local window_sizes = {60, 300, 900, 3600, 86400, 604800} -- 1min, 5min, 15min, 1hour, 24h, 7d
     local request_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
 
+    -- Derive a robust username identifier (some protocols fill 'account')
+    local username_value = request.username or request.account or ""
+
     for _, window in ipairs(window_sizes) do
         -- Track authentication attempts using atomic Redis Lua script
         local key = "ntc:multilayer:global:auth_attempts:" .. window
@@ -70,7 +73,7 @@ function nauthilus_call_feature(request)
             "", 
             "ZAddRemExpire", 
             {user_key}, 
-            {timestamp, request.username, 0, timestamp - window, window * 2}
+            {timestamp, username_value, 0, timestamp - window, window * 2}
         )
         nauthilus_util.if_error_raise(err_script)
     end
