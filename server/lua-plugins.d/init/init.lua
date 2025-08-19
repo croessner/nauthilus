@@ -66,10 +66,119 @@ function nauthilus_run_hook(logging)
 
     local upload_script_name = "nauthilus_send_mail_hash"
     local sha1, err_upload = nauthilus_redis.redis_upload_script(custom_pool, script, upload_script_name)
-
     nauthilus_util.if_error_raise(err_upload)
-
     result[upload_script_name] = sha1
+
+    -- Upload required Redis Lua scripts used by security features
+    -- 1) ZAddRemExpire: ZADD score member; ZREMRANGEBYSCORE -inf min_score; EXPIRE ttl
+    local zadd_script = [[
+        local key = KEYS[1]
+        local score = tonumber(ARGV[1])
+        local member = ARGV[2]
+        -- ARGV[3] currently unused/reserved
+        local min_score = tonumber(ARGV[4])
+        local ttl = tonumber(ARGV[5]) or 0
+
+        redis.call('ZADD', key, score, member)
+        if min_score ~= nil then
+            redis.call('ZREMRANGEBYSCORE', key, '-inf', min_score)
+        end
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return 1
+    ]]
+    local zadd_sha1, zadd_err = nauthilus_redis.redis_upload_script(custom_pool, zadd_script, "ZAddRemExpire")
+    nauthilus_util.if_error_raise(zadd_err)
+    result["ZAddRemExpire"] = zadd_sha1
+
+    -- 2) HSetMultiExpire: HSET multiple fields then EXPIRE ttl
+    local hset_multi_script = [[
+        local key = KEYS[1]
+        local ttl = tonumber(ARGV[1]) or 0
+        local i = 2
+        while i <= #ARGV do
+            local field = ARGV[i]
+            local value = ARGV[i + 1]
+            redis.call('HSET', key, field, value)
+            i = i + 2
+        end
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return 1
+    ]]
+    local hset_multi_sha1, hset_multi_err = nauthilus_redis.redis_upload_script(custom_pool, hset_multi_script, "HSetMultiExpire")
+    nauthilus_util.if_error_raise(hset_multi_err)
+    result["HSetMultiExpire"] = hset_multi_sha1
+
+    -- 3) SAddMultiExpire: SADD multiple members then EXPIRE ttl
+    local sadd_multi_script = [[
+        local key = KEYS[1]
+        local ttl = tonumber(ARGV[1]) or 0
+        for i = 2, #ARGV do
+            redis.call('SADD', key, ARGV[i])
+        end
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return 1
+    ]]
+    local sadd_multi_sha1, sadd_multi_err = nauthilus_redis.redis_upload_script(custom_pool, sadd_multi_script, "SAddMultiExpire")
+    nauthilus_util.if_error_raise(sadd_multi_err)
+    result["SAddMultiExpire"] = sadd_multi_sha1
+
+    -- 4) ExistsHSetMultiExpire: if not EXISTS then HSET multiple then EXPIRE ttl
+    local exists_hset_script = [[
+        local key = KEYS[1]
+        if redis.call('EXISTS', key) == 1 then
+            return 0
+        end
+        local ttl = tonumber(ARGV[1]) or 0
+        local i = 2
+        while i <= #ARGV do
+            local field = ARGV[i]
+            local value = ARGV[i + 1]
+            redis.call('HSET', key, field, value)
+            i = i + 2
+        end
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return 1
+    ]]
+    local exists_hset_sha1, exists_hset_err = nauthilus_redis.redis_upload_script(custom_pool, exists_hset_script, "ExistsHSetMultiExpire")
+    nauthilus_util.if_error_raise(exists_hset_err)
+    result["ExistsHSetMultiExpire"] = exists_hset_sha1
+
+    -- 5) IncrementAndExpire: INCR key then EXPIRE ttl
+    local incr_script = [[
+        local key = KEYS[1]
+        local ttl = tonumber(ARGV[1]) or 0
+        local val = redis.call('INCR', key)
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return val
+    ]]
+    local incr_sha1, incr_err = nauthilus_redis.redis_upload_script(custom_pool, incr_script, "IncrementAndExpire")
+    nauthilus_util.if_error_raise(incr_err)
+    result["IncrementAndExpire"] = incr_sha1
+
+    -- 6) AddToSetAndExpire: SADD member then EXPIRE ttl
+    local addset_script = [[
+        local key = KEYS[1]
+        local member = ARGV[1]
+        local ttl = tonumber(ARGV[2]) or 0
+        redis.call('SADD', key, member)
+        if ttl ~= nil and ttl > 0 then
+            redis.call('EXPIRE', key, ttl)
+        end
+        return 1
+    ]]
+    local addset_sha1, addset_err = nauthilus_redis.redis_upload_script(custom_pool, addset_script, "AddToSetAndExpire")
+    nauthilus_util.if_error_raise(addset_err)
+    result["AddToSetAndExpire"] = addset_sha1
 
     -- common
     nauthilus_prometheus.create_gauge_vec("http_client_concurrent_requests_total", "Measure the number of total concurrent HTTP client requests", { "service" })
