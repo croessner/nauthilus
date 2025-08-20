@@ -211,11 +211,6 @@ function nauthilus_run_hook(logging)
         nauthilus_psnet.register_connection_target(geoip_policyd_addr, "remote", "geoippolicyd")
     end
 
-    -- neural.lua
-    if geoip_policyd_addr then
-        nauthilus_prometheus.create_histogram_vec("neural_duration_seconds", "HTTP request to the neural service", { "http" })
-    end
-
     -- failed_login_hotspot.lua
     nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_user_score", "Failed login ZSET score for username", { "username" })
     nauthilus_prometheus.create_gauge_vec("failed_login_hotspot_user_rank", "Rank within top failed-logins for username (lower is hotter)", { "username" })
@@ -233,6 +228,18 @@ function nauthilus_run_hook(logging)
     nauthilus_prometheus.create_counter_vec("security_stepup_challenges_issued_total", "Number of step-up challenges issued (hint flags set)", { })
     nauthilus_prometheus.create_counter_vec("security_pow_challenges_issued_total", "Number of proof-of-work challenges issued", { })
     nauthilus_prometheus.create_counter_vec("security_slow_attack_suspicions_total", "Heuristic slow-attack suspicions", { })
+
+    -- Ensure zero-valued time series exist so dashboards don't show N/A
+    -- We "touch" counters (instantiate with labels) without incrementing.
+    if nauthilus_prometheus.touch_counter then
+        -- Sprayed password tokens per window
+        nauthilus_prometheus.touch_counter("security_sprayed_password_tokens_total", { window = "24h" })
+        nauthilus_prometheus.touch_counter("security_sprayed_password_tokens_total", { window = "7d" })
+        -- Step-Up, PoW, and slow-attack suspicion (no labels)
+        nauthilus_prometheus.touch_counter("security_stepup_challenges_issued_total", { })
+        nauthilus_prometheus.touch_counter("security_pow_challenges_issued_total", { })
+        nauthilus_prometheus.touch_counter("security_slow_attack_suspicions_total", { })
+    end
 
     result.status = "finished"
 

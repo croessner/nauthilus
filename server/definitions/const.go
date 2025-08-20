@@ -1453,6 +1453,9 @@ const (
 	// LuaFnDecrementGauge is used to decrement a gauge in Prometheus.
 	LuaFnDecrementGauge = "decrement_gauge"
 
+	// LuaFnTouchCounter is used to pre-create a CounterVec child without incrementing (expose zero series).
+	LuaFnTouchCounter = "touch_counter"
+
 	// LuaFnRegisterConnectionTarget is used to register a connection target in the system.
 	LuaFnRegisterConnectionTarget = "register_connection_target"
 
