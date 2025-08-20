@@ -335,6 +335,30 @@ func decrementGauge(L *lua.LState) int {
 	return 0
 }
 
+// touchCounter creates a labeled child for a CounterVec without incrementing it.
+// This ensures a zero-valued time series is exposed to Prometheus on scrape.
+func touchCounter(L *lua.LState) int {
+	name := L.CheckString(1)
+	labels := L.CheckTable(2)
+
+	counter, exists := counters[name]
+	if !exists {
+		L.ArgError(1, "CounterVec not found")
+
+		return 0
+	}
+
+	labelValues := make(map[string]string)
+	labels.ForEach(func(key, value lua.LValue) {
+		labelValues[key.String()] = value.String()
+	})
+
+	// Create the child without incrementing; Go client will expose 0
+	counter.With(labelValues)
+
+	return 0
+}
+
 var exportsModPrometheus = map[string]lua.LGFunction{
 	definitions.LuaFnCreateSummaryVec:    createSummaryVec,
 	definitions.LuaFnCreateCounterVec:    createCounterVec,
@@ -349,6 +373,7 @@ var exportsModPrometheus = map[string]lua.LGFunction{
 	definitions.LuaFnSetGauge:            setGauge,
 	definitions.LuaFnIncrementGauge:      incrementGauge,
 	definitions.LuaFnDecrementGauge:      decrementGauge,
+	definitions.LuaFnTouchCounter:        touchCounter,
 }
 
 // LoaderModPrometheus loads and initializes the Prometheus module with metric-related functions for use in Lua scripts.

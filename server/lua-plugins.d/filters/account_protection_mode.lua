@@ -35,6 +35,9 @@ local nauthilus_redis = require("nauthilus_redis")
 dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 
+dynamic_loader("nauthilus_http_response")
+local nauthilus_http_response = require("nauthilus_http_response")
+
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
@@ -195,6 +198,13 @@ function nauthilus_call_filter(request)
 
         -- For HTTP/OIDC flows: we cannot detect protocol reliably here; set step-up hint flag
         set_stepup_required(client, username, "protection:" .. table.concat(m.hits, ","), MODE_TTL)
+
+        -- Expose a response header so frontends (e.g., Keycloak) can enforce a CAPTCHA/Step-Up
+        -- Header indicates that protection is required for this account
+        pcall(function()
+            nauthilus_http_response.set_http_response_header("X-Nauthilus-Protection", "stepup")
+            nauthilus_http_response.set_http_response_header("X-Nauthilus-Protection-Reason", table.concat(m.hits, ","))
+        end)
 
         -- Logging
         local logs = {

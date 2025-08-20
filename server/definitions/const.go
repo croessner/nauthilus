@@ -1055,6 +1055,9 @@ const (
 	// LuaModHTTPRequest is a constant representing the value "nauthilus_http_request".
 	LuaModHTTPRequest = "nauthilus_http_request"
 
+	// LuaModHTTPResponse is a constant representing the value "nauthilus_http_response".
+	LuaModHTTPResponse = "nauthilus_http_response"
+
 	// LuaModPrometheus is a constant that identifies the Prometheus module for monitoring and metrics collection.
 	LuaModPrometheus = "nauthilus_prometheus"
 
@@ -1227,6 +1230,15 @@ const (
 
 	// LuaFnGetHTTPPath retrieves the HTTP path from the incoming request.
 	LuaFnGetHTTPPath = "get_http_path"
+
+	// LuaFnSetHTTPResponseHeader sets an HTTP response header (replaces existing values)
+	LuaFnSetHTTPResponseHeader = "set_http_response_header"
+
+	// LuaFnAddHTTPResponseHeader adds a value to an HTTP response header
+	LuaFnAddHTTPResponseHeader = "add_http_response_header"
+
+	// LuaFnRemoveHTTPResponseHeader removes an HTTP response header
+	LuaFnRemoveHTTPResponseHeader = "remove_http_response_header"
 
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"
@@ -1452,6 +1464,9 @@ const (
 
 	// LuaFnDecrementGauge is used to decrement a gauge in Prometheus.
 	LuaFnDecrementGauge = "decrement_gauge"
+
+	// LuaFnTouchCounter is used to pre-create a CounterVec child without incrementing (expose zero series).
+	LuaFnTouchCounter = "touch_counter"
 
 	// LuaFnRegisterConnectionTarget is used to register a connection target in the system.
 	LuaFnRegisterConnectionTarget = "register_connection_target"
