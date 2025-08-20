@@ -363,7 +363,18 @@ func CustomRequestHandler(ctx *gin.Context) {
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
 		)
-		ctx.JSON(http.StatusOK, result)
+
+		// If Lua already wrote the response (headers/body), do not override with JSON
+		if ctx.Writer.Written() {
+			return
+		}
+
+		status := ctx.Writer.Status()
+		if status == 0 {
+			status = http.StatusOK
+		}
+
+		ctx.JSON(status, result)
 	} else {
 		util.DebugModule(
 			definitions.DbgHTTP,

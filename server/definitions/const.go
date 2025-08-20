@@ -1240,6 +1240,12 @@ const (
 	// LuaFnRemoveHTTPResponseHeader removes an HTTP response header
 	LuaFnRemoveHTTPResponseHeader = "remove_http_response_header"
 
+	// LuaFnSetHTTPStatus allows Lua to set the HTTP status code for the current response
+	LuaFnSetHTTPStatus = "set_http_status"
+
+	// LuaFnWriteHTTPResponseBody allows Lua to write raw data to the HTTP response body
+	LuaFnWriteHTTPResponseBody = "write_http_response_body"
+
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"
 
