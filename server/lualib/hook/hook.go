@@ -426,6 +426,12 @@ func registerModule(L *lua.LState, ctx context.Context, modName string, registry
 		} else {
 			return
 		}
+	case definitions.LuaModHTTPResponse:
+		if useGin {
+			L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx.(*gin.Context).Writer))
+		} else {
+			return
+		}
 	case definitions.LuaModLDAP:
 		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
