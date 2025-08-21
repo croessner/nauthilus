@@ -55,12 +55,16 @@ function nauthilus_call_feature(request)
         -- 1) Unique IPs per account using HLL for 24h and 7d
         if client_ip and client_ip ~= "" then
             local windows = { 86400, 604800 } -- 24h, 7d
+            -- Batch HLL updates and TTLs via pipeline
+            local pipe_cmds = {}
             for _, w in ipairs(windows) do
                 local hll_key = "ntc:hll:acct:" .. username .. ":ips:" .. w
-                -- PFADD ip
-                nauthilus_redis.redis_pfadd(client, hll_key, client_ip)
-                -- Set TTL ~ 2 * window
-                expire_key(client, hll_key, w * 2)
+                table.insert(pipe_cmds, {"pfadd", hll_key, client_ip})
+                table.insert(pipe_cmds, {"expire", hll_key, w * 2})
+            end
+            if #pipe_cmds > 0 then
+                local _, perr = nauthilus_redis.redis_pipeline(client, "write", pipe_cmds)
+                nauthilus_util.if_error_raise(perr)
             end
         end
 
@@ -68,11 +72,13 @@ function nauthilus_call_feature(request)
         if not authenticated then
             local zkey = "ntc:z:acct:" .. username .. ":fails"
             -- Use request id to avoid duplicates as member
-            nauthilus_redis.redis_zadd(client, zkey, now, req_id)
-            -- Trim older than 7d
-            nauthilus_redis.redis_zremrangebyscore(client, zkey, 0, now - 604800)
-            -- TTL ~ 2 * 7d
-            expire_key(client, zkey, 604800 * 2)
+            local pipe_cmds = {
+                {"zadd", zkey, now, req_id},
+                {"zremrangebyscore", zkey, "0", tostring(now - 604800)},
+                {"expire", zkey, 604800 * 2},
+            }
+            local _, perr = nauthilus_redis.redis_pipeline(client, "write", pipe_cmds)
+            nauthilus_util.if_error_raise(perr)
         end
     end
 
@@ -82,16 +88,20 @@ function nauthilus_call_feature(request)
     local pw_token = request.pw_token
     if pw_token and pw_token ~= "" then
         local windows = { 86400, 604800 } -- 24h, 7d
+        -- Batch window updates for spray tokens
+        local pipe_cmds = {}
         for _, w in ipairs(windows) do
             local zkey = "ntc:z:spray:pw:" .. w
-            -- Add token with current timestamp and prune window
-            nauthilus_redis.redis_zadd(client, zkey, now, pw_token)
-            nauthilus_redis.redis_zremrangebyscore(client, zkey, 0, now - w)
-            expire_key(client, zkey, w * 2)
+            table.insert(pipe_cmds, {"zadd", zkey, now, pw_token})
+            table.insert(pipe_cmds, {"zremrangebyscore", zkey, "0", tostring(now - w)})
+            table.insert(pipe_cmds, {"expire", zkey, w * 2})
 
-            -- Increment Prometheus counter for observed spray tokens
             local label = (w == 86400) and "24h" or "7d"
             nauthilus_prometheus.increment_counter("security_sprayed_password_tokens_total", { window = label })
+        end
+        if #pipe_cmds > 0 then
+            local _, perr = nauthilus_redis.redis_pipeline(client, "write", pipe_cmds)
+            nauthilus_util.if_error_raise(perr)
         end
     end
 

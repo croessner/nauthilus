@@ -43,40 +43,20 @@ function nauthilus_call_feature(request)
     -- Derive a robust username identifier (some protocols fill 'account')
     local username_value = request.username or request.account or ""
 
+    -- Batch all per-window updates into one pipeline to reduce round trips
+    local pipeline_cmds = {}
     for _, window in ipairs(window_sizes) do
-        -- Track authentication attempts using atomic Redis Lua script
         local key = "ntc:multilayer:global:auth_attempts:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-                custom_pool,
-            "", 
-            "ZAddRemExpire", 
-            {key}, 
-            {timestamp, request_id, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {key}, {timestamp, request_id, 0, timestamp - window, window * 2}})
 
-        -- Track unique IPs using atomic Redis Lua script
         local ip_key = "ntc:multilayer:global:unique_ips:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-                custom_pool,
-            "", 
-            "ZAddRemExpire", 
-            {ip_key}, 
-            {timestamp, request.client_ip, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
 
-        -- Track unique usernames using atomic Redis Lua script
         local user_key = "ntc:multilayer:global:unique_users:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-                custom_pool,
-            "", 
-            "ZAddRemExpire", 
-            {user_key}, 
-            {timestamp, username_value, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {user_key}, {timestamp, username_value, 0, timestamp - window, window * 2}})
     end
+    local _, pipe_err = nauthilus_redis.redis_pipeline(custom_pool, "write", pipeline_cmds)
+    nauthilus_util.if_error_raise(pipe_err)
 
     -- Store metrics for this authentication attempt using atomic Redis Lua script
     local metrics_key = "ntc:multilayer:global:metrics:" .. timestamp
@@ -101,9 +81,17 @@ function nauthilus_call_feature(request)
     local ip_key = "ntc:multilayer:global:unique_ips:" .. window
     local user_key = "ntc:multilayer:global:unique_users:" .. window
 
-    local attempts = nauthilus_redis.redis_zcount(custom_pool, key, timestamp - window, timestamp)
-    local unique_ips = nauthilus_redis.redis_zcount(custom_pool, ip_key, timestamp - window, timestamp)
-    local unique_users = nauthilus_redis.redis_zcount(custom_pool, user_key, timestamp - window, timestamp)
+    -- Fetch window counts in a single read pipeline
+    local read_cmds = {
+        {"zcount", key, tostring(timestamp - window), tostring(timestamp)},
+        {"zcount", ip_key, tostring(timestamp - window), tostring(timestamp)},
+        {"zcount", user_key, tostring(timestamp - window), tostring(timestamp)},
+    }
+    local res, read_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
+    nauthilus_util.if_error_raise(read_err)
+    local attempts = tonumber(res[1]) or 0
+    local unique_ips = tonumber(res[2]) or 0
+    local unique_users = tonumber(res[3]) or 0
 
     -- Calculate metrics
     local attempts_per_ip = attempts / math.max(unique_ips, 1)

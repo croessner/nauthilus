@@ -49,13 +49,13 @@ function nauthilus_call_action(request)
         -- Only track failed logins for usernames that don't have a recognized account
         -- This prevents legitimate users who mistype their password from being added to the list
         if not request.account or request.account == "" then
-            -- Increment the score for this username in the sorted set
-            local _, zib_err = nauthilus_redis.redis_zincrby(custom_pool, top_failed_logins_key, 1, username)
-            nauthilus_util.if_error_raise(zib_err)
-
-            -- Trim the sorted set to keep only the top 100 entries
-            local _, zrrbr_err = nauthilus_redis.redis_zremrangebyrank(custom_pool, top_failed_logins_key, 0, -101)
-            nauthilus_util.if_error_raise(zrrbr_err)
+            -- Increment the score and trim the set in a single Redis pipeline round-trip
+            local pipeline_cmds = {
+                {"zincrby", top_failed_logins_key, 1, username},
+                {"zremrangebyrank", top_failed_logins_key, 0, -101},
+            }
+            local _, pipe_err = nauthilus_redis.redis_pipeline(custom_pool, "write", pipeline_cmds)
+            nauthilus_util.if_error_raise(pipe_err)
         end
 
         -- Get result table

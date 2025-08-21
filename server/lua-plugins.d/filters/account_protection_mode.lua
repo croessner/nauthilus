@@ -76,15 +76,22 @@ end
 
 local function compute_under_protection(client, username)
     local key = "ntc:acct:" .. username .. ":longwindow"
-    local uniq24 = tonumber(nauthilus_redis.redis_hget(client, key, "uniq_ips_24h") or "0") or 0
-    local uniq7d = tonumber(nauthilus_redis.redis_hget(client, key, "uniq_ips_7d") or "0") or 0
-    local fail24 = tonumber(nauthilus_redis.redis_hget(client, key, "fails_24h") or "0") or 0
-    local fail7d = tonumber(nauthilus_redis.redis_hget(client, key, "fails_7d") or "0") or 0
+    -- Pipeline the related reads to minimize latency
+    local cmds = {
+        {"hget", key, "uniq_ips_24h"},
+        {"hget", key, "uniq_ips_7d"},
+        {"hget", key, "fails_24h"},
+        {"hget", key, "fails_7d"},
+        {"zscore", "ntc:multilayer:distributed_attack:accounts", username},
+    }
+    local res, err = nauthilus_redis.redis_pipeline(client, "read", cmds)
+    nauthilus_util.if_error_raise(err)
 
-    local attacked = false
-    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local z = nauthilus_redis.redis_zscore(client, attacked_accounts_key, username)
-    if z ~= nil then attacked = true end
+    local uniq24 = tonumber(res[1] or "0") or 0
+    local uniq7d = tonumber(res[2] or "0") or 0
+    local fail24 = tonumber(res[3] or "0") or 0
+    local fail7d = tonumber(res[4] or "0") or 0
+    local attacked = (res[5] ~= nil and res[5] ~= false and res[5] ~= "")
 
     local hits = {}
     if uniq24 >= THRESH_UNIQ24 then table.insert(hits, "uniq24") end
