@@ -139,15 +139,9 @@ function monitor_account_activity(username)
 end
 ```
 
-### 3. Real-time Anomaly Detection with Neural Network
+### 3. Real-time Anomaly Detection
 
-> **Note:** The Neural Network functionality has been dropped in version 1.8.0 and is no longer available.
-
-The existing neural network can be enhanced to detect distributed brute force attacks by:
-
-1. **Adding Global Features**: Incorporate system-wide metrics into the neural network
-2. **Temporal Pattern Analysis**: Analyze patterns over time to detect unusual spikes
-3. **Account-Specific Features**: Include features related to account targeting patterns
+Note: As of v1.8.0, the previous neural network component has been removed. Detection now relies on metrics- and rules-based approaches described in sections 1 and 2, combined with dynamic response mechanisms in section 4.
 
 ### 4. Dynamic Response Mechanisms
 
@@ -168,7 +162,7 @@ function apply_dynamic_response(threat_level, metrics)
         enable_global_captcha()
         enable_global_rate_limiting()
         enable_geographic_filtering(metrics.suspicious_regions)
-        increase_ml_sensitivity()
+        -- increase_ml_sensitivity() -- removed (ML dropped in v1.8.0)
     elseif threat_level >= 0.7 then
         -- High threat: Implement moderate measures
         enable_targeted_captcha(metrics.targeted_accounts)
@@ -259,7 +253,7 @@ The distributed brute force detection and mitigation system has been implemented
    - Uses atomic Redis operations to prevent race conditions
    - Sends email notifications to administrators about detected threats
 
-4. **Redis Lua Scripts for Atomic Operations** (`server/lua-plugins.d/init/init_neural.lua`)
+4. **Redis Lua Scripts for Atomic Operations** (uploaded during initialization)
    - Implements Redis Lua scripts for atomic operations to prevent race conditions
    - Ensures data consistency in high-concurrency scenarios
    - Provides better performance by reducing the number of Redis round-trips
@@ -287,7 +281,7 @@ The following Redis Lua scripts have been implemented:
    - Used for storing historical metrics only if they don't already exist
    - Ensures that historical data is not overwritten by concurrent operations
 
-These scripts are automatically uploaded to Redis during initialization by the `init_neural.lua` script.
+These scripts are automatically uploaded to Redis during standard initialization.
 
 ### Pending Tasks
 
@@ -369,12 +363,10 @@ To enable the distributed brute force detection and mitigation system, you need 
 
 ```yaml
 lua:
-  # Add the features for global pattern monitoring and neural network enhancement
+  # Add the features for global pattern monitoring
   features:
     - name: "global_pattern_monitoring"
       script_path: "/etc/nauthilus/lua-plugins.d/features/global_pattern_monitoring.lua"
-    - name: "neural_enhanced"
-      script_path: "/etc/nauthilus/lua-plugins.d/features/neural_enhanced.lua"
 
   # Add the filter for account-centric monitoring
   filters:
@@ -395,7 +387,6 @@ lua:
     # If you're using multiple init scripts (v1.7.7+)
     init_script_paths:
       - "/etc/nauthilus/lua-plugins.d/init/init.lua"
-      - "/etc/nauthilus/lua-plugins.d/init/init_neural.lua"
 ```
 
 ### Required Environment Variables
@@ -440,33 +431,14 @@ server:
       password: ""
 ```
 
-### Neural Network Configuration
-
-> **Note:** The Neural Network functionality has been dropped in version 1.8.0 and is no longer available.
-
-To optimize the neural network for distributed brute force detection, configure the neural network settings in the `nauthilus.yml` file:
-
-```yaml
-brute_force:
-  neural_network:
-    max_training_records: 20000
-    hidden_neurons: 12
-    activation_function: "tanh"
-    static_weight: 0.5
-    ml_weight: 0.5
-    threshold: 0.7
-    learning_rate: 0.005
-```
 
 ### Deployment Steps
 
 1. **Copy Lua Scripts**: Copy all the Lua scripts to your Nauthilus server:
    ```bash
    cp -r server/lua-plugins.d/features/global_pattern_monitoring.lua /etc/nauthilus/lua-plugins.d/features/
-   cp -r server/lua-plugins.d/features/neural_enhanced.lua /etc/nauthilus/lua-plugins.d/features/
    cp -r server/lua-plugins.d/filters/account_centric_monitoring.lua /etc/nauthilus/lua-plugins.d/filters/
    cp -r server/lua-plugins.d/actions/dynamic_response.lua /etc/nauthilus/lua-plugins.d/actions/
-   cp -r server/lua-plugins.d/init/init_neural.lua /etc/nauthilus/lua-plugins.d/init/
    ```
 
 2. **Update Configuration**: Update your `nauthilus.yml` file with the configuration shown above.

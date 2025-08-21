@@ -321,7 +321,6 @@ function nauthilus_run_hook(logging, session)
                 "captcha_enabled", "false",
                 "rate_limit_enabled", "false",
                 "monitoring_mode", "false",
-                "ml_threshold", "0.7", -- Reset to default
                 "threat_level", "0.0"  -- Reset threat level
             }
         )
