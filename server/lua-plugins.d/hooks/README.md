@@ -43,6 +43,25 @@ Access the plugin through HTTP requests with the following query parameters:
 
 Example: `https://nauthilus-server/api/v1/custom/distributed-brute-force-test?action=run_test&username=testuser&num_ips=30&country_code=RU`
 
+### hello-world-request-dump.lua
+A simple demonstration hook that returns an HTML page and dumps the incoming HTTP request.
+
+**Features:**
+- Renders a minimal, styled HTML page (no external assets required)
+- Shows HTTP method and path
+- Lists all request headers and their values
+- Displays the request body
+- Redacts password-like data in headers and body (e.g., password=xxxx)
+- Uses the new nauthilus_http_response API to set headers, status and body
+
+**Usage:**
+- Typical endpoint: GET /api/v1/custom/hello-world-request-dump
+- Send any request; the page will display all received data
+
+Example: `https://nauthilus-server/api/v1/custom/hello-world-request-dump`
+
+Note: Sensitive fields that look like passwords are masked for safety in the output.
+
 ### dovecot-session-cleaner.lua
 Manages Dovecot authentication sessions, cleaning up expired sessions and maintaining session data.
 
@@ -90,6 +109,11 @@ lua:
       http_method: "POST"
       script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
       roles: ["admin", "security"]
+
+    - http_location: "hello-world-request-dump"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/hello-world-request-dump.lua"
+      roles: ["admin"]
 ```
 
 ### Access Control with JWT Authentication
