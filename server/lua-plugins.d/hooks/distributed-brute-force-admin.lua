@@ -111,7 +111,8 @@ local function reset_account(redis_handle, username)
 
     -- Remove account from attacked accounts
     local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    nauthilus_redis.redis_zrem(redis_handle, attacked_accounts_key, username)
+    -- redis_zrem expects a table of members as the third argument
+    nauthilus_redis.redis_zrem(redis_handle, attacked_accounts_key, { username })
 
     -- Remove account from captcha accounts
     local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"

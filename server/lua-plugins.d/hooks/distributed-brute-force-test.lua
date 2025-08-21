@@ -172,7 +172,7 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     -- Mark account as under attack if many IPs are targeting it
     if num_ips > 10 then
         local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-        nauthilus_redis.redis_zadd(redis_handle, attacked_accounts_key, num_ips, username)
+        nauthilus_redis.redis_zadd(redis_handle, attacked_accounts_key, {num_ips, username})
         nauthilus_redis.redis_expire(redis_handle, attacked_accounts_key, 3600) -- Expire after 1 hour
     end
 
