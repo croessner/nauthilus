@@ -89,9 +89,16 @@ function nauthilus_call_feature(request)
     }
     local res, read_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
     nauthilus_util.if_error_raise(read_err)
-    local attempts = tonumber(res[1]) or 0
-    local unique_ips = tonumber(res[2]) or 0
-    local unique_users = tonumber(res[3]) or 0
+
+    -- Defensive: some environments may return nil for result on internal no-op conditions.
+    -- Ensure we don't index a non-table value.
+    if type(res) ~= "table" then
+        res = {}
+    end
+
+    local attempts = tonumber(res[1] or "0") or 0
+    local unique_ips = tonumber(res[2] or "0") or 0
+    local unique_users = tonumber(res[3] or "0") or 0
 
     -- Calculate metrics
     local attempts_per_ip = attempts / math.max(unique_ips, 1)

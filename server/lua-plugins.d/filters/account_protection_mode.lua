@@ -87,6 +87,12 @@ local function compute_under_protection(client, username)
     local res, err = nauthilus_redis.redis_pipeline(client, "read", cmds)
     nauthilus_util.if_error_raise(err)
 
+    -- Be defensive: some environments might return nil for result on internal no-op conditions;
+    -- ensure we handle it gracefully.
+    if type(res) ~= "table" then
+        res = {}
+    end
+
     local uniq24 = tonumber(res[1] or "0") or 0
     local uniq7d = tonumber(res[2] or "0") or 0
     local fail24 = tonumber(res[3] or "0") or 0
