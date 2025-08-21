@@ -141,5 +141,6 @@ function nauthilus_run_hook(logging, session)
         nauthilus_util.print_result(logging, result)
     end
 
-    return result
+    -- Returning nil tells the framework that we already handled the HTTP response
+    return nil
 end
