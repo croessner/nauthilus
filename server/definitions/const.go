@@ -1388,6 +1388,9 @@ const (
 	// LuaFnRedisScan is a constant defining the Redis command "SCAN" for incrementally iterating over keys.
 	LuaFnRedisScan = "redis_scan"
 
+	// LuaFnRedisPipeline exposes Redis pipelining to Lua to batch multiple commands in a single round-trip.
+	LuaFnRedisPipeline = "redis_pipeline"
+
 	// LuaFnRedisPFAdd represents the Lua function name for the Redis HyperLogLog PFADD command. Added in version 1.8.4
 	LuaFnRedisPFAdd = "redis_pfadd"
 

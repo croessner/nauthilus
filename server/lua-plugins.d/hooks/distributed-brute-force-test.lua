@@ -44,42 +44,24 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     for i = 1, num_ips do
         local ip = generate_random_ip()
 
+        -- Build batched pipeline commands to reduce round trips
+        local pipeline_cmds = {}
+
         -- Track global authentication metrics in sliding windows
         for _, window in ipairs(window_sizes) do
             local request_id = "test-" .. username .. "-" .. i
 
             -- Add authentication attempt
             local key = "nauthilus:global:auth_attempts:" .. window
-            local _, err_script = nauthilus_redis.redis_run_script(
-                redis_handle, 
-                "", 
-                "ZAddRemExpire", 
-                {key}, 
-                {timestamp, request_id, 0, timestamp - window, window * 2}
-            )
-            nauthilus_util.if_error_raise(err_script)
+            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {key}, {timestamp, request_id, 0, timestamp - window, window * 2}})
 
             -- Add unique IP
-            local ip_key = "nauthilus:global:unique_ips:" .. window
-            local _, err_script = nauthilus_redis.redis_run_script(
-                redis_handle, 
-                "", 
-                "ZAddRemExpire", 
-                {ip_key}, 
-                {timestamp, ip, 0, timestamp - window, window * 2}
-            )
-            nauthilus_util.if_error_raise(err_script)
+            local ip_key_w = "nauthilus:global:unique_ips:" .. window
+            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key_w}, {timestamp, ip, 0, timestamp - window, window * 2}})
 
             -- Add unique username
             local user_key = "nauthilus:global:unique_users:" .. window
-            local _, err_script = nauthilus_redis.redis_run_script(
-                redis_handle, 
-                "", 
-                "ZAddRemExpire", 
-                {user_key}, 
-                {timestamp, username, 0, timestamp - window, window * 2}
-            )
-            nauthilus_util.if_error_raise(err_script)
+            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {user_key}, {timestamp, username, 0, timestamp - window, window * 2}})
         end
 
         -- Track account-specific metrics
@@ -87,49 +69,24 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
 
         -- Add IP to account's unique IPs
         local ip_key = "nauthilus:account:" .. username .. ":ips:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
-            "", 
-            "ZAddRemExpire", 
-            {ip_key}, 
-            {timestamp, ip, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, ip, 0, timestamp - window, window * 2}})
 
         -- Add failed attempt for account
         local fail_key = "nauthilus:account:" .. username .. ":fails:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-            redis_handle, 
-            "", 
-            "ZAddRemExpire", 
-            {fail_key}, 
-            {timestamp, "test-fail-" .. i, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {fail_key}, {timestamp, "test-fail-" .. i, 0, timestamp - window, window * 2}})
 
-        -- Increment country count if country code is provided
+        -- Increment country count and country set if country code is provided
         if country_code and country_code ~= "" then
             local country_key = "ntc:multilayer:global:country:" .. country_code
-            local _, err_script = nauthilus_redis.redis_run_script(
-                redis_handle, 
-                "", 
-                "IncrementAndExpire", 
-                {country_key}, 
-                {24 * 3600} -- Expire after 24 hours
-            )
-            nauthilus_util.if_error_raise(err_script)
+            table.insert(pipeline_cmds, {"run_script", "IncrementAndExpire", {country_key}, {24 * 3600}})
 
-            -- Add country to set of countries
             local countries_key = "ntc:multilayer:global:countries"
-            local _, err_script = nauthilus_redis.redis_run_script(
-                redis_handle, 
-                "", 
-                "AddToSetAndExpire", 
-                {countries_key}, 
-                {country_code, 24 * 3600} -- Expire after 24 hours
-            )
-            nauthilus_util.if_error_raise(err_script)
+            table.insert(pipeline_cmds, {"run_script", "AddToSetAndExpire", {countries_key}, {country_code, 24 * 3600}})
         end
+
+        -- Execute the pipeline batch
+        local _, pipe_err = nauthilus_redis.redis_pipeline(redis_handle, "write", pipeline_cmds)
+        nauthilus_util.if_error_raise(pipe_err)
     end
 
     -- Update global metrics
