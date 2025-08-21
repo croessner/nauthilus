@@ -90,21 +90,6 @@ lua:
       http_method: "POST"
       script_path: "/etc/nauthilus/lua-plugins.d/hooks/distributed-brute-force-test.lua"
       roles: ["admin", "security"]
-
-    - http_location: "learning-mode"
-      http_method: "GET"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/learning-mode.lua"
-      roles: ["admin"]
-
-    - http_location: "neural-feedback"
-      http_method: "POST"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/neural-feedback.lua"
-      roles: ["admin", "security"]
-
-    - http_location: "train-neural-network"
-      http_method: "GET"
-      script_path: "/etc/nauthilus/lua-plugins.d/hooks/train-neural-network.lua"
-      roles: ["admin"]
 ```
 
 ### Access Control with JWT Authentication

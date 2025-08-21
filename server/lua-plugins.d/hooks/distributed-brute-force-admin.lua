@@ -86,8 +86,7 @@ local function reset_protection_measures(redis_handle)
             3600, -- Expire after 1 hour
             "captcha_enabled", "false",
             "rate_limit_enabled", "false",
-            "monitoring_mode", "false",
-            "ml_threshold", "0.7" -- Reset to default
+            "monitoring_mode", "false"
         }
     )
     nauthilus_util.if_error_raise(err_script)

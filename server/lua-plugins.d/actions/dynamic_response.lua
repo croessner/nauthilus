@@ -279,18 +279,6 @@ local function apply_severe_measures(custom_pool, metrics)
         nauthilus_util.if_error_raise(err_script)
     end
 
-    -- Increase ML sensitivity using atomic Redis Lua script
-    local _, err_script = nauthilus_redis.redis_run_script(
-        custom_pool, 
-        "", 
-        "HSetMultiExpire", 
-        {"ntc:multilayer:global:settings"}, 
-        {
-            3600, -- Enable for 1 hour
-            "ml_threshold", "0.5" -- Lower threshold for 1 hour
-        }
-    )
-    nauthilus_util.if_error_raise(err_script)
 
     -- Notify administrators
     notify_administrators("SEVERE THREAT ALERT", metrics)
