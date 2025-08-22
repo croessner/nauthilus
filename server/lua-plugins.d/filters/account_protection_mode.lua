@@ -87,17 +87,21 @@ local function compute_under_protection(client, username)
     local res, err = nauthilus_redis.redis_pipeline(client, "read", cmds)
     nauthilus_util.if_error_raise(err)
 
-    -- Be defensive: some environments might return nil for result on internal no-op conditions;
-    -- ensure we handle it gracefully.
-    if type(res) ~= "table" then
-        res = {}
+    -- Normalize structured pipeline results
+    if type(res) ~= "table" then res = {} end
+    local function val(i)
+        local e = res[i]
+        if type(e) ~= "table" then return nil end
+        if e.ok == false then return nil end
+        return e.value
     end
 
-    local uniq24 = tonumber(res[1] or "0") or 0
-    local uniq7d = tonumber(res[2] or "0") or 0
-    local fail24 = tonumber(res[3] or "0") or 0
-    local fail7d = tonumber(res[4] or "0") or 0
-    local attacked = (res[5] ~= nil and res[5] ~= false and res[5] ~= "")
+    local uniq24 = tonumber(val(1) or "0") or 0
+    local uniq7d = tonumber(val(2) or "0") or 0
+    local fail24 = tonumber(val(3) or "0") or 0
+    local fail7d = tonumber(val(4) or "0") or 0
+    local attacked_val = val(5)
+    local attacked = (attacked_val ~= nil and attacked_val ~= false and attacked_val ~= "")
 
     local hits = {}
     if uniq24 >= THRESH_UNIQ24 then table.insert(hits, "uniq24") end

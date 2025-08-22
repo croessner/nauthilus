@@ -90,15 +90,18 @@ function nauthilus_call_feature(request)
     local res, read_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
     nauthilus_util.if_error_raise(read_err)
 
-    -- Defensive: some environments may return nil for result on internal no-op conditions.
-    -- Ensure we don't index a non-table value.
-    if type(res) ~= "table" then
-        res = {}
+    -- Structured results
+    if type(res) ~= "table" then res = {} end
+    local function val(i)
+        local e = res[i]
+        if type(e) ~= "table" then return nil end
+        if e.ok == false then return nil end
+        return e.value
     end
 
-    local attempts = tonumber(res[1] or "0") or 0
-    local unique_ips = tonumber(res[2] or "0") or 0
-    local unique_users = tonumber(res[3] or "0") or 0
+    local attempts = tonumber(val(1) or "0") or 0
+    local unique_ips = tonumber(val(2) or "0") or 0
+    local unique_users = tonumber(val(3) or "0") or 0
 
     -- Calculate metrics
     local attempts_per_ip = attempts / math.max(unique_ips, 1)
@@ -107,7 +110,7 @@ function nauthilus_call_feature(request)
 
     -- Store current metrics using atomic Redis Lua script
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
-    local _, err_script = nauthilus_redis.redis_run_script(
+    local _, err_script_current = nauthilus_redis.redis_run_script(
             custom_pool,
         "", 
         "HSetMultiExpire", 
@@ -123,14 +126,14 @@ function nauthilus_call_feature(request)
             "last_updated", timestamp
         }
     )
-    nauthilus_util.if_error_raise(err_script)
+    nauthilus_util.if_error_raise(err_script_current)
 
     -- Store historical metrics (one entry per hour)
     local hour_key = os.date("%Y-%m-%d-%H", timestamp)
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
 
     -- Only update once per hour to avoid overwriting using atomic Redis Lua script
-    local _, err_script = nauthilus_redis.redis_run_script(
+    local _, err_script_historical = nauthilus_redis.redis_run_script(
             custom_pool,
         "", 
         "ExistsHSetMultiExpire", 
@@ -146,7 +149,7 @@ function nauthilus_call_feature(request)
             "timestamp", timestamp
         }
     )
-    nauthilus_util.if_error_raise(err_script)
+    nauthilus_util.if_error_raise(err_script_historical)
 
     -- Add log
     local logs = {}

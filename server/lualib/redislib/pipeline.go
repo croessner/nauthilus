@@ -17,6 +17,7 @@ package redislib
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -637,55 +638,149 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		// Convert results to Lua table
+		// Convert results to Lua table (structured per-entry: { ok=bool, value=?, err=string|nil })
 		out := L.NewTable()
 		for _, cmd := range captured {
-			// Attempt generic conversion via String() or dedicated Val methods
+			item := L.NewTable()
 			switch c := cmd.(type) {
 			case *redis.StringCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.IntCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.BoolCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.StatusCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.StringSliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.MapStringStringCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.FloatCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.SliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			case *redis.ZSliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			default:
-				// Fallback to Err or Text
-				if cmd.Err() != nil {
-					out.Append(lua.LString(cmd.Err().Error()))
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
 				} else {
-					out.Append(lua.LString(cmd.String()))
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.IntCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.BoolCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.StatusCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.StringSliceCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.MapStringStringCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.FloatCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.SliceCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.ZSliceCmd:
+				val, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", convert.GoToLuaValue(L, val))
+				}
+			case *redis.ScanCmd:
+				keys, cursor, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					valTbl := L.NewTable()
+					// keys
+					keysTbl := L.NewTable()
+					for _, k := range keys {
+						keysTbl.Append(lua.LString(k))
+					}
+					valTbl.RawSetString("keys", keysTbl)
+					valTbl.RawSetString("cursor", lua.LNumber(cursor))
+					item.RawSetString("value", valTbl)
+				}
+			default:
+				if cmd.Err() != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(cmd.Err().Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LString(cmd.String()))
 				}
 			}
+			out.Append(item)
 		}
 
 		L.Push(out)
