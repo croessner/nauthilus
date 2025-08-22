@@ -17,6 +17,7 @@ package redislib
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,27 @@ import (
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
+
+// setPipelineItem writes a standardized result object into item (ok, value|err)
+// This replaces the per-iteration closure to avoid re-allocations in the loop.
+func setPipelineItem(L *lua.LState, item *lua.LTable, val any, err error) {
+	if errors.Is(err, redis.Nil) {
+		item.RawSetString("ok", lua.LBool(true))
+		item.RawSetString("value", lua.LNil)
+
+		return
+	}
+
+	if err != nil {
+		item.RawSetString("ok", lua.LBool(false))
+		item.RawSetString("err", lua.LString(err.Error()))
+
+		return
+	}
+
+	item.RawSetString("ok", lua.LBool(true))
+	item.RawSetString("value", convert.GoToLuaValue(L, val))
+}
 
 // RedisPipeline provides a Lua API to execute multiple Redis commands in a single pipeline round-trip.
 // Usage from Lua:
@@ -197,10 +219,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zremrangebyscore":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZRemRangeByScore(ctx, key, min, max)
+				pipe.ZRemRangeByScore(ctx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zremrangebyrank":
@@ -213,10 +235,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zcount":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZCount(ctx, key, min, max)
+				pipe.ZCount(ctx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zscore":
@@ -351,10 +373,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zrangebyscore":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 				optsTbl, _ := rowTbl.RawGetInt(5).(*lua.LTable)
-				opts := &redis.ZRangeBy{Min: min, Max: max}
+				opts := &redis.ZRangeBy{Min: minStr, Max: maxStr}
 
 				if optsTbl != nil {
 					if off := optsTbl.RawGetString("offset"); off != lua.LNil {
@@ -637,55 +659,73 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		// Convert results to Lua table
+		// Convert results to Lua table (structured per-entry: { ok=bool, value=?, err=string|nil })
 		out := L.NewTable()
 		for _, cmd := range captured {
-			// Attempt generic conversion via String() or dedicated Val methods
+			item := L.NewTable()
+
 			switch c := cmd.(type) {
 			case *redis.StringCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.IntCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.BoolCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.StatusCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.StringSliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.MapStringStringCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.FloatCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.SliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
 			case *redis.ZSliceCmd:
-				val, _ := c.Result()
-
-				out.Append(convert.GoToLuaValue(L, val))
-			default:
-				// Fallback to Err or Text
-				if cmd.Err() != nil {
-					out.Append(lua.LString(cmd.Err().Error()))
+				val, err := c.Result()
+				setPipelineItem(L, item, val, err)
+			case *redis.ScanCmd:
+				keys, cursor, err := c.Result()
+				if errors.Is(err, redis.Nil) {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LNil)
+				} else if err != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(err.Error()))
 				} else {
-					out.Append(lua.LString(cmd.String()))
+					item.RawSetString("ok", lua.LBool(true))
+
+					valTbl := L.NewTable()
+
+					// keys
+					keysTbl := L.NewTable()
+					for _, k := range keys {
+						keysTbl.Append(lua.LString(k))
+					}
+
+					valTbl.RawSetString("keys", keysTbl)
+					valTbl.RawSetString("cursor", lua.LNumber(cursor))
+					item.RawSetString("value", valTbl)
+				}
+			default:
+				if cmd.Err() != nil {
+					item.RawSetString("ok", lua.LBool(false))
+					item.RawSetString("err", lua.LString(cmd.Err().Error()))
+				} else {
+					item.RawSetString("ok", lua.LBool(true))
+					item.RawSetString("value", lua.LString(cmd.String()))
 				}
 			}
+
+			out.Append(item)
 		}
 
 		L.Push(out)

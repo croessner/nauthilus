@@ -71,37 +71,84 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 	}
 
 	resTbl := gotResult.(*lua.LTable)
-	// Verify each pipelined result in order
-	// 1) set => "OK"
-	if v := resTbl.RawGetInt(1); v.String() != "OK" {
-		t.Errorf("result[1] = %v, want OK", v)
-	}
-	// 2) get => "1"
-	if v := resTbl.RawGetInt(2); v.String() != "1" {
-		t.Errorf("result[2] = %v, want 1", v)
-	}
-	// 3) incr => 1
-	if v := resTbl.RawGetInt(3); v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
-		t.Errorf("result[3] = %v, want 1", v)
-	}
-	// 4) hset => 1 (fields added)
-	if v := resTbl.RawGetInt(4); v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
-		t.Errorf("result[4] = %v, want 1", v)
-	}
-	// 5) hget => "v"
-	if v := resTbl.RawGetInt(5); v.String() != "v" {
-		t.Errorf("result[5] = %v, want v", v)
-	}
-	// 6) mget => {"v1", nil}
-	if v := resTbl.RawGetInt(6); v.Type() != lua.LTTable {
-		t.Errorf("result[6] expected table, got %v", v.Type())
-	} else {
-		arr := v.(*lua.LTable)
-		if arr.RawGetInt(1).String() != "v1" {
-			t.Errorf("result[6][1] = %v, want v1", arr.RawGetInt(1))
+	// Verify each pipelined result in order (structured entries)
+	// Helper to get entry fields
+	getEntry := func(i int) *lua.LTable {
+		v := resTbl.RawGetInt(i)
+		if v.Type() != lua.LTTable {
+			t.Fatalf("result[%d] expected table, got %v", i, v.Type())
 		}
-		if arr.RawGetInt(2) != lua.LNil {
-			t.Errorf("result[6][2] = %v, want nil", arr.RawGetInt(2))
+		return v.(*lua.LTable)
+	}
+	// 1) set => ok=true, value="OK"
+	{
+		it := getEntry(1)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[1].ok = %v, want true", it.RawGetString("ok"))
+		}
+		if it.RawGetString("value").String() != "OK" {
+			t.Errorf("result[1].value = %v, want OK", it.RawGetString("value"))
+		}
+	}
+	// 2) get => ok=true, value="1"
+	{
+		it := getEntry(2)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[2].ok = %v, want true", it.RawGetString("ok"))
+		}
+		if it.RawGetString("value").String() != "1" {
+			t.Errorf("result[2].value = %v, want 1", it.RawGetString("value"))
+		}
+	}
+	// 3) incr => ok=true, value=1
+	{
+		it := getEntry(3)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[3].ok = %v, want true", it.RawGetString("ok"))
+		}
+		v := it.RawGetString("value")
+		if v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
+			t.Errorf("result[3].value = %v, want 1", v)
+		}
+	}
+	// 4) hset => ok=true, value=1
+	{
+		it := getEntry(4)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[4].ok = %v, want true", it.RawGetString("ok"))
+		}
+		v := it.RawGetString("value")
+		if v.Type() != lua.LTNumber || int(lua.LVAsNumber(v)) != 1 {
+			t.Errorf("result[4].value = %v, want 1", v)
+		}
+	}
+	// 5) hget => ok=true, value="v"
+	{
+		it := getEntry(5)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[5].ok = %v, want true", it.RawGetString("ok"))
+		}
+		if it.RawGetString("value").String() != "v" {
+			t.Errorf("result[5].value = %v, want v", it.RawGetString("value"))
+		}
+	}
+	// 6) mget => ok=true, value={"v1", nil}
+	{
+		it := getEntry(6)
+		if it.RawGetString("ok") != lua.LTrue {
+			t.Errorf("result[6].ok = %v, want true", it.RawGetString("ok"))
+		}
+		localVal := it.RawGetString("value")
+		if localVal.Type() != lua.LTTable {
+			t.Errorf("result[6].value expected table, got %v", localVal.Type())
+		} else {
+			arr := localVal.(*lua.LTable)
+			if arr.RawGetInt(1).String() != "v1" {
+				t.Errorf("result[6].value[1] = %v, want v1", arr.RawGetInt(1))
+			}
+			if arr.RawGetInt(2) != lua.LNil {
+				t.Errorf("result[6].value[2] = %v, want nil", arr.RawGetInt(2))
+			}
 		}
 	}
 

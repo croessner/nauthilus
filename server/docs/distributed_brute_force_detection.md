@@ -488,3 +488,20 @@ Distributed brute force attacks represent a sophisticated threat that requires a
 The implemented approach leverages Nauthilus's existing strengths—Lua extensibility and Redis integration—while adding new dimensions of analysis that focus on system-wide patterns and account-specific behaviors. Note that neural network capabilities mentioned in this document are no longer available as of version 1.8.0.
 
 With these enhancements, Nauthilus is now able to detect and respond to distributed brute force attacks that would otherwise bypass traditional IP-based protection mechanisms. The system provides a comprehensive defense against sophisticated attackers using large pools of IP addresses to conduct brute force attacks.
+
+
+## Automatic exit from Monitoring mode (adaptation)
+
+To avoid remaining permanently in monitoring mode, the dynamic response now implements a hysteresis/decay mechanism:
+
+- When the computed threat_level remains low (< 0.3) for a sustained period, the system increments an ok_streak counter in Redis.
+- If this streak reaches a configurable threshold and there are no accounts currently marked under distributed attack, monitoring_mode is explicitly turned off.
+- Additional benignity checks ensure that global ratios look normal (e.g., ips_per_user low, unique_ips small) to prevent flapping.
+
+Environment variable to tune the behavior:
+- MONITORING_OK_STREAK_MIN (default: 10) — number of consecutive low-threat evaluations required before monitoring_mode will be switched off automatically.
+
+Keys used (prefixed by your configured Redis prefix, default "nauthilus:"):
+- ntc:multilayer:global:ok_streak — counter with TTL used to track consecutive low-threat windows.
+
+This approach complements the existing TTL-based expiry by also actively clearing monitoring_mode after sustained normal conditions.

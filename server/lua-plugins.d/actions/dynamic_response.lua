@@ -269,14 +269,14 @@ local function apply_severe_measures(custom_pool, metrics)
             table.insert(args, region)
         end
 
-        local _, err_script = nauthilus_redis.redis_run_script(
+        local _, err_script_regions = nauthilus_redis.redis_run_script(
             custom_pool, 
             "", 
             "SAddMultiExpire", 
             {"ntc:multilayer:global:blocked_regions"}, 
             args
         )
-        nauthilus_util.if_error_raise(err_script)
+        nauthilus_util.if_error_raise(err_script_regions)
     end
 
 
@@ -476,14 +476,14 @@ function nauthilus_call_action(request)
 
         -- Get total countries using atomic Redis Lua script
         local countries_key = "ntc:multilayer:global:countries"
-        local _, err_script = nauthilus_redis.redis_run_script(
+        local _, err_script_countries = nauthilus_redis.redis_run_script(
                 custom_pool, 
             "", 
             "AddToSetAndExpire", 
             {countries_key}, 
             {country_code, 24 * 3600} -- Expire after 24 hours
         )
-        nauthilus_util.if_error_raise(err_script)
+        nauthilus_util.if_error_raise(err_script_countries)
 
         local total_countries = nauthilus_redis.redis_scard(custom_pool, countries_key) or 1
 
@@ -634,6 +634,60 @@ function nauthilus_call_action(request)
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_threat_level", threat_level)
         nauthilus_builtin.custom_log_add(N .. "_response", "normal")
+    end
+
+    -- Adaptive reset/hysteresis for monitoring_mode to avoid getting stuck in permanent monitoring
+    local ok_threshold = tonumber(os.getenv("MONITORING_OK_STREAK_MIN") or "10")
+    local ok_streak_key = "ntc:multilayer:global:ok_streak"
+    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
+
+    local function disable_monitoring_mode()
+        local _, err_clear = nauthilus_redis.redis_run_script(
+            custom_pool,
+            "",
+            "HSetMultiExpire",
+            {"ntc:multilayer:global:settings"},
+            {
+                3600, -- keep visibility for 1h, but set to false
+                "monitoring_mode", "false"
+            }
+        )
+        nauthilus_util.if_error_raise(err_clear)
+
+        local info_logs = {}
+        info_logs.caller = N .. ".lua"
+        info_logs.level = "info"
+        info_logs.message = "Monitoring mode disabled after sustained normal activity"
+        info_logs.ok_streak_required = ok_threshold
+        nauthilus_util.print_result({ log_format = "json" }, info_logs)
+        nauthilus_builtin.custom_log_add(N .. "_monitoring_reset", "true")
+    end
+
+    -- Update OK streak based on current threat assessment
+    if threat_level < 0.3 then
+        local streak_val = nauthilus_redis.redis_incr(custom_pool, ok_streak_key)
+        local streak = tonumber(streak_val or "0") or 0
+        -- ensure streak key does not grow unbounded in idle periods
+        nauthilus_redis.redis_expire(custom_pool, ok_streak_key, 3600)
+
+        if streak >= ok_threshold then
+            -- Only disable monitoring if there are no currently attacked accounts
+            local attacked_accounts = nauthilus_redis.redis_zrange(custom_pool, attacked_accounts_key, 0, -1, "WITHSCORES") or {}
+            local any_attacked = nauthilus_util.table_length(attacked_accounts)
+
+            -- Require also that global ratios look benign to prevent flapping
+            local benign_ips_per_user = (metrics.ips_per_user or 0) < 2
+            local benign_unique_ips = (metrics.unique_ips or 0) < 50
+
+            if any_attacked == 0 and benign_ips_per_user and benign_unique_ips then
+                disable_monitoring_mode()
+                -- reset streak after action
+                nauthilus_redis.redis_del(custom_pool, ok_streak_key)
+            end
+        end
+    else
+        -- Elevated threat -> reset OK streak
+        nauthilus_redis.redis_del(custom_pool, ok_streak_key)
     end
 
     -- Store the current threat level in Redis for other components to use using atomic Redis Lua script
