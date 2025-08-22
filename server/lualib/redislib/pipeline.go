@@ -28,6 +28,27 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// setPipelineItem writes a standardized result object into item (ok, value|err)
+// This replaces the per-iteration closure to avoid re-allocations in the loop.
+func setPipelineItem(L *lua.LState, item *lua.LTable, val any, err error) {
+	if errors.Is(err, redis.Nil) {
+		item.RawSetString("ok", lua.LBool(true))
+		item.RawSetString("value", lua.LNil)
+
+		return
+	}
+
+	if err != nil {
+		item.RawSetString("ok", lua.LBool(false))
+		item.RawSetString("err", lua.LString(err.Error()))
+
+		return
+	}
+
+	item.RawSetString("ok", lua.LBool(true))
+	item.RawSetString("value", convert.GoToLuaValue(L, val))
+}
+
 // RedisPipeline provides a Lua API to execute multiple Redis commands in a single pipeline round-trip.
 // Usage from Lua:
 //
@@ -642,115 +663,35 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 		out := L.NewTable()
 		for _, cmd := range captured {
 			item := L.NewTable()
+
 			switch c := cmd.(type) {
 			case *redis.StringCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.IntCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.BoolCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.StatusCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.StringSliceCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.MapStringStringCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.FloatCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.SliceCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.ZSliceCmd:
 				val, err := c.Result()
-				if errors.Is(err, redis.Nil) {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", lua.LNil)
-				} else if err != nil {
-					item.RawSetString("ok", lua.LBool(false))
-					item.RawSetString("err", lua.LString(err.Error()))
-				} else {
-					item.RawSetString("ok", lua.LBool(true))
-					item.RawSetString("value", convert.GoToLuaValue(L, val))
-				}
+				setPipelineItem(L, item, val, err)
 			case *redis.ScanCmd:
 				keys, cursor, err := c.Result()
 				if errors.Is(err, redis.Nil) {
@@ -761,12 +702,15 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					item.RawSetString("err", lua.LString(err.Error()))
 				} else {
 					item.RawSetString("ok", lua.LBool(true))
+
 					valTbl := L.NewTable()
+
 					// keys
 					keysTbl := L.NewTable()
 					for _, k := range keys {
 						keysTbl.Append(lua.LString(k))
 					}
+
 					valTbl.RawSetString("keys", keysTbl)
 					valTbl.RawSetString("cursor", lua.LNumber(cursor))
 					item.RawSetString("value", valTbl)
@@ -780,6 +724,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					item.RawSetString("value", lua.LString(cmd.String()))
 				}
 			}
+
 			out.Append(item)
 		}
 
