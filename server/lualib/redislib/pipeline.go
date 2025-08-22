@@ -197,10 +197,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zremrangebyscore":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZRemRangeByScore(ctx, key, min, max)
+				pipe.ZRemRangeByScore(ctx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zremrangebyrank":
@@ -213,10 +213,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zcount":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZCount(ctx, key, min, max)
+				pipe.ZCount(ctx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zscore":
@@ -351,10 +351,10 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 			case "zrangebyscore":
 				key := rowTbl.RawGetInt(2).String()
-				min := rowTbl.RawGetInt(3).String()
-				max := rowTbl.RawGetInt(4).String()
+				minStr := rowTbl.RawGetInt(3).String()
+				maxStr := rowTbl.RawGetInt(4).String()
 				optsTbl, _ := rowTbl.RawGetInt(5).(*lua.LTable)
-				opts := &redis.ZRangeBy{Min: min, Max: max}
+				opts := &redis.ZRangeBy{Min: minStr, Max: maxStr}
 
 				if optsTbl != nil {
 					if off := optsTbl.RawGetString("offset"); off != lua.LNil {
