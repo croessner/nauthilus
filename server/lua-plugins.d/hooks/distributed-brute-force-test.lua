@@ -26,6 +26,56 @@ local time = require("time")
 
 local N = "distributed-brute-force-test"
 
+-- Ensure system start and warm-up settings exist; return settings table
+local function ensure_startup_settings(redis_handle)
+    local settings_key = "ntc:multilayer:global:settings"
+    local settings = nauthilus_redis.redis_hgetall(redis_handle, settings_key) or {}
+
+    -- system_started_at: unix timestamp
+    if not settings["system_started_at"] or settings["system_started_at"] == "" then
+        local now = os.time()
+        -- Persist only if missing
+        nauthilus_redis.redis_hset(redis_handle, settings_key, "system_started_at", tostring(now))
+        settings["system_started_at"] = tostring(now)
+    end
+
+    -- warmup_window_seconds: from env or default 86400 (24h)
+    local env_warmup = os.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS")
+    local default_warmup = tostring(86400)
+    local warmup_value = env_warmup and tostring(tonumber(env_warmup) or 0) or nil
+    if not warmup_value or tonumber(warmup_value) == nil or tonumber(warmup_value) <= 0 then
+        warmup_value = default_warmup
+    end
+
+    if not settings["warmup_window_seconds"] or settings["warmup_window_seconds"] == "" then
+        nauthilus_redis.redis_hset(redis_handle, settings_key, "warmup_window_seconds", warmup_value)
+        settings["warmup_window_seconds"] = warmup_value
+    end
+
+    return settings
+end
+
+-- Compute warm-up diagnostics table
+local function get_warmup(redis_handle)
+    local settings = ensure_startup_settings(redis_handle)
+    local now = os.time()
+    local started_at = tonumber(settings["system_started_at"]) or now
+    local warmup_window = tonumber(settings["warmup_window_seconds"]) or 86400
+    local uptime = math.max(0, now - started_at)
+    local progress = 0.0
+    if warmup_window > 0 then
+        progress = math.min(1.0, uptime / warmup_window)
+    end
+    return {
+        system_started_at = started_at,
+        uptime_seconds = uptime,
+        warmup_window_seconds = warmup_window,
+        warmup_progress = progress,
+        warmup_complete = progress >= 1.0,
+        settings = settings or {}
+    }
+end
+
 -- Helper function to generate random IP addresses
 local function generate_random_ip()
     local ip = math.random(1, 255) .. "." .. 
@@ -228,6 +278,13 @@ function nauthilus_run_hook(logging, session)
         result.username = username
         result.num_ips = num_ips
         result.country_code = country_code
+
+        -- Include warm-up diagnostics
+        local warmup = get_warmup(redis_handle)
+        result.warmup = warmup
+        if not warmup.warmup_complete then
+            result.message = result.message .. " (Note: system is in warm-up; sliding windows may not reflect steady-state yet.)"
+        end
     elseif action == "check_detection" then
         -- Get username parameter
         local username = nauthilus_http_request.get_http_query_param("username")
@@ -249,6 +306,13 @@ function nauthilus_run_hook(logging, session)
         result.message = "Detection check completed"
         result.username = username
         result.detection_result = detection_result
+
+        -- Include warm-up diagnostics
+        local warmup = get_warmup(redis_handle)
+        result.warmup = warmup
+        if not warmup.warmup_complete then
+            result.message = result.message .. " (Note: system is in warm-up; sliding windows may not reflect steady-state yet.)"
+        end
     elseif action == "run_test" then
         -- Get parameters
         local username = nauthilus_http_request.get_http_query_param("username")
@@ -316,6 +380,10 @@ function nauthilus_run_hook(logging, session)
         result.country_code = country_code
         result.detection_result = detection_result
 
+        -- Include warm-up diagnostics
+        local warmup = get_warmup(redis_handle)
+        result.warmup = warmup
+
         -- Determine test result
         if detection_result.attack_detected then
             result.test_result = "PASS"
@@ -323,6 +391,10 @@ function nauthilus_run_hook(logging, session)
         else
             result.test_result = "FAIL"
             result.test_message = "Distributed brute force attack was not detected"
+        end
+
+        if not warmup.warmup_complete then
+            result.test_message = result.test_message .. " (Note: system is in warm-up; sliding windows may not reflect steady-state yet.)"
         end
     else
         result.level = "error"

@@ -23,9 +23,41 @@ local nauthilus_redis = require("nauthilus_redis")
 
 local N = "distributed-brute-force-admin"
 
+-- Ensure system start and warm-up settings exist; return settings table
+local function ensure_startup_settings(redis_handle)
+    local settings_key = "ntc:multilayer:global:settings"
+    local settings = nauthilus_redis.redis_hgetall(redis_handle, settings_key) or {}
+
+    -- system_started_at: unix timestamp
+    if not settings["system_started_at"] or settings["system_started_at"] == "" then
+        local now = os.time()
+        -- Persist only if missing
+        nauthilus_redis.redis_hset(redis_handle, settings_key, "system_started_at", tostring(now))
+        settings["system_started_at"] = tostring(now)
+    end
+
+    -- warmup_window_seconds: from env or default 86400 (24h)
+    local env_warmup = os.getenv("NAUTHILUS_WARMUP_WINDOW_SECONDS")
+    local default_warmup = tostring(86400)
+    local warmup_value = env_warmup and tostring(tonumber(env_warmup) or 0) or nil
+    if not warmup_value or tonumber(warmup_value) == nil or tonumber(warmup_value) <= 0 then
+        warmup_value = default_warmup
+    end
+
+    if not settings["warmup_window_seconds"] or settings["warmup_window_seconds"] == "" then
+        nauthilus_redis.redis_hset(redis_handle, settings_key, "warmup_window_seconds", warmup_value)
+        settings["warmup_window_seconds"] = warmup_value
+    end
+
+    return settings
+end
+
 -- Helper function to get metrics from Redis
 local function get_metrics(redis_handle)
     local metrics = {}
+
+    -- Make sure startup-related settings exist
+    local settings = ensure_startup_settings(redis_handle)
 
     -- Get current threat level
     local threat_level = nauthilus_redis.redis_hget(redis_handle, "ntc:multilayer:global:settings", "threat_level") or "0.0"
@@ -67,8 +99,53 @@ local function get_metrics(redis_handle)
     local captcha_accounts = nauthilus_redis.redis_smembers(redis_handle, captcha_accounts_key)
     metrics.captcha_accounts = captcha_accounts or {}
 
-    -- Get current settings
-    local settings = nauthilus_redis.redis_hgetall(redis_handle, "ntc:multilayer:global:settings")
+    -- Compute warm-up diagnostics (aligned with dynamic_response.lua gating)
+    local now = os.time()
+    local warmup_seconds = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_SECONDS") or "3600")
+    local warmup_min_users = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS") or "1000")
+    local warmup_min_attempts = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS") or "10000")
+
+    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
+    local first_seen_val = nauthilus_redis.redis_get(redis_handle, first_seen_key)
+    local first_seen_ts = tonumber(first_seen_val or "0") or 0
+    if first_seen_ts == 0 then
+        -- Initialize on first call to provide immediate feedback to UI; best-effort with TTL 30d
+        nauthilus_redis.redis_set(redis_handle, first_seen_key, tostring(now), 30 * 24 * 3600)
+        first_seen_ts = now
+    end
+
+    local elapsed = math.max(0, now - first_seen_ts)
+    local seconds_progress = (warmup_seconds > 0) and math.min(1.0, elapsed / warmup_seconds) or 1.0
+    local users_progress = (warmup_min_users > 0) and math.min(1.0, (metrics.unique_users or 0) / warmup_min_users) or 1.0
+    local attempts_progress = (warmup_min_attempts > 0) and math.min(1.0, (metrics.attempts or 0) / warmup_min_attempts) or 1.0
+    local overall_progress = math.min(seconds_progress, users_progress, attempts_progress)
+
+    local warmed_up = (elapsed >= warmup_seconds) and ((metrics.unique_users or 0) >= warmup_min_users) and ((metrics.attempts or 0) >= warmup_min_attempts)
+
+    -- Legacy/top-level fields used by UI consumers
+    metrics.warmup_progress = overall_progress
+    metrics.warmup_complete = warmed_up
+
+    -- Detailed warm-up info for rich UIs
+    metrics.warmup = {
+        first_seen_ts = first_seen_ts,
+        now_ts = now,
+        elapsed_seconds = elapsed,
+        requirements = {
+            seconds = warmup_seconds,
+            min_users = warmup_min_users,
+            min_attempts = warmup_min_attempts
+        },
+        progress = {
+            seconds = seconds_progress,
+            users = users_progress,
+            attempts = attempts_progress,
+            overall = overall_progress
+        },
+        warmed_up = warmed_up
+    }
+
+    -- Keep startup settings for backward compatibility
     metrics.settings = settings or {}
 
     return metrics
@@ -86,7 +163,8 @@ local function reset_protection_measures(redis_handle)
             3600, -- Expire after 1 hour
             "captcha_enabled", "false",
             "rate_limit_enabled", "false",
-            "monitoring_mode", "false"
+            "monitoring_mode", "false",
+            "threat_level", "0.0"
         }
     )
     nauthilus_util.if_error_raise(err_script)
@@ -164,7 +242,11 @@ function nauthilus_run_hook(logging, session)
         if has_data then
             result.message = "Metrics retrieved successfully"
         else
-            result.message = "Metrics retrieved successfully, but no significant activity has been detected yet. This is normal if the system has just been set up or if there have been no authentication attempts."
+            if not metrics.warmup_complete then
+                result.message = "Metrics retrieved successfully. System is in warm-up; sliding windows may not reflect steady-state yet."
+            else
+                result.message = "Metrics retrieved successfully, but no significant activity has been detected yet. This can be normal on low-volume systems."
+            end
         end
         result.metrics = metrics
     elseif action == "reset_protection" then
