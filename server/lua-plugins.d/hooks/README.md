@@ -9,6 +9,7 @@ Provides administrative functions for managing distributed brute force protectio
 
 **Features:**
 - Retrieves security metrics from Redis for monitoring
+- Includes warm-up diagnostics aligned with dynamic_response gating (progress by seconds/users/attempts, overall progress, warmed_up)
 - Allows administrators to reset protection measures
 - Provides account-specific management functions
 - Returns structured JSON responses for integration with admin interfaces
@@ -17,8 +18,16 @@ Provides administrative functions for managing distributed brute force protectio
 **Usage:**
 Access the plugin through HTTP requests with the following query parameters:
 - `action=get_metrics`: Retrieves current security metrics
-- `action=reset_protection`: Resets all protection measures
+  - Response includes `metrics` object with fields like:
+    - `attempts`, `unique_ips`, `unique_users`, `ips_per_user`, `threat_level`
+    - Warm-up (from dynamic_response): `warmup` object with `requirements` (seconds, min_users, min_attempts), `progress` (seconds, users, attempts, overall), `first_seen_ts`, `elapsed_seconds`, `warmed_up`. Legacy top-level fields: `warmup_progress` (overall 0.0-1.0), `warmup_complete` (boolean)
+- `action=reset_protection`: Resets all protection measures (also resets `threat_level` to 0.0)
 - `action=reset_account&username=<username>`: Resets protection for a specific account
+
+Environment:
+- `DYNAMIC_RESPONSE_WARMUP_SECONDS` (optional): gating minimum time since first activity (default 3600)
+- `DYNAMIC_RESPONSE_WARMUP_MIN_USERS` (optional): minimum unique users observed (default 1000)
+- `DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS` (optional): minimum total auth attempts observed (default 10000)
 
 Example: `https://nauthilus-server/api/v1/custom/distributed-brute-force-admin?action=get_metrics`
 
@@ -31,6 +40,7 @@ A testing tool for simulating distributed brute force attacks to verify that pro
 - Configurable attack patterns and intensity
 - Provides detailed logging of test activities
 - Includes detection verification
+- Includes warm-up diagnostics in responses (result.warmup: system_started_at, uptime_seconds, warmup_window_seconds, warmup_progress, warmup_complete)
 
 **Usage:**
 Access the plugin through HTTP requests with the following query parameters:
