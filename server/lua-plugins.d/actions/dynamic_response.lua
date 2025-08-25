@@ -703,5 +703,28 @@ function nauthilus_call_action(request)
     )
     nauthilus_util.if_error_raise(err_script)
 
+    -- Enrich rt for downstream actions (e.g., telegram)
+    do
+        local rt = nauthilus_context.context_get("rt") or {}
+        if type(rt) == "table" then
+            -- Determine response string selected earlier via custom_log
+            local response = "normal"
+            -- Try to reflect thresholds
+            if threat_level >= 0.9 then
+                response = "severe"
+            elseif threat_level >= 0.7 then
+                -- warmed_up gating could have switched to moderate; best-effort use custom log hint not accessible here
+                response = "high"
+            elseif threat_level >= 0.5 then
+                response = "moderate"
+            end
+            rt.dynamic_response = {
+                threat_level = threat_level,
+                response = response,
+            }
+            nauthilus_context.context_set("rt", rt)
+        end
+    end
+
     return nauthilus_builtin.ACTION_RESULT_OK
 end

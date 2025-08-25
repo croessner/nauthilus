@@ -242,6 +242,24 @@ function nauthilus_call_filter(request)
         }
         nauthilus_util.print_result({ log_format = "json" }, logs)
 
+        -- Enrich rt so downstream actions (e.g., telegram) can include protection info
+        do
+            dynamic_loader("nauthilus_context")
+            local nauthilus_context = require("nauthilus_context")
+            local rt = nauthilus_context.context_get("rt") or {}
+            if type(rt) == "table" then
+                rt.account_protection = {
+                    active = true,
+                    reason = table.concat(m.hits, ","),
+                    backoff_level = backoff_level,
+                    delay_ms = applied_ms,
+                    ts = now,
+                }
+                rt.filter_account_protection_mode = true
+                nauthilus_context.context_set("rt", rt)
+            end
+        end
+
         -- Decide filter result: If authentication failed, we reject to enforce cooldown; if authenticated, accept
         if not request.authenticated then
             nauthilus_builtin.status_message_set("Temporary protection active")
