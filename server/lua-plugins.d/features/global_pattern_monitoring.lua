@@ -165,5 +165,25 @@ function nauthilus_call_feature(request)
 
     nauthilus_util.print_result({ log_format = "json" }, logs)
 
+    -- Enrich rt for downstream actions (e.g., telegram)
+    do
+        dynamic_loader("nauthilus_context")
+        local nauthilus_context = require("nauthilus_context")
+        local rt = nauthilus_context.context_get("rt") or {}
+        if type(rt) == "table" then
+            rt.feature_global_pattern = true
+            rt.global_pattern_info = {
+                attempts = attempts,
+                unique_ips = unique_ips,
+                unique_users = unique_users,
+                attempts_per_ip = attempts_per_ip,
+                attempts_per_user = attempts_per_user,
+                ips_per_user = ips_per_user,
+                last_updated = timestamp,
+            }
+            nauthilus_context.context_set("rt", rt)
+        end
+    end
+
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK
 end

@@ -166,7 +166,13 @@ function nauthilus_call_filter(request)
 
                 if nauthilus_util.is_table(rt) then
                     rt.filter_geoippolicyd = true
-
+                    -- Enrich rt with geoip details
+                    rt.geoip_info = {
+                        guid = response.guid or "",
+                        current_country_code = current_iso_code or "",
+                        iso_codes_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {},
+                        status = "reject",
+                    }
                     nauthilus_context.context_set("rt", rt)
                 end
 
@@ -179,6 +185,21 @@ function nauthilus_call_filter(request)
                 country = current_iso_code,
                 status = "accept",
             })
+
+            -- Also enrich rt on accept for downstream context
+            do
+                local rt = nauthilus_context.context_get("rt") or {}
+                if nauthilus_util.is_table(rt) then
+                    rt.filter_geoippolicyd = true
+                    rt.geoip_info = {
+                        guid = response.guid or "",
+                        current_country_code = current_iso_code or "",
+                        iso_codes_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {},
+                        status = "accept",
+                    }
+                    nauthilus_context.context_set("rt", rt)
+                end
+            end
         else
             return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
         end
