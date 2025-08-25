@@ -551,6 +551,17 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			r.StatusMessage = fr.statusText
 			statusSet = true
 		}
+
+		// Merge per-filter additional logs into the shared request logs for final logging
+		if len(fr.logs) > 0 {
+			if r.Logs == nil {
+				r.Logs = new(lualib.CustomLogKeyValue)
+			}
+
+			for i := range fr.logs {
+				*r.Logs = append(*r.Logs, fr.logs[i])
+			}
+		}
 	}
 
 	backendResult = mergedBackendResult

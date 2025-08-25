@@ -420,6 +420,17 @@ func (r *Request) executeScripts(ctx *gin.Context, _ *lua.LState, _ *lua.LTable)
 			r.StatusMessage = fr.statusText
 			statusSet = true
 		}
+
+		// Merge per-feature additional logs into the shared request logs for final logging
+		if len(fr.logs) > 0 {
+			if r.Logs == nil {
+				r.Logs = new(lualib.CustomLogKeyValue)
+			}
+
+			for i := range fr.logs {
+				*r.Logs = append(*r.Logs, fr.logs[i])
+			}
+		}
 	}
 
 	return triggered, abortFeatures, nil
