@@ -81,6 +81,10 @@ function nauthilus_call_filter(request)
         dynamic_loader("nauthilus_gll_json")
         local json = require("json")
 
+        -- Short-lived local cache to reduce outbound GEOIP policy requests under load
+        dynamic_loader("nauthilus_cache")
+        local nauthilus_cache = require("nauthilus_cache")
+
         local t = {}
 
         t.key = "client"
@@ -92,29 +96,38 @@ function nauthilus_call_filter(request)
         local payload, json_encode_err = json.encode(t)
         nauthilus_util.if_error_raise(json_encode_err)
 
-        nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+        local cache_key = "geoip:" .. (request.client_ip or "") .. ":" .. (request.account or "")
+        local response = nauthilus_cache.cache_get(cache_key)
 
-        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
-        local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
-            timeout = "10s",
-            headers = {
-                Accept = "*/*",
-                ["User-Agent"] = "Nauthilus",
-                ["Content-Type"] = "application/json",
-            },
-            body = payload,
-        })
+        if response == nil then
+            nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
-        nauthilus_prometheus.stop_timer(timer)
-        nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
-        nauthilus_util.if_error_raise(request_err)
+            local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
+            local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
+                timeout = "10s",
+                headers = {
+                    Accept = "*/*",
+                    ["User-Agent"] = "Nauthilus",
+                    ["Content-Type"] = "application/json",
+                },
+                body = payload,
+            })
 
-        if result.status_code ~= 202 then
-            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
+            nauthilus_prometheus.stop_timer(timer)
+            nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
+            nauthilus_util.if_error_raise(request_err)
+
+            if result.status_code ~= 202 then
+                nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
+            end
+
+            local decoded, err_jdec = json.decode(result.body)
+            nauthilus_util.if_error_raise(err_jdec)
+            response = decoded
+
+            -- Cache for a short TTL (30s) to keep decisions fresh while reducing HTTP load
+            nauthilus_cache.cache_set(cache_key, response, 30)
         end
-
-        local response, err_jdec = json.decode(result.body)
-        nauthilus_util.if_error_raise(err_jdec)
 
         if response.err == nil then
             local current_iso_code = ""

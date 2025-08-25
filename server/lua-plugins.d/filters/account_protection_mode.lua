@@ -41,6 +41,10 @@ local nauthilus_http_response = require("nauthilus_http_response")
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
+-- Local short-lived cache for protection computations (reduces Redis spikes; multi-instance safe)
+dynamic_loader("nauthilus_cache")
+local nauthilus_cache = require("nauthilus_cache")
+
 -- env helpers
 local function getenv_num(name, def)
     local v = tonumber(os.getenv(name) or "")
@@ -75,6 +79,13 @@ local function get_redis_client()
 end
 
 local function compute_under_protection(client, username)
+    -- Check short-lived in-process cache first
+    local ckey = "prot:" .. (username or "")
+    local cached = nauthilus_cache.cache_get(ckey)
+    if cached and type(cached) == "table" then
+        return cached.under, cached.metrics
+    end
+
     local key = "ntc:acct:" .. username .. ":longwindow"
     -- Pipeline the related reads to minimize latency
     local cmds = {
@@ -112,12 +123,17 @@ local function compute_under_protection(client, username)
 
     local under = (#hits > 0)
 
-    return under, {
+    local metrics = {
         uniq24 = uniq24, uniq7d = uniq7d,
         fail24 = fail24, fail7d = fail7d,
         attacked = attacked,
         hits = hits
     }
+
+    -- Cache result briefly (5s) to smooth spikes while keeping decisions fresh
+    nauthilus_cache.cache_set(ckey, { under = under, metrics = metrics }, 5)
+
+    return under, metrics
 end
 
 local function record_protection_state(client, username, reason, backoff_level, ttl)

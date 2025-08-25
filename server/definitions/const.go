@@ -1115,6 +1115,9 @@ const (
 	// HTTP related operations in the Nauthilus software.
 	LuaModGLLHTTP = "nauthilus_gll_http"
 
+	// LuaModCache represents the module name for the in-process cache exposed to Lua
+	LuaModCache = "nauthilus_cache"
+
 	// LuaModGLLHumanize is a constant that represents the Lua module name for the "nauthilus_gll_humanize" module.
 	LuaModGLLHumanize = "nauthilus_gll_humanize"
 
@@ -1834,3 +1837,27 @@ const (
 
 // DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
 const DefaultBackendName = "__meta_default__"
+
+// Cache module function names
+const (
+	// LuaFnCacheSet represents the function name for setting a cache entry
+	LuaFnCacheSet = "cache_set"
+	// LuaFnCacheGet represents the function name for getting a cache entry
+	LuaFnCacheGet = "cache_get"
+	// LuaFnCacheDelete represents the function name for deleting a cache entry
+	LuaFnCacheDelete = "cache_delete"
+	// LuaFnCacheExists represents the function name for checking if a cache entry exists
+	LuaFnCacheExists = "cache_exists"
+	// LuaFnCacheUpdate represents the function name for atomically updating a cache entry
+	LuaFnCacheUpdate = "cache_update"
+	// LuaFnCacheKeys represents the function name for listing cache keys
+	LuaFnCacheKeys = "cache_keys"
+	// LuaFnCacheSize represents the function name for retrieving current cache size
+	LuaFnCacheSize = "cache_size"
+	// LuaFnCacheFlush represents the function name for flushing the cache
+	LuaFnCacheFlush = "cache_flush"
+	// LuaFnCachePush represents the function name for pushing a value into a list under a key
+	LuaFnCachePush = "cache_push"
+	// LuaFnCachePopAll represents the function name for popping all values from a list under a key
+	LuaFnCachePopAll = "cache_pop_all"
+)

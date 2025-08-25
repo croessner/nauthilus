@@ -36,6 +36,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
+	"golang.org/x/sync/errgroup"
 )
 
 // LuaFeatures is a global variable that holds a collection of pre-compiled Lua features for the application.
@@ -246,84 +247,182 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 	return request
 }
 
-// executeScripts executes a series of Lua scripts associated with the request context and Lua state, handling defined features.
-// It manages Lua script execution within a timeout, processes errors, and updates execution flags: triggered and abortFeatures.
-func (r *Request) executeScripts(ctx *gin.Context, L *lua.LState, request *lua.LTable) (triggered bool, abortFeatures bool, err error) {
+// executeScripts executes all Lua feature scripts in parallel. It waits for all to finish,
+// then aggregates their results considering error, abort, and triggered semantics.
+func (r *Request) executeScripts(ctx *gin.Context, _ *lua.LState, _ *lua.LTable) (triggered bool, abortFeatures bool, err error) {
+	// Prepare synchronization primitives and results storage
+	type featResult struct {
+		name       string
+		triggered  bool
+		abort      bool
+		ret        int
+		err        error
+		logs       lualib.CustomLogKeyValue
+		statusText *string
+	}
+
+	var (
+		mu      sync.Mutex
+		results = make([]*featResult, 0, len(LuaFeatures.LuaScripts))
+	)
+
+	// Use errgroup for cleaner goroutine management and first-error propagation
+	g, egCtx := errgroup.WithContext(ctx)
+
+	// Fast cancel if request context already canceled
+	if stderrors.Is(ctx.Err(), context.Canceled) {
+		return false, false, ctx.Err()
+	}
+
 	for index := range LuaFeatures.LuaScripts {
-		util.DebugModule(definitions.DbgFeature,
-			definitions.LogKeyGUID, r.Session,
-			definitions.LogKeyMsg, "Executing feature script",
-			"name", LuaFeatures.LuaScripts[index].Name,
-		)
+		idx := index
+		feature := LuaFeatures.LuaScripts[idx]
 
-		if L.GetTop() != 0 {
-			L.SetTop(0)
-		}
+		g.Go(func() error {
+			util.DebugModule(definitions.DbgFeature,
+				definitions.LogKeyGUID, r.Session,
+				definitions.LogKeyMsg, "Executing feature script",
+				"name", feature.Name,
+			)
 
-		stopTimer := stats.PrometheusTimer(definitions.PromFeature, LuaFeatures.LuaScripts[index].Name)
+			// Per-feature Lua state
+			Llocal := luapool.Get()
+			defer luapool.Put(Llocal)
 
-		if stderrors.Is(ctx.Err(), context.Canceled) {
+			// Register dynamic loader for this state
+			r.registerDynamicLoader(Llocal, ctx)
+
+			// Per-feature globals and local logs/status
+			localLogs := new(lualib.CustomLogKeyValue)
+
+			var localStatus *string
+
+			globals := Llocal.NewTable()
+
+			globals.RawSet(lua.LString(definitions.LuaFeatureTriggerNo), lua.LBool(false))
+			globals.RawSet(lua.LString(definitions.LuaFeatureTriggerYes), lua.LBool(true))
+			globals.RawSet(lua.LString(definitions.LuaFeatureAbortNo), lua.LBool(false))
+			globals.RawSet(lua.LString(definitions.LuaFeatureAbortYes), lua.LBool(true))
+			globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
+			globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
+
+			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.AddCustomLog(localLogs)))
+			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
+
+			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
+
+			// Build per-feature request table from the common request
+			request := Llocal.NewTable()
+
+			r.CommonRequest.SetupRequest(request)
+
+			stopTimer := stats.PrometheusTimer(definitions.PromFeature, feature.Name)
+
+			luaCtx, luaCancel := context.WithTimeout(egCtx, viper.GetDuration("lua_script_timeout")*time.Second)
+			defer luaCancel()
+
+			Llocal.SetContext(luaCtx)
+
+			fr := &featResult{name: feature.Name, statusText: localStatus}
+
+			// Load package path and execute compiled script
+			if e := lualib.PackagePath(Llocal); e != nil {
+				if stopTimer != nil {
+					stopTimer()
+				}
+
+				return e
+			}
+
+			if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
+				if stopTimer != nil {
+					stopTimer()
+				}
+
+				return e
+			}
+
+			// Invoke nauthilus_call_feature if present
+			callFeaturesFunc := Llocal.GetGlobal(definitions.LuaFnCallFeature)
+			if callFeaturesFunc.Type() == lua.LTFunction {
+				if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
+					if stopTimer != nil {
+						stopTimer()
+					}
+
+					return e
+				} else {
+					ret := Llocal.ToInt(-1)
+					Llocal.Pop(1)
+					ab := Llocal.ToBool(-1)
+					Llocal.Pop(1)
+					tr := Llocal.ToBool(-1)
+					Llocal.Pop(1)
+					fr.ret = ret
+					fr.abort = ab
+					fr.triggered = tr
+				}
+			}
+
+			// Log per-feature outcome without touching shared r.Logs
+			fr.logs = *localLogs
+			logs := []any{
+				definitions.LogKeyGUID, r.Session,
+				"name", feature.Name,
+				definitions.LogKeyMsg, "Lua feature finished",
+				"triggered", fr.triggered,
+				"abort_features", fr.abort,
+				"result", func() string { return r.formatResult(fr.ret) }(),
+			}
+
+			if len(fr.logs) > 0 {
+				for i := range fr.logs {
+					logs = append(logs, fr.logs[i])
+				}
+			}
+
+			util.DebugModule(definitions.DbgFeature, logs...)
+
 			if stopTimer != nil {
 				stopTimer()
 			}
 
-			return
+			mu.Lock()
+			results = append(results, fr)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if e := g.Wait(); e != nil {
+		return false, false, e
+	}
+
+	// Aggregate results: prioritize error, then abort, then triggered
+	var statusSet bool
+	for _, fr := range results {
+		if fr.err != nil {
+			// Return the first error encountered
+			return false, false, fr.err
 		}
 
-		luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
-
-		L.SetContext(luaCtx)
-
-		if err = lualib.PackagePath(L); err != nil {
-			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
-
-			break
+		if fr.abort {
+			abortFeatures = true
 		}
 
-		if err = lualib.DoCompiledFile(L, LuaFeatures.LuaScripts[index].CompiledScript); err != nil {
-			r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
-
-			break
+		if fr.triggered {
+			triggered = true
 		}
 
-		// Check if the script has a nauthilus_call_feature function
-		callFeaturesFunc := L.GetGlobal(definitions.LuaFnCallFeature)
-
-		if callFeaturesFunc.Type() == lua.LTFunction {
-			if err = L.CallByParam(lua.P{
-				Fn:      L.GetGlobal(definitions.LuaFnCallFeature),
-				NRet:    3,
-				Protect: true,
-			}, request); err != nil {
-				r.handleError(luaCancel, err, LuaFeatures.LuaScripts[index].Name, stopTimer)
-
-				break
-			}
-
-			ret := L.ToInt(-1)
-			L.Pop(1)
-
-			abortFeatures = L.ToBool(-1)
-			L.Pop(1)
-
-			triggered = L.ToBool(-1)
-			L.Pop(1)
-
-			r.generateLog(triggered, abortFeatures, ret, LuaFeatures.LuaScripts[index].Name)
-		}
-
-		if stopTimer != nil {
-			stopTimer()
-		}
-
-		luaCancel()
-
-		if triggered || abortFeatures {
-			break
+		// Propagate a status message if set by any feature (take the first meaningful one)
+		if !statusSet && fr.statusText != nil {
+			r.StatusMessage = fr.statusText
+			statusSet = true
 		}
 	}
 
-	return
+	return triggered, abortFeatures, nil
 }
 
 // handleError logs the error message and cancels the Lua context.

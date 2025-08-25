@@ -486,3 +486,15 @@ Notes:
 Implementing these recommendations should significantly improve the performance of the Nauthilus authentication system. The focus should be on optimizing the most critical paths first, particularly LDAP connection management and Redis caching, as these are likely to provide the most immediate benefits. Regular performance testing and monitoring should be implemented to measure the impact of these changes and identify further optimization opportunities.
 
 Several optimizations have already been implemented, particularly in Redis connection management and caching, as well as request preprocessing. However, there are still many opportunities for further optimization, especially in LDAP connection management, parallel backend processing, and Lua script execution.
+
+
+## Status Update (2025-08-25)
+
+Based on recent changes in this repository:
+
+- Section 4.1 Asynchronous Script Execution: status is now partially implemented (⚠️).
+  - Implemented: Lua features and filters now execute in parallel using errgroup with per-script timeouts and first-error propagation; results are aggregated after all goroutines complete. This reduces end-to-end latency for requests with multiple scripts.
+  - Still open: result caching for deterministic scripts; optional script execution queue.
+- Minor code quality: resolved a variable shadowing issue in Lua filters (local variable renamed to avoid shadowing the named return parameter). This does not change TODO status items but improves maintainability.
+
+Note: The TODO list contains duplicated sections; the above update applies to both occurrences of Section 4.1 in this file.

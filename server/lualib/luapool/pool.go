@@ -91,6 +91,7 @@ func resetLuaState(L *lua.LState) {
 			L.SetField(loadedTable, definitions.LuaModDNS, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModNeural, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModPsnet, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModCache, lua.LNil)
 
 			// Clear GLua modules
 			L.SetField(loadedTable, definitions.LuaModGLuaCrypto, lua.LNil)

@@ -101,3 +101,66 @@ Configure the plugin through environment variables:
 **Compatibility Notes:**
 - Requires Nauthilus v1.8.2+ for the `nauthilus_password.generate_password_hash` function to be available to Lua.
 - The public documentation in the nauthilus_website repository should reflect these changes (v1.8.2).
+
+
+### clickhouse.lua
+Exports metrics about non-authenticated requests (including those without an existing account) to ClickHouse using batched inserts.
+
+Features:
+- Mirrors metrics/fields collected by telegram.lua, but does not require an existing account (account can be "n/a").
+- Batches rows with the in-process nauthilus_cache to reduce HTTP insert overhead.
+- Uses glua_http (cjoudrey/gluahttp) for HTTP POST to ClickHouse.
+
+ClickHouse table schema (JSONEachRow):
+```
+CREATE TABLE IF NOT EXISTS nauthilus.failed_logins (
+  ts                 String,
+  session            String,
+  client_ip          String,
+  hostname           String,
+  proto              String,
+  display_name       String,
+  account            String,
+  unique_user_id     String,
+  username           String,
+  password_hash      String,
+  pwnd_info          String,
+  brute_force_bucket String,
+  failed_login_count String,
+  failed_login_rank  String,
+  failed_login_recognized String,
+  geoip_guid         String,
+  geoip_country      String,
+  geoip_iso_codes    String,
+  geoip_status       String,
+  gp_attempts        String,
+  gp_unique_ips      String,
+  gp_unique_users    String,
+  gp_ips_per_user    String,
+  prot_active        String,
+  prot_reason        String,
+  prot_backoff       String,
+  prot_delay_ms      String,
+  dyn_threat         String,
+  dyn_response       String
+) Engine = MergeTree
+ORDER BY (ts)
+SETTINGS index_granularity = 8192;
+```
+Notes:
+- All fields are stored as String for schema stability; CAST at query-time if needed.
+
+Configuration (environment variables):
+- CLICKHOUSE_INSERT_URL: Full HTTP endpoint including the INSERT and FORMAT JSONEachRow, e.g.
+  http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow
+- CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: Optional; sent via X-ClickHouse-User/Key headers.
+- CLICKHOUSE_BATCH_SIZE: Optional batch size (default 100).
+- CLICKHOUSE_CACHE_KEY: Optional cache key for batching list (default clickhouse:batch:failed_logins).
+
+Batching details:
+- The action pushes JSON-encoded rows via nauthilus_cache.cache_push(CLICKHOUSE_CACHE_KEY, row_json).
+- When the heuristics suggest the threshold is reached, it flushes with nauthilus_cache.cache_pop_all and sends one NDJSON body (one JSON per line).
+- On HTTP errors, rows are requeued best-effort with nauthilus_cache.cache_push.
+
+Enabling the action:
+- Ensure your post-actions configuration invokes server/lua-plugins.d/actions/clickhouse.lua after authentication processing.
