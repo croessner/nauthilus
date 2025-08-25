@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/feature"
@@ -288,6 +289,9 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 	core.SaveStatsToRedis(ctx)
 
 	level.Debug(log.Logger).Log(definitions.LogKeyMsg, "Shutdown complete")
+
+	// Stop background janitors and process-wide resources
+	lualib.StopGlobalCache()
 
 	closeChannels()
 
