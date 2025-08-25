@@ -63,6 +63,10 @@ function nauthilus_call_action(request)
         dynamic_loader("nauthilus_gll_template")
         local template = require("template")
 
+        -- In-process cache to reduce Redis/HTTP for repeated checks (multi-instance safe via TTL)
+        dynamic_loader("nauthilus_cache")
+        local nauthilus_cache = require("nauthilus_cache")
+
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)
         local hash = string.lower(crypto.sha1(request.password))
 
@@ -75,11 +79,28 @@ function nauthilus_call_action(request)
             nauthilus_util.if_error_raise(err_redis_client)
         end
 
+        -- Fast-path: check local cache first to avoid Redis/HTTP on repeated attempts
+        local cache_key = "hibp:" .. (request.account or "") .. ":" .. hash:sub(1, 5)
+        local cached = nauthilus_cache.cache_get(cache_key)
+        if cached ~= nil then
+            if nauthilus_util.is_number(cached) and cached > 0 then
+                nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cached)
+                nauthilus_builtin.custom_log_add(N .. "_result", "leaked")
+            end
+
+            return nauthilus_builtin.ACTION_RESULT_OK
+        end
+
         local redis_hash_count, err_redis_hget = nauthilus_redis.redis_hget(custom_pool, redis_key, hash:sub(1, 5), "number")
         nauthilus_util.if_error_raise(err_redis_hget)
 
         if redis_hash_count then
             if nauthilus_util.is_number(redis_hash_count) then
+                -- Seed local cache for short TTL to reduce repeated lookups across processes
+                -- Positive: 3600s, Negative: 600s
+                local ttl = (redis_hash_count > 0) and 3600 or 600
+                nauthilus_cache.cache_set(cache_key, redis_hash_count, ttl)
+
                 if redis_hash_count > 0 then
                     -- Required by telegram.lua
                     nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. redis_hash_count)
@@ -117,6 +138,9 @@ function nauthilus_call_action(request)
 
                 local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
+
+                -- Update in-process cache for positive hit (1h TTL)
+                nauthilus_cache.cache_set(cache_key, tonumber(cmp_hash[2]) or 0, 3600)
 
                 -- Required by telegram.lua
                 nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
@@ -187,6 +211,9 @@ function nauthilus_call_action(request)
 
         local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 86400)
         nauthilus_util.if_error_raise(err_redis_expire)
+
+        -- Cache negative result shortly to avoid repeated HTTP lookups
+        nauthilus_cache.cache_set(cache_key, 0, 600)
     end
 
     return nauthilus_builtin.ACTION_RESULT_OK
