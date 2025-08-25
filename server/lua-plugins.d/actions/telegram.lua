@@ -123,8 +123,8 @@ function nauthilus_call_action(request)
         pwnd_info = pwnd
     end
 
-    -- Only send if request.account is set
-    if send_message and request.account and request.account ~= "" then
+    -- Only send if authentication failed AND account is set
+    if send_message and (not request.authenticated) and request.account and request.account ~= "" then
         dynamic_loader("nauthilus_prometheus")
         local nauthilus_prometheus = require("nauthilus_prometheus")
 
