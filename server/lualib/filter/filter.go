@@ -17,7 +17,6 @@ package filter
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
+	"golang.org/x/sync/errgroup"
 )
 
 // httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
@@ -352,109 +352,6 @@ func removeFromBackendResult(attributes *[]string) lua.LGFunction {
 	}
 }
 
-// setGlobals initializes Lua global variables and functions for the given request and state.
-func setGlobals(r *Request, L *lua.LState) {
-	r.Logs = new(lualib.CustomLogKeyValue)
-
-	globals := L.NewTable()
-
-	globals.RawSet(lua.LString(definitions.LuaFilterAccept), lua.LBool(false))
-	globals.RawSet(lua.LString(definitions.LuaFilterREJECT), lua.LBool(true))
-	globals.RawSet(lua.LString(definitions.LuaFilterResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(definitions.LuaFilterResultFail), lua.LNumber(1))
-
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
-	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-
-	L.SetGlobal(definitions.LuaDefaultTable, globals)
-}
-
-// setRequest constructs a new lua.LTable and assigns fields based on the supplied Request struct 'r'.
-// Upon completion, it returns the constructed lua.LTable.
-func setRequest(r *Request, L *lua.LState) *lua.LTable {
-	request := L.NewTable()
-
-	r.CommonRequest.SetupRequest(request)
-
-	return request
-}
-
-// executeScriptWithinContext runs a Lua script within a provided execution context and Lua state.
-// It uses a timeout configuration to limit script execution time.
-// The function sets up the Lua state, executes the script, and processes the result.
-// Returns a boolean indicating success and an error in case of failure.
-func executeScriptWithinContext(request *lua.LTable, script *LuaFilter, r *Request, ctx *gin.Context, L *lua.LState) (bool, error) {
-	var err error
-
-	stopTimer := stats.PrometheusTimer(definitions.PromFilter, script.Name)
-
-	if stopTimer != nil {
-		defer stopTimer()
-	}
-
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration(definitions.LogKeyLuaScripttimeout)*time.Second)
-
-	defer luaCancel()
-
-	L.SetContext(luaCtx)
-
-	packagePathErr := lualib.PackagePath(L)
-	if packagePathErr != nil {
-		return false, packagePathErr
-	}
-
-	scriptErr := lualib.DoCompiledFile(L, script.CompiledScript)
-	if scriptErr != nil {
-		return false, scriptErr
-	}
-
-	filterFunc := L.GetGlobal(definitions.LuaFnCallFilter)
-
-	if filterFunc.Type() == lua.LTFunction {
-		callErr := L.CallByParam(lua.P{Fn: L.GetGlobal(definitions.LuaFnCallFilter), NRet: 2, Protect: true}, request)
-		if callErr != nil {
-			return false, callErr
-		}
-
-		result := L.ToInt(-1)
-		L.Pop(1)
-
-		action := L.ToBool(-1)
-		L.Pop(1)
-
-		logResult(r, script, action, result)
-
-		if action {
-			return true, err
-		}
-	}
-
-	return false, err
-}
-
-// logResult logs the completion of a Lua filter execution including action taken, result, and optional custom logs.
-func logResult(r *Request, script *LuaFilter, action bool, ret int) {
-	resultMap := map[int]string{definitions.ResultOk: "ok", definitions.ResultFail: "fail"}
-
-	logs := []any{
-		definitions.LogKeyGUID, r.Session,
-		"name", script.Name,
-		definitions.LogKeyMsg, "Lua filter finished",
-		"action", action,
-		"result", resultMap[ret],
-	}
-
-	if ret != 0 {
-		if r.Logs != nil {
-			for index := range *r.Logs {
-				logs = append(logs, (*r.Logs)[index])
-			}
-		}
-	}
-
-	util.DebugModule(definitions.DbgFilter, logs...)
-}
-
 // mergeMaps merges 2 maps into one. If same key exists in both maps, value from m2 is used.
 func mergeMaps(m1, m2 map[any]any) map[any]any {
 	result := make(map[any]any)
@@ -470,25 +367,8 @@ func mergeMaps(m1, m2 map[any]any) map[any]any {
 	return result
 }
 
-// mapsEqual checks if two maps are equal by comparing their key-value pairs.
-// It returns true if the maps are equal, and false otherwise.
-func mapsEqual(m1, m2 map[any]any) bool {
-	if len(m1) != len(m2) {
-		return false
-	}
-
-	for k, v := range m1 {
-		if v2, ok := m2[k]; !ok || v != v2 {
-			return false
-		}
-	}
-
-	return true
-}
-
-// CallFilterLua executes predefined Lua filter scripts in a secured Lua state using the provided Gin context and request.
-// It evaluates each script sequentially, merging backend results and attributes for successful executions.
-// Returns a boolean indicating action, the merged backend result, a list of remove attributes, and an error if any occur.
+// CallFilterLua executes Lua filter scripts in parallel. It merges backend results and remove-attributes
+// from all filters, returns action=true if any filter requested action, and returns the first error if any.
 func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
 	startTime := time.Now()
 	defer func() {
@@ -496,6 +376,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		if r.Logs == nil {
 			r.Logs = new(lualib.CustomLogKeyValue)
 		}
+
 		r.Logs.Set(definitions.LogKeyFilterLatency, fmt.Sprintf("%v", latency))
 	}()
 
@@ -503,62 +384,177 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		return false, nil, nil, errors.ErrNoFiltersDefined
 	}
 
-	backendResult = &lualib.LuaBackendResult{}
-	removeAttributes = make([]string, 0)
-
 	LuaFilters.Mu.RLock()
-
 	defer LuaFilters.Mu.RUnlock()
 
-	L := luapool.Get()
+	// Structure to collect per-filter results
+	type filtResult struct {
+		name            string
+		action          bool
+		ret             int
+		err             error
+		logs            lualib.CustomLogKeyValue
+		statusText      *string
+		backendResult   *lualib.LuaBackendResult
+		removeAttrsList []string
+	}
 
-	defer luapool.Put(L)
+	var (
+		mu      sync.Mutex
+		results = make([]*filtResult, 0, len(LuaFilters.LuaScripts))
+	)
 
-	registerDynamicLoader(L, ctx, r, &backendResult, &removeAttributes)
+	g, egCtx := errgroup.WithContext(ctx)
 
-	lualib.RegisterBackendResultType(L, definitions.LuaBackendResultAttributes)
-	setGlobals(r, L)
+	for _, script := range LuaFilters.LuaScripts {
+		sc := script
+		g.Go(func() error {
+			// Per-filter state
+			Llocal := luapool.Get()
+			defer luapool.Put(Llocal)
 
-	request := setRequest(r, L)
+			// Local log and status to avoid races on r.Logs / r.StatusMessage
+			localLogs := new(lualib.CustomLogKeyValue)
+			var localStatus *string
 
+			// Local backend result and remove-attributes that this filter may set
+			localBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+			localRemoveAttrs := make([]string, 0)
+
+			// Register dynamic loader and backend result type for this state
+			registerDynamicLoader(Llocal, ctx, r, &localBackendResult, &localRemoveAttrs)
+			lualib.RegisterBackendResultType(Llocal, definitions.LuaBackendResultAttributes)
+
+			// Globals for this state
+			globals := Llocal.NewTable()
+
+			globals.RawSet(lua.LString(definitions.LuaFilterAccept), lua.LBool(false))
+			globals.RawSet(lua.LString(definitions.LuaFilterREJECT), lua.LBool(true))
+			globals.RawSet(lua.LString(definitions.LuaFilterResultOk), lua.LNumber(0))
+			globals.RawSet(lua.LString(definitions.LuaFilterResultFail), lua.LNumber(1))
+
+			globals.RawSetString(definitions.LuaFnAddCustomLog, Llocal.NewFunction(lualib.AddCustomLog(localLogs)))
+			globals.RawSetString(definitions.LuaFnSetStatusMessage, Llocal.NewFunction(lualib.SetStatusMessage(&localStatus)))
+
+			Llocal.SetGlobal(definitions.LuaDefaultTable, globals)
+
+			// Build request table
+			request := Llocal.NewTable()
+
+			r.CommonRequest.SetupRequest(request)
+
+			// Timing and context
+			stopTimer := stats.PrometheusTimer(definitions.PromFilter, sc.Name)
+
+			luaCtx, luaCancel := context.WithTimeout(egCtx, viper.GetDuration(definitions.LogKeyLuaScripttimeout)*time.Second)
+			defer luaCancel()
+
+			Llocal.SetContext(luaCtx)
+
+			fr := &filtResult{name: sc.Name, statusText: localStatus, backendResult: localBackendResult}
+
+			// Execute script
+			if e := lualib.PackagePath(Llocal); e != nil {
+				if stopTimer != nil {
+					stopTimer()
+				}
+
+				return e
+			}
+
+			if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
+				if stopTimer != nil {
+					stopTimer()
+				}
+
+				return e
+			}
+
+			// Call filter function if present
+			filterFunc := Llocal.GetGlobal(definitions.LuaFnCallFilter)
+			if filterFunc.Type() == lua.LTFunction {
+				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
+					if stopTimer != nil {
+						stopTimer()
+					}
+
+					return e
+				}
+
+				ret := Llocal.ToInt(-1)
+				Llocal.Pop(1)
+				takeAction := Llocal.ToBool(-1)
+				Llocal.Pop(1)
+				fr.ret = ret
+				fr.action = takeAction
+			}
+
+			// Snapshot local logs and remove-attrs for aggregation
+			fr.logs = *localLogs
+			fr.removeAttrsList = localRemoveAttrs
+
+			// Emit debug log for this filter
+			logs := []any{definitions.LogKeyGUID, r.Session, "name", sc.Name, definitions.LogKeyMsg, "Lua filter finished", "action", fr.action, "result", func() string {
+				if fr.ret == 0 {
+					return "ok"
+				} else if fr.ret == 1 {
+					return "fail"
+				}
+
+				return fmt.Sprintf("unknown(%d)", fr.ret)
+			}()}
+
+			if len(fr.logs) > 0 {
+				for i := range fr.logs {
+					logs = append(logs, fr.logs[i])
+				}
+			}
+
+			util.DebugModule(definitions.DbgFilter, logs...)
+
+			if stopTimer != nil {
+				stopTimer()
+			}
+
+			mu.Lock()
+			results = append(results, fr)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if e := g.Wait(); e != nil {
+		return false, nil, nil, e
+	}
+
+	// Aggregate results
 	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
 	mergedRemoveAttributes := config.NewStringSet()
 
-	for _, script := range LuaFilters.LuaScripts {
-		if L.GetTop() != 0 {
-			L.SetTop(0)
+	var statusSet bool
+
+	for _, fr := range results {
+		if fr.action {
+			action = true
 		}
 
-		if stderrors.Is(ctx.Err(), context.Canceled) {
-			return
+		if fr.backendResult != nil && len(fr.backendResult.Attributes) > 0 {
+			mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, fr.backendResult.Attributes)
 		}
 
-		prevBackendResult := backendResult
-
-		result, errLua := executeScriptWithinContext(request, script, r, ctx, L)
-		if errLua != nil {
-			err = errLua
-
-			break
-		}
-
-		if !mapsEqual(prevBackendResult.Attributes, backendResult.Attributes) {
-			mergedBackendResult.Attributes = mergeMaps(mergedBackendResult.Attributes, backendResult.Attributes)
-		}
-
-		for _, attr := range removeAttributes {
+		for _, attr := range fr.removeAttrsList {
 			mergedRemoveAttributes.Set(attr)
 		}
 
-		if result {
-			action = true
-
-			break
+		if !statusSet && fr.statusText != nil {
+			r.StatusMessage = fr.statusText
+			statusSet = true
 		}
 	}
 
 	backendResult = mergedBackendResult
 	removeAttributes = mergedRemoveAttributes.GetStringSlice()
 
-	return
+	return action, backendResult, removeAttributes, nil
 }
