@@ -40,6 +40,14 @@ function nauthilus_call_action(request)
 
     local nauthilus_util = require("nauthilus_util")
 
+    local function log_line(level, message, extra, err_string)
+        local logs = { caller = N .. ".lua", level = level or "info", message = message }
+        if extra and type(extra) == "table" then
+            for k, v in pairs(extra) do logs[k] = v end
+        end
+        nauthilus_util.print_result({ log_format = "json" }, logs, err_string)
+    end
+
     -- Modules
     dynamic_loader("nauthilus_password")
     local nauthilus_password = require("nauthilus_password")
@@ -201,11 +209,13 @@ function nauthilus_call_action(request)
         local ok, row_json = pcall(json.encode, row)
         if not ok then
             -- best-effort: drop this row if encoding fails
+            log_line("error", "clickhouse: encode row failed; dropping")
             row_json = nil
         end
 
         if row_json then
             nauthilus_cache.cache_push(cache_key, row_json)
+            log_line("debug", "clickhouse: queued row", { key = cache_key })
         end
 
         -- To avoid heavy operations, flush only when we likely reached threshold by a heuristic:
@@ -220,10 +230,12 @@ function nauthilus_call_action(request)
             for _, v in ipairs(popped) do
                 nauthilus_cache.cache_push(cache_key, v)
             end
+            log_line("debug", "clickhouse: batch below threshold; keeping in cache", { have = #popped, need = batch_size })
         end
 
         if #to_send > 0 then
             -- Prepare HTTP client and request
+            log_line("info", "clickhouse: flushing batch", { count = #to_send })
             dynamic_loader("nauthilus_prometheus")
             local nauthilus_prometheus = require("nauthilus_prometheus")
 
@@ -255,9 +267,12 @@ function nauthilus_call_action(request)
                 nauthilus_prometheus.stop_timer(timer)
                 nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
 
-                if err or not res or (res.status_code ~= 200 and res.status_code ~= 204) then
+                if not err and res and (res.status_code == 200 or res.status_code == 204) then
+                    log_line("info", "clickhouse: batch inserted", { count = #to_send, status = res.status_code })
+                elseif err or not res or (res.status_code ~= 200 and res.status_code ~= 204) then
                     -- Requeue on failure (best-effort)
                     for _, v in ipairs(to_send) do nauthilus_cache.cache_push(cache_key, v) end
+                    log_line("error", "clickhouse: insert failed; re-queued", { count = #to_send, status = res and res.status_code or "nil" }, err and tostring(err) or nil)
                     if err then
                         nauthilus_util.if_error_raise(err)
                     else
@@ -268,6 +283,7 @@ function nauthilus_call_action(request)
             else
                 -- No endpoint configured, keep queued
                 for _, v in ipairs(to_send) do nauthilus_cache.cache_push(cache_key, v) end
+                log_line("info", "clickhouse: no insert URL configured; keeping batch in cache", { count = #to_send, key = cache_key })
             end
         end
     end
