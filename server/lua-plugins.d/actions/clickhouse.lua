@@ -22,8 +22,8 @@
 -- Environment variables:
 --   CLICKHOUSE_INSERT_URL   - Full HTTP endpoint with SQL query, e.g.:
 --                             http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow
---   CLICKHOUSE_USER         - (optional) Basic auth user
---   CLICKHOUSE_PASSWORD     - (optional) Basic auth password
+--   CLICKHOUSE_USER         - (optional) auth user (used for Basic Auth and X-ClickHouse-User)
+--   CLICKHOUSE_PASSWORD     - (optional) auth password (used for Basic Auth and X-ClickHouse-Key)
 --   CLICKHOUSE_BATCH_SIZE   - (optional) default 100
 --   CLICKHOUSE_CACHE_KEY    - (optional) key for cache list, default "clickhouse:batch:failed_logins"
 --
@@ -255,8 +255,40 @@ function nauthilus_call_action(request)
                 }
                 local user = os.getenv("CLICKHOUSE_USER")
                 local pass = os.getenv("CLICKHOUSE_PASSWORD")
-                if user and user ~= "" then headers["X-ClickHouse-User"] = user end
-                if pass and pass ~= "" then headers["X-ClickHouse-Key"] = pass end
+                local auth_method = "none"
+
+                -- Prefer Basic auth if both user and pass are provided; do NOT send X- headers simultaneously.
+                -- If Basic cannot be created (e.g., base64 unavailable), fall back to X- headers.
+                if user and user ~= "" and pass and pass ~= "" then
+                    dynamic_loader("nauthilus_gll_base64")
+                    local b64 = require("nauthilus_gll_base64")
+
+                    local credentials = tostring(user) .. ":" .. tostring(pass)
+                    local encoded
+                    local ok_enc, err_enc = pcall(function() encoded = b64.encode(credentials) end)
+                    if ok_enc and encoded and encoded ~= "" then
+                        headers["Authorization"] = "Basic " .. encoded
+                        auth_method = "basic"
+                    else
+                        -- Fallback to X- headers when Basic cannot be formed
+                        headers["X-ClickHouse-User"] = user
+                        headers["X-ClickHouse-Key"] = pass
+                        auth_method = "x-headers"
+                        log_line("debug", "clickhouse: base64 encode failed; falling back to X- headers", { err = err_enc and tostring(err_enc) or nil })
+                    end
+                else
+                    -- If only one of user/password is present, use X- headers (best effort)
+                    if user and user ~= "" then
+                        headers["X-ClickHouse-User"] = user
+                        auth_method = "x-headers"
+                    end
+                    if pass and pass ~= "" then
+                        headers["X-ClickHouse-Key"] = pass
+                        if auth_method == "none" then auth_method = "x-headers" end
+                    end
+                end
+
+                log_line("debug", "clickhouse: posting batch", { url_configured = true, count = #to_send, auth_method = auth_method })
 
                 local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { op = "insert" })
                 local res, err = http.post(insert_url, {
@@ -267,18 +299,28 @@ function nauthilus_call_action(request)
                 nauthilus_prometheus.stop_timer(timer)
                 nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
 
-                if not err and res and (res.status_code == 200 or res.status_code == 204) then
-                    log_line("info", "clickhouse: batch inserted", { count = #to_send, status = res.status_code })
-                elseif err or not res or (res.status_code ~= 200 and res.status_code ~= 204) then
+                -- Ensure we always log the outcome of http.post
+                local status = res and res.status_code or nil
+                local resp_body = res and res.body or nil
+
+                if not err and res and (status == 200 or status == 204) then
+                    log_line("info", "clickhouse: batch inserted", { count = #to_send, status = status })
+                elseif err or not res or (status ~= 200 and status ~= 204) then
                     -- Requeue on failure (best-effort)
                     for _, v in ipairs(to_send) do nauthilus_cache.cache_push(cache_key, v) end
-                    log_line("error", "clickhouse: insert failed; re-queued", { count = #to_send, status = res and res.status_code or "nil" }, err and tostring(err) or nil)
+                    -- Truncate body to avoid excessive log size
+                    local body_preview
+                    if resp_body and type(resp_body) == "string" then body_preview = string.sub(resp_body, 1, 512) end
+                    log_line("error", "clickhouse: insert failed; re-queued", { count = #to_send, status = status, body = body_preview }, err and tostring(err) or nil)
                     if err then
                         nauthilus_util.if_error_raise(err)
                     else
                         -- Surface HTTP status as error
-                        error("clickhouse insert failed, status " .. tostring(res and res.status_code or "nil"))
+                        error("clickhouse insert failed, status " .. tostring(status))
                     end
+                else
+                    -- Unexpected branch: neither success nor explicit failure matched
+                    log_line("warn", "clickhouse: unexpected HTTP result state", { status = status, has_err = err ~= nil })
                 end
             else
                 -- No endpoint configured, keep queued
