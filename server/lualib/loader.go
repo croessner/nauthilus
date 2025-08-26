@@ -30,6 +30,7 @@ import (
 	"github.com/vadv/gopher-lua-libs/argparse"
 	"github.com/vadv/gopher-lua-libs/aws/cloudwatch"
 	"github.com/vadv/gopher-lua-libs/base64"
+	"github.com/vadv/gopher-lua-libs/bit"
 	"github.com/vadv/gopher-lua-libs/cert_util"
 	"github.com/vadv/gopher-lua-libs/chef"
 	"github.com/vadv/gopher-lua-libs/cmd"
@@ -37,6 +38,7 @@ import (
 	"github.com/vadv/gopher-lua-libs/db"
 	"github.com/vadv/gopher-lua-libs/filepath"
 	"github.com/vadv/gopher-lua-libs/goos"
+	"github.com/vadv/gopher-lua-libs/hex"
 	"github.com/vadv/gopher-lua-libs/http"
 	"github.com/vadv/gopher-lua-libs/humanize"
 	"github.com/vadv/gopher-lua-libs/inspect"
@@ -73,6 +75,10 @@ func RegisterCommonLuaLibraries(L *lua.LState, ctx context.Context, modName stri
 		argparse.Preload(L)
 	case definitions.LuaModGLLBase64:
 		base64.Preload(L)
+	case definitions.LuaModGLLBit:
+		bit.Preload(L)
+	case definitions.LuaModGLLHex:
+		hex.Preload(L)
 	case definitions.LuaModGLLCertUtil:
 		cert_util.Preload(L)
 	case definitions.LuaModGLLChef:

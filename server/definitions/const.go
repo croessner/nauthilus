@@ -1086,6 +1086,12 @@ const (
 	// LuaModGLLBase64 represents the name of the package containing the base64 utility functions.
 	LuaModGLLBase64 = "nauthilus_gll_base64"
 
+	// LuaModGLLBit represents the name of the bit operations module from gopher-lua-libs.
+	LuaModGLLBit = "nauthilus_gll_bit"
+
+	// LuaModGLLHex represents the name of the hex encoding/decoding module from gopher-lua-libs.
+	LuaModGLLHex = "nauthilus_gll_hex"
+
 	// LuaModGLLCertUtil is a constant that represents the name of the Lua module for certificate utilities in a software system.
 	LuaModGLLCertUtil = "nauthilus_gll_cert_util"
 
@@ -1759,15 +1765,6 @@ const (
 
 	// LuaBackendResultAttributes represents the field name for the attributes in a Lua backend result.
 	LuaBackendResultAttributes = "attributes"
-)
-
-// Exit status codes.
-const (
-	// ResultOk is a constant representing the successful outcome of an operation
-	ResultOk = 0
-
-	// ResultFail is a constant representing the unsuccessful outcome of an operation
-	ResultFail = 1
 )
 
 const (
