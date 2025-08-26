@@ -261,11 +261,11 @@ function nauthilus_call_action(request)
                 -- If Basic cannot be created (e.g., base64 unavailable), fall back to X- headers.
                 if user and user ~= "" and pass and pass ~= "" then
                     dynamic_loader("nauthilus_gll_base64")
-                    local b64 = require("nauthilus_gll_base64")
+                    local base64 = require("base64")
 
                     local credentials = tostring(user) .. ":" .. tostring(pass)
                     local encoded
-                    local ok_enc, err_enc = pcall(function() encoded = b64.encode(credentials) end)
+                    local ok_enc, err_enc = pcall(function() encoded = base64.RawStdEncoding:encode_to_string(credentials) end)
                     if ok_enc and encoded and encoded ~= "" then
                         headers["Authorization"] = "Basic " .. encoded
                         auth_method = "basic"
