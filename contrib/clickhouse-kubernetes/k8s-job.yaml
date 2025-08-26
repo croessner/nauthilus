@@ -1,0 +1,165 @@
+# Nauthilus ClickHouse initialization for Kubernetes
+# Namespace: auth (adjust if needed)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nauthilus-clickhouse-schema
+  namespace: clickhouse
+  labels:
+    app: nauthilus-clickhouse
+    component: schema
+data:
+  schema.sql: |
+    -- Creates database/table expected by server/lua-plugins.d/actions/clickhouse.lua
+    CREATE DATABASE IF NOT EXISTS nauthilus;
+
+    CREATE TABLE IF NOT EXISTS nauthilus.failed_logins (
+      ts                 String,
+      session            String,
+      client_ip          String,
+      hostname           String,
+      proto              String,
+      display_name       String,
+      account            String,
+      unique_user_id     String,
+      username           String,
+      password_hash      String,
+      pwnd_info          String,
+      brute_force_bucket String,
+      failed_login_count String,
+      failed_login_rank  String,
+      failed_login_recognized String,
+      geoip_guid         String,
+      geoip_country      String,
+      geoip_iso_codes    String,
+      geoip_status       String,
+      gp_attempts        String,
+      gp_unique_ips      String,
+      gp_unique_users    String,
+      gp_ips_per_user    String,
+      prot_active        String,
+      prot_reason        String,
+      prot_backoff       String,
+      prot_delay_ms      String,
+      dyn_threat         String,
+      dyn_response       String
+    ) ENGINE = MergeTree
+    ORDER BY (ts)
+    SETTINGS index_granularity = 8192;
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nauthilus-clickhouse-init
+  namespace: clickhouse
+  labels:
+    app: nauthilus-clickhouse
+    component: init
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: nauthilus-clickhouse
+        component: init
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: schema
+          configMap:
+            name: nauthilus-clickhouse-schema
+            items:
+              - key: schema.sql
+                path: schema.sql
+      containers:
+        - name: apply-schema
+          image: clickhouse/clickhouse-server:24.8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CLICKHOUSE_HOST
+              value: "clickhouse.clickhouse.svc.cluster.local"  # service name of your ClickHouse server in the same namespace
+            - name: CLICKHOUSE_NATIVE_PORT
+              value: "9000"        # native TCP port for clickhouse-client
+            - name: CLICKHOUSE_HTTP_PORT
+              value: "8123"        # HTTP port; used as fallback if native is unreachable
+            - name: CLICKHOUSE_PROTOCOL
+              value: "native"      # one of: native, http
+            - name: WAIT_TIMEOUT_SECONDS
+              value: "180"         # how long to wait for ClickHouse to become reachable
+            - name: CLICKHOUSE_USER
+              value: "default"
+            - name: CLICKHOUSE_PASSWORD
+              value: "default"
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -eu
+              
+              # Build auth flags if provided
+              EXTRA=""
+              if [ -n "${CLICKHOUSE_USER:-}" ]; then EXTRA="$EXTRA --user=${CLICKHOUSE_USER}"; fi
+              if [ -n "${CLICKHOUSE_PASSWORD:-}" ]; then EXTRA="$EXTRA --password=${CLICKHOUSE_PASSWORD}"; fi
+              
+              HOST="${CLICKHOUSE_HOST}"
+              NATIVE_PORT="${CLICKHOUSE_NATIVE_PORT:-9000}"
+              HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
+              PROTO="${CLICKHOUSE_PROTOCOL:-native}"
+              WAIT="${WAIT_TIMEOUT_SECONDS:-180}"
+              
+              if command -v clickhouse-client >/dev/null 2>&1; then
+                CLI="clickhouse-client"
+              else
+                CLI="clickhouse client"
+              fi
+              echo "Using ClickHouse CLI: $CLI"
+              USER_STATE="unset"; [ -n "${CLICKHOUSE_USER:-}" ] && USER_STATE="set"
+              PASS_STATE="unset"; [ -n "${CLICKHOUSE_PASSWORD:-}" ] && PASS_STATE="set"
+              echo "Config: host=$HOST native_port=$NATIVE_PORT http_port=$HTTP_PORT proto=$PROTO wait=${WAIT}s user=$USER_STATE password=$PASS_STATE"
+              
+              wait_for() {
+                local mode="$1" port="$2" proto_arg="" elapsed=0 step=2
+                if [ "$mode" = "http" ]; then proto_arg="--protocol=http"; fi
+                echo "Probing $HOST:$port using $mode for up to ${WAIT}s ..."
+                while [ "$elapsed" -lt "$WAIT" ]; do
+                  if sh -c "$CLI --host \"$HOST\" --port \"$port\" $proto_arg $EXTRA --query=SELECT\ 1" >/dev/null 2>&1; then
+                    echo "Probe successful for $HOST:$port using $mode"
+                    return 0
+                  fi
+                  echo "Still waiting for $HOST:$port ($mode) ... elapsed ${elapsed}s"
+                  sleep "$step"
+                  elapsed=$((elapsed + step))
+                done
+                return 1
+              }
+              
+              apply_schema() {
+                local mode="$1" port="$2" proto_arg=""
+                if [ "$mode" = "http" ]; then proto_arg="--protocol=http"; fi
+                echo "Applying ClickHouse schema using $mode to $HOST:$port"
+                sh -c "$CLI --host \"$HOST\" --port \"$port\" $proto_arg $EXTRA --multiquery --queries-file=/schema/schema.sql"
+              }
+              
+              # Try native first if requested
+              if [ "$PROTO" = "native" ]; then
+                echo "Waiting for ClickHouse (native) at $HOST:$NATIVE_PORT for up to ${WAIT}s ..."
+                if wait_for native "$NATIVE_PORT"; then
+                  apply_schema native "$NATIVE_PORT"
+                  exit 0
+                fi
+                echo "Native connection failed or timed out. Falling back to HTTP at $HOST:$HTTP_PORT ..."
+              fi
+              
+              echo "Waiting for ClickHouse (http) at $HOST:$HTTP_PORT for up to ${WAIT}s ..."
+              if wait_for http "$HTTP_PORT"; then
+                apply_schema http "$HTTP_PORT"
+                exit 0
+              fi
+              
+              echo "ERROR: ClickHouse is unreachable on both native ($HOST:$NATIVE_PORT) and HTTP ($HOST:$HTTP_PORT) within ${WAIT}s" >&2
+              exit 1
