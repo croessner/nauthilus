@@ -53,13 +53,12 @@ local function escape_sql_ident(s)
     return nil
 end
 
-local function build_select_url(base, sql)
-    -- Construct URL with query parameter `query=...`; naive-encode spaces and newlines
-    -- http library will not encode for us; replace spaces and newlines
-    sql = string.gsub(sql, "\n", " ")
-    -- Use double percent to produce a literal percent sign; otherwise Lua treats %n as capture index
-    sql = string.gsub(sql, " ", "%%20")
-    return base .. "/?query=" .. sql
+local function build_select_endpoint(base)
+    -- Use POST to avoid URL encoding issues; ClickHouse accepts SQL in the request body
+    if string.sub(base, -1) == "/" then
+        return base
+    end
+    return base .. "/"
 end
 
 function nauthilus_run_hook(logging, session)
@@ -119,24 +118,31 @@ function nauthilus_run_hook(logging, session)
 
     local sql = "SELECT " .. fields .. " FROM " .. safe_table .. where .. " ORDER BY ts DESC LIMIT " .. tostring(limit) .. " FORMAT JSON"
 
-    local url = build_select_url(base, sql)
+    local endpoint = build_select_endpoint(base)
 
-    local headers = {}
+    local headers = { ["Content-Type"] = "text/plain; charset=utf-8" }
     local user = os.getenv("CLICKHOUSE_USER")
     local pass = os.getenv("CLICKHOUSE_PASSWORD")
     if user and user ~= "" then headers["X-ClickHouse-User"] = user end
     if pass and pass ~= "" then headers["X-ClickHouse-Key"] = pass end
 
-    local res, err = http.get(url, {
+    local res, err = http.post(endpoint, {
         timeout = "10s",
         headers = headers,
+        body = sql,
     })
 
     if err or not res or (res.status_code ~= 200 and res.status_code ~= 204) then
         result.status = "error"
-        result.message = "ClickHouse query failed"
+        local body_snip = res and res.body and tostring(res.body) or ""
+        if body_snip ~= "" then
+            -- limit size
+            if #body_snip > 500 then body_snip = string.sub(body_snip, 1, 500) .. "..." end
+        end
+        result.message = "ClickHouse query failed" .. (res and res.status_code and (" (status " .. tostring(res.status_code) .. ")") or "")
         result.http_status = res and res.status_code or nil
-        result.error = err and tostring(err) or nil
+        result.error = (err and tostring(err) or nil)
+        result.clickhouse = { raw = body_snip }
         return result
     end
 
