@@ -101,6 +101,8 @@ func resetLuaState(L *lua.LState) {
 			L.SetField(loadedTable, definitions.LuaModGLLPlugin, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModGLLArgParse, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModGLLBase64, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLBit, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModGLLHex, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModGLLCertUtil, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModGLLChef, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModGLLCloudWatch, lua.LNil)

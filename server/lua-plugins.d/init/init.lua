@@ -182,6 +182,10 @@ function nauthilus_run_hook(logging)
 
     -- common
     nauthilus_prometheus.create_gauge_vec("http_client_concurrent_requests_total", "Measure the number of total concurrent HTTP client requests", { "service" })
+    -- Pre-instantiate gauge series for clickhouse so it appears with value 0
+    if nauthilus_prometheus.set_gauge then
+        nauthilus_prometheus.set_gauge("http_client_concurrent_requests_total", 0, { service = "clickhouse" })
+    end
 
     -- analytics.lua
     nauthilus_prometheus.create_counter_vec("analytics_count", "Count the criteria which caused rejection", {"feature"})
@@ -192,6 +196,9 @@ function nauthilus_run_hook(logging)
 
     -- telegram.lua
     nauthilus_prometheus.create_histogram_vec("telegram_duration_seconds", "HTTP request to the telegram network", { "bot" })
+
+    -- clickhouse.lua
+    nauthilus_prometheus.create_histogram_vec("clickhouse_duration_seconds", "HTTP request to the clickhouse service", { "op" })
 
     -- backend.lua
     nauthilus_psnet.register_connection_target("127.0.0.1:3306", "remote", "backend")

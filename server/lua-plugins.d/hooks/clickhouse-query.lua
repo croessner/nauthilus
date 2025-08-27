@@ -20,7 +20,7 @@
 --
 -- Environment:
 --   CLICKHOUSE_SELECT_BASE - Base URL of ClickHouse HTTP endpoint, e.g. http://clickhouse:8123
---   CLICKHOUSE_TABLE       - Table name, e.g. nauthilus.failed_logins
+--   CLICKHOUSE_TABLE       - Table name, e.g. nauthilus.logins
 --   CLICKHOUSE_USER        - (optional) user for basic auth via headers
 --   CLICKHOUSE_PASSWORD    - (optional) password for basic auth via headers
 --
@@ -72,7 +72,7 @@ function nauthilus_run_hook(logging, session)
     local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 1000)
 
     local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
-    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.failed_logins"
+    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
 
     local safe_table = escape_sql_ident(table_name)
     if base == "" or not safe_table then
@@ -97,13 +97,23 @@ function nauthilus_run_hook(logging, session)
     end
 
     local fields = table.concat({
-        "ts","session","client_ip","hostname","proto","display_name","account",
-        "unique_user_id","username","password_hash","pwnd_info","brute_force_bucket",
+        -- core identifiers and network
+        "ts","session","service","client_ip","client_port","client_net","client_id",
+        "hostname","proto","user_agent","local_ip","local_port",
+        -- user/account info
+        "display_name","account","account_field","unique_user_id","username","password_hash",
+        -- security and feature info
+        "pwnd_info","brute_force_bucket","brute_force_counter","oidc_cid",
+        -- hotspot / geoip / pattern
         "failed_login_count","failed_login_rank","failed_login_recognized",
         "geoip_guid","geoip_country","geoip_iso_codes","geoip_status",
         "gp_attempts","gp_unique_ips","gp_unique_users","gp_ips_per_user",
+        -- protection and dynamic response
         "prot_active","prot_reason","prot_backoff","prot_delay_ms",
-        "dyn_threat","dyn_response"
+        "dyn_threat","dyn_response",
+        -- flags and TLS
+        "debug","repeating","user_found","authenticated","no_auth",
+        "xssl_protocol","xssl_cipher","ssl_fingerprint"
     }, ",")
 
     local sql = "SELECT " .. fields .. " FROM " .. safe_table .. where .. " ORDER BY ts DESC LIMIT " .. tostring(limit) .. " FORMAT JSON"

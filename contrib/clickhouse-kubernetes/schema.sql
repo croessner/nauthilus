@@ -1,0 +1,60 @@
+-- Nauthilus ClickHouse schema for Kubernetes deployments
+-- Creates database and table used by server/lua-plugins.d/actions/clickhouse.lua
+-- All fields are String for schema stability; cast at query time if needed.
+
+CREATE DATABASE IF NOT EXISTS nauthilus;
+
+CREATE TABLE IF NOT EXISTS nauthilus.logins (
+  ts                   String,
+  session              String,
+  service              String,
+  client_ip            String,
+  client_port          String,
+  client_net           String,
+  client_id            String,
+  hostname             String,
+  proto                String,
+  user_agent           String,
+  local_ip             String,
+  local_port           String,
+  display_name         String,
+  account              String,
+  account_field        String,
+  unique_user_id       String,
+  username             String,
+  password_hash        String,
+  pwnd_info            String,
+  brute_force_bucket   String,
+  brute_force_counter  Nullable(UInt64),
+  oidc_cid             String,
+  failed_login_count   Nullable(UInt64),
+  failed_login_rank    Nullable(UInt64),
+  failed_login_recognized Nullable(Bool),
+  geoip_guid           String,
+  geoip_country        String,
+  geoip_iso_codes      String,
+  geoip_status         String,
+  gp_attempts          Nullable(UInt64),
+  gp_unique_ips        Nullable(UInt64),
+  gp_unique_users      Nullable(UInt64),
+  gp_ips_per_user      Nullable(Float64),
+  prot_active          Nullable(Bool),
+  prot_reason          String,
+  prot_backoff         Nullable(UInt64),
+  prot_delay_ms        Nullable(UInt64),
+  dyn_threat           Nullable(UInt64),
+  dyn_response         String,
+  debug                Nullable(Bool),
+  repeating            Nullable(Bool),
+  user_found           Nullable(Bool),
+  authenticated        Nullable(Bool),
+  no_auth              Nullable(Bool),
+  xssl_protocol        String,
+  xssl_cipher          String,
+  ssl_fingerprint      String,
+  INDEX idx_username   username   TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
+  INDEX idx_account    account    TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64,
+  INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64
+) ENGINE = MergeTree
+ORDER BY (ts)
+SETTINGS index_granularity = 8192;

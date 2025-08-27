@@ -415,11 +415,8 @@ func (r *Request) executeScripts(ctx *gin.Context, _ *lua.LState, _ *lua.LTable)
 			triggered = true
 		}
 
-		// Propagate a status message if set by any feature (take the first meaningful one)
-		if !statusSet && fr.statusText != nil {
-			r.StatusMessage = fr.statusText
-			statusSet = true
-		}
+		// Merge per-feature status message and logs via common helper
+		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, fr.statusText, fr.logs)
 	}
 
 	return triggered, abortFeatures, nil

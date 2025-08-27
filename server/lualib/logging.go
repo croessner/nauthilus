@@ -52,3 +52,25 @@ func AddCustomLog(keyval *CustomLogKeyValue) lua.LGFunction {
 		return 0
 	}
 }
+
+// MergeStatusAndLogs merges a single script's status message and logs into the request-level fields.
+// - statusSet controls that only the first non-nil status message is applied.
+// - reqLogs points to the request's aggregated log slice; it will be initialized if nil.
+// - reqStatus is the address of the request's status message pointer.
+// - scriptStatus is the per-script status message pointer (may be nil).
+// - scriptLogs is the per-script collected logs.
+func MergeStatusAndLogs(statusSet *bool, reqLogs **CustomLogKeyValue, reqStatus **string, scriptStatus *string, scriptLogs CustomLogKeyValue) {
+	if statusSet != nil && !*statusSet && scriptStatus != nil {
+		*reqStatus = scriptStatus
+		*statusSet = true
+	}
+
+	if len(scriptLogs) > 0 {
+		if *reqLogs == nil {
+			*reqLogs = new(CustomLogKeyValue)
+		}
+		for i := range scriptLogs {
+			**reqLogs = append(**reqLogs, scriptLogs[i])
+		}
+	}
+}

@@ -547,10 +547,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			mergedRemoveAttributes.Set(attr)
 		}
 
-		if !statusSet && fr.statusText != nil {
-			r.StatusMessage = fr.statusText
-			statusSet = true
-		}
+		// Merge per-filter status message and logs via common helper
+		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, fr.statusText, fr.logs)
 	}
 
 	backendResult = mergedBackendResult
