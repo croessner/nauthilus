@@ -110,9 +110,9 @@ function nauthilus_call_action(request)
         end
 
         -- Failed-login hotspot details if present
-        local failed_login_count = nil
-        local failed_login_rank = nil
-        local failed_login_recognized = nil
+        local failed_login_count
+        local failed_login_rank
+        local failed_login_recognized
         if rt and rt.failed_login_info then
             if rt.failed_login_info.new_count ~= nil then failed_login_count = tonumber(rt.failed_login_info.new_count) end
             if rt.failed_login_info.rank ~= nil then failed_login_rank = tonumber(rt.failed_login_info.rank) end
@@ -136,10 +136,10 @@ function nauthilus_call_action(request)
         end
 
         -- Global pattern details if present
-        local gp_attempts = nil
-        local gp_unique_ips = nil
-        local gp_unique_users = nil
-        local gp_ips_per_user = nil
+        local gp_attempts
+        local gp_unique_ips
+        local gp_unique_users
+        local gp_ips_per_user
         if rt and rt.global_pattern_info then
             local gpi = rt.global_pattern_info
             if gpi.attempts ~= nil then gp_attempts = tonumber(gpi.attempts) end
@@ -149,10 +149,10 @@ function nauthilus_call_action(request)
         end
 
         -- Account protection details
-        local prot_active = nil
+        local prot_active
         local prot_reason = ""
-        local prot_backoff = nil
-        local prot_delay_ms = nil
+        local prot_backoff
+        local prot_delay_ms
         if rt and rt.account_protection then
             if rt.account_protection.active ~= nil then prot_active = (rt.account_protection.active == true) end
             if rt.account_protection.reason ~= nil then prot_reason = tostring(rt.account_protection.reason) end
@@ -161,7 +161,7 @@ function nauthilus_call_action(request)
         end
 
         -- Dynamic response details
-        local dyn_threat = nil
+        local dyn_threat
         local dyn_response = ""
         if rt and rt.dynamic_response then
             if rt.dynamic_response.threat_level ~= nil then dyn_threat = tonumber(rt.dynamic_response.threat_level) end
