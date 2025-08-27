@@ -65,9 +65,9 @@ function nauthilus_call_action(request)
     local nauthilus_cache = require("nauthilus_cache")
 
     local send_message = false
-    local pwnd_info = "n/a"
-    local brute_force_bucket = "n/a"
-    local password_hash = "n/a"
+    local pwnd_info = ""
+    local brute_force_bucket = ""
+    local password_hash = ""
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt") or {}
@@ -86,44 +86,44 @@ function nauthilus_call_action(request)
     end
 
     local hibp = nauthilus_context.context_get("haveibeenpwnd_hash_info")
-    if hibp then pwnd_info = hibp end
+    if hibp then pwnd_info = hibp else pwnd_info = "" end
 
     -- Send when unauthenticated; include both with and without account
     if send_message and (not request.authenticated) then
         -- Build row (same values as telegram), tolerate missing account
         local ts = nauthilus_util.get_current_timestamp() or "unknown"
 
-        local proto = (request.protocol ~= "" and request.protocol) or "n/a"
-        local username = (request.username ~= "" and request.username) or "n/a"
-        local account = (request.account ~= nil and request.account ~= "" and request.account) or "n/a"
+        local proto = (request.protocol ~= "" and request.protocol) or ""
+        local username = (request.username ~= "" and request.username) or ""
+        local account = (request.account ~= nil and request.account ~= "" and request.account) or ""
 
         if request.password and request.password ~= "" then
             password_hash = nauthilus_password.generate_password_hash(request.password)
         end
 
-        local unique_user_id = (request.unique_user_id ~= "" and request.unique_user_id) or "n/a"
-        local display_name = (request.display_name ~= "" and request.display_name) or "n/a"
-        local hostname = (request.client_hostname ~= "" and request.client_hostname) or "n/a"
+        local unique_user_id = (request.unique_user_id ~= "" and request.unique_user_id) or ""
+        local display_name = (request.display_name ~= "" and request.display_name) or ""
+        local hostname = (request.client_hostname ~= "" and request.client_hostname) or ""
 
         if request.brute_force_bucket and request.brute_force_bucket ~= "" then
             brute_force_bucket = request.brute_force_bucket
         end
 
         -- Failed-login hotspot details if present
-        local failed_login_count = "n/a"
-        local failed_login_rank = "n/a"
-        local failed_login_recognized = "n/a"
+        local failed_login_count = nil
+        local failed_login_rank = nil
+        local failed_login_recognized = nil
         if rt and rt.failed_login_info then
-            if rt.failed_login_info.new_count ~= nil then failed_login_count = tostring(rt.failed_login_info.new_count) end
-            if rt.failed_login_info.rank ~= nil then failed_login_rank = tostring(rt.failed_login_info.rank) end
-            if rt.failed_login_info.recognized_account ~= nil then failed_login_recognized = tostring(rt.failed_login_info.recognized_account) end
+            if rt.failed_login_info.new_count ~= nil then failed_login_count = tonumber(rt.failed_login_info.new_count) end
+            if rt.failed_login_info.rank ~= nil then failed_login_rank = tonumber(rt.failed_login_info.rank) end
+            if rt.failed_login_info.recognized_account ~= nil then failed_login_recognized = (rt.failed_login_info.recognized_account == true) end
         end
 
         -- GeoIP details if present
-        local geoip_guid = "n/a"
-        local geoip_country = "n/a"
-        local geoip_iso_codes = "n/a"
-        local geoip_status = "n/a"
+        local geoip_guid = ""
+        local geoip_country = ""
+        local geoip_iso_codes = ""
+        local geoip_status = ""
         if rt and rt.geoip_info then
             if rt.geoip_info.guid and rt.geoip_info.guid ~= "" then geoip_guid = rt.geoip_info.guid end
             if rt.geoip_info.current_country_code and rt.geoip_info.current_country_code ~= "" then geoip_country = rt.geoip_info.current_country_code end
@@ -136,52 +136,62 @@ function nauthilus_call_action(request)
         end
 
         -- Global pattern details if present
-        local gp_attempts = "n/a"
-        local gp_unique_ips = "n/a"
-        local gp_unique_users = "n/a"
-        local gp_ips_per_user = "n/a"
+        local gp_attempts = nil
+        local gp_unique_ips = nil
+        local gp_unique_users = nil
+        local gp_ips_per_user = nil
         if rt and rt.global_pattern_info then
             local gpi = rt.global_pattern_info
-            if gpi.attempts ~= nil then gp_attempts = tostring(gpi.attempts) end
-            if gpi.unique_ips ~= nil then gp_unique_ips = tostring(gpi.unique_ips) end
-            if gpi.unique_users ~= nil then gp_unique_users = tostring(gpi.unique_users) end
-            if gpi.ips_per_user ~= nil then gp_ips_per_user = tostring(gpi.ips_per_user) end
+            if gpi.attempts ~= nil then gp_attempts = tonumber(gpi.attempts) end
+            if gpi.unique_ips ~= nil then gp_unique_ips = tonumber(gpi.unique_ips) end
+            if gpi.unique_users ~= nil then gp_unique_users = tonumber(gpi.unique_users) end
+            if gpi.ips_per_user ~= nil then gp_ips_per_user = tonumber(gpi.ips_per_user) end
         end
 
         -- Account protection details
-        local prot_active = "false"
-        local prot_reason = "n/a"
-        local prot_backoff = "n/a"
-        local prot_delay_ms = "n/a"
+        local prot_active = nil
+        local prot_reason = ""
+        local prot_backoff = nil
+        local prot_delay_ms = nil
         if rt and rt.account_protection then
-            prot_active = tostring(rt.account_protection.active)
+            if rt.account_protection.active ~= nil then prot_active = (rt.account_protection.active == true) end
             if rt.account_protection.reason ~= nil then prot_reason = tostring(rt.account_protection.reason) end
-            if rt.account_protection.backoff_level ~= nil then prot_backoff = tostring(rt.account_protection.backoff_level) end
-            if rt.account_protection.delay_ms ~= nil then prot_delay_ms = tostring(rt.account_protection.delay_ms) end
+            if rt.account_protection.backoff_level ~= nil then prot_backoff = tonumber(rt.account_protection.backoff_level) end
+            if rt.account_protection.delay_ms ~= nil then prot_delay_ms = tonumber(rt.account_protection.delay_ms) end
         end
 
         -- Dynamic response details
-        local dyn_threat = "n/a"
-        local dyn_response = "n/a"
+        local dyn_threat = nil
+        local dyn_response = ""
         if rt and rt.dynamic_response then
-            if rt.dynamic_response.threat_level ~= nil then dyn_threat = tostring(rt.dynamic_response.threat_level) end
+            if rt.dynamic_response.threat_level ~= nil then dyn_threat = tonumber(rt.dynamic_response.threat_level) end
             if rt.dynamic_response.response ~= nil then dyn_response = tostring(rt.dynamic_response.response) end
         end
 
         -- Build row for ClickHouse
         local row = {
-            session = request.session,
             ts = ts,
+            session = request.session,
+            service = request.service or "",
             client_ip = request.client_ip,
+            client_port = request.client_port or "",
+            client_net = request.client_net or "",
+            client_id = request.client_id or "",
             hostname = hostname,
             proto = proto,
+            user_agent = request.user_agent or "",
+            local_ip = request.local_ip or "",
+            local_port = request.local_port or "",
             display_name = display_name,
             account = account,
+            account_field = request.account_field or "",
             unique_user_id = unique_user_id,
             username = username,
             password_hash = password_hash,
             pwnd_info = pwnd_info,
             brute_force_bucket = brute_force_bucket,
+            brute_force_counter = (request.brute_force_counter ~= nil) and tonumber(request.brute_force_counter) or nil,
+            oidc_cid = request.oidc_cid or "",
             failed_login_count = failed_login_count,
             failed_login_rank = failed_login_rank,
             failed_login_recognized = failed_login_recognized,
@@ -199,6 +209,14 @@ function nauthilus_call_action(request)
             prot_delay_ms = prot_delay_ms,
             dyn_threat = dyn_threat,
             dyn_response = dyn_response,
+            debug = (request.debug == true),
+            repeating = (request.repeating == true),
+            user_found = (request.user_found == true),
+            authenticated = (request.authenticated == true),
+            no_auth = (request.no_auth == true),
+            xssl_protocol = request.xssl_protocol or "",
+            xssl_cipher = request.xssl_cipher or "",
+            ssl_fingerprint = request.ssl_fingerprint or "",
         }
 
         -- Batch into cache
@@ -213,24 +231,13 @@ function nauthilus_call_action(request)
             row_json = nil
         end
 
-        if row_json then
-            nauthilus_cache.cache_push(cache_key, row_json)
-            log_line("debug", "clickhouse: queued row", { key = cache_key })
-        end
-
-        -- To avoid heavy operations, flush only when we likely reached threshold by a heuristic:
-        -- Try pop_all only if we have at least batch_size elements in this specific list.
-        -- Simple approach: attempt to pop_all and check length; if lower than batch_size, push back and skip.
         local to_send = {}
-        local popped = nauthilus_cache.cache_pop_all(cache_key) or {}
-        if #popped >= batch_size then
-            to_send = popped
-        else
-            -- push them back in order
-            for _, v in ipairs(popped) do
-                nauthilus_cache.cache_push(cache_key, v)
+        if row_json then
+            local new_len = nauthilus_cache.cache_push(cache_key, row_json)
+            log_line("debug", "clickhouse: queued row", { key = cache_key, length = new_len, threshold = batch_size })
+            if tonumber(new_len) and tonumber(new_len) >= batch_size then
+                to_send = nauthilus_cache.cache_pop_all(cache_key) or {}
             end
-            log_line("debug", "clickhouse: batch below threshold; keeping in cache", { have = #popped, need = batch_size })
         end
 
         if #to_send > 0 then
