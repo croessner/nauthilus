@@ -37,6 +37,18 @@ local http = require("glua_http")
 
 local N = "clickhouse-query"
 
+-- Sanitize strings to be safely embeddable into JSON by removing control characters
+-- Replace common whitespace controls (CR, LF, TAB) with a single space to keep readability,
+-- and strip remaining control characters (U+0000–U+001F) which may break JSON serializers.
+local function sanitize_json_string(s)
+    if type(s) ~= "string" then return s end
+    -- normalize common whitespace controls to spaces
+    s = s:gsub("[\r\n\t]", " ")
+    -- remove any remaining control characters
+    s = s:gsub("%c", "")
+    return s
+end
+
 local function clamp(n, minv, maxv)
     n = tonumber(n or 0) or 0
     if n < minv then return minv end
@@ -142,7 +154,7 @@ function nauthilus_run_hook(logging, session)
         result.message = "ClickHouse query failed" .. (res and res.status_code and (" (status " .. tostring(res.status_code) .. ")") or "")
         result.http_status = res and res.status_code or nil
         result.error = (err and tostring(err) or nil)
-        result.clickhouse = { raw = body_snip }
+        result.clickhouse = { raw = sanitize_json_string(body_snip) }
         return result
     end
 
@@ -152,7 +164,7 @@ function nauthilus_run_hook(logging, session)
         action = action,
         limit = limit,
         table = table_name,
-        raw = res.body, -- JSON from ClickHouse
+        raw = sanitize_json_string(res.body), -- JSON from ClickHouse (sanitized)
     }
 
     -- If this hook is used to render HTTP directly, return nil; otherwise return result to be serialized.
