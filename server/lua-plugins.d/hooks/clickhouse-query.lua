@@ -20,7 +20,7 @@
 --
 -- Environment:
 --   CLICKHOUSE_SELECT_BASE - Base URL of ClickHouse HTTP endpoint, e.g. http://clickhouse:8123
---   CLICKHOUSE_TABLE       - Table name, e.g. nauthilus.failed_logins
+--   CLICKHOUSE_TABLE       - Table name, e.g. nauthilus.logins
 --   CLICKHOUSE_USER        - (optional) user for basic auth via headers
 --   CLICKHOUSE_PASSWORD    - (optional) password for basic auth via headers
 --
@@ -72,7 +72,7 @@ function nauthilus_run_hook(logging, session)
     local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 1000)
 
     local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
-    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.failed_logins"
+    local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
 
     local safe_table = escape_sql_ident(table_name)
     if base == "" or not safe_table then

@@ -4,7 +4,7 @@
 
 CREATE DATABASE IF NOT EXISTS nauthilus;
 
-CREATE TABLE IF NOT EXISTS nauthilus.failed_logins (
+CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   String,
   session              String,
   service              String,

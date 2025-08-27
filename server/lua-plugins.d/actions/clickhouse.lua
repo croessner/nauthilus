@@ -21,11 +21,11 @@
 --
 -- Environment variables:
 --   CLICKHOUSE_INSERT_URL   - Full HTTP endpoint with SQL query, e.g.:
---                             http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.failed_logins%20FORMAT%20JSONEachRow
+--                             http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
 --   CLICKHOUSE_USER         - (optional) auth user (used for Basic Auth and X-ClickHouse-User)
 --   CLICKHOUSE_PASSWORD     - (optional) auth password (used for Basic Auth and X-ClickHouse-Key)
 --   CLICKHOUSE_BATCH_SIZE   - (optional) default 100
---   CLICKHOUSE_CACHE_KEY    - (optional) key for cache list, default "clickhouse:batch:failed_logins"
+--   CLICKHOUSE_CACHE_KEY    - (optional) key for cache list, default "clickhouse:batch:logins"
 --
 -- Data format: JSONEachRow with fields documented in README.
 
@@ -252,7 +252,7 @@ function nauthilus_call_action(request)
             }
 
             -- Batch into cache
-            local cache_key = os.getenv("CLICKHOUSE_CACHE_KEY") or "clickhouse:batch:failed_logins"
+            local cache_key = os.getenv("CLICKHOUSE_CACHE_KEY") or "clickhouse:batch:logins"
             local batch_size = tonumber(os.getenv("CLICKHOUSE_BATCH_SIZE") or "100") or 100
 
             -- Store JSON-encoded row to ensure stability of types
