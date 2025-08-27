@@ -57,7 +57,8 @@ local function build_select_url(base, sql)
     -- Construct URL with query parameter `query=...`; naive-encode spaces and newlines
     -- http library will not encode for us; replace spaces and newlines
     sql = string.gsub(sql, "\n", " ")
-    sql = string.gsub(sql, " ", "%20")
+    -- Use double percent to produce a literal percent sign; otherwise Lua treats %n as capture index
+    sql = string.gsub(sql, " ", "%%20")
     return base .. "/?query=" .. sql
 end
 
