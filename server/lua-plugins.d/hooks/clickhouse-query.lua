@@ -35,6 +35,9 @@ local nauthilus_http_request = require("nauthilus_http_request")
 dynamic_loader("nauthilus_gluahttp")
 local http = require("glua_http")
 
+dynamic_loader("nauthilus_gll_json")
+local json = require("json")
+
 local N = "clickhouse-query"
 
 -- Sanitize strings to be safely embeddable into JSON by removing control characters
@@ -146,26 +149,57 @@ function nauthilus_run_hook(logging, session)
 
     if err or not res or (res.status_code ~= 200 and res.status_code ~= 204) then
         result.status = "error"
-        local body_snip = res and res.body and tostring(res.body) or ""
+        local full_body = res and res.body and tostring(res.body) or ""
+        local body_snip = full_body
         if body_snip ~= "" then
-            -- limit size
+            -- limit size for logging/string return only
             if #body_snip > 500 then body_snip = string.sub(body_snip, 1, 500) .. "..." end
         end
         result.message = "ClickHouse query failed" .. (res and res.status_code and (" (status " .. tostring(res.status_code) .. ")") or "")
         result.http_status = res and res.status_code or nil
         result.error = (err and tostring(err) or nil)
-        result.clickhouse = { raw = sanitize_json_string(body_snip) }
+        -- Try to decode JSON error body if present; otherwise return a short raw snippet
+        local ok, decoded = pcall(json.decode, full_body)
+        if ok and type(decoded) == "table" then
+            result.clickhouse = {
+                action = action,
+                limit = limit,
+                table = table_name,
+                query_result = decoded,
+            }
+        else
+            result.clickhouse = {
+                action = action,
+                limit = limit,
+                table = table_name,
+                raw = sanitize_json_string(body_snip),
+                parse_error = (not ok and sanitize_json_string(tostring(decoded))) or nil,
+            }
+        end
         return result
     end
 
     result.status = "success"
     result.message = "Query executed"
-    result.clickhouse = {
-        action = action,
-        limit = limit,
-        table = table_name,
-        raw = sanitize_json_string(res.body), -- JSON from ClickHouse (sanitized)
-    }
+    -- Decode ClickHouse JSON body to return a proper JSON object to the client
+    local ok, decoded = pcall(json.decode, res.body)
+    if ok and type(decoded) == "table" then
+        result.clickhouse = {
+            action = action,
+            limit = limit,
+            table = table_name,
+            query_result = decoded,
+        }
+    else
+        -- Fallback for unexpected non-JSON bodies; keep previous behavior
+        result.clickhouse = {
+            action = action,
+            limit = limit,
+            table = table_name,
+            raw = sanitize_json_string(tostring(res.body or "")),
+            parse_error = (not ok and sanitize_json_string(tostring(decoded))) or nil,
+        }
+    end
 
     -- If this hook is used to render HTTP directly, return nil; otherwise return result to be serialized.
     return result
