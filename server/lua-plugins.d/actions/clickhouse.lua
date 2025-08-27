@@ -47,6 +47,15 @@ function nauthilus_call_action(request)
         nauthilus_util.print_result({ log_format = "json" }, logs, err_string)
     end
 
+    -- Utility: sanitize unsigned integers for ClickHouse (returns nil if negative or not a number)
+    local function to_uint(value)
+        local n = tonumber(value)
+        if n == nil then return nil end
+        if n < 0 then return nil end
+        if n ~= n then return nil end -- NaN guard (just in case)
+        return math.floor(n)
+    end
+
     -- Modules
     dynamic_loader("nauthilus_password")
     local nauthilus_password = require("nauthilus_password")
@@ -137,8 +146,8 @@ function nauthilus_call_action(request)
             local failed_login_rank
             local failed_login_recognized
             if rt and rt.failed_login_info then
-                if rt.failed_login_info.new_count ~= nil then failed_login_count = tonumber(rt.failed_login_info.new_count) end
-                if rt.failed_login_info.rank ~= nil then failed_login_rank = tonumber(rt.failed_login_info.rank) end
+                if rt.failed_login_info.new_count ~= nil then failed_login_count = to_uint(rt.failed_login_info.new_count) end
+                if rt.failed_login_info.rank ~= nil then failed_login_rank = to_uint(rt.failed_login_info.rank) end
                 if rt.failed_login_info.recognized_account ~= nil then failed_login_recognized = (rt.failed_login_info.recognized_account == true) end
             end
 
@@ -165,10 +174,10 @@ function nauthilus_call_action(request)
             local gp_ips_per_user
             if rt and rt.global_pattern_info then
                 local gpi = rt.global_pattern_info
-                if gpi.attempts ~= nil then gp_attempts = tonumber(gpi.attempts) end
-                if gpi.unique_ips ~= nil then gp_unique_ips = tonumber(gpi.unique_ips) end
-                if gpi.unique_users ~= nil then gp_unique_users = tonumber(gpi.unique_users) end
-                if gpi.ips_per_user ~= nil then gp_ips_per_user = tonumber(gpi.ips_per_user) end
+                if gpi.attempts ~= nil then gp_attempts = to_uint(gpi.attempts) end
+                if gpi.unique_ips ~= nil then gp_unique_ips = to_uint(gpi.unique_ips) end
+                if gpi.unique_users ~= nil then gp_unique_users = to_uint(gpi.unique_users) end
+                if gpi.ips_per_user ~= nil then gp_ips_per_user = to_uint(gpi.ips_per_user) end
             end
 
             -- Account protection details
@@ -179,15 +188,15 @@ function nauthilus_call_action(request)
             if rt and rt.account_protection then
                 if rt.account_protection.active ~= nil then prot_active = (rt.account_protection.active == true) end
                 if rt.account_protection.reason ~= nil then prot_reason = tostring(rt.account_protection.reason) end
-                if rt.account_protection.backoff_level ~= nil then prot_backoff = tonumber(rt.account_protection.backoff_level) end
-                if rt.account_protection.delay_ms ~= nil then prot_delay_ms = tonumber(rt.account_protection.delay_ms) end
+                if rt.account_protection.backoff_level ~= nil then prot_backoff = to_uint(rt.account_protection.backoff_level) end
+                if rt.account_protection.delay_ms ~= nil then prot_delay_ms = to_uint(rt.account_protection.delay_ms) end
             end
 
             -- Dynamic response details
             local dyn_threat
             local dyn_response = ""
             if rt and rt.dynamic_response then
-                if rt.dynamic_response.threat_level ~= nil then dyn_threat = tonumber(rt.dynamic_response.threat_level) end
+                if rt.dynamic_response.threat_level ~= nil then dyn_threat = to_uint(rt.dynamic_response.threat_level) end
                 if rt.dynamic_response.response ~= nil then dyn_response = tostring(rt.dynamic_response.response) end
             end
 
@@ -213,7 +222,7 @@ function nauthilus_call_action(request)
                 password_hash = password_hash,
                 pwnd_info = pwnd_info,
                 brute_force_bucket = brute_force_bucket,
-                brute_force_counter = (request.brute_force_counter ~= nil) and tonumber(request.brute_force_counter) or nil,
+                brute_force_counter = (request.brute_force_counter ~= nil) and to_uint(request.brute_force_counter) or nil,
                 oidc_cid = request.oidc_cid or "",
                 failed_login_count = failed_login_count,
                 failed_login_rank = failed_login_rank,
