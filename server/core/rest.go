@@ -715,42 +715,48 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 // If any error occurs during the removal process, it logs the error and immediately returns.
 // After successful removal, it logs the keys that have been flushed.
 func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
-	var (
-		result int64
-		err    error
-	)
-
 	removedKeys := make([]string, 0)
 
 	redisKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
+	// Increment write counter once for the whole pipeline execution
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	if removeHash {
-		err = rediscli.GetClient().GetWriteHandle().Del(ctx, redisKey).Err()
-	} else {
-		err = rediscli.GetClient().GetWriteHandle().HDel(ctx, redisKey, userCmd.User).Err()
-	}
+	keys := userKeys.GetStringSlice()
+
+	cmds, err := rediscli.ExecuteWritePipeline(ctx, func(pipe redis.Pipeliner) error {
+		// Remove hash (whole hash or a single field) first
+		if removeHash {
+			pipe.Del(ctx, redisKey)
+		} else {
+			pipe.HDel(ctx, redisKey, userCmd.User)
+		}
+
+		// Queue deletion of all user keys
+		for _, userKey := range keys {
+			pipe.Del(ctx, userKey)
+		}
+		return nil
+	})
 
 	if err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-
 		return removedKeys
 	}
 
-	for _, userKey := range userKeys.GetStringSlice() {
-		if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, userKey).Result(); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-
-			return removedKeys
-		}
-
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-		if result > 0 {
-			removedKeys = append(removedKeys, userKey)
-
-			level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+	// cmds[0] corresponds to Del/HDel of redisKey, which we do not report in removedKeys (preserving prior behavior)
+	// Collect results for user keys deletions
+	for i, userKey := range keys {
+		idx := i + 1 // shift due to the first command being Del/HDel
+		if idx >= 0 && idx < len(cmds) {
+			if intCmd, ok := cmds[idx].(*redis.IntCmd); ok {
+				if val, cerr := intCmd.Result(); cerr == nil && val > 0 {
+					removedKeys = append(removedKeys, userKey)
+					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
+				}
+			} else {
+				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Unexpected command type in pipeline result")
+			}
 		}
 	}
 

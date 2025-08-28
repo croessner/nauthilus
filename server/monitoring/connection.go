@@ -66,6 +66,14 @@ func checkBackendConnection(server *config.BackendServer) error {
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(server.Host, fmt.Sprintf("%d", server.Port)), timeout)
 	if err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "TCP dial failed",
+			"host", server.Host,
+			"port", server.Port,
+			"protocol", strings.ToLower(server.Protocol),
+			"error", err,
+		)
+
 		return err
 	}
 
@@ -76,24 +84,52 @@ func checkBackendConnection(server *config.BackendServer) error {
 
 	if server.HAProxyV2 {
 		if err = checkHAproxyV2(conn, server.Host, server.Port); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "HAProxy v2 header send failed",
+				"host", server.Host,
+				"port", server.Port,
+				"protocol", strings.ToLower(server.Protocol),
+				"error", err,
+			)
+
 			return err
 		}
 	}
 
-	if server.TLS {
+	if server.TLS && strings.ToLower(server.Protocol) != "sieve" {
 		// Securing the connection
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: server.TLSSkipVerify,
 			ServerName:         server.Host,
 			MinVersion:         tls.VersionTLS12,
+			// Prefer modern secure ciphers; leave to Go defaults but ensure SNI is set.
 		}
 
+		// If the underlying service expects implicit TLS (e.g., SMTPS/IMAPS/POPS/HTTPS), we can wrap immediately.
+		// Otherwise, STARTTLS should be handled at protocol layer (as with Sieve below).
 		tlsConn := tls.Client(conn, tlsConfig)
 
-		// Handshake to establish the secure connection
+		// Handshake to establish the secure connection with a short timeout
+		type deadlineConn interface {
+			SetDeadline(time.Time) error
+		}
+
+		if dc, ok := conn.(deadlineConn); ok {
+			_ = dc.SetDeadline(time.Now().Add(5 * time.Second))
+		}
+
 		err = tlsConn.Handshake()
 		if err != nil {
-			return err
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "TLS handshake failed",
+				"host", server.Host,
+				"port", server.Port,
+				"protocol", strings.ToLower(server.Protocol),
+				"skip_verify", server.TLSSkipVerify,
+				"error", err,
+			)
+
+			return fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s skip_verify=%t): %w", server.Host, server.Port, strings.ToLower(server.Protocol), server.TLSSkipVerify, err)
 		}
 
 		// Replace the plain 'conn' with the tlsConn - everything written/read to/from this connection is encrypted/decrypted
@@ -186,6 +222,11 @@ func checkSMTP(conn net.Conn, protocol string, username string, password string)
 	}
 
 	if !isTLSConnection(conn) {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "missing TLS on connection where required",
+			"protocol", "smtp",
+		)
+
 		return errors.ErrMissingTLS
 	}
 
@@ -251,6 +292,11 @@ func checkPOP3(conn net.Conn, username string, password string) error {
 	}
 
 	if !isTLSConnection(conn) {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "missing TLS on connection where required",
+			"protocol", "pop3",
+		)
+
 		return errors.ErrMissingTLS
 	}
 
@@ -307,6 +353,11 @@ func checkIMAP(conn net.Conn, username string, password string) error {
 	}
 
 	if !isTLSConnection(conn) {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "missing TLS on connection where required",
+			"protocol", "imap",
+		)
+
 		return errors.ErrMissingTLS
 	}
 
@@ -339,9 +390,23 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	// Wait for initial greeting
 	if response, err := isOkResponseSieve(tp); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Sieve greeting read failed",
+			"host", hostname,
+			"protocol", "sieve",
+			"error", err,
+		)
+
 		return err
 	} else if response != "OK" {
 		//goland:noinspection GoErrorStringFormat
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Sieve greeting not OK",
+			"host", hostname,
+			"protocol", "sieve",
+			"response", response,
+		)
+
 		return fmt.Errorf("Sieve greeting failed: %s", response)
 	}
 
@@ -350,8 +415,22 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	// Read STARTTLS response
 	if response, err := isOkResponseSieve(tp); err != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Sieve STARTTLS read failed",
+			"host", hostname,
+			"protocol", "sieve",
+			"error", err,
+		)
+
 		return err
 	} else if response != "OK" {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Sieve STARTTLS refused",
+			"host", hostname,
+			"protocol", "sieve",
+			"response", response,
+		)
+
 		return fmt.Errorf("STARTTLS command failed: %s", response)
 	}
 
@@ -364,7 +443,15 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	tlsConn := tls.Client(conn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
-		return fmt.Errorf("TLS handshake failed: %s", err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "TLS handshake failed (sieve STARTTLS)",
+			"host", hostname,
+			"protocol", "sieve",
+			"skip_verify", tlsSkipVerify,
+			"error", err,
+		)
+
+		return fmt.Errorf("TLS handshake failed (sieve host=%s skip_verify=%t): %s", hostname, tlsSkipVerify, err)
 	}
 
 	if username == "" || password == "" {
@@ -420,6 +507,11 @@ func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) e
 
 	if username != "" && password != "" {
 		if !isTLSConnection(conn) {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "missing TLS on connection where required",
+				"protocol", "http",
+			)
+
 			return errors.ErrMissingTLS
 		}
 
