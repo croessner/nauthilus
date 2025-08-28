@@ -169,14 +169,14 @@ local function reset_protection_measures(redis_handle)
     )
     nauthilus_util.if_error_raise(err_script)
 
-    -- Delete blocked regions
-    nauthilus_redis.redis_del(redis_handle, "ntc:multilayer:global:blocked_regions")
-
-    -- Delete rate limited IPs
-    nauthilus_redis.redis_del(redis_handle, "ntc:multilayer:global:rate_limited_ips")
-
-    -- Delete captcha accounts
-    nauthilus_redis.redis_del(redis_handle, "ntc:multilayer:global:captcha_accounts")
+    -- Delete blocked regions, rate limited IPs, and captcha accounts using a single pipeline
+    local pipeline_cmds = {
+        {"del", "ntc:multilayer:global:blocked_regions"},
+        {"del", "ntc:multilayer:global:rate_limited_ips"},
+        {"del", "ntc:multilayer:global:captcha_accounts"},
+    }
+    local _, pipe_err = nauthilus_redis.redis_pipeline(redis_handle, "write", pipeline_cmds)
+    nauthilus_util.if_error_raise(pipe_err)
 
     return true
 end
@@ -187,46 +187,41 @@ local function reset_account(redis_handle, username)
         return false, "Username is required"
     end
 
-    -- Remove account from attacked accounts (distributed BF)
+    -- Prepare keys and members
     local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    -- redis_zrem expects a table of members as the third argument
-    nauthilus_redis.redis_zrem(redis_handle, attacked_accounts_key, { username })
-
-    -- Remove account from captcha accounts (global pattern/dynamic response)
     local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
-    nauthilus_redis.redis_srem(redis_handle, captcha_accounts_key, username)
 
-    -- Delete account-specific keys in the distributed BF namespace
     local window = 3600 -- 1 hour window
     local ip_key = "nauthilus:account:" .. username .. ":ips:" .. window
     local fail_key = "nauthilus:account:" .. username .. ":fails:" .. window
 
-    nauthilus_redis.redis_del(redis_handle, ip_key)
-    nauthilus_redis.redis_del(redis_handle, fail_key)
-
-    -- Additionally, clear classic brute-force/pw-history state so the user can log in again
-    -- These keys follow the same naming as the Go server (without custom Redis prefix)
-    -- 1) Remove user from AFFECTED_ACCOUNTS
-    nauthilus_redis.redis_srem(redis_handle, "AFFECTED_ACCOUNTS", username)
-
-    -- 2) Load all IPs seen for this account and remove related PW_HIST and META keys
+    -- Load all IPs seen for this account (read) to build the deletion pipeline
     local pw_hist_ips_key = "PW_HIST_IPS:" .. username
     local ips = nauthilus_redis.redis_smembers(redis_handle, pw_hist_ips_key) or {}
 
+    -- Build a single write pipeline to delete all related keys and set entries
+    local pipeline_cmds = {
+        {"zrem", attacked_accounts_key, { username }},
+        {"srem", captcha_accounts_key, username},
+        {"del", ip_key},
+        {"del", fail_key},
+        {"srem", "AFFECTED_ACCOUNTS", username},
+    }
+
     for _, ip in ipairs(ips) do
-        -- Per-account+IP and per-IP password history hashes
-        nauthilus_redis.redis_del(redis_handle, "PW_HIST:" .. username .. ":" .. ip)
-        nauthilus_redis.redis_del(redis_handle, "PW_HIST:" .. ip)
-        -- Metadata about protocols/OIDC seen for this IP
-        nauthilus_redis.redis_del(redis_handle, "PW_HIST_META:" .. ip)
-        -- Tolerate bucket keys (bf:TR) for this IP (as used by core REST flush)
-        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip)
-        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip .. ":P")
-        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip .. ":N")
+        table.insert(pipeline_cmds, {"del", "PW_HIST:" .. username .. ":" .. ip})
+        table.insert(pipeline_cmds, {"del", "PW_HIST:" .. ip})
+        table.insert(pipeline_cmds, {"del", "PW_HIST_META:" .. ip})
+        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip})
+        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip .. ":P"})
+        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip .. ":N"})
     end
 
     -- Finally, drop the set of IPs for this account
-    nauthilus_redis.redis_del(redis_handle, pw_hist_ips_key)
+    table.insert(pipeline_cmds, {"del", pw_hist_ips_key})
+
+    local _, pipe_err = nauthilus_redis.redis_pipeline(redis_handle, "write", pipeline_cmds)
+    nauthilus_util.if_error_raise(pipe_err)
 
     return true
 end
