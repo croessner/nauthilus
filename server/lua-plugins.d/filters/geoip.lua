@@ -17,6 +17,139 @@ local N = "geoippolicyd"
 
 local HCCR = "http_client_concurrent_requests_total"
 
+-- Shared helpers for filter and action
+local function add_custom_logs(object)
+    for item, values in pairs(object) do
+        if type(values) == "table" then
+            local log_str = ""
+            for _, value in pairs(values) do
+                if string.len(log_str) == 0 then
+                    log_str = value
+                else
+                    log_str = log_str .. "," .. value
+                end
+
+                nauthilus_builtin.custom_log_add(N .. "_" .. item, log_str)
+            end
+        end
+    end
+end
+
+local function exists_in_table(tbl, element)
+    for _, value in pairs(tbl) do
+        if value == element then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function build_payload_and_cache_key(request)
+    local nauthilus_util = require("nauthilus_util")
+
+    dynamic_loader("nauthilus_gll_json")
+    local json = require("json")
+
+    local t = {}
+    t.key = "client"
+    t.value = { address = request.client_ip, sender = request.account }
+
+    local payload, json_encode_err = json.encode(t)
+    nauthilus_util.if_error_raise(json_encode_err)
+
+    local cache_key = "geoip:" .. (request.client_ip or "") .. ":" .. (request.account or "")
+
+    return payload, cache_key
+end
+
+local function http_geoip_request(url, payload)
+    local nauthilus_util = require("nauthilus_util")
+
+    dynamic_loader("nauthilus_prometheus")
+    local nauthilus_prometheus = require("nauthilus_prometheus")
+
+    dynamic_loader("nauthilus_gluahttp")
+    local http = require("glua_http")
+
+    dynamic_loader("nauthilus_gll_json")
+    local json = require("json")
+
+    nauthilus_prometheus.increment_gauge(HCCR, { service = N })
+    local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
+
+    local result, request_err = http.post(url, {
+        timeout = "10s",
+        headers = { Accept = "*/*", ["User-Agent"] = "Nauthilus", ["Content-Type"] = "application/json" },
+        body = payload,
+    })
+
+    nauthilus_prometheus.stop_timer(timer)
+    nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
+    nauthilus_util.if_error_raise(request_err)
+
+    if result.status_code ~= 202 then
+        nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
+    end
+
+    local decoded, err_jdec = json.decode(result.body)
+    nauthilus_util.if_error_raise(err_jdec)
+
+    return decoded
+end
+
+local function process_response_and_context(response)
+    local nauthilus_util = require("nauthilus_util")
+
+    dynamic_loader("nauthilus_context")
+    local nauthilus_context = require("nauthilus_context")
+
+    local current_iso_code = ""
+
+    nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
+
+    if response.object then
+        add_custom_logs(response.object)
+        if nauthilus_util.is_table(response.object) then
+            local result_iso_codes = {}
+            for key, values in pairs(response.object) do
+                if key == "current_country_code" then
+                    if nauthilus_util.is_string(values) then
+                        current_iso_code = values
+                    end
+                end
+
+                if key == "foreign_countries_seen" or key == "home_countries_seen" then
+                    if nauthilus_util.is_table(values) then
+                        for _, iso_code in ipairs(values) do
+                            if not exists_in_table(result_iso_codes, iso_code) then
+                                table.insert(result_iso_codes, iso_code)
+                            end
+                        end
+                    end
+                end
+            end
+
+            nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
+        end
+    end
+
+    return current_iso_code
+end
+
+local function write_rt_geoip(rt, guid, current_iso_code, iso_codes_seen, status)
+    rt.filter_geoippolicyd = true
+    rt.geoip_info = {
+        guid = guid or "",
+        current_country_code = current_iso_code or "",
+        iso_codes_seen = iso_codes_seen or {},
+    }
+
+    if status ~= nil then
+        rt.geoip_info.status = status
+    end
+end
+
 function nauthilus_call_filter(request)
     if request.no_auth then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
@@ -40,33 +173,6 @@ function nauthilus_call_filter(request)
         end
     end
 
-    local function add_custom_logs(object)
-        for item, values in pairs(object) do
-            if type(values) == "table" then
-                local log_str = ""
-
-                for _, value in pairs(values) do
-                    if string.len(log_str) == 0 then
-                        log_str = value
-                    else
-                        log_str = log_str .. "," .. value
-                    end
-
-                    nauthilus_builtin.custom_log_add(N .. "_" .. item, log_str)
-                end
-            end
-        end
-    end
-
-    local function exists_in_table(tbl, element)
-        for _, value in pairs(tbl) do
-            if value == element then
-                return true
-            end
-        end
-
-        return false
-    end
 
     -- Always run the GEOIP policy lookup for routable IPs to enrich context for both
     -- authenticated and unauthenticated requests.
@@ -76,117 +182,29 @@ function nauthilus_call_filter(request)
     dynamic_loader("nauthilus_prometheus")
     local nauthilus_prometheus = require("nauthilus_prometheus")
 
-    dynamic_loader("nauthilus_gluahttp")
-    local http = require("glua_http")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
-
     -- Short-lived local cache to reduce outbound GEOIP policy requests under load
     dynamic_loader("nauthilus_cache")
     local nauthilus_cache = require("nauthilus_cache")
 
-    local t = {}
-
-    t.key = "client"
-    t.value = {
-        address = request.client_ip,
-        sender = request.account
-    }
-
-    local payload, json_encode_err = json.encode(t)
-    nauthilus_util.if_error_raise(json_encode_err)
-
-    local cache_key = "geoip:" .. (request.client_ip or "") .. ":" .. (request.account or "")
+    local payload, cache_key = build_payload_and_cache_key(request)
     local response = nauthilus_cache.cache_get(cache_key)
 
     if response == nil then
-        nauthilus_prometheus.increment_gauge(HCCR, { service = N })
-
-        local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
-        local  result, request_err = http.post(os.getenv("GEOIP_POLICY_URL"), {
-            timeout = "10s",
-            headers = {
-                Accept = "*/*",
-                ["User-Agent"] = "Nauthilus",
-                ["Content-Type"] = "application/json",
-            },
-            body = payload,
-        })
-
-        nauthilus_prometheus.stop_timer(timer)
-        nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
-        nauthilus_util.if_error_raise(request_err)
-
-        if result.status_code ~= 202 then
-            nauthilus_util.if_error_raise(N .. "_status_code=" .. tostring(result.status_code))
-        end
-
-        local decoded, err_jdec = json.decode(result.body)
-        nauthilus_util.if_error_raise(err_jdec)
-        response = decoded
-
-        -- Cache for a short TTL (30s) to keep decisions fresh while reducing HTTP load
+        response = http_geoip_request(os.getenv("GEOIP_POLICY_URL"), payload)
         nauthilus_cache.cache_set(cache_key, response, 30)
     end
 
     if response.err == nil then
-        local current_iso_code = ""
+        local current_iso_code = process_response_and_context(response)
+        local iso_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {}
 
-        nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
-
-        if response.object then
-            add_custom_logs(response.object)
-
-            -- Try to get all ISO country codes
-            if nauthilus_util.is_table(response.object) then
-                local result_iso_codes = {}
-
-                for key, values in pairs(response.object) do
-                    if key == "current_country_code" then
-                        if nauthilus_util.is_string(values) then
-                            current_iso_code = values
-                        end
-                    end
-
-                    if key == "foreign_countries_seen" or key == "home_countries_seen" then
-                        if nauthilus_util.is_table(values) then
-                            for _, iso_code in ipairs(values) do
-                                if not exists_in_table(result_iso_codes, iso_code) then
-                                    table.insert(result_iso_codes, iso_code)
-                                end
-                            end
-                        end
-                    end
-                end
-
-                nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
-            end
-        end
-
-        if response.object and nauthilus_util.is_table(response.object) and response.object.policy_reject then
-            nauthilus_prometheus.increment_counter(N .. "_count", {
-                country = current_iso_code,
-                status = "reject",
-            })
-
+        if response.object and response.object.policy_reject then
+            nauthilus_prometheus.increment_counter(N .. "_count", { country = current_iso_code, status = "reject" })
             nauthilus_builtin.custom_log_add(N, "blocked")
 
-            -- Get result table
-            local rt = nauthilus_context.context_get("rt")
-            if rt == nil then
-                rt = {}
-            end
-
+            local rt = nauthilus_context.context_get("rt") or {}
             if nauthilus_util.is_table(rt) then
-                rt.filter_geoippolicyd = true
-                -- Enrich rt with geoip details
-                rt.geoip_info = {
-                    guid = response.guid or "",
-                    current_country_code = current_iso_code or "",
-                    iso_codes_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {},
-                    status = "reject",
-                }
+                write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "reject")
                 nauthilus_context.context_set("rt", rt)
             end
 
@@ -195,24 +213,12 @@ function nauthilus_call_filter(request)
             return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
         end
 
-        nauthilus_prometheus.increment_counter(N .. "_count", {
-            country = current_iso_code,
-            status = "accept",
-        })
+        nauthilus_prometheus.increment_counter(N .. "_count", { country = current_iso_code, status = "accept" })
 
-        -- Also enrich rt on accept for downstream context
-        do
-            local rt = nauthilus_context.context_get("rt") or {}
-            if nauthilus_util.is_table(rt) then
-                rt.filter_geoippolicyd = true
-                rt.geoip_info = {
-                    guid = response.guid or "",
-                    current_country_code = current_iso_code or "",
-                    iso_codes_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {},
-                    status = "accept",
-                }
-                nauthilus_context.context_set("rt", rt)
-            end
+        local rt = nauthilus_context.context_get("rt") or {}
+        if nauthilus_util.is_table(rt) then
+            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "accept")
+            nauthilus_context.context_set("rt", rt)
         end
     else
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
@@ -225,4 +231,57 @@ function nauthilus_call_filter(request)
     else
         return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
     end
+end
+
+function nauthilus_call_action(request)
+    local nauthilus_util = require("nauthilus_util")
+
+    -- Skip non-routable IPs quickly; nothing to store
+    local is_routable = false
+
+    if request.client_ip then
+        is_routable = nauthilus_util.is_routable_ip(request.client_ip)
+    end
+
+    if not is_routable then
+        return nauthilus_builtin.ACTION_RESULT_OK
+    end
+
+    dynamic_loader("nauthilus_context")
+    local nauthilus_context = require("nauthilus_context")
+
+    dynamic_loader("nauthilus_cache")
+    local nauthilus_cache = require("nauthilus_cache")
+
+    -- Build payload and a dedicated cache key for info-mode to avoid mixing with policy cache
+    local payload, base_cache_key = build_payload_and_cache_key(request)
+    local cache_key = "info:" .. base_cache_key
+
+    local response = nauthilus_cache.cache_get(cache_key)
+    if response == nil then
+        -- Append info=1 to URL (preserve existing query if present)
+        local base_url = os.getenv("GEOIP_POLICY_URL")
+        local sep = string.find(base_url or "", "?", 1, true) and "&" or "?"
+        local url = (base_url or "") .. sep .. "info=1"
+
+        response = http_geoip_request(url, payload)
+
+        -- Short TTL to keep fresh but reduce HTTP load
+        nauthilus_cache.cache_set(cache_key, response, 30)
+    end
+
+    if response and response.err == nil then
+        local current_iso_code = process_response_and_context(response)
+        local iso_seen = nauthilus_context.context_get(N .. "_iso_codes_seen") or {}
+
+        -- Only write info into rt, no status
+        local rt = nauthilus_context.context_get("rt") or {}
+        if nauthilus_util.is_table(rt) then
+            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, nil)
+
+            nauthilus_context.context_set("rt", rt)
+        end
+    end
+
+    return nauthilus_builtin.ACTION_RESULT_OK
 end
