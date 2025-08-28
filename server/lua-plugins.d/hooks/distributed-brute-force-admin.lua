@@ -187,22 +187,46 @@ local function reset_account(redis_handle, username)
         return false, "Username is required"
     end
 
-    -- Remove account from attacked accounts
+    -- Remove account from attacked accounts (distributed BF)
     local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
     -- redis_zrem expects a table of members as the third argument
     nauthilus_redis.redis_zrem(redis_handle, attacked_accounts_key, { username })
 
-    -- Remove account from captcha accounts
+    -- Remove account from captcha accounts (global pattern/dynamic response)
     local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
     nauthilus_redis.redis_srem(redis_handle, captcha_accounts_key, username)
 
-    -- Delete account-specific keys
+    -- Delete account-specific keys in the distributed BF namespace
     local window = 3600 -- 1 hour window
     local ip_key = "nauthilus:account:" .. username .. ":ips:" .. window
     local fail_key = "nauthilus:account:" .. username .. ":fails:" .. window
 
     nauthilus_redis.redis_del(redis_handle, ip_key)
     nauthilus_redis.redis_del(redis_handle, fail_key)
+
+    -- Additionally, clear classic brute-force/pw-history state so the user can log in again
+    -- These keys follow the same naming as the Go server (without custom Redis prefix)
+    -- 1) Remove user from AFFECTED_ACCOUNTS
+    nauthilus_redis.redis_srem(redis_handle, "AFFECTED_ACCOUNTS", username)
+
+    -- 2) Load all IPs seen for this account and remove related PW_HIST and META keys
+    local pw_hist_ips_key = "PW_HIST_IPS:" .. username
+    local ips = nauthilus_redis.redis_smembers(redis_handle, pw_hist_ips_key) or {}
+
+    for _, ip in ipairs(ips) do
+        -- Per-account+IP and per-IP password history hashes
+        nauthilus_redis.redis_del(redis_handle, "PW_HIST:" .. username .. ":" .. ip)
+        nauthilus_redis.redis_del(redis_handle, "PW_HIST:" .. ip)
+        -- Metadata about protocols/OIDC seen for this IP
+        nauthilus_redis.redis_del(redis_handle, "PW_HIST_META:" .. ip)
+        -- Tolerate bucket keys (bf:TR) for this IP (as used by core REST flush)
+        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip)
+        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip .. ":P")
+        nauthilus_redis.redis_del(redis_handle, "bf:TR:" .. ip .. ":N")
+    end
+
+    -- Finally, drop the set of IPs for this account
+    nauthilus_redis.redis_del(redis_handle, pw_hist_ips_key)
 
     return true
 end
