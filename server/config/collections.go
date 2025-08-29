@@ -32,7 +32,7 @@ func (s *StringSet) GetStringSlice() []string {
 		return []string{}
 	}
 
-	var result []string
+	result := make([]string, 0, len(*s))
 	for key := range *s {
 		result = append(result, key)
 	}

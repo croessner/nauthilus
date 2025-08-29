@@ -72,6 +72,13 @@ function nauthilus_call_action(request)
     dynamic_loader("nauthilus_cache")
     local nauthilus_cache = require("nauthilus_cache")
 
+    local feature_from_ctx = {}
+    local builtin_features = nauthilus_context.context_get("__lua_ctx_builtin__")
+    if nauthilus_util.is_table(builtin_features) and nauthilus_util.table_length(builtin_features) > 0 then
+        for _, v in ipairs(builtin_features) do
+            table.insert(feature_from_ctx, v)
+        end
+    end
     local send_message = false
     local pwnd_info = ""
     local brute_force_bucket = ""
@@ -84,14 +91,31 @@ function nauthilus_call_action(request)
     if type(rt) == "table" and nauthilus_util.table_length(rt) > 0 then
         if rt.brute_force_haproxy then send_message = true end
         if rt.feature_haproxy then send_message = true end
-        if rt.feature_blocklist then send_message = true end
+        if rt.feature_blocklist then
+            send_message = true
+            table.insert(feature_from_ctx, "blocklist")
+        end
         if rt.feature_failed_login_hotspot and rt.failed_login_info then send_message = true end
-        if rt.filter_geoippolicyd then send_message = true end
+        if rt.filter_geoippolicyd then
+            send_message = true
+            table.insert(feature_from_ctx, "geoip_policyd")
+        end
         if rt.action_haveibeenpwnd then send_message = true end
-        if rt.feature_global_pattern then send_message = true end
-        if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then send_message = true end
-        if rt.dynamic_response then send_message = true end
+        if rt.feature_global_pattern then
+            send_message = true
+            table.insert(feature_from_ctx, "gp")
+        end
+        if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
+            send_message = true
+            table.insert(feature_from_ctx, "account_prot")
+        end
+        if rt.dynamic_response then
+            send_message = true
+            table.insert(feature_from_ctx, "dyn_response")
+        end
     end
+
+    local features = table.concat(feature_from_ctx, ",")
 
     local hibp = nauthilus_context.context_get("haveibeenpwnd_hash_info")
     if hibp then pwnd_info = hibp else pwnd_info = "" end
@@ -205,6 +229,7 @@ function nauthilus_call_action(request)
                 ts = ts,
                 session = request.session,
                 service = request.service or "",
+                features = features,
                 client_ip = request.client_ip,
                 client_port = request.client_port or "",
                 client_net = request.client_net or "",

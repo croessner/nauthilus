@@ -86,6 +86,22 @@ func logAddLocalhost(auth *AuthState, feature string) {
 	auth.AdditionalLogs = append(auth.AdditionalLogs, definitions.Localhost)
 }
 
+// updateLuaContext updates the Lua context with a new feature in the Gin context, ensuring unique entries.
+func updateLuaContext(ctx *lualib.Context, feature string) {
+	var featureList config.StringSet
+
+	curFeatures, exists := ctx.GetExists(definitions.LuaCtxBuiltin)
+	if !exists {
+		featureList = config.NewStringSet()
+	} else {
+		featureList = curFeatures.(config.StringSet)
+	}
+
+	featureList.Set(feature)
+
+	ctx.Set(definitions.LuaCtxBuiltin, featureList)
+}
+
 // FeatureLua runs Lua scripts and returns a trigger result.
 func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
 	if isLocalOrEmptyIP(a.ClientIP) {
@@ -192,6 +208,7 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 
 	if !a.IsInNetwork(config.GetFile().GetClearTextList()) {
 		logAddMessage(a, definitions.NoTLS, definitions.FeatureTLSEncryption)
+		updateLuaContext(a.Context, definitions.FeatureTLSEncryption)
 
 		triggered = true
 
@@ -242,6 +259,7 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 		}
 
 		logAddMessage(a, fmt.Sprintf("%s not our domain", split[1]), definitions.FeatureRelayDomains)
+		updateLuaContext(a.Context, definitions.FeatureRelayDomains)
 
 		triggered = true
 	}
@@ -415,6 +433,8 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	if totalRBLScore >= rbls.GetThreshold() {
+		updateLuaContext(a.Context, definitions.FeatureRBL)
+
 		triggered = true
 	}
 

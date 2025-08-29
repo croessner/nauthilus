@@ -1835,6 +1835,9 @@ const (
 // DefaultBackendName specifies the default name used for the backend in channel and pool creation procedures.
 const DefaultBackendName = "__meta_default__"
 
+// LuaCtxBuiltin is a builtin map for static features that have been triggered
+const LuaCtxBuiltin = "__lua_ctx_builtin__"
+
 // Cache module function names
 const (
 	// LuaFnCacheSet represents the function name for setting a cache entry

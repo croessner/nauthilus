@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   String,
   session              String,
   service              String,
+  features             String,
   client_ip            String,
   client_port          String,
   client_net           String,

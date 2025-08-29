@@ -67,10 +67,10 @@ func (c *Context) Set(key string, value any) {
 	c.mu.Unlock()
 }
 
-// Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
-func (c *Context) Get(key string) any {
+// GetExists retrieves the value associated with the given key and returns a boolean indicating its existence in the context.
+func (c *Context) GetExists(key string) (any, bool) {
 	if c == nil {
-		return nil
+		return nil, false
 	}
 
 	c.mu.RLock()
@@ -78,6 +78,20 @@ func (c *Context) Get(key string) any {
 	defer c.mu.RUnlock()
 
 	if value, assertOk := c.data[key]; assertOk {
+		return value, true
+	}
+
+	return nil, false
+}
+
+// Get returns the lua.LValue value aquired by key from the Lua Context. If no key was found, it returns nil.
+func (c *Context) Get(key string) any {
+	if c == nil {
+		return nil
+	}
+
+	value, exists := c.GetExists(key)
+	if exists {
 		return value
 	}
 

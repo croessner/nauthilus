@@ -164,6 +164,12 @@ function nauthilus_run_hook(logging, session)
             -- Minimal escape: replace single quotes with doubled quotes.
             username = username:gsub("'", "''")
             where = " WHERE username = '" .. username .. "'"
+        elseif action == "by_account" then
+            local account = nauthilus_http_request.get_http_query_param("account") or ""
+            -- Parameterize safely by using ClickHouse functions; we still must quote safely.
+            -- Minimal escape: replace single quotes with doubled quotes.
+            account = account:gsub("'", "''")
+            where = " WHERE account = '" .. account .. "'"
         elseif action == "by_ip" then
             local ip = nauthilus_http_request.get_http_query_param("ip") or ""
             ip = ip:gsub("'", "''")
@@ -174,7 +180,7 @@ function nauthilus_run_hook(logging, session)
 
         local fields = table.concat({
             -- core identifiers and network
-            "ts","session","service","client_ip","client_port","client_net","client_id",
+            "ts","session","service","features","client_ip","client_port","client_net","client_id",
             "hostname","proto","user_agent","local_ip","local_port",
             -- user/account info
             "display_name","account","account_field","unique_user_id","username","password_hash",
