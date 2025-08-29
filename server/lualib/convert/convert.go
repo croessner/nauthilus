@@ -18,6 +18,7 @@ package convert
 import (
 	"fmt"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -103,6 +104,15 @@ func GoToLuaValue(L *lua.LState, value any) lua.LValue {
 		return lua.LNumber(v)
 	case bool:
 		return lua.LBool(v)
+	case config.StringSet:
+		tbl := L.NewTable()
+
+		strSlice := v.GetStringSlice()
+		for _, str := range strSlice {
+			tbl.Append(lua.LString(str))
+		}
+
+		return tbl
 	case []any:
 		tbl := L.NewTable()
 
