@@ -137,8 +137,8 @@ local function process_response_and_context(response)
     return current_iso_code
 end
 
-local function write_rt_geoip(rt, guid, current_iso_code, iso_codes_seen, status)
-    rt.filter_geoippolicyd = true
+local function write_rt_geoip(rt, guid, current_iso_code, iso_codes_seen, status, is_filter)
+    rt.filter_geoippolicyd = is_filter or false
     rt.geoip_info = {
         guid = guid or "",
         current_country_code = current_iso_code or "",
@@ -204,7 +204,7 @@ function nauthilus_call_filter(request)
 
             local rt = nauthilus_context.context_get("rt") or {}
             if nauthilus_util.is_table(rt) then
-                write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "reject")
+                write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "reject", true)
                 nauthilus_context.context_set("rt", rt)
             end
 
@@ -217,7 +217,7 @@ function nauthilus_call_filter(request)
 
         local rt = nauthilus_context.context_get("rt") or {}
         if nauthilus_util.is_table(rt) then
-            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "accept")
+            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, "accept", true)
             nauthilus_context.context_set("rt", rt)
         end
     else
@@ -277,7 +277,7 @@ function nauthilus_call_action(request)
         -- Only write info into rt, no status
         local rt = nauthilus_context.context_get("rt") or {}
         if nauthilus_util.is_table(rt) then
-            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, nil)
+            write_rt_geoip(rt, response.guid, current_iso_code, iso_seen, nil, false)
 
             nauthilus_context.context_set("rt", rt)
         end
