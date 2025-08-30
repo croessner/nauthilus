@@ -155,6 +155,11 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
+    -- Never run the GeoIP policy service for unauthenticated users!
+    if not request.authenticated then
+        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+    end
+
     local nauthilus_util = require("nauthilus_util")
 
     -- Check if the IP is routable at the very beginning
@@ -173,9 +178,6 @@ function nauthilus_call_filter(request)
         end
     end
 
-
-    -- Always run the GEOIP policy lookup for routable IPs to enrich context for both
-    -- authenticated and unauthenticated requests.
     dynamic_loader("nauthilus_context")
     local nauthilus_context = require("nauthilus_context")
 
@@ -221,6 +223,10 @@ function nauthilus_call_filter(request)
             nauthilus_context.context_set("rt", rt)
         end
     else
+        if not request.authenticated then
+            return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_FAIL
+        end
+
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_FAIL
     end
 
