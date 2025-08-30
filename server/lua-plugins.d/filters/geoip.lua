@@ -188,7 +188,9 @@ function nauthilus_call_filter(request)
     dynamic_loader("nauthilus_cache")
     local nauthilus_cache = require("nauthilus_cache")
 
-    local payload, cache_key = build_payload_and_cache_key(request)
+    local payload, base_cache_key = build_payload_and_cache_key(request)
+    -- Use a dedicated namespace for filter cache to avoid mixing with action cache
+    local cache_key = "policy:" .. base_cache_key
     local response = nauthilus_cache.cache_get(cache_key)
 
     if response == nil then
