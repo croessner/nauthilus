@@ -76,6 +76,17 @@ function nauthilus_call_action(request)
         return t
     end
 
+    -- Return current UTC timestamp as 'YYYY-MM-DD HH:MM:SS.mmm'
+    -- We avoid relying on nauthilus_util.get_current_timestamp() because it may honor TZ.
+    local function utc_now_ts_ms()
+        -- Use UTC with os.date('!'), seconds resolution
+        local base = os.date("!%Y-%m-%d %H:%M:%S")
+        -- Best-effort milliseconds: Lua standard libs don't provide wall-clock ms reliably.
+        -- We use .000 to keep a stable DateTime64(3) compatible format.
+        local ms = "000"
+        return string.format("%s.%s", base, ms)
+    end
+
     -- Modules
     dynamic_loader("nauthilus_password")
     local nauthilus_password = require("nauthilus_password")
@@ -148,7 +159,7 @@ function nauthilus_call_action(request)
 
     if allowed then
         -- Build row (same values as telegram), tolerate missing account
-        local ts = nauthilus_util.get_current_timestamp() or "unknown"
+        local ts = utc_now_ts_ms()
 
         local proto = (request.protocol ~= "" and request.protocol) or ""
         local username = (request.username ~= "" and request.username) or ""
