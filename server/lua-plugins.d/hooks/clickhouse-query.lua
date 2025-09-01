@@ -129,7 +129,7 @@ function nauthilus_run_hook(logging, session)
     }
 
     local action = nauthilus_http_request.get_http_query_param("action") or "recent"
-    local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 1000)
+    local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 10000)
 
     local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
     local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
@@ -157,25 +157,46 @@ function nauthilus_run_hook(logging, session)
         end
         sql = ensure_limit_and_format(safe_or_reason, limit)
     else
-        local where = ""
+        local where_clauses = {}
         if action == "by_user" then
             local username = nauthilus_http_request.get_http_query_param("username") or ""
-            -- Parameterize safely by using ClickHouse functions; we still must quote safely.
-            -- Minimal escape: replace single quotes with doubled quotes.
             username = username:gsub("'", "''")
-            where = " WHERE username = '" .. username .. "'"
+            table.insert(where_clauses, "username = '" .. username .. "'")
         elseif action == "by_account" then
             local account = nauthilus_http_request.get_http_query_param("account") or ""
-            -- Parameterize safely by using ClickHouse functions; we still must quote safely.
-            -- Minimal escape: replace single quotes with doubled quotes.
             account = account:gsub("'", "''")
-            where = " WHERE account = '" .. account .. "'"
+            table.insert(where_clauses, "account = '" .. account .. "'")
         elseif action == "by_ip" then
             local ip = nauthilus_http_request.get_http_query_param("ip") or ""
             ip = ip:gsub("'", "''")
-            where = " WHERE client_ip = '" .. ip .. "'"
+            table.insert(where_clauses, "client_ip = '" .. ip .. "'")
         else
-            -- recent (no where)
+            -- recent: no action-specific filter
+        end
+
+        -- Status filter: authenticated true/false
+        local status = nauthilus_http_request.get_http_query_param("status") or "all"
+        if status == "success" then
+            table.insert(where_clauses, "authenticated = true")
+        elseif status == "failed" then
+            table.insert(where_clauses, "authenticated = false")
+        end
+
+        -- Time range filters (inclusive). Accept ISO8601 and let CH parse best-effort.
+        local ts_start = nauthilus_http_request.get_http_query_param("ts_start")
+        if ts_start and ts_start ~= "" then
+            ts_start = ts_start:gsub("'", "''")
+            table.insert(where_clauses, "ts >= parseDateTimeBestEffort('" .. ts_start .. "')")
+        end
+        local ts_end = nauthilus_http_request.get_http_query_param("ts_end")
+        if ts_end and ts_end ~= "" then
+            ts_end = ts_end:gsub("'", "''")
+            table.insert(where_clauses, "ts <= parseDateTimeBestEffort('" .. ts_end .. "')")
+        end
+
+        local where = ""
+        if #where_clauses > 0 then
+            where = " WHERE " .. table.concat(where_clauses, " AND ")
         end
 
         local fields = table.concat({
