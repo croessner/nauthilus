@@ -364,30 +364,60 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 			t.logRedisError(ipAddress, err)
 			// Fall back to standard calculation if script fails
 		} else {
-			// Parse the result from the Lua script
+			// Parse the result from the Lua script robustly
 			resultArray, ok := result.([]interface{})
 			if ok && len(resultArray) >= 5 {
-				calculatedPct, _ := resultArray[0].(int64)
-				maxNegative, _ := resultArray[1].(int64)
-				positive, _ := resultArray[2].(int64)
-				negative, _ := resultArray[3].(int64)
-				adaptiveUsed, _ := resultArray[4].(int64)
+				parseI64 := func(v interface{}) (int64, bool) {
+					switch val := v.(type) {
+					case int64:
+						return val, true
+					case int:
+						return int64(val), true
+					case float64:
+						return int64(val), true
+					case string:
+						if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+							return n, true
+						}
+					}
 
-				adaptiveStr := "static"
-				if adaptiveUsed == 1 {
-					adaptiveStr = "adaptive"
+					return 0, false
 				}
 
-				t.logDbgTolerate(
-					ipAddress,
-					positive,
-					negative,
-					maxNegative,
-					uint8(calculatedPct),
-					adaptiveStr,
-				)
+				calculatedPct, ok1 := parseI64(resultArray[0])
+				maxNegative, ok2 := parseI64(resultArray[1])
+				pos, ok3 := parseI64(resultArray[2])
+				neg, ok4 := parseI64(resultArray[3])
+				adaptiveUsed, ok5 := parseI64(resultArray[4])
 
-				return negative <= maxNegative
+				if !(ok1 && ok2 && ok3 && ok4 && ok5) {
+					// Parsing failed; fall back to standard calculation
+				} else {
+					positive = pos
+					negative = neg
+
+					adaptiveStr := "static"
+					if adaptiveUsed == 1 {
+						adaptiveStr = "adaptive"
+					}
+
+					// If there are no positives, do not tolerate
+					if positive == 0 {
+						t.logDbgTolerate(ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
+						return false
+					}
+
+					t.logDbgTolerate(
+						ipAddress,
+						positive,
+						negative,
+						maxNegative,
+						uint8(calculatedPct),
+						adaptiveStr,
+					)
+
+					return negative <= maxNegative
+				}
 			}
 		}
 	}
