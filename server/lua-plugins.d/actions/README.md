@@ -114,7 +114,7 @@ Features:
 ClickHouse table schema (JSONEachRow):
 ```
 CREATE TABLE IF NOT EXISTS nauthilus.logins (
-  ts                   String,
+  ts                   DateTime64(3, 'UTC'),
   session              String,
   service              String,
   client_ip            String,
@@ -170,7 +170,7 @@ SETTINGS index_granularity = 8192;
 ```
 
 Notes:
-- All fields are stored as String for schema stability; CAST at query-time if needed.
+- ts is DateTime64(3, 'UTC'); other fields are String for schema stability. ClickHouse JSONEachRow will parse ISO-like timestamp strings for ts automatically.
 
 Configuration (environment variables):
 - CLICKHOUSE_INSERT_URL: Full HTTP endpoint including the INSERT and FORMAT JSONEachRow, e.g.
