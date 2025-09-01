@@ -121,7 +121,7 @@ function nauthilus_call_action(request)
         if rt.feature_blocklist then
             table.insert(feature_from_ctx, "blocklist")
         end
-        if rt.filter_geoippolicyd then
+        if rt.filter_geoippolicyd and rt.geoip_info and rt.geoip_info.status and rt.geoip_info.status == "reject" then
             table.insert(feature_from_ctx, "geoip_policyd")
         end
         if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
