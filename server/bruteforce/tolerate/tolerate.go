@@ -404,6 +404,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 					// If there are no positives, do not tolerate
 					if positive == 0 {
 						t.logDbgTolerate(ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
+
 						return false
 					}
 
