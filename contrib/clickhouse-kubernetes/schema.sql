@@ -1,11 +1,11 @@
 -- Nauthilus ClickHouse schema for Kubernetes deployments
 -- Creates database and table used by server/lua-plugins.d/actions/clickhouse.lua
--- All fields are String for schema stability; cast at query time if needed.
+-- ts uses DateTime64(3, 'UTC') for precise timestamps; other fields are String for schema stability.
 
 CREATE DATABASE IF NOT EXISTS nauthilus;
 
 CREATE TABLE IF NOT EXISTS nauthilus.logins (
-  ts                   String,
+  ts                   DateTime64(3, 'UTC'),
   session              String,
   service              String,
   features             String,

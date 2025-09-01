@@ -183,15 +183,21 @@ function nauthilus_run_hook(logging, session)
         end
 
         -- Time range filters (inclusive). Accept ISO8601 and let CH parse best-effort.
+        -- Normalize trailing 'Z' to '+00:00' for better compatibility across ClickHouse versions,
+        -- and prefer DateTime64 parsing to match typical ts column precision.
         local ts_start = nauthilus_http_request.get_http_query_param("ts_start")
         if ts_start and ts_start ~= "" then
+            ts_start = ts_start:gsub("Z$","+00:00")
             ts_start = ts_start:gsub("'", "''")
-            table.insert(where_clauses, "ts >= parseDateTimeBestEffort('" .. ts_start .. "')")
+            table.insert(where_clauses, "ts >= parseDateTime64BestEffort('" .. ts_start .. "')"
+            )
         end
         local ts_end = nauthilus_http_request.get_http_query_param("ts_end")
         if ts_end and ts_end ~= "" then
+            ts_end = ts_end:gsub("Z$","+00:00")
             ts_end = ts_end:gsub("'", "''")
-            table.insert(where_clauses, "ts <= parseDateTimeBestEffort('" .. ts_end .. "')")
+            table.insert(where_clauses, "ts <= parseDateTime64BestEffort('" .. ts_end .. "')"
+            )
         end
 
         local where = ""
