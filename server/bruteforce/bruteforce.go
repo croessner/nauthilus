@@ -451,7 +451,7 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		bm.loadBruteForceBucketCounter(&rules[ruleNumber])
 
 		// The counter goes from 0...N-1, but the 'failed_requests' setting from 1...N
-		if bm.bruteForceCounter[rules[ruleNumber].Name]+1 > rules[ruleNumber].FailedRequests {
+		if bm.bruteForceCounter[rules[ruleNumber].Name]+1 >= rules[ruleNumber].FailedRequests {
 			ruleTriggered = true
 			*message = "Brute force attack detected"
 			stats.GetMetrics().GetBruteForceRejected().WithLabelValues(rules[ruleNumber].Name).Inc()
