@@ -56,6 +56,26 @@ function nauthilus_call_action(request)
         return math.floor(n)
     end
 
+    -- Normalize timestamp strings for ClickHouse DateTime64(3, 'UTC') JSONEachRow input
+    -- - Replace 'T' with space
+    -- - Remove trailing 'Z'
+    -- - Remove trailing timezone offset like ' +HH:MM' or ' -HH:MM'
+    -- - Truncate fractional seconds to 3 digits (milliseconds)
+    local function normalize_ts_for_clickhouse(s)
+        if type(s) ~= "string" or s == "" then return s end
+        local t = s
+        -- unify separator
+        t = t:gsub("T", " ")
+        -- remove trailing Z (already UTC)
+        t = t:gsub("Z$", "")
+        -- remove trailing offset (space then +HH:MM or -HH:MM)
+        t = t:gsub(" [%+%-]%d%d:%d%d$", "")
+        -- truncate fractional seconds to 3 digits if longer
+        -- patterns: .123456 -> .123 ; .123 -> .123 ; .1 -> .1 (left as-is)
+        t = t:gsub("(%.[0-9][0-9][0-9])%d+", "%1")
+        return t
+    end
+
     -- Modules
     dynamic_loader("nauthilus_password")
     local nauthilus_password = require("nauthilus_password")
@@ -207,7 +227,7 @@ function nauthilus_call_action(request)
 
         -- Build row for ClickHouse
         local row = {
-            ts = ts,
+            ts = normalize_ts_for_clickhouse(ts),
             session = request.session,
             service = request.service or "",
             features = features,
