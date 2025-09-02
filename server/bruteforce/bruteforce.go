@@ -513,7 +513,15 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			}
 		}
 
-		bm.bruteForceName = rule.Name
+		if alreadyTriggered {
+			if cachedRuleName, err := bm.getPreResultBruteForceRedis(rule); err == nil && cachedRuleName != "" {
+				bm.bruteForceName = cachedRuleName
+			} else {
+				bm.bruteForceName = fmt.Sprintf("%s,guessed", rule.Name)
+			}
+		} else {
+			bm.bruteForceName = rule.Name
+		}
 
 		bm.updateAffectedAccount()
 
