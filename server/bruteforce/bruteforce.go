@@ -505,10 +505,12 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			}
 		}
 
-		if tolerate.GetTolerate().IsTolerated(bm.ctx, bm.clientIP) {
-			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
+		if !alreadyTriggered {
+			if tolerate.GetTolerate().IsTolerated(bm.ctx, bm.clientIP) {
+				level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
 
-			return false
+				return false
+			}
 		}
 
 		bm.bruteForceName = rule.Name
