@@ -364,37 +364,23 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 			t.logRedisError(ipAddress, err)
 			// Fall back to standard calculation if script fails
 		} else {
-			// Parse the result from the Lua script robustly
-			resultArray, ok := result.([]interface{})
-			if ok && len(resultArray) >= 5 {
-				parseI64 := func(v interface{}) (int64, bool) {
-					switch val := v.(type) {
-					case int64:
-						return val, true
-					case int:
-						return int64(val), true
-					case float64:
-						return int64(val), true
-					case string:
-						if n, err := strconv.ParseInt(val, 10, 64); err == nil {
-							return n, true
-						}
-					}
+			if arr, ok := result.([]any); ok {
+				resultArray := make([]int64, len(arr))
 
-					return 0, false
+				for i, v := range arr {
+					if n, ok := v.(int64); ok {
+						resultArray[i] = n
+					} else {
+						resultArray[i] = 0
+					}
 				}
 
-				calculatedPct, ok1 := parseI64(resultArray[0])
-				maxNegative, ok2 := parseI64(resultArray[1])
-				pos, ok3 := parseI64(resultArray[2])
-				neg, ok4 := parseI64(resultArray[3])
-				adaptiveUsed, ok5 := parseI64(resultArray[4])
-
-				if !(ok1 && ok2 && ok3 && ok4 && ok5) {
-					// Parsing failed; fall back to standard calculation
-				} else {
-					positive = pos
-					negative = neg
+				if len(resultArray) == 5 {
+					calculatedPct := resultArray[0]
+					maxNegative := resultArray[1]
+					positive = resultArray[2]
+					negative = resultArray[3]
+					adaptiveUsed := resultArray[4]
 
 					adaptiveStr := "static"
 					if adaptiveUsed == 1 {
