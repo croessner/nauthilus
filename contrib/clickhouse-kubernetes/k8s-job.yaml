@@ -15,7 +15,7 @@ data:
     CREATE DATABASE IF NOT EXISTS nauthilus;
 
     CREATE TABLE IF NOT EXISTS nauthilus.logins (
-      ts                   String,
+      ts                   DateTime64(3, 'UTC'),
       session              String,
       service              String,
       features             String,

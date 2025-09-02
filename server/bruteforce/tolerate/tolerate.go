@@ -364,30 +364,47 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 			t.logRedisError(ipAddress, err)
 			// Fall back to standard calculation if script fails
 		} else {
-			// Parse the result from the Lua script
-			resultArray, ok := result.([]interface{})
-			if ok && len(resultArray) >= 5 {
-				calculatedPct, _ := resultArray[0].(int64)
-				maxNegative, _ := resultArray[1].(int64)
-				positive, _ := resultArray[2].(int64)
-				negative, _ := resultArray[3].(int64)
-				adaptiveUsed, _ := resultArray[4].(int64)
+			if arr, ok := result.([]any); ok {
+				resultArray := make([]int64, len(arr))
 
-				adaptiveStr := "static"
-				if adaptiveUsed == 1 {
-					adaptiveStr = "adaptive"
+				for i, v := range arr {
+					if n, ok := v.(int64); ok {
+						resultArray[i] = n
+					} else {
+						resultArray[i] = 0
+					}
 				}
 
-				t.logDbgTolerate(
-					ipAddress,
-					positive,
-					negative,
-					maxNegative,
-					uint8(calculatedPct),
-					adaptiveStr,
-				)
+				if len(resultArray) == 5 {
+					calculatedPct := resultArray[0]
+					maxNegative := resultArray[1]
+					positive = resultArray[2]
+					negative = resultArray[3]
+					adaptiveUsed := resultArray[4]
 
-				return negative <= maxNegative
+					adaptiveStr := "static"
+					if adaptiveUsed == 1 {
+						adaptiveStr = "adaptive"
+					}
+
+					// If there are no positives, do not tolerate
+					if positive == 0 {
+						t.logDbgTolerate(ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
+
+						return false
+					}
+
+					t.logDbgTolerate(
+						ipAddress,
+						positive,
+						negative,
+						maxNegative,
+						uint8(calculatedPct),
+						adaptiveStr,
+					)
+
+					return negative <= maxNegative
+				}
 			}
 		}
 	}

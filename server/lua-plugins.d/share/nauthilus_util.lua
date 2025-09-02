@@ -39,9 +39,15 @@ end
 --- nauthilus_util.get_current_timestamp creates a timestamp string valid for logging purposes.
 ---@return string
 function nauthilus_util.get_current_timestamp()
+    ---@type string tz
+    local tz = os.getenv("TZ")
+    if tz == nil or tz == "" then
+        tz = "UTC"
+    end
+
     ---@type string currentTime
     ---@type string err
-    local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", "Europe/Berlin")
+    local currentTime, err = time.format(time.unix(), "2006-01-02T15:04:05 -07:00", tz)
     if err then
         error(err)
     end

@@ -56,6 +56,37 @@ function nauthilus_call_action(request)
         return math.floor(n)
     end
 
+    -- Normalize timestamp strings for ClickHouse DateTime64(3, 'UTC') JSONEachRow input
+    -- - Replace 'T' with space
+    -- - Remove trailing 'Z'
+    -- - Remove trailing timezone offset like ' +HH:MM' or ' -HH:MM'
+    -- - Truncate fractional seconds to 3 digits (milliseconds)
+    local function normalize_ts_for_clickhouse(s)
+        if type(s) ~= "string" or s == "" then return s end
+        local t = s
+        -- unify separator
+        t = t:gsub("T", " ")
+        -- remove trailing Z (already UTC)
+        t = t:gsub("Z$", "")
+        -- remove trailing offset (space then +HH:MM or -HH:MM)
+        t = t:gsub(" [%+%-]%d%d:%d%d$", "")
+        -- truncate fractional seconds to 3 digits if longer
+        -- patterns: .123456 -> .123 ; .123 -> .123 ; .1 -> .1 (left as-is)
+        t = t:gsub("(%.[0-9][0-9][0-9])%d+", "%1")
+        return t
+    end
+
+    -- Return current UTC timestamp as 'YYYY-MM-DD HH:MM:SS.mmm'
+    -- We avoid relying on nauthilus_util.get_current_timestamp() because it may honor TZ.
+    local function utc_now_ts_ms()
+        -- Use UTC with os.date('!'), seconds resolution
+        local base = os.date("!%Y-%m-%d %H:%M:%S")
+        -- Best-effort milliseconds: Lua standard libs don't provide wall-clock ms reliably.
+        -- We use .000 to keep a stable DateTime64(3) compatible format.
+        local ms = "000"
+        return string.format("%s.%s", base, ms)
+    end
+
     -- Modules
     dynamic_loader("nauthilus_password")
     local nauthilus_password = require("nauthilus_password")
@@ -90,7 +121,7 @@ function nauthilus_call_action(request)
         if rt.feature_blocklist then
             table.insert(feature_from_ctx, "blocklist")
         end
-        if rt.filter_geoippolicyd then
+        if rt.filter_geoippolicyd and rt.geoip_info and rt.geoip_info.status and rt.geoip_info.status == "reject" then
             table.insert(feature_from_ctx, "geoip_policyd")
         end
         if rt.filter_account_protection_mode or (rt.account_protection and rt.account_protection.active) then
@@ -128,7 +159,7 @@ function nauthilus_call_action(request)
 
     if allowed then
         -- Build row (same values as telegram), tolerate missing account
-        local ts = nauthilus_util.get_current_timestamp() or "unknown"
+        local ts = utc_now_ts_ms()
 
         local proto = (request.protocol ~= "" and request.protocol) or ""
         local username = (request.username ~= "" and request.username) or ""
@@ -207,7 +238,7 @@ function nauthilus_call_action(request)
 
         -- Build row for ClickHouse
         local row = {
-            ts = ts,
+            ts = normalize_ts_for_clickhouse(ts),
             session = request.session,
             service = request.service or "",
             features = features,
