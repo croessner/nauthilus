@@ -28,18 +28,20 @@ local prom = require("nauthilus_prometheus")
 dynamic_loader("nauthilus_redis")
 local r = require("nauthilus_redis")
 
+dynamic_loader("nauthilus_gll_bit")
+local bit = require("bit")
+
 -- Deterministic string hash (djb2) to support stable sampling by username
 local function djb2_hash(s)
     local hash = 5381
     for i = 1, #s do
         local c = string.byte(s, i)
-        hash = (hash * 33 + c)
-        -- keep it in 32-bit range deterministically
-        if hash > 4294967295 then
-            hash = math.fmod(hash, 4294967296)
-        elseif hash < 0 then
-            hash = 4294967296 + math.fmod(hash, 4294967296)
-        end
+        -- djb2: hash = ((hash << 5) + hash + c) & 0xffffffff
+        hash = bit.band((bit.lshift(hash, 5) + hash + c), 0xFFFFFFFF)
+    end
+    if hash < 0 then
+        -- normalize to unsigned 32-bit range for deterministic sampling
+        hash = hash + 4294967296
     end
     return hash
 end
