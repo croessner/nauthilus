@@ -23,7 +23,7 @@ Account: {{account}}
 Hash: {{hash}}
 Count: {{count}}
 
-Please consider changing your password as soon as poosible. To do so, please go to the following
+Please consider changing your password as soon as possible. To do so, please go to the following
 website: {{website}}.
 
 Regards
@@ -132,18 +132,19 @@ function nauthilus_call_action(request)
 
         for line in result.body:gmatch("([^\n]*)\n?") do
             local cmp_hash = strings.split(line, ":")
-            if #cmp_hash == 2 and string.lower(cmp_hash[1]) == hash then
-                local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, redis_key, hash:sub(1, 5), cmp_hash[2])
+            if #cmp_hash == 2 and string.lower(cmp_hash[1]) == hash:sub(6) then
+                local count = tonumber(cmp_hash[2]) or 0
+                local _, err_redis_hset = nauthilus_redis.redis_hset(custom_pool, redis_key, hash:sub(1, 5), count)
                 nauthilus_util.if_error_raise(err_redis_hset)
 
                 local _, err_redis_expire = nauthilus_redis.redis_expire(custom_pool, redis_key, 3600)
                 nauthilus_util.if_error_raise(err_redis_expire)
 
                 -- Update in-process cache for positive hit (1h TTL)
-                nauthilus_cache.cache_set(cache_key, tonumber(cmp_hash[2]) or 0, 3600)
+                nauthilus_cache.cache_set(cache_key, count, 3600)
 
                 -- Required by telegram.lua
-                nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. cmp_hash[2])
+                nauthilus_context.context_set(N .. "_hash_info", hash:sub(1, 5) .. count)
                 nauthilus_builtin.custom_log_add(N .. "_action", "leaked")
 
                 local script_result, err_run_script = nauthilus_redis.redis_run_script(custom_pool, "", "nauthilus_send_mail_hash", { redis_key }, {})
@@ -167,7 +168,7 @@ function nauthilus_call_action(request)
                     local tmpl_data = {
                         account = request.account,
                         hash = hash:sub(1, 5),
-                        count = cmp_hash[2],
+                        count = count,
                         website = os.environ("SSP_WEBSITE")
                     }
 
