@@ -21,13 +21,6 @@ local time = require("time")
 dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 
--- Helper: set EXPIRE on a key if ttl_seconds > 0
-local function expire_key(client, key, ttl_seconds)
-    if ttl_seconds and ttl_seconds > 0 then
-        nauthilus_redis.redis_expire(client, key, ttl_seconds)
-    end
-end
-
 function nauthilus_call_feature(request)
     -- This feature should run regardless of success/failure, but respect no_auth
     if request.no_auth then

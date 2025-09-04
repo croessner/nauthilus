@@ -282,11 +282,11 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 //	waitGroup - is used to synchronize the goroutines
 //
 // dnsResolverErr - is an atomic boolean to indicate if a DNS resolver error occurred
-func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, waitGroup *sync.WaitGroup, dnsResolverErr *atomic.Bool) {
+func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
 	isListed, rblName, rblErr := a.isListed(ctx, rbl)
 	if rblErr != nil {
 		handleRBLError(*a.GUID, rblErr, rbl, dnsResolverErr)
-		handleRBLOutcome(waitGroup, rblChan, 0)
+		handleRBLOutcome(rblChan, 0)
 
 		return
 	}
@@ -294,12 +294,12 @@ func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan i
 	if isListed {
 		stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
 		logMatchedRBL(a, rblName, rbl.Weight)
-		handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
+		handleRBLOutcome(rblChan, rbl.Weight)
 
 		return
 	}
 
-	handleRBLOutcome(waitGroup, rblChan, 0)
+	handleRBLOutcome(rblChan, 0)
 }
 
 // handleRBLOutcome handles the outcome of the RBL processing by sending the weight to the rblChan channel.
@@ -314,9 +314,7 @@ func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan i
 // Usage example:
 //
 //	handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
-func handleRBLOutcome(waitGroup *sync.WaitGroup, rblChan chan int, weight int) {
-	waitGroup.Done()
-
+func handleRBLOutcome(rblChan chan int, weight int) {
 	rblChan <- weight
 }
 
@@ -363,20 +361,21 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 		return
 	}
 
-	waitGroup := &sync.WaitGroup{}
+	g := &sync.WaitGroup{}
 
 	dnsResolverErr.Store(false)
-	rblChan := make(chan int)
 	rblLists := rbls.GetLists()
 	numberOfRBLs := len(rblLists)
+	rblChan := make(chan int, numberOfRBLs)
 
 	for _, rbl := range rblLists {
-		waitGroup.Add(1)
-
-		go a.processRBL(ctx, &rbl, rblChan, waitGroup, &dnsResolverErr)
+		r := rbl
+		g.Go(func() {
+			a.processRBL(ctx, &r, rblChan, &dnsResolverErr)
+		})
 	}
 
-	waitGroup.Wait()
+	g.Wait()
 
 	if dnsResolverErr.Load() {
 		err = errors.ErrDNSResolver
