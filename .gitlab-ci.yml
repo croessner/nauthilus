@@ -1,4 +1,4 @@
-image: golang:1.24-alpine
+image: golang:1.25-alpine
 
 variables:
   CGO_ENABLED: 0
@@ -48,7 +48,7 @@ build:
           mkdir -p ${FILEPATH}
           BIN_FILE_NAME="${FILEPATH}/${CI_PROJECT_NAME}-${GOOS}-${GOARCH}-${tag}"
           echo "Building ${BIN_FILE_NAME}"
-          GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -ldflags="-s -X main.version=${tag}-${CI_COMMIT_SHORT_SHA}" -o ${BIN_FILE_NAME} ./server
+          GOEXPERIMENT=greenteagc GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -ldflags="-s -X main.version=${tag}-${CI_COMMIT_SHORT_SHA}" -o ${BIN_FILE_NAME} ./server
       done
   artifacts:
     paths:

@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine3.22 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine3.22 AS builder
 
 LABEL org.opencontainers.image.authors="christian@roessner.email"
 LABEL org.opencontainers.image.source="https://github.com/croessner/nauthilus"
@@ -12,6 +12,7 @@ COPY . ./
 
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=0
+ENV GOEXPERIMENT=greenteagc
 RUN apk add --no-cache build-base git
 
 RUN cd server && go build -mod=vendor -tags="avx" -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg" -o nauthilus .
