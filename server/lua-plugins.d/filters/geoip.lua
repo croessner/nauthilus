@@ -51,9 +51,12 @@ local function build_payload_and_cache_key(request)
     dynamic_loader("nauthilus_gll_json")
     local json = require("json")
 
+    local acc = request.account
+    local sender = (acc ~= nil and acc ~= "" and acc) or "unknown"
+
     local t = {}
     t.key = "client"
-    t.value = { address = request.client_ip, sender = request.account }
+    t.value = { address = request.client_ip, sender = sender }
 
     local payload, json_encode_err = json.encode(t)
     nauthilus_util.if_error_raise(json_encode_err)
