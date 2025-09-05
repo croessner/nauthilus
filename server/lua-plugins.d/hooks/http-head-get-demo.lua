@@ -52,7 +52,7 @@ function nauthilus_run_hook(logging, session)
 
     -- Common headers for both HEAD and GET
     nauthilus_http_response.set_http_response_header("Content-Type", "text/plain; charset=utf-8")
-    nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache")
+    nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache, no-transform")
     nauthilus_http_response.set_http_response_header("ETag", "W/\"static-" .. content_length .. "\"")
     nauthilus_http_response.set_http_response_header("Last-Modified", rfc1123_now())
 

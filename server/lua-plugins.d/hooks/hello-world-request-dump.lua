@@ -134,8 +134,17 @@ function nauthilus_run_hook(logging, session)
 
     -- Use the new HTTP response methods
     nauthilus_http_response.set_http_response_header("Content-Type", "text/html; charset=utf-8")
-    nauthilus_http_response.set_http_status(200)
-    nauthilus_http_response.write_http_response_body(html)
+    nauthilus_http_response.set_http_response_header("Cache-Control", "no-transform")
+
+    -- For HEAD requests, do not write a body (avoids nil body writer crash)
+    if method == "HEAD" then
+        -- Provide Content-Length matching the body we would send for GET
+        nauthilus_http_response.set_http_response_header("Content-Length", tostring(#html))
+        nauthilus_http_response.set_http_status(200)
+    else
+        nauthilus_http_response.set_http_status(200)
+        nauthilus_http_response.write_http_response_body(html)
+    end
 
     if logging.log_level == "debug" or logging.log_level == "info" then
         nauthilus_util.print_result(logging, result)
