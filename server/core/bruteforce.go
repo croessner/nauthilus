@@ -236,6 +236,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	})
 
 	if triggered {
+		updateLuaContext(a.Context, definitions.FeatureBruteForce)
 		a.handleBruteForceLuaAction(alreadyTriggered, &rules[ruleNumber], network)
 	}
 
