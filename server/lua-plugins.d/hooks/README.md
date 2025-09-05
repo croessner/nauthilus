@@ -169,3 +169,93 @@ server:
   disabled_endpoints:
     custom_hooks: true  # Disables all custom hooks
 ```
+
+
+### http-head-get-demo.lua
+A minimal demo hook to simulate and test HEAD and GET requests on the same endpoint.
+
+Features:
+- Responds to GET with text/plain body and 200 status
+- Responds to HEAD with the same headers (including Content-Length) but no body
+- Demonstrates usage of nauthilus_http_request + nauthilus_http_response
+
+Usage:
+- Configure the same http_location twice, once for GET and once for HEAD, both pointing to this script
+
+Example:
+
+```yaml
+lua:
+  custom_hooks:
+    - http_location: "http-head-get-demo"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
+      roles: ["admin"]
+
+    - http_location: "http-head-get-demo"
+      http_method: "HEAD"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/http-head-get-demo.lua"
+      roles: ["admin"]
+```
+
+Endpoint examples:
+- GET /api/v1/custom/http-head-get-demo
+- HEAD /api/v1/custom/http-head-get-demo
+
+
+### dynamic-textmap-demo.lua
+A Redis-backed demo hook that serves dynamic text/plain content suitable for consumers like Rspamd. It shows how to implement GET/HEAD on the same endpoint with proper caching headers and rotating content.
+
+Features:
+- Returns text/plain; GET sends the body, HEAD returns headers only
+- Rotates content on a TTL window (default 60s) using Redis
+- Sets standard headers for caches/clients: Content-Type, Cache-Control: no-cache,
+  ETag (W/"v<version>-<len>"), Last-Modified (RFC 1123)
+- Designed as a minimal template for building dynamic maps
+
+Environment:
+- CUSTOM_REDIS_POOL_NAME (optional): Redis pool name to use (default: "default")
+- TEXTMAP_DEMO_TTL_SECONDS (optional): TTL/rotation window in seconds (default: 60)
+
+Redis keys used:
+- ntc:demo:textmap:content        (content, with TTL)
+- ntc:demo:textmap:version        (monotonically increasing version)
+- ntc:demo:textmap:last_modified  (unix timestamp, with TTL)
+
+Usage:
+- Configure the same http_location twice (GET and HEAD), both pointing to this script.
+
+Example configuration:
+
+```yaml
+lua:
+  custom_hooks:
+    - http_location: "dynamic-textmap-demo"
+      http_method: "GET"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
+      roles: ["admin"]
+
+    - http_location: "dynamic-textmap-demo"
+      http_method: "HEAD"
+      script_path: "/etc/nauthilus/lua-plugins.d/hooks/dynamic-textmap-demo.lua"
+      roles: ["admin"]
+```
+
+Example requests:
+- GET  /api/v1/custom/dynamic-textmap-demo
+- HEAD /api/v1/custom/dynamic-textmap-demo
+
+Example response body (GET):
+```
+# dynamic-textmap-demo
+# version: 123
+# generated_at: Fri, 05 Sep 2025 10:15:00 GMT
+# This list rotates every TTL window; use ETag/Last-Modified for caching.
+example.com
+rotate-3.example
+hash-1a2b3c4d
+```
+
+Notes:
+- Clients can use ETag or Last-Modified to avoid re-downloading unchanged content within a TTL window.
+- This is a demo; adapt key names, structure, and rotation logic for production needs.

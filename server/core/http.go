@@ -1314,11 +1314,17 @@ type gzipWriter struct {
 
 // Write compresses the data and writes it to the underlying ResponseWriter.
 func (g *gzipWriter) Write(data []byte) (int, error) {
+	// Ensure the underlying Gin writer marks the response as written
+	g.ResponseWriter.WriteHeaderNow()
+
 	return g.writer.Write(data)
 }
 
 // WriteString compresses the string and writes it to the underlying ResponseWriter.
 func (g *gzipWriter) WriteString(s string) (int, error) {
+	// Ensure the underlying Gin writer marks the response as written
+	g.ResponseWriter.WriteHeaderNow()
+
 	return g.writer.Write([]byte(s))
 }
 

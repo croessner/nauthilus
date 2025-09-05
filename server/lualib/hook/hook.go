@@ -587,21 +587,27 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 		processError(err, hook)
 	}
 
+	// Interpret the Lua return value correctly:
+	// - nil (or no return) => no Gin result (keep result == nil)
+	// - table (map-like)   => convert to gin.H
+	// - table (array-like) => error if non-empty (invalid result)
 	if L.GetTop() == 1 {
-		luaResult := L.ToTable(-1)
-		switch value := convert.LuaValueToGo(luaResult).(type) {
-		case map[any]any:
-			result = convert.ToGinH(value)
-
-			if result == nil {
-				result = gin.H{}
-				err = fmt.Errorf("custom location '%s' returned invalid result", hook)
-			}
-		case []any:
-			// An empty Lua table is treated as a list, not a map!
-			if len(value) > 0 {
-				result = gin.H{}
-				err = fmt.Errorf("custom location '%s' returned invalid result, expected a map", hook)
+		lv := L.Get(-1)
+		if lv != lua.LNil {
+			switch value := convert.LuaValueToGo(lv).(type) {
+			case map[any]any:
+				result = convert.ToGinH(value)
+				if result == nil {
+					// Non-map table provided; signal invalid result
+					result = gin.H{}
+					err = fmt.Errorf("custom location '%s' returned invalid result", hook)
+				}
+			case []any:
+				// An empty Lua array means 'no content'; if non-empty, it's invalid for hooks
+				if len(value) > 0 {
+					result = gin.H{}
+					err = fmt.Errorf("custom location '%s' returned invalid result, expected a map", hook)
+				}
 			}
 		}
 	}
