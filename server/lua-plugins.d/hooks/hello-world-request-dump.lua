@@ -133,7 +133,7 @@ function nauthilus_run_hook(logging, session)
     local html = table.concat(parts, "\n")
 
     -- Use the new HTTP response methods
-    nauthilus_http_response.set_http_response_header("Content-Type", "text/html; charset=utf-8")
+    nauthilus_http_response.set_http_content_type("text/html; charset=utf-8")
     nauthilus_http_response.set_http_response_header("Cache-Control", "no-transform")
 
     -- For HEAD requests, do not write a body (avoids nil body writer crash)
