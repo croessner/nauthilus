@@ -1448,8 +1448,9 @@ func CompressionMiddleware() gin.HandlerFunc {
 		}
 
 		// Replace writer with gzip writer
+		// Signal gzip encoding; let net/http manage Transfer-Encoding and Content-Length
 		c.Header("Content-Encoding", "gzip")
-		c.Header("Transfer-Encoding", "chunked")
+		c.Writer.Header().Del("Content-Length")
 
 		gzWriter := &gzipWriter{
 			ResponseWriter: c.Writer,
@@ -1461,8 +1462,8 @@ func CompressionMiddleware() gin.HandlerFunc {
 		// Process request
 		c.Next()
 
-		// Close gzip writer
-		gzWriter.Close()
+		// Ensure gzip writer is closed to flush all data
+		_ = gzWriter.Close()
 	}
 }
 
