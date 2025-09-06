@@ -1255,6 +1255,9 @@ const (
 	// LuaFnWriteHTTPResponseBody allows Lua to write raw data to the HTTP response body
 	LuaFnWriteHTTPResponseBody = "write_http_response_body"
 
+	// LuaFnSetHTTPContentType allows Lua to set the Content-Type header more ergonomically
+	LuaFnSetHTTPContentType = "set_http_content_type"
+
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"
 

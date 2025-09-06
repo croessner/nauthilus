@@ -160,14 +160,13 @@ function nauthilus_run_hook(logging, session)
     local content_length = tostring(#content)
 
     -- Common headers
-    nauthilus_http_response.set_http_response_header("Content-Type", "text/plain; charset=utf-8")
+    nauthilus_http_response.set_http_content_type("text/plain; charset=utf-8")
     nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache")
     nauthilus_http_response.set_http_response_header("ETag", string.format("W/\"v%d-%s\"", version, content_length))
     nauthilus_http_response.set_http_response_header("Last-Modified", rfc1123(lastmod_ts))
 
     if method == "HEAD" then
         nauthilus_http_response.set_http_status(200)
-        nauthilus_http_response.set_http_response_header("Content-Length", content_length)
 
         result.status = "success"
         result.message = "HEAD response sent (no body)"
@@ -192,9 +191,9 @@ function nauthilus_run_hook(logging, session)
         end
         return nil
     else
-        nauthilus_http_response.set_http_status(405)
         nauthilus_http_response.set_http_response_header("Allow", "GET, HEAD")
         nauthilus_http_response.write_http_response_body("Method Not Allowed\n")
+        nauthilus_http_response.set_http_status(405)
 
         result.status = "error"
         result.message = "Unsupported method"

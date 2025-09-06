@@ -17,7 +17,7 @@
 --
 -- A minimal demo hook to respond to GET and HEAD requests on the same endpoint.
 -- - GET: returns a small text/plain body
--- - HEAD: returns the same headers (including Content-Length) but no body
+-- - HEAD: returns the same headers but no body
 --
 -- Configure the same http_location twice in nauthilus.yml (once for GET, once for HEAD),
 -- both pointing to this script, to test both methods on the same path.
@@ -51,7 +51,7 @@ function nauthilus_run_hook(logging, session)
     local content_length = tostring(#body)
 
     -- Common headers for both HEAD and GET
-    nauthilus_http_response.set_http_response_header("Content-Type", "text/plain; charset=utf-8")
+    nauthilus_http_response.set_http_content_type("text/plain; charset=utf-8")
     nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache")
     nauthilus_http_response.set_http_response_header("ETag", "W/\"static-" .. content_length .. "\"")
     nauthilus_http_response.set_http_response_header("Last-Modified", rfc1123_now())
@@ -59,7 +59,6 @@ function nauthilus_run_hook(logging, session)
     if method == "HEAD" then
         -- HEAD: status + headers, but no body
         nauthilus_http_response.set_http_status(200)
-        nauthilus_http_response.set_http_response_header("Content-Length", content_length)
 
         result.status = "success"
         result.message = "HEAD response sent (no body)"
@@ -85,8 +84,8 @@ function nauthilus_run_hook(logging, session)
         return nil
     else
         -- For other methods, return 405 and Allow header
-        nauthilus_http_response.set_http_status(405)
         nauthilus_http_response.set_http_response_header("Allow", "GET, HEAD")
+        nauthilus_http_response.set_http_status(405)
         nauthilus_http_response.write_http_response_body("Method Not Allowed\n")
 
         result.status = "error"
