@@ -134,12 +134,9 @@ function nauthilus_run_hook(logging, session)
 
     -- Use the new HTTP response methods
     nauthilus_http_response.set_http_content_type("text/html; charset=utf-8")
-    nauthilus_http_response.set_http_response_header("Cache-Control", "no-transform")
 
     -- For HEAD requests, do not write a body (avoids nil body writer crash)
     if method == "HEAD" then
-        -- Provide Content-Length matching the body we would send for GET
-        nauthilus_http_response.set_http_response_header("Content-Length", tostring(#html))
         nauthilus_http_response.set_http_status(200)
     else
         nauthilus_http_response.set_http_status(200)

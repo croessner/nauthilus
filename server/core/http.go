@@ -309,6 +309,7 @@ func CustomRequestHandler(ctx *gin.Context) {
 	// Get the hook name and method from the request
 	hookName := ctx.Param("hook")
 	hookMethod := ctx.Request.Method
+
 	util.DebugModule(
 		definitions.DbgHTTP,
 		definitions.LogKeyGUID, guid,
@@ -364,22 +365,18 @@ func CustomRequestHandler(ctx *gin.Context) {
 			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
 		)
 
-		// If Lua already wrote the response (headers/body), do not override with JSON
-		if ctx.Writer.Written() {
+		// If Lua already wrote the response (body), do not override with JSON
+		if ctx.Writer.Size() > 0 {
 			return
 		}
 
-		status := ctx.Writer.Status()
-		if status == 0 {
-			status = http.StatusOK
-		}
-
-		ctx.JSON(status, result)
+		ctx.JSON(http.StatusOK, result)
 	} else {
 		util.DebugModule(
 			definitions.DbgHTTP,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no result: %s %s", hookMethod, hookName),
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d",
+				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size()),
 		)
 	}
 }
@@ -1314,17 +1311,11 @@ type gzipWriter struct {
 
 // Write compresses the data and writes it to the underlying ResponseWriter.
 func (g *gzipWriter) Write(data []byte) (int, error) {
-	// Ensure the underlying Gin writer marks the response as written
-	g.ResponseWriter.WriteHeaderNow()
-
 	return g.writer.Write(data)
 }
 
 // WriteString compresses the string and writes it to the underlying ResponseWriter.
 func (g *gzipWriter) WriteString(s string) (int, error) {
-	// Ensure the underlying Gin writer marks the response as written
-	g.ResponseWriter.WriteHeaderNow()
-
 	return g.writer.Write([]byte(s))
 }
 
@@ -1351,6 +1342,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		if c.Request.Header.Get("Content-Encoding") == "gzip" {
 			// Get the compressed body
 			compressedBody := c.Request.Body
+
 			defer compressedBody.Close()
 
 			// Create a gzip reader
@@ -1360,6 +1352,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 
 				return
 			}
+
 			defer gzipReader.Close()
 
 			// Replace the request body with the decompressed content
