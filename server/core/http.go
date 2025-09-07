@@ -370,7 +370,9 @@ func CustomRequestHandler(ctx *gin.Context) {
 			return
 		}
 
-		ctx.JSON(http.StatusOK, result)
+		if ctx.Writer != nil {
+			ctx.JSON(http.StatusOK, result)
+		}
 	} else {
 		util.DebugModule(
 			definitions.DbgHTTP,

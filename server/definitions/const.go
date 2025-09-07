@@ -1258,6 +1258,24 @@ const (
 	// LuaFnSetHTTPContentType allows Lua to set the Content-Type header more ergonomically
 	LuaFnSetHTTPContentType = "set_http_content_type"
 
+	// LuaFnHTTPString maps to Gin's ctx.String(status, body)
+	LuaFnHTTPString = "string"
+
+	// LuaFnHTTPHTML maps to Gin's ctx.HTML(status, html)
+	LuaFnHTTPHTML = "html"
+
+	// LuaFnHTTPData maps to Gin's ctx.Data(status, contentType, data)
+	LuaFnHTTPData = "data"
+
+	// LuaFnHTTPJSON maps to sending raw JSON string with status (no implicit marshalling)
+	LuaFnHTTPJSON = "json"
+
+	// LuaFnHTTPXML maps to sending raw XML string with status
+	LuaFnHTTPXML = "xml"
+
+	// LuaFnHTTPRedirect maps to Gin's ctx.Redirect(status, location)
+	LuaFnHTTPRedirect = "redirect"
+
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"
 
