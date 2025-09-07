@@ -6,7 +6,6 @@ COPY . ./
 
 # Set necessarry environment vairables and compile the app
 ENV CGO_ENABLED=0
-ENV GOEXPERIMENT=greenteagc
 RUN apk add --no-cache build-base git upx
 
 RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
