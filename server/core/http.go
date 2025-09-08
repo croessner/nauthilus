@@ -365,8 +365,8 @@ func CustomRequestHandler(ctx *gin.Context) {
 			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
 		)
 
-		// If Lua already wrote the response (body), do not override with JSON
-		if ctx.Writer.Size() > 0 {
+		// If Lua already wrote the response, do not override with JSON
+		if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
 			return
 		}
 
@@ -377,8 +377,8 @@ func CustomRequestHandler(ctx *gin.Context) {
 		util.DebugModule(
 			definitions.DbgHTTP,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d",
-				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size()),
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d written: %t encoding: %s",
+				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size(), ctx.Writer.Written(), ctx.Writer.Header().Get("Content-Encoding")),
 		)
 	}
 }

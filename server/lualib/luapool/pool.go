@@ -85,6 +85,7 @@ func resetLuaState(L *lua.LState) {
 			L.SetField(loadedTable, definitions.LuaModMisc, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModLDAP, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModHTTPRequest, lua.LNil)
+			L.SetField(loadedTable, definitions.LuaModHTTPResponse, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModPrometheus, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModSoftWhitelist, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModBruteForce, lua.LNil)

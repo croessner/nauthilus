@@ -736,6 +736,9 @@ const (
 
 	// CtxMessageKey is used as a key to store message information in the context.
 	CtxMessageKey = "message"
+
+	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
+	CtxResponseWrittenKey = "response_written"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.

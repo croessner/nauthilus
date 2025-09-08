@@ -17,6 +17,7 @@ func SetHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 		value := L.CheckString(2)
 
 		ctx.Header(name, value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -30,6 +31,7 @@ func AddHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 		value := L.CheckString(2)
 
 		ctx.Writer.Header().Add(name, value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -42,6 +44,7 @@ func RemoveHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 		name := L.CheckString(1)
 
 		ctx.Writer.Header().Del(name)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -54,6 +57,7 @@ func SetHTTPStatus(ctx *gin.Context) lua.LGFunction {
 		code := L.CheckInt(1)
 
 		ctx.Status(code)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -73,6 +77,7 @@ func WriteHTTPResponseBody(ctx *gin.Context) lua.LGFunction {
 
 		// Use Gin's writer to ensure correct size/accounting
 		_, _ = ctx.Writer.Write([]byte(data))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -85,6 +90,7 @@ func SetHTTPContentType(ctx *gin.Context) lua.LGFunction {
 		value := L.CheckString(1)
 
 		ctx.Header("Content-Type", value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -98,6 +104,7 @@ func HTTPString(ctx *gin.Context) lua.LGFunction {
 		body := L.CheckString(2)
 
 		ctx.String(status, body)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -114,11 +121,13 @@ func HTTPData(ctx *gin.Context) lua.LGFunction {
 		// Do not write body for HEAD requests
 		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
 			ctx.Status(status)
+			ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 			return 0
 		}
 
 		ctx.Data(status, contentType, []byte(data))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -133,11 +142,13 @@ func HTTPHTML(ctx *gin.Context) lua.LGFunction {
 
 		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
 			ctx.Status(status)
+			ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 			return 0
 		}
 
 		ctx.Data(status, "text/html; charset=utf-8", []byte(html))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -151,6 +162,7 @@ func HTTPRedirect(ctx *gin.Context) lua.LGFunction {
 		location := L.CheckString(2)
 
 		ctx.Redirect(status, location)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
