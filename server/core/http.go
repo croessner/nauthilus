@@ -539,6 +539,34 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 	}
 }
 
+// secureCompare compares two strings in constant time by hashing them first.
+func secureCompare(a, b string) bool {
+	h1 := sha256.Sum256([]byte(a))
+	h2 := sha256.Sum256([]byte(b))
+
+	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
+}
+
+// checkAndRequireBasicAuth validates HTTP Basic Auth against configured credentials.
+// Returns true if authorized. If not authorized and basic auth is enabled, it writes
+// a WWW-Authenticate header with the provided realm and aborts with 401. If basic auth
+// is disabled in config, it returns true (no auth required).
+func checkAndRequireBasicAuth(ctx *gin.Context) bool {
+	if !config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+		return true
+	}
+
+	username, password, ok := ctx.Request.BasicAuth()
+	if ok && secureCompare(username, config.GetFile().GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, config.GetFile().GetServer().GetBasicAuth().GetPassword()) {
+		return true
+	}
+
+	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
+	ctx.AbortWithStatus(http.StatusUnauthorized)
+
+	return false
+}
+
 // BasicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic AuthState.
 // It first checks for specified parameters in the incoming request context.
 // If the request already contains BasicAuth in its header, it attempts to authenticate the credentials. Hashed values
@@ -562,28 +590,12 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-
-		if httpBasicAuthOk {
-			usernameHash := sha256.Sum256([]byte(username))
-			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
-			expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
-
-			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
-			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-			if usernameMatch && passwordMatch {
-				ctx.Next()
-
-				return
-			}
-
-			ctx.AbortWithStatus(http.StatusForbidden)
-		} else {
-			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
+		// Use shared helper to validate or challenge for Basic Auth
+		if !checkAndRequireBasicAuth(ctx) {
+			return
 		}
+
+		ctx.Next()
 	}
 }
 
@@ -1382,12 +1394,12 @@ func setupRouter(router *gin.Engine) {
 			)
 		}
 
-		level := config.GetFile().GetServer().GetCompression().GetLevel()
-		if level < gzip.BestSpeed || level > gzip.BestCompression {
-			level = gzip.DefaultCompression
+		compressionLevel := config.GetFile().GetServer().GetCompression().GetLevel()
+		if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
+			compressionLevel = gzip.DefaultCompression
 		}
 
-		router.Use(gzipmw.Gzip(level))
+		router.Use(gzipmw.Gzip(compressionLevel))
 	}
 
 	// Add Prometheus middleware for metrics collection
@@ -1418,36 +1430,11 @@ func setupRouter(router *gin.Engine) {
 			}
 		}
 
-		// Check if Basic Auth is enabled
-		if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-			username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-
-			if httpBasicAuthOk {
-				usernameHash := sha256.Sum256([]byte(username))
-				passwordHash := sha256.Sum256([]byte(password))
-				expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
-				expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
-
-				usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
-				passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-				if usernameMatch && passwordMatch {
-					// Basic auth successful, allow access
-					promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
-
-					return
-				}
-			}
-
-			// Basic auth failed, request authentication
-			ctx.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
-			ctx.AbortWithStatus(http.StatusUnauthorized)
-
-			return
+		// Check Basic Auth using shared helper; if it fails and is enabled, helper already responded 401
+		if checkAndRequireBasicAuth(ctx) {
+			// authorized or basic auth disabled
+			promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 		}
-
-		// If neither JWT nor Basic Auth is enabled, allow access
-		promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 	})
 
 	// Healthcheck - keep this simple and fast
