@@ -47,8 +47,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Legal characters for IMAP username based on RFC 3501: Any character except "(", ")", "{", SP, CTL, "%", """, "\". The "*" might be used as master separator.
-var usernamePattern = regexp.MustCompile(`^[^(){}%"\\]+$`)
+// Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". The "*" might be used as master separator.
+var usernamePattern = regexp.MustCompile(`^[^\x00-\x1F\x7F(){}%"\\ ]+$`)
 
 // RedisLogger implements the interface redis.Logging
 type RedisLogger struct{}
@@ -102,12 +102,12 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definiti
 
 	// Encode according to password option
 	switch pwOption {
-	case definitions.B64:
+	case definitions.ENCB64:
 		c.Password = base64.StdEncoding.EncodeToString(hashWithSalt)
-		c.PasswordOption = definitions.B64
-	case definitions.HEX:
+		c.PasswordOption = definitions.ENCB64
+	case definitions.ENCHEX:
 		c.Password = hex.EncodeToString(hashWithSalt)
-		c.PasswordOption = definitions.HEX
+		c.PasswordOption = definitions.ENCHEX
 	default:
 		return "", errors.ErrUnsupportedPasswordOption
 	}
@@ -115,8 +115,9 @@ func (c *CryptPassword) Generate(plainPassword string, salt []byte, alg definiti
 	return c.Password, nil
 }
 
-// Pre-compiled regex pattern for password prefix matching
-var passwordPrefixPattern = regexp.MustCompile(`SSHA(256|512)(\.HEX|\.B64)?`)
+// Pre-compiled regex pattern for password prefix matching including curly braces and capturing groups
+// Full format: {SSHA256.B64}payload or {SSHA512.HEX}payload; option and dot are optional, default B64
+var passwordPrefixPattern = regexp.MustCompile(`^\{SSHA(256|512)(?:\.(HEX|B64))?}(.+)$`)
 
 // GetParameters splits an encoded password into its components.
 // It extracts the salt, algorithm, and password option from the crypted password
@@ -126,48 +127,48 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 ) {
 	var decodedPwSalt []byte
 
-	// Find the password prefix (SSHA256/SSHA512 with optional .HEX/.B64)
-	passwordPrefix := passwordPrefixPattern.FindString(cryptedPassword)
-	if passwordPrefix == "" {
+	alg = definitions.SSHAUNKNOWN
+	pwOption = definitions.ENCUNKNOWN
+
+	// Use regex to capture algorithm (group1), option (group2), and payload (group3)
+	subs := passwordPrefixPattern.FindStringSubmatch(cryptedPassword)
+	if len(subs) != 4 { // full match + 3 capture groups
 		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 	}
 
-	// Determine algorithm
-	if strings.HasPrefix(passwordPrefix, "SSHA512") {
+	// Determine algorithm from group 1
+	switch subs[1] {
+	case "512":
 		alg = definitions.SSHA512
-	} else if strings.HasPrefix(passwordPrefix, "SSHA256") {
+	case "256":
 		alg = definitions.SSHA256
-	} else {
+	default:
 		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 	}
+
 	c.Algorithm = alg
 
-	// Determine password option
-	if strings.HasSuffix(passwordPrefix, ".B64") {
-		pwOption = definitions.B64
-	} else if strings.HasSuffix(passwordPrefix, ".HEX") {
-		pwOption = definitions.HEX
-	} else {
-		// Default to B64 if no suffix is specified
-		pwOption = definitions.B64
-	}
-	c.PasswordOption = pwOption
-
-	// Extract the password part (everything after the closing brace)
-	closingBraceIndex := strings.Index(cryptedPassword, "}")
-	if closingBraceIndex == -1 {
-		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
-	}
-	c.Password = cryptedPassword[closingBraceIndex+1:]
-
-	// Decode the password based on the password option
-	switch pwOption {
-	case definitions.B64:
-		decodedPwSalt, err = base64.StdEncoding.DecodeString(c.Password)
-	case definitions.HEX:
-		decodedPwSalt, err = hex.DecodeString(c.Password)
+	// Determine password option from group 2 (default B64)
+	switch subs[2] {
+	case "HEX":
+		pwOption = definitions.ENCHEX
+	case "B64", "":
+		pwOption = definitions.ENCB64
 	default:
 		return nil, alg, pwOption, errors.ErrUnsupportedPasswordOption
+	}
+
+	c.PasswordOption = pwOption
+
+	// Group 3 is the encoded password+salt payload
+	c.Password = subs[3]
+
+	// Decode the password based on the password option
+	if pwOption == definitions.ENCB64 {
+		decodedPwSalt, err = base64.StdEncoding.DecodeString(c.Password)
+	} else if //goland:noinspection GoDfaConstantCondition
+	pwOption == definitions.ENCHEX {
+		decodedPwSalt, err = hex.DecodeString(c.Password)
 	}
 
 	if err != nil {
@@ -175,19 +176,19 @@ func (c *CryptPassword) GetParameters(cryptedPassword string) (
 	}
 
 	// Extract the salt based on the algorithm
-	switch alg {
-	case definitions.SSHA512:
+	if alg == definitions.SSHA512 {
 		if len(decodedPwSalt) < 65 {
 			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
+
 		salt = decodedPwSalt[64:]
-	case definitions.SSHA256:
+	} else if //goland:noinspection GoDfaConstantCondition
+	alg == definitions.SSHA256 {
 		if len(decodedPwSalt) < 33 {
 			return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 		}
+
 		salt = decodedPwSalt[32:]
-	default:
-		return nil, alg, pwOption, errors.ErrUnsupportedAlgorithm
 	}
 
 	c.Salt = salt

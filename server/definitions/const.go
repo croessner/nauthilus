@@ -801,19 +801,26 @@ const InvalidCode = "The TOTP code is invalid"
 // ReisPromPoolName is a constant string used for labeling Redis pool metrics in Prometheus.
 const ReisPromPoolName = "pool_name"
 
-// Supported salted hashes.
 const (
+	// SSHAUNKNOWN represents an unknown or undefined hashing algorithm type.
+	SSHAUNKNOWN Algorithm = iota
+
 	// SSHA256 is a constant for choosing the SHA-256 algorithm
-	SSHA256 Algorithm = iota
+	SSHA256
 
 	// SSHA512 is a constant for choosing the SHA-512 algorithm
 	SSHA512
 )
 
-// Encoding schema for encrypted passwords.
 const (
-	B64 PasswordOption = iota
-	HEX
+	// ENCUNKNOWN represents an unknown or undefined password encoding option.
+	ENCUNKNOWN PasswordOption = iota
+
+	// ENCB64 represents the base64 password encoding option for hashed passwords.
+	ENCB64
+
+	// ENCHEX represents the hexadecimal password encoding option for hashed passwords.
+	ENCHEX
 )
 
 const (
@@ -1269,12 +1276,6 @@ const (
 
 	// LuaFnHTTPData maps to Gin's ctx.Data(status, contentType, data)
 	LuaFnHTTPData = "data"
-
-	// LuaFnHTTPJSON maps to sending raw JSON string with status (no implicit marshalling)
-	LuaFnHTTPJSON = "json"
-
-	// LuaFnHTTPXML maps to sending raw XML string with status
-	LuaFnHTTPXML = "xml"
 
 	// LuaFnHTTPRedirect maps to Gin's ctx.Redirect(status, location)
 	LuaFnHTTPRedirect = "redirect"
