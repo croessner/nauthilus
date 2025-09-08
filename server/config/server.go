@@ -1621,8 +1621,9 @@ func (d *DefaultHTTPRequestHeader) GetOIDCCID() string {
 
 // Compression represents the configuration for HTTP response compression.
 type Compression struct {
-	Enabled      bool     `mapstructure:"enabled"`
-	Level        int      `mapstructure:"level" validate:"omitempty,gte=1,lte=9"`
+	Enabled bool `mapstructure:"enabled"`
+	Level   int  `mapstructure:"level" validate:"omitempty,gte=1,lte=9"`
+	// Deprecated: content_types has no effect since 1.9.2 and will be removed in a future release.
 	ContentTypes []string `mapstructure:"content_types" validate:"omitempty,dive,printascii"`
 	MinLength    int      `mapstructure:"min_length" validate:"omitempty,gte=0"`
 }

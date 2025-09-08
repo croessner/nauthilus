@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
+	gzipmw "github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -1305,27 +1306,6 @@ func configureTLS() *tls.Config {
 	return tlsConfig
 }
 
-// gzipWriter is a custom ResponseWriter that compresses the response using gzip.
-type gzipWriter struct {
-	gin.ResponseWriter
-	writer *gzip.Writer
-}
-
-// Write compresses the data and writes it to the underlying ResponseWriter.
-func (g *gzipWriter) Write(data []byte) (int, error) {
-	return g.writer.Write(data)
-}
-
-// WriteString compresses the string and writes it to the underlying ResponseWriter.
-func (g *gzipWriter) WriteString(s string) (int, error) {
-	return g.writer.Write([]byte(s))
-}
-
-// Close closes the gzip.Writer.
-func (g *gzipWriter) Close() error {
-	return g.writer.Close()
-}
-
 // DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
 // It checks if the request has a Content-Encoding header with value "gzip" and if so, replaces the request body
 // with a decompressed version.
@@ -1371,97 +1351,6 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 	}
 }
 
-// CompressionMiddleware returns a middleware that compresses HTTP responses based on the configuration settings.
-// It uses the gzip compression algorithm with the configured level and only compresses responses with the configured content types
-// and minimum length.
-func CompressionMiddleware() gin.HandlerFunc {
-	compressionConfig := config.GetFile().GetServer().GetCompression()
-
-	if !compressionConfig.IsEnabled() {
-		return func(c *gin.Context) {
-			c.Next()
-		}
-	}
-
-	compressionLevel := compressionConfig.GetLevel()
-	if compressionLevel == 0 {
-		compressionLevel = gzip.DefaultCompression
-	}
-
-	minLength := compressionConfig.GetMinLength()
-	if minLength == 0 {
-		minLength = 1024 // Default to 1KB if not specified
-	}
-
-	contentTypes := compressionConfig.GetContentTypes()
-	if len(contentTypes) == 0 {
-		contentTypes = []string{
-			"application/json",
-			"application/javascript",
-			"text/css",
-			"text/html",
-			"text/plain",
-			"text/xml",
-		}
-	}
-
-	return func(c *gin.Context) {
-		// Check if client accepts gzip encoding
-		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
-			c.Next()
-
-			return
-		}
-
-		// Check if content type should be compressed
-		contentType := c.Writer.Header().Get("Content-Type")
-		shouldCompress := false
-
-		for _, ct := range contentTypes {
-			if strings.Contains(contentType, ct) {
-				shouldCompress = true
-
-				break
-			}
-		}
-
-		if !shouldCompress {
-			c.Next()
-
-			return
-		}
-
-		// Only add Vary header for proper handling of compressed responses
-		c.Header("Vary", "Accept-Encoding")
-
-		// Create gzip writer
-		gz, err := gzip.NewWriterLevel(c.Writer, compressionLevel)
-		if err != nil {
-			c.Next()
-
-			return
-		}
-
-		// Replace writer with gzip writer
-		// Signal gzip encoding; let net/http manage Transfer-Encoding and Content-Length
-		c.Header("Content-Encoding", "gzip")
-		c.Writer.Header().Del("Content-Length")
-
-		gzWriter := &gzipWriter{
-			ResponseWriter: c.Writer,
-			writer:         gz,
-		}
-
-		c.Writer = gzWriter
-
-		// Process request
-		c.Next()
-
-		// Ensure gzip writer is closed to flush all data
-		_ = gzWriter.Close()
-	}
-}
-
 // setupRouter sets up the router for the HTTP server.
 //
 // It takes in one parameter:
@@ -1484,8 +1373,22 @@ func setupRouter(router *gin.Engine) {
 	// Add request decompression middleware if enabled - should be early in the chain
 	router.Use(DecompressRequestMiddleware())
 
-	// Add response compression middleware if enabled - should be early to compress all responses
-	router.Use(CompressionMiddleware())
+	// Add response compression middleware if enabled (gzip only)
+	if config.GetFile().GetServer().GetCompression().IsEnabled() {
+		// Warn: content_types is deprecated and ignored since 1.9.2
+		if len(config.GetFile().GetServer().GetCompression().GetContentTypes()) > 0 {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "compression.content_types is deprecated and ignored as of 1.9.2; remove it from configuration",
+			)
+		}
+
+		level := config.GetFile().GetServer().GetCompression().GetLevel()
+		if level < gzip.BestSpeed || level > gzip.BestCompression {
+			level = gzip.DefaultCompression
+		}
+
+		router.Use(gzipmw.Gzip(level))
+	}
 
 	// Add Prometheus middleware for metrics collection
 	router.Use(PrometheusMiddleware())
