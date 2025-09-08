@@ -448,10 +448,23 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *
 	fwdAddress := ctx.GetHeader("X-Forwarded-For")
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
+	// Only trust forwarded headers from trusted proxies
+	isTrustedProxy := IsInNetwork(viper.GetStringSlice("trusted_proxies"), guid, *clientIP)
+
+	// Determine local transport security (actual connection using TLS)
+	isLocalHTTPS := ctx.Request != nil && ctx.Request.TLS != nil
+
+	// Read proto header once (lowercased/trimmed)
+	proto := strings.ToLower(strings.TrimSpace(ctx.GetHeader("X-Forwarded-Proto")))
+
+	// Gate for accepting forwarded headers
+	acceptForwarded := isTrustedProxy && proto == "https" && isLocalHTTPS
+
 	if fwdAddress != "" {
 		logForwarderFound(guid)
 
-		if !IsInNetwork(viper.GetStringSlice("trusted_proxies"), guid, *clientIP) {
+		if !acceptForwarded {
+			// Not accepted: either not from trusted proxy or header claims https while local request is not HTTPS
 			logNoTrustedProxies(guid, *clientIP)
 
 			return
@@ -467,12 +480,15 @@ func ProcessXForwardedFor(ctx *gin.Context, clientIP, clientPort *string, xssl *
 		}
 
 		*clientPort = definitions.NotAvailable
+	}
 
-		if *xssl == "" {
-			proto := ctx.GetHeader("X-Forwarded-Proto")
-			if proto == "https" {
-				*xssl = "on"
-			}
+	// Evaluate X-Forwarded-Proto if xssl not yet set and only if accepted
+	if *xssl == "" && acceptForwarded {
+		if proto == "https" {
+			*xssl = "on"
+		} else if proto != "" {
+			// explicitly mark as off if header claims non-https
+			*xssl = "off"
 		}
 	}
 }
