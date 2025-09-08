@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
+	gzipmw "github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -365,18 +366,20 @@ func CustomRequestHandler(ctx *gin.Context) {
 			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
 		)
 
-		// If Lua already wrote the response (body), do not override with JSON
-		if ctx.Writer.Size() > 0 {
+		// If Lua already wrote the response, do not override with JSON
+		if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
 			return
 		}
 
-		ctx.JSON(http.StatusOK, result)
+		if ctx.Writer != nil {
+			ctx.JSON(http.StatusOK, result)
+		}
 	} else {
 		util.DebugModule(
 			definitions.DbgHTTP,
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d",
-				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size()),
+			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d written: %t encoding: %s",
+				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size(), ctx.Writer.Written(), ctx.Writer.Header().Get("Content-Encoding")),
 		)
 	}
 }
@@ -536,6 +539,34 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 	}
 }
 
+// secureCompare compares two strings in constant time by hashing them first.
+func secureCompare(a, b string) bool {
+	h1 := sha256.Sum256([]byte(a))
+	h2 := sha256.Sum256([]byte(b))
+
+	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
+}
+
+// checkAndRequireBasicAuth validates HTTP Basic Auth against configured credentials.
+// Returns true if authorized. If not authorized and basic auth is enabled, it writes
+// a WWW-Authenticate header with the provided realm and aborts with 401. If basic auth
+// is disabled in config, it returns true (no auth required).
+func checkAndRequireBasicAuth(ctx *gin.Context) bool {
+	if !config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+		return true
+	}
+
+	username, password, ok := ctx.Request.BasicAuth()
+	if ok && secureCompare(username, config.GetFile().GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, config.GetFile().GetServer().GetBasicAuth().GetPassword()) {
+		return true
+	}
+
+	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
+	ctx.AbortWithStatus(http.StatusUnauthorized)
+
+	return false
+}
+
 // BasicAuthMiddleware returns a gin middleware handler dedicated for performing HTTP Basic AuthState.
 // It first checks for specified parameters in the incoming request context.
 // If the request already contains BasicAuth in its header, it attempts to authenticate the credentials. Hashed values
@@ -559,28 +590,12 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-
-		if httpBasicAuthOk {
-			usernameHash := sha256.Sum256([]byte(username))
-			passwordHash := sha256.Sum256([]byte(password))
-			expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
-			expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
-
-			usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
-			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-			if usernameMatch && passwordMatch {
-				ctx.Next()
-
-				return
-			}
-
-			ctx.AbortWithStatus(http.StatusForbidden)
-		} else {
-			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
+		// Use shared helper to validate or challenge for Basic Auth
+		if !checkAndRequireBasicAuth(ctx) {
+			return
 		}
+
+		ctx.Next()
 	}
 }
 
@@ -1303,27 +1318,6 @@ func configureTLS() *tls.Config {
 	return tlsConfig
 }
 
-// gzipWriter is a custom ResponseWriter that compresses the response using gzip.
-type gzipWriter struct {
-	gin.ResponseWriter
-	writer *gzip.Writer
-}
-
-// Write compresses the data and writes it to the underlying ResponseWriter.
-func (g *gzipWriter) Write(data []byte) (int, error) {
-	return g.writer.Write(data)
-}
-
-// WriteString compresses the string and writes it to the underlying ResponseWriter.
-func (g *gzipWriter) WriteString(s string) (int, error) {
-	return g.writer.Write([]byte(s))
-}
-
-// Close closes the gzip.Writer.
-func (g *gzipWriter) Close() error {
-	return g.writer.Close()
-}
-
 // DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
 // It checks if the request has a Content-Encoding header with value "gzip" and if so, replaces the request body
 // with a decompressed version.
@@ -1369,97 +1363,6 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 	}
 }
 
-// CompressionMiddleware returns a middleware that compresses HTTP responses based on the configuration settings.
-// It uses the gzip compression algorithm with the configured level and only compresses responses with the configured content types
-// and minimum length.
-func CompressionMiddleware() gin.HandlerFunc {
-	compressionConfig := config.GetFile().GetServer().GetCompression()
-
-	if !compressionConfig.IsEnabled() {
-		return func(c *gin.Context) {
-			c.Next()
-		}
-	}
-
-	compressionLevel := compressionConfig.GetLevel()
-	if compressionLevel == 0 {
-		compressionLevel = gzip.DefaultCompression
-	}
-
-	minLength := compressionConfig.GetMinLength()
-	if minLength == 0 {
-		minLength = 1024 // Default to 1KB if not specified
-	}
-
-	contentTypes := compressionConfig.GetContentTypes()
-	if len(contentTypes) == 0 {
-		contentTypes = []string{
-			"application/json",
-			"application/javascript",
-			"text/css",
-			"text/html",
-			"text/plain",
-			"text/xml",
-		}
-	}
-
-	return func(c *gin.Context) {
-		// Check if client accepts gzip encoding
-		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
-			c.Next()
-
-			return
-		}
-
-		// Check if content type should be compressed
-		contentType := c.Writer.Header().Get("Content-Type")
-		shouldCompress := false
-
-		for _, ct := range contentTypes {
-			if strings.Contains(contentType, ct) {
-				shouldCompress = true
-
-				break
-			}
-		}
-
-		if !shouldCompress {
-			c.Next()
-
-			return
-		}
-
-		// Only add Vary header for proper handling of compressed responses
-		c.Header("Vary", "Accept-Encoding")
-
-		// Create gzip writer
-		gz, err := gzip.NewWriterLevel(c.Writer, compressionLevel)
-		if err != nil {
-			c.Next()
-
-			return
-		}
-
-		// Replace writer with gzip writer
-		// Signal gzip encoding; let net/http manage Transfer-Encoding and Content-Length
-		c.Header("Content-Encoding", "gzip")
-		c.Writer.Header().Del("Content-Length")
-
-		gzWriter := &gzipWriter{
-			ResponseWriter: c.Writer,
-			writer:         gz,
-		}
-
-		c.Writer = gzWriter
-
-		// Process request
-		c.Next()
-
-		// Ensure gzip writer is closed to flush all data
-		_ = gzWriter.Close()
-	}
-}
-
 // setupRouter sets up the router for the HTTP server.
 //
 // It takes in one parameter:
@@ -1482,8 +1385,22 @@ func setupRouter(router *gin.Engine) {
 	// Add request decompression middleware if enabled - should be early in the chain
 	router.Use(DecompressRequestMiddleware())
 
-	// Add response compression middleware if enabled - should be early to compress all responses
-	router.Use(CompressionMiddleware())
+	// Add response compression middleware if enabled (gzip only)
+	if config.GetFile().GetServer().GetCompression().IsEnabled() {
+		// Warn: content_types is deprecated and ignored since 1.9.2
+		if len(config.GetFile().GetServer().GetCompression().GetContentTypes()) > 0 {
+			level.Warn(log.Logger).Log(
+				definitions.LogKeyMsg, "compression.content_types is deprecated and ignored as of 1.9.2; remove it from configuration",
+			)
+		}
+
+		compressionLevel := config.GetFile().GetServer().GetCompression().GetLevel()
+		if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
+			compressionLevel = gzip.DefaultCompression
+		}
+
+		router.Use(gzipmw.Gzip(compressionLevel))
+	}
 
 	// Add Prometheus middleware for metrics collection
 	router.Use(PrometheusMiddleware())
@@ -1513,36 +1430,11 @@ func setupRouter(router *gin.Engine) {
 			}
 		}
 
-		// Check if Basic Auth is enabled
-		if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-			username, password, httpBasicAuthOk := ctx.Request.BasicAuth()
-
-			if httpBasicAuthOk {
-				usernameHash := sha256.Sum256([]byte(username))
-				passwordHash := sha256.Sum256([]byte(password))
-				expectedUsernameHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetUsername()))
-				expectedPasswordHash := sha256.Sum256([]byte(config.GetFile().GetServer().GetBasicAuth().GetPassword()))
-
-				usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
-				passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-				if usernameMatch && passwordMatch {
-					// Basic auth successful, allow access
-					promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
-
-					return
-				}
-			}
-
-			// Basic auth failed, request authentication
-			ctx.Header("WWW-Authenticate", `Basic realm="Prometheus Metrics", charset="UTF-8"`)
-			ctx.AbortWithStatus(http.StatusUnauthorized)
-
-			return
+		// Check Basic Auth using shared helper; if it fails and is enabled, helper already responded 401
+		if checkAndRequireBasicAuth(ctx) {
+			// authorized or basic auth disabled
+			promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 		}
-
-		// If neither JWT nor Basic Auth is enabled, allow access
-		promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
 	})
 
 	// Healthcheck - keep this simple and fast

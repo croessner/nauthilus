@@ -736,6 +736,9 @@ const (
 
 	// CtxMessageKey is used as a key to store message information in the context.
 	CtxMessageKey = "message"
+
+	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
+	CtxResponseWrittenKey = "response_written"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
@@ -798,19 +801,26 @@ const InvalidCode = "The TOTP code is invalid"
 // ReisPromPoolName is a constant string used for labeling Redis pool metrics in Prometheus.
 const ReisPromPoolName = "pool_name"
 
-// Supported salted hashes.
 const (
+	// SSHAUNKNOWN represents an unknown or undefined hashing algorithm type.
+	SSHAUNKNOWN Algorithm = iota
+
 	// SSHA256 is a constant for choosing the SHA-256 algorithm
-	SSHA256 Algorithm = iota
+	SSHA256
 
 	// SSHA512 is a constant for choosing the SHA-512 algorithm
 	SSHA512
 )
 
-// Encoding schema for encrypted passwords.
 const (
-	B64 PasswordOption = iota
-	HEX
+	// ENCUNKNOWN represents an unknown or undefined password encoding option.
+	ENCUNKNOWN PasswordOption = iota
+
+	// ENCB64 represents the base64 password encoding option for hashed passwords.
+	ENCB64
+
+	// ENCHEX represents the hexadecimal password encoding option for hashed passwords.
+	ENCHEX
 )
 
 const (
@@ -1257,6 +1267,18 @@ const (
 
 	// LuaFnSetHTTPContentType allows Lua to set the Content-Type header more ergonomically
 	LuaFnSetHTTPContentType = "set_http_content_type"
+
+	// LuaFnHTTPString maps to Gin's ctx.String(status, body)
+	LuaFnHTTPString = "string"
+
+	// LuaFnHTTPHTML maps to Gin's ctx.HTML(status, html)
+	LuaFnHTTPHTML = "html"
+
+	// LuaFnHTTPData maps to Gin's ctx.Data(status, contentType, data)
+	LuaFnHTTPData = "data"
+
+	// LuaFnHTTPRedirect maps to Gin's ctx.Redirect(status, location)
+	LuaFnHTTPRedirect = "redirect"
 
 	// LuaFnRedisRegisterRedisPool defines the name of the function to register a Redis connection pool.
 	LuaFnRedisRegisterRedisPool = "register_redis_pool"

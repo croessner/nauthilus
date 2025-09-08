@@ -15,7 +15,9 @@ func SetHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		name := L.CheckString(1)
 		value := L.CheckString(2)
+
 		ctx.Header(name, value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -27,7 +29,9 @@ func AddHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		name := L.CheckString(1)
 		value := L.CheckString(2)
+
 		ctx.Writer.Header().Add(name, value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -38,7 +42,9 @@ func AddHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 func RemoveHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		name := L.CheckString(1)
+
 		ctx.Writer.Header().Del(name)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -49,7 +55,9 @@ func RemoveHTTPResponseHeader(ctx *gin.Context) lua.LGFunction {
 func SetHTTPStatus(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		code := L.CheckInt(1)
+
 		ctx.Status(code)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -61,6 +69,7 @@ func SetHTTPStatus(ctx *gin.Context) lua.LGFunction {
 func WriteHTTPResponseBody(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		data := L.CheckString(1)
+
 		// Do not write body for HEAD requests
 		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
 			return 0
@@ -68,6 +77,7 @@ func WriteHTTPResponseBody(ctx *gin.Context) lua.LGFunction {
 
 		// Use Gin's writer to ensure correct size/accounting
 		_, _ = ctx.Writer.Write([]byte(data))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -78,7 +88,81 @@ func WriteHTTPResponseBody(ctx *gin.Context) lua.LGFunction {
 func SetHTTPContentType(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		value := L.CheckString(1)
+
 		ctx.Header("Content-Type", value)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+		return 0
+	}
+}
+
+// HTTPString returns a Lua function that maps to Gin's ctx.String(status, body)
+// Usage from Lua: nauthilus_http_response.string(status_code, body)
+func HTTPString(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		status := L.CheckInt(1)
+		body := L.CheckString(2)
+
+		ctx.String(status, body)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+		return 0
+	}
+}
+
+// HTTPData returns a Lua function that maps to Gin's ctx.Data(status, contentType, data)
+// Usage from Lua: nauthilus_http_response.data(status_code, content_type, data)
+func HTTPData(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		status := L.CheckInt(1)
+		contentType := L.CheckString(2)
+		data := L.CheckString(3)
+
+		// Do not write body for HEAD requests
+		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
+			ctx.Status(status)
+			ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+			return 0
+		}
+
+		ctx.Data(status, contentType, []byte(data))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+		return 0
+	}
+}
+
+// HTTPHTML returns a Lua function to send HTML content (uses Gin's Data with text/html)
+// Usage from Lua: nauthilus_http_response.html(status_code, html_string)
+func HTTPHTML(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		status := L.CheckInt(1)
+		html := L.CheckString(2)
+
+		if strings.EqualFold(ctx.Request.Method, http.MethodHead) {
+			ctx.Status(status)
+			ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+			return 0
+		}
+
+		ctx.Data(status, "text/html; charset=utf-8", []byte(html))
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
+
+		return 0
+	}
+}
+
+// HTTPRedirect returns a Lua function that maps to Gin's ctx.Redirect(status, location)
+// Usage from Lua: nauthilus_http_response.redirect(status_code, location)
+func HTTPRedirect(ctx *gin.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		status := L.CheckInt(1)
+		location := L.CheckString(2)
+
+		ctx.Redirect(status, location)
+		ctx.Set(definitions.CtxResponseWrittenKey, true)
 
 		return 0
 	}
@@ -94,8 +178,42 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 			definitions.LuaFnSetHTTPStatus:            SetHTTPStatus(ctx),
 			definitions.LuaFnWriteHTTPResponseBody:    WriteHTTPResponseBody(ctx),
 			definitions.LuaFnSetHTTPContentType:       SetHTTPContentType(ctx),
+			definitions.LuaFnHTTPString:               HTTPString(ctx),
+			definitions.LuaFnHTTPData:                 HTTPData(ctx),
+			definitions.LuaFnHTTPHTML:                 HTTPHTML(ctx),
+			definitions.LuaFnHTTPRedirect:             HTTPRedirect(ctx),
 		})
+
+		// Expose essential HTTP status codes as UPPER_CASE module variables
+		statusCodes := map[string]int{
+			"STATUS_OK":                     200,
+			"STATUS_CREATED":                201,
+			"STATUS_NO_CONTENT":             204,
+			"STATUS_MOVED_PERMANENTLY":      301,
+			"STATUS_FOUND":                  302,
+			"STATUS_SEE_OTHER":              303,
+			"STATUS_NOT_MODIFIED":           304,
+			"STATUS_BAD_REQUEST":            400,
+			"STATUS_UNAUTHORIZED":           401,
+			"STATUS_FORBIDDEN":              403,
+			"STATUS_NOT_FOUND":              404,
+			"STATUS_METHOD_NOT_ALLOWED":     405,
+			"STATUS_CONFLICT":               409,
+			"STATUS_UNSUPPORTED_MEDIA_TYPE": 415,
+			"STATUS_TOO_MANY_REQUESTS":      429,
+			"STATUS_INTERNAL_SERVER_ERROR":  500,
+			"STATUS_NOT_IMPLEMENTED":        501,
+			"STATUS_BAD_GATEWAY":            502,
+			"STATUS_SERVICE_UNAVAILABLE":    503,
+			"STATUS_GATEWAY_TIMEOUT":        504,
+		}
+
+		for k, v := range statusCodes {
+			mod.RawSetString(k, lua.LNumber(v))
+		}
+
 		L.Push(mod)
+
 		return 1
 	}
 }
