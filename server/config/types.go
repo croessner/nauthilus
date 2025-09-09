@@ -404,8 +404,6 @@ func (d *DbgModule) Set(value string) error {
 		d.module = definitions.DbgFilter
 	case definitions.DbgTolerateName:
 		d.module = definitions.DbgTolerate
-	case definitions.DbgNeuralName:
-		d.module = definitions.DbgNeural
 	case definitions.DbgJWTName:
 		d.module = definitions.DbgJWT
 	case definitions.DbgHTTPName:
