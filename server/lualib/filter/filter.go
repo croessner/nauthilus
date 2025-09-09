@@ -319,15 +319,34 @@ func selectBackendServer(server **string, port **int) lua.LGFunction {
 	}
 }
 
-// applyBackendResult sets the backendResult pointer to the value from Lua userdata if it's of type LuaBackendResult.
+// applyBackendResult merges attributes from the provided Lua userdata into the existing backendResult
+// instead of reassigning the pointer. This ensures the per-filter accumulator referenced elsewhere
+// (e.g., in filtResult) sees the applied changes.
 func applyBackendResult(backendResult **lualib.LuaBackendResult) lua.LGFunction {
 	return func(L *lua.LState) int {
 		userData := L.CheckUserData(1)
 
-		if luaBackendResult, assertOk := userData.Value.(*lualib.LuaBackendResult); assertOk {
-			*backendResult = luaBackendResult
-		} else {
+		luaBackendResult, ok := userData.Value.(*lualib.LuaBackendResult)
+		if !ok {
 			L.ArgError(1, "expected lua backend_result")
+
+			return 0
+		}
+
+		// Ensure destination exists
+		if *backendResult == nil {
+			*backendResult = &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+		}
+
+		if (*backendResult).Attributes == nil {
+			(*backendResult).Attributes = make(map[any]any)
+		}
+
+		// Merge attributes (overwrite on conflict)
+		if luaBackendResult != nil {
+			for k, v := range luaBackendResult.Attributes {
+				(*backendResult).Attributes[k] = v
+			}
 		}
 
 		return 0
