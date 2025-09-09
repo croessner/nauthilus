@@ -875,9 +875,6 @@ const (
 	// DbgTolerate represents the debug module for operations related to tolerance or error allowances.
 	DbgTolerate
 
-	// DbgNeural represents the debug module identifier for neural network-related operations.
-	DbgNeural
-
 	// DbgJWT represents the debug module for JWT-related operations.
 	DbgJWT
 
@@ -936,9 +933,6 @@ const (
 
 	// DbgTolerateName represents the debug mode for tolerating certain conditions or operations during execution.
 	DbgTolerateName = "tolerate"
-
-	// DbgNeuralName specifies the debug identifier for neural-related processes or functionalities.
-	DbgNeuralName = "neural"
 
 	// DbgJWTName is the debug identifier for JWT
 	DbgJWTName = "jwt"
@@ -1205,14 +1199,8 @@ const (
 	// LuaModPsnet is a constant representing the module name "nauthilus_psnet".
 	LuaModPsnet = "nauthilus_psnet"
 
-	// LuaModNeural is a constant representing the module name "nauthilus_neural" for neural network integration.
-	LuaModNeural = "nauthilus_neural"
-
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
-
-	// LuaFnCallNeuralNetwork represents the Lua function name used to invoke a neural network call in the system.
-	LuaFnCallNeuralNetwork = "nauthilus_call_neural_network"
 
 	// LuaFnCallAction represents the function name for "nauthilus_call_action" in Lua
 	LuaFnCallAction = "nauthilus_call_action"

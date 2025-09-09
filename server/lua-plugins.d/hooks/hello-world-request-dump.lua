@@ -132,7 +132,7 @@ function nauthilus_run_hook(logging, session)
 
     local html = table.concat(parts, "\n")
 
-    nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache, no-transform")
+    nauthilus_http_response.set_http_response_header("Cache-Control", "no-cache")
     nauthilus_http_response.html(nauthilus_http_response.STATUS_OK, html)
 
     if logging.log_level == "debug" or logging.log_level == "info" then

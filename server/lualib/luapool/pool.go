@@ -55,7 +55,6 @@ func resetLuaState(L *lua.LState) {
 	L.SetGlobal(definitions.LuaFnCallFilter, lua.LNil)
 	L.SetGlobal(definitions.LuaFnCallFeature, lua.LNil)
 	L.SetGlobal(definitions.LuaFnCallAction, lua.LNil)
-	L.SetGlobal(definitions.LuaFnCallNeuralNetwork, lua.LNil)
 
 	// Clear the default table which is recreated for each request
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
@@ -90,7 +89,6 @@ func resetLuaState(L *lua.LState) {
 			L.SetField(loadedTable, definitions.LuaModSoftWhitelist, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModBruteForce, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModDNS, lua.LNil)
-			L.SetField(loadedTable, definitions.LuaModNeural, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModPsnet, lua.LNil)
 			L.SetField(loadedTable, definitions.LuaModCache, lua.LNil)
 
