@@ -32,6 +32,21 @@ type BruteForceSection struct {
 	MinToleratePercent uint8            `mapstructure:"min_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	MaxToleratePercent uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	ScaleFactor        float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
+
+	// IPv6 scoping options for features that use password-history (PW_HIST), e.g., repeating-wrong-password.
+	// If set to >0, IPv6 addresses will be considered on the given CIDR instead of /128 for the respective context.
+	IPScoping IPScoping `mapstructure:"ip_scoping"`
+}
+
+// IPScoping configures how client IPs are normalized/scoped for different contexts.
+// This is intentionally generic to allow reuse by tolerations in the future.
+type IPScoping struct {
+	// RepeatingWrongPasswordIPv6CIDR defines the IPv6 CIDR to use when evaluating/storing
+	// password-history for repeating-wrong-password detection. 0 disables special handling (default /128).
+	RepeatingWrongPasswordIPv6CIDR uint `mapstructure:"rwp_ipv6_cidr" validate:"omitempty,min=1,max=128"`
+
+	// TolerationsIPv6CIDR defines the IPv6 CIDR to use for tolerations buckets. 0 disables (default /128).
+	TolerationsIPv6CIDR uint `mapstructure:"tolerations_ipv6_cidr" validate:"omitempty,min=1,max=128"`
 }
 
 func (b *BruteForceSection) String() string {
@@ -173,6 +188,33 @@ func (b *BruteForceSection) GetBuckets() []BruteForceRule {
 	}
 
 	return b.Buckets
+}
+
+// GetIPScoping returns the IPScoping settings or a zero-value if not present.
+func (b *BruteForceSection) GetIPScoping() IPScoping {
+	if b == nil {
+		return IPScoping{}
+	}
+
+	return b.IPScoping
+}
+
+// GetRWPIPv6CIDR returns the CIDR to use for IPv6 in the repeating-wrong-password context (0 disables).
+func (b *BruteForceSection) GetRWPIPv6CIDR() uint {
+	if b == nil {
+		return 0
+	}
+
+	return b.IPScoping.RepeatingWrongPasswordIPv6CIDR
+}
+
+// GetTolerationsIPv6CIDR returns the CIDR to use for IPv6 in the tolerations context (0 disables).
+func (b *BruteForceSection) GetTolerationsIPv6CIDR() uint {
+	if b == nil {
+		return 0
+	}
+
+	return b.IPScoping.TolerationsIPv6CIDR
 }
 
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).

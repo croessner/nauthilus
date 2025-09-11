@@ -26,6 +26,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -42,6 +43,9 @@ var (
 	cleaner     *houseKeeper
 	initCleaner sync.Once
 )
+
+// Shared IP scoper for tolerations context
+var tolScoper = ipscoper.NewIPScoper()
 
 // houseKeeper manages a collection of IP addresses and ensures thread-safe operations.
 type houseKeeper struct {
@@ -233,7 +237,9 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		return
 	}
 
-	t.getHouseKeeper().setIPAddress(ipAddress)
+	// Track scoped identifier in housekeeping to avoid per-/128 duplicates for IPv6
+	scoped := tolScoper.Scope(ipscoper.ScopeTolerations, ipAddress)
+	t.getHouseKeeper().setIPAddress(scoped)
 
 	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
 
@@ -537,7 +543,9 @@ func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
 
 // getRedisKey constructs a Redis key using the configured prefix and the given IP address.
 func (t *tolerateImpl) getRedisKey(ipAddress string) string {
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + ipAddress
+	// Apply tolerations scoping (e.g., IPv6 /CIDR) so all components use consistent keys
+	scoped := tolScoper.Scope(ipscoper.ScopeTolerations, ipAddress)
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + scoped
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.

@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -135,6 +136,9 @@ type bucketManagerImpl struct {
 	protocol           string
 	oidcCID            string
 	additionalFeatures map[string]any
+
+	// ip scoper used to normalize addresses per feature context (e.g., RWP IPv6 CIDR)
+	scoper ipscoper.IPScoper
 }
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
@@ -1002,16 +1006,22 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		} else if repeating {
 			return false, nil
 		} else if bm.passwordHistory == nil {
+			// No negative password cache present for a known account.
+			// This can legitimately happen right after a cache flush or first failed attempt.
+			// In this situation we should NOT enforce brute-force computation, otherwise
+			// the first spike of wrong-password retries (e.g. multiple devices after a password change)
+			// would immediately increase brute-force buckets and lock out the user.
+			// Instead, gracefully learn the client's IP for later unlock operations and skip enforcement.
 			level.Info(log.Logger).Log(
 				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "No negative password cache present; enforcing brute force computation",
+				definitions.LogKeyMsg, "No negative password cache present; not enforcing and learning IP",
 				definitions.LogKeyUsername, bm.username,
 				definitions.LogKeyClientIP, bm.clientIP,
 			)
 
-			// If there is no negative password cache yet, we must enforce computation
-			// so that initial attempts can still trigger brute force logic.
-			return true, nil
+			// Learn client's IP for PW_HIST related features (protocol/OIDC meta persisted with TTL)
+			bm.ProcessPWHist()
+			return false, nil
 		}
 	}
 
@@ -1054,6 +1064,12 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 
 // getPasswordHistoryRedisHashKey generates the Redis hash key for password history storage based on username and client IP.
 func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (key string) {
+	// Normalize the IP for the repeating-wrong-password context (may apply IPv6 CIDR scoping)
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+	}
+
 	if withUsername {
 		// Prefer explicit accountName; if absent, fall back to username.
 		accountName := bm.accountName
@@ -1071,9 +1087,9 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, bm.clientIP)
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + bm.clientIP
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scoped
 	}
 
 	util.DebugModule(
@@ -1088,6 +1104,12 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 
 // getPasswordHistoryTotalRedisKey generates the Redis key for the total counter for password history.
 func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) (key string) {
+	// Normalize the IP for the repeating-wrong-password context (may apply IPv6 CIDR scoping)
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+	}
+
 	if withUsername {
 		// Prefer explicit accountName; if absent, fall back to username.
 		accountName := bm.accountName
@@ -1104,9 +1126,9 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, bm.clientIP)
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + bm.clientIP
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scoped
 	}
 
 	util.DebugModule(
@@ -1288,6 +1310,7 @@ func NewBucketManager(ctx context.Context, guid, clientIP string) BucketManager 
 		ctx:      ctx,
 		guid:     guid,
 		clientIP: clientIP,
+		scoper:   ipscoper.NewIPScoper(),
 	}
 }
 
