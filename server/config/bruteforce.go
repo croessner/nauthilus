@@ -33,6 +33,11 @@ type BruteForceSection struct {
 	MaxToleratePercent uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	ScaleFactor        float64          `mapstructure:"scale_factor" validate:"omitempty,min=0.1,max=10"`
 
+	// Reduce PW_HIST write amplification while an IP/net is already blocked:
+	// If true, account-scoped PW_HIST entries are only written for known accounts (no fallback to username)
+	// when the request is served from an already-triggered (cached) brute-force block.
+	LogHistoryForKnownAccounts bool `mapstructure:"pw_history_for_known_accounts"`
+
 	// IPv6 scoping options for features that use password-history (PW_HIST), e.g., repeating-wrong-password.
 	// If set to >0, IPv6 addresses will be considered on the given CIDR instead of /128 for the respective context.
 	IPScoping IPScoping `mapstructure:"ip_scoping"`
@@ -197,6 +202,18 @@ func (b *BruteForceSection) GetIPScoping() IPScoping {
 	}
 
 	return b.IPScoping
+}
+
+// GetPWHistKnownAccountsOnlyOnAlreadyTriggered returns whether per-account PW_HIST should be limited
+// to known accounts (no username fallback) when a request is already cached-blocked.
+// Supports both the new short key (pw_hist_known_cached) and the legacy long key
+// (pw_hist_known_accounts_only_on_already_triggered) for backward compatibility.
+func (b *BruteForceSection) GetPWHistKnownAccountsOnlyOnAlreadyTriggered() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.LogHistoryForKnownAccounts
 }
 
 // GetRWPIPv6CIDR returns the CIDR to use for IPv6 in the repeating-wrong-password context (0 disables).

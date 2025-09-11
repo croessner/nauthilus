@@ -137,6 +137,9 @@ type bucketManagerImpl struct {
 	oidcCID            string
 	additionalFeatures map[string]any
 
+	// request-context flags
+	alreadyTriggered bool
+
 	// ip scoper used to normalize addresses per feature context (e.g., RWP IPv6 CIDR)
 	scoper ipscoper.IPScoper
 }
@@ -480,6 +483,9 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
 	if alreadyTriggered || ruleTriggered {
 		var useCache bool
+
+		// capture context flag for downstream operations (e.g., PW_HIST behavior)
+		bm.alreadyTriggered = alreadyTriggered
 
 		defer setter()
 		defer bm.LoadAllPasswordHistories()
@@ -1071,9 +1077,20 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 	}
 
 	if withUsername {
-		// Prefer explicit accountName; if absent, fall back to username.
+		// Prefer explicit accountName; if absent, optionally fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
+			// If configured and this is a cached-block (alreadyTriggered), do not create
+			// per-username PW_HIST entries for unknown accounts to reduce key footprint.
+			if config.GetFile().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+				level.Debug(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Skipping account-scoped PW_HIST for unknown account on cached block",
+				)
+
+				return ""
+			}
+
 			if bm.username == "" {
 				// Skip if neither account nor username is available
 				level.Debug(log.Logger).Log(
@@ -1111,9 +1128,19 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 	}
 
 	if withUsername {
-		// Prefer explicit accountName; if absent, fall back to username.
+		// Prefer explicit accountName; if absent, optionally fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
+			// Respect config to reduce PW_HIST on cached-blocks
+			if config.GetFile().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+				level.Debug(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Skipping account-scoped PW_HIST total for unknown account on cached block",
+				)
+
+				return ""
+			}
+
 			if bm.username == "" {
 				level.Debug(log.Logger).Log(
 					definitions.LogKeyGUID, bm.guid,
