@@ -116,6 +116,9 @@ type JSONRequest struct {
 	// ClientID is the unique identifier of the client/user, usually assigned by the application.
 	ClientID string `json:"client_id,omitempty"`
 
+	// UserAgent optionally provides the user agent via JSON when headers are unavailable.
+	UserAgent string `json:"user_agent,omitempty"`
+
 	// LocalIP is the IP address of the server or endpoint receiving the request.
 	LocalIP string `json:"local_ip,omitempty"`
 
@@ -172,6 +175,9 @@ type State interface {
 
 	// SetClientHost sets the client host information for the current state using the provided hostname string.
 	SetClientHost(clientHost string)
+
+	// SetClientID sets the client ID to the provided string value.
+	SetClientID(clientID string)
 
 	// SetStatusCodes sets the current status code associated with the authentication process.
 	SetStatusCodes(statusCode string)
@@ -2733,7 +2739,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 // Otherwise, it calls the setAuthenticationFields function with the AuthState object and the JSONRequest object,
 // and sets additional fields in the AuthState object using the XSSL method.
 func processApplicationJSON(ctx *gin.Context, auth State) {
-	var jsonRequest *JSONRequest
+	var jsonRequest JSONRequest
 
 	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
 		HandleJSONError(ctx, err)
@@ -2741,7 +2747,12 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 		return
 	}
 
-	setAuthenticationFields(auth, jsonRequest)
+	setAuthenticationFields(auth, &jsonRequest)
+
+	// If no user_agent provided via JSON, fallback to HTTP header
+	if jsonRequest.UserAgent == "" {
+		auth.WithUserAgent(ctx)
+	}
 
 	// Apply DNS resolution logic after setting client IP
 	if authState, ok := auth.(*AuthState); ok {
@@ -2777,33 +2788,117 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 // setAuthenticationFields(auth, request)
 // // After the function call, the fields of auth would be populated with the values from request
 func setAuthenticationFields(auth State, request *JSONRequest) {
-	auth.SetMethod(request.Method)
-	auth.SetUserAgent(request.ClientID)
-	auth.SetUsername(request.Username)
-	auth.SetPassword(request.Password)
-	auth.SetClientIP(request.ClientIP)
-	auth.SetClientPort(request.ClientPort)
-	auth.SetClientHost(request.ClientHostname)
-	auth.SetLocalIP(request.LocalIP)
-	auth.SetLocalPort(request.LocalPort)
-	auth.SetProtocol(config.NewProtocol(request.Service))
-	auth.SetSSL(request.XSSL)
-	auth.SetSSLSessionID(request.XSSLSessionID)
-	auth.SetSSLClientVerify(request.XSSLClientVerify)
-	auth.SetSSLClientDN(request.XSSLClientDN)
-	auth.SetSSLClientCN(request.XSSLClientCN)
-	auth.SetSSLIssuer(request.XSSLIssuer)
-	auth.SetSSLClientNotBefore(request.XSSLClientNotBefore)
-	auth.SetSSLClientNotAfter(request.XSSLClientNotAfter)
-	auth.SetSSLSubjectDN(request.XSSLSubjectDN)
-	auth.SetSSLIssuerDN(request.XSSLIssuerDN)
-	auth.SetSSLClientSubjectDN(request.XSSLClientSubjectDN)
-	auth.SetSSLClientIssuerDN(request.XSSLIssuerDN)
-	auth.SetSSLProtocol(request.XSSLProtocol)
-	auth.SetSSLCipher(request.XSSLCipher)
-	auth.SetSSLSerial(request.SSLSerial)
-	auth.SetSSLFingerprint(request.SSLFingerprint)
-	auth.SetOIDCCID(request.OIDCCID)
+	if request.Method != "" {
+		auth.SetMethod(request.Method)
+	}
+
+	if request.UserAgent != "" {
+		auth.SetUserAgent(request.UserAgent)
+	}
+
+	if request.ClientID != "" {
+		auth.SetClientID(request.ClientID)
+	}
+
+	if request.Username != "" {
+		auth.SetUsername(request.Username)
+	}
+
+	if request.Password != "" {
+		auth.SetPassword(request.Password)
+	}
+
+	if request.ClientIP != "" {
+		auth.SetClientIP(request.ClientIP)
+	}
+
+	if request.ClientPort != "" {
+		auth.SetClientPort(request.ClientPort)
+	}
+
+	if request.ClientHostname != "" {
+		auth.SetClientHost(request.ClientHostname)
+	}
+
+	if request.LocalIP != "" {
+		auth.SetLocalIP(request.LocalIP)
+	}
+
+	if request.LocalPort != "" {
+		auth.SetLocalPort(request.LocalPort)
+	}
+
+	if request.Service != "" {
+		auth.SetProtocol(config.NewProtocol(request.Service))
+	}
+
+	if request.XSSL != "" {
+		auth.SetSSL(request.XSSL)
+	}
+
+	if request.XSSLSessionID != "" {
+		auth.SetSSLSessionID(request.XSSLSessionID)
+	}
+
+	if request.XSSLClientVerify != "" {
+		auth.SetSSLClientVerify(request.XSSLClientVerify)
+	}
+
+	if request.XSSLClientDN != "" {
+		auth.SetSSLClientDN(request.XSSLClientDN)
+	}
+
+	if request.XSSLClientCN != "" {
+		auth.SetSSLClientCN(request.XSSLClientCN)
+	}
+
+	if request.XSSLIssuer != "" {
+		auth.SetSSLIssuer(request.XSSLIssuer)
+	}
+
+	if request.XSSLClientNotBefore != "" {
+		auth.SetSSLClientNotBefore(request.XSSLClientNotBefore)
+	}
+
+	if request.XSSLClientNotAfter != "" {
+		auth.SetSSLClientNotAfter(request.XSSLClientNotAfter)
+	}
+
+	if request.XSSLSubjectDN != "" {
+		auth.SetSSLSubjectDN(request.XSSLSubjectDN)
+	}
+
+	if request.XSSLIssuerDN != "" {
+		auth.SetSSLIssuerDN(request.XSSLIssuerDN)
+	}
+
+	if request.XSSLClientSubjectDN != "" {
+		auth.SetSSLClientSubjectDN(request.XSSLClientSubjectDN)
+	}
+
+	if request.XSSLClientIssuerDN != "" {
+		auth.SetSSLClientIssuerDN(request.XSSLClientIssuerDN)
+	}
+
+	if request.XSSLProtocol != "" {
+		auth.SetSSLProtocol(request.XSSLProtocol)
+	}
+
+	if request.XSSLCipher != "" {
+		auth.SetSSLCipher(request.XSSLCipher)
+	}
+
+	if request.SSLSerial != "" {
+		auth.SetSSLSerial(request.SSLSerial)
+	}
+
+	if request.SSLFingerprint != "" {
+		auth.SetSSLFingerprint(request.SSLFingerprint)
+	}
+
+	if request.OIDCCID != "" {
+		auth.SetOIDCCID(request.OIDCCID)
+	}
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
