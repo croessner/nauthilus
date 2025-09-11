@@ -125,10 +125,10 @@ type JSONRequest struct {
 	// LocalPort is the port number of the server or endpoint receiving the request.
 	LocalPort string `json:"local_port,omitempty"`
 
-	// Service is the specific service that the client/user is trying to access with the request.
-	Service string `json:"service"`
+	// Protocol is the application protocol used by the client (e.g., imap, smtp, pop3, http).
+	Protocol string `json:"protocol,omitempty"`
 
-	// Method is the HTTP method used in the request (i.e., PLAIN, LOGIN, etc.)
+	// Method is the HTTP/SASL method used in the request (e.g., PLAIN, LOGIN, etc.)
 	Method string `json:"method,omitempty"`
 
 	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
@@ -2828,8 +2828,8 @@ func setAuthenticationFields(auth State, request *JSONRequest) {
 		auth.SetLocalPort(request.LocalPort)
 	}
 
-	if request.Service != "" {
-		auth.SetProtocol(config.NewProtocol(request.Service))
+	if request.Protocol != "" {
+		auth.SetProtocol(config.NewProtocol(request.Protocol))
 	}
 
 	if request.XSSL != "" {
