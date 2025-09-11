@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -137,7 +138,7 @@ type bucketManagerImpl struct {
 	additionalFeatures map[string]any
 
 	// ip scoper used to normalize addresses per feature context (e.g., RWP IPv6 CIDR)
-	scoper IPScoper
+	scoper ipscoper.IPScoper
 }
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
@@ -1066,7 +1067,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 	// Normalize the IP for the repeating-wrong-password context (may apply IPv6 CIDR scoping)
 	scoped := bm.clientIP
 	if bm.scoper != nil {
-		scoped = bm.scoper.Scope(ScopeRepeatingWrongPassword, bm.clientIP)
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
 	if withUsername {
@@ -1106,7 +1107,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 	// Normalize the IP for the repeating-wrong-password context (may apply IPv6 CIDR scoping)
 	scoped := bm.clientIP
 	if bm.scoper != nil {
-		scoped = bm.scoper.Scope(ScopeRepeatingWrongPassword, bm.clientIP)
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
 	if withUsername {
@@ -1309,7 +1310,7 @@ func NewBucketManager(ctx context.Context, guid, clientIP string) BucketManager 
 		ctx:      ctx,
 		guid:     guid,
 		clientIP: clientIP,
-		scoper:   newIPScoper(),
+		scoper:   ipscoper.NewIPScoper(),
 	}
 }
 

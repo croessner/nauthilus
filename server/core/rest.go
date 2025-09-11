@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -674,9 +675,44 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 	userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
 
 	if ips != nil {
+		// Shared scoper used to compute CIDR-scoped identifiers when configured (IPv6)
+		scoper := ipscoper.NewIPScoper()
+
 		for _, ip := range ips {
+			// Compute scoped identifier for both contexts we need to clean up
+			scopedRWP := scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, ip)
+			scopedTol := scoper.Scope(ipscoper.ScopeTolerations, ip)
+
+			// Password-history hashes (account+IP and IP-only) — delete for raw and scoped identifiers
 			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
 			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + ip)
+
+			// PW_HIST totals (account+IP and IP-only) — delete for raw and scoped identifiers
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + accountName + ":" + ip)
+			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + ip)
+
+			if scopedRWP != ip {
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + scopedRWP)
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scopedRWP)
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + accountName + ":" + scopedRWP)
+				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scopedRWP)
+			}
+
+			// Tolerations keys — delete base hash and both positive/negative ZSETs for raw and scoped identifiers
+			baseTolRaw := config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + ip
+
+			userKeys.Set(baseTolRaw)        // hash with aggregated counters
+			userKeys.Set(baseTolRaw + ":P") // positives ZSET
+			userKeys.Set(baseTolRaw + ":N") // negatives ZSET
+
+			if scopedTol != ip {
+				baseTolScoped := config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + scopedTol
+
+				userKeys.Set(baseTolScoped)
+				userKeys.Set(baseTolScoped + ":P")
+				userKeys.Set(baseTolScoped + ":N")
+			}
+
 			// Also remove the PW_HIST meta key for this IP (protocol/oidc persistence)
 			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + ip)
 

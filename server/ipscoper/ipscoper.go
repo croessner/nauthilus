@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package bruteforce
+package ipscoper
 
 import (
 	"fmt"
@@ -31,6 +31,8 @@ type ScopeContext string
 const (
 	// ScopeRepeatingWrongPassword is used when operating on password-history keys and totals.
 	ScopeRepeatingWrongPassword ScopeContext = "repeating_wrong_password"
+	// ScopeTolerations is used when operating on tolerations keys.
+	ScopeTolerations ScopeContext = "tolerations"
 )
 
 // IPScoper abstracts normalization of IP addresses into a stable identifier for storage/lookup.
@@ -42,13 +44,31 @@ type IPScoper interface {
 }
 
 // configurableIPScoper implements IPScoper based on configuration values.
-// Currently supports IPv6 CIDR scoping for the repeating-wrong-password context.
-type configurableIPScoper struct {
-	bf *config.BruteForceSection
+// Currently supports IPv6 CIDR scoping for multiple contexts.
+type configurableIPScoper struct{}
+
+// NewIPScoper returns a new IPScoper instance without touching configuration at init time.
+// Configuration is consulted lazily during Scope calls to avoid early GetFile() usage in package init.
+func NewIPScoper() IPScoper {
+	return &configurableIPScoper{}
 }
 
-func newIPScoper() IPScoper {
-	return &configurableIPScoper{bf: config.GetFile().GetBruteForce()}
+// cidrFor returns the configured IPv6 CIDR for the given context.
+// This removes the need for duplicated switch-case logic in Scope and avoids early config access.
+func (s *configurableIPScoper) cidrFor(ctx ScopeContext) uint {
+	bf := config.GetFile().GetBruteForce()
+	if bf == nil {
+		return 0
+	}
+
+	switch ctx {
+	case ScopeRepeatingWrongPassword:
+		return bf.GetRWPIPv6CIDR()
+	case ScopeTolerations:
+		return bf.GetTolerationsIPv6CIDR()
+	default:
+		return 0
+	}
 }
 
 // Scope processes the given IP based on the context and configuration, applying scoping rules like IPv6 CIDR, if applicable.
@@ -57,15 +77,13 @@ func (s *configurableIPScoper) Scope(ctx ScopeContext, ip string) string {
 		return ip
 	}
 
-	isIPv6 := strings.Contains(ip, ":") && net.ParseIP(ip) != nil && net.ParseIP(ip).To4() == nil
+	parsed := net.ParseIP(ip)
+	isIPv6 := parsed != nil && strings.Contains(ip, ":") && parsed.To4() == nil
 
-	switch ctx {
-	case ScopeRepeatingWrongPassword:
-		if isIPv6 && s != nil && s.bf != nil {
-			if cidr := s.bf.GetRWPIPv6CIDR(); cidr > 0 && cidr <= 128 {
-				if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, cidr)); err == nil && network != nil {
-					return network.String()
-				}
+	if isIPv6 {
+		if cidr := s.cidrFor(ctx); cidr > 0 && cidr <= 128 {
+			if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, cidr)); err == nil && network != nil {
+				return network.String()
 			}
 		}
 	}
