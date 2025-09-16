@@ -29,6 +29,8 @@
 --   by_user  - list recent rows for a specific username; params: username, limit (default 100, max 1000)
 --   by_ip    - list recent rows for a client_ip; params: ip, limit (default 100, max 1000)
 
+local nauthilus_util = require("nauthilus_util")
+
 dynamic_loader("nauthilus_http_request")
 local nauthilus_http_request = require("nauthilus_http_request")
 
@@ -111,13 +113,39 @@ end
 local function ensure_limit_and_format(sql, limit)
     local s = trim(sql or "")
     local lower = string.lower(s)
-    if not string.match(lower, "%f[%w]limit%f[%W]") then
+
+    local function has_real_limit(txt)
+        local pos = 1
+        while true do
+            local i = string.find(txt, "limit", pos, true)
+
+            if not i then return false end
+
+            local prev_char = (i > 1) and txt:sub(i-1, i-1) or ""
+            local next_char = txt:sub(i+5, i+5)
+            local prev_is_alpha = prev_char:match("%a") ~= nil
+            local next_is_alpha = next_char:match("%a") ~= nil
+
+            if not prev_is_alpha and not next_is_alpha then
+                local rest = txt:sub(i+5)
+                rest = rest:gsub("^%s+", "")
+                if rest:match("^%d") then
+                    return true
+                end
+            end
+
+            pos = i + 5
+        end
+    end
+
+    if not has_real_limit(lower) then
         s = s .. " LIMIT " .. tostring(limit)
         lower = string.lower(s)
     end
-    if not string.match(lower, "%f[%w]format%f[%W]") then
-        s = s .. " FORMAT JSON"
-    end
+
+    -- Always enforce JSON output for UI consumption, regardless of any user-specified FORMAT.
+    s = s .. " FORMAT JSON"
+
     return s
 end
 
@@ -236,6 +264,20 @@ function nauthilus_run_hook(logging, session)
     if user and user ~= "" then headers["X-ClickHouse-User"] = user end
     if pass and pass ~= "" then headers["X-ClickHouse-Key"] = pass end
 
+    -- Debugging: log the effective SQL query if debug is enabled
+    if logging.log_level == "debug" then
+        local debug_info = {}
+        for k, v in pairs(result) do
+            debug_info[k] = v
+        end
+
+        debug_info.level = "debug"
+        debug_info.message = "Effective ClickHouse SQL"
+        debug_info.sql = sql
+
+        nauthilus_util.print_result(logging, debug_info)
+    end
+
     local res, err = http.post(endpoint, {
         timeout = "10s",
         headers = headers,
@@ -261,6 +303,7 @@ function nauthilus_run_hook(logging, session)
                 limit = limit,
                 table = table_name,
                 query_result = decoded,
+                debug = debug_info,
             }
         else
             result.clickhouse = {
@@ -269,6 +312,7 @@ function nauthilus_run_hook(logging, session)
                 table = table_name,
                 raw = sanitize_json_string(body_snip),
                 parse_error = (not ok and sanitize_json_string(tostring(decoded))) or nil,
+                debug = debug_info,
             }
         end
         return result
@@ -284,6 +328,7 @@ function nauthilus_run_hook(logging, session)
             limit = limit,
             table = table_name,
             query_result = decoded,
+            debug = debug_info,
         }
     else
         -- Fallback for unexpected non-JSON bodies; keep previous behavior
@@ -293,6 +338,7 @@ function nauthilus_run_hook(logging, session)
             table = table_name,
             raw = sanitize_json_string(tostring(res.body or "")),
             parse_error = (not ok and sanitize_json_string(tostring(decoded))) or nil,
+            debug = debug_info,
         }
     end
 
