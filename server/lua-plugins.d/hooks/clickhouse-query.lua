@@ -114,20 +114,38 @@ local function ensure_limit_and_format(sql, limit)
     local s = trim(sql or "")
     local lower = string.lower(s)
 
-    local function has_keyword(txt, kw)
-        for word in txt:gmatch("%a+") do
-            if word == kw then return true end
+    local function has_real_limit(txt)
+        local pos = 1
+        while true do
+            local i = string.find(txt, "limit", pos, true)
+
+            if not i then return false end
+
+            local prev_char = (i > 1) and txt:sub(i-1, i-1) or ""
+            local next_char = txt:sub(i+5, i+5)
+            local prev_is_alpha = prev_char:match("%a") ~= nil
+            local next_is_alpha = next_char:match("%a") ~= nil
+
+            if not prev_is_alpha and not next_is_alpha then
+                local rest = txt:sub(i+5)
+                rest = rest:gsub("^%s+", "")
+                if rest:match("^%d") then
+                    return true
+                end
+            end
+
+            pos = i + 5
         end
-        return false
     end
 
-    if not has_keyword(lower, "limit") then
+    if not has_real_limit(lower) then
         s = s .. " LIMIT " .. tostring(limit)
         lower = string.lower(s)
     end
-    if not has_keyword(lower, "format") then
-        s = s .. " FORMAT JSON"
-    end
+
+    -- Always enforce JSON output for UI consumption, regardless of any user-specified FORMAT.
+    s = s .. " FORMAT JSON"
+
     return s
 end
 
