@@ -113,11 +113,19 @@ end
 local function ensure_limit_and_format(sql, limit)
     local s = trim(sql or "")
     local lower = string.lower(s)
-    if not string.match(lower, "%f[%w]limit%f[%W]") then
+
+    local function has_keyword(txt, kw)
+        for word in txt:gmatch("%a+") do
+            if word == kw then return true end
+        end
+        return false
+    end
+
+    if not has_keyword(lower, "limit") then
         s = s .. " LIMIT " .. tostring(limit)
         lower = string.lower(s)
     end
-    if not string.match(lower, "%f[%w]format%f[%W]") then
+    if not has_keyword(lower, "format") then
         s = s .. " FORMAT JSON"
     end
     return s
