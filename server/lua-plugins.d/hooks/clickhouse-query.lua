@@ -110,7 +110,7 @@ local function is_safe_select(sql)
     return true, s
 end
 
-local function ensure_limit_and_format(sql, limit)
+local function ensure_limit_and_format(sql, limit, offset)
     local s = trim(sql or "")
     local lower = string.lower(s)
 
@@ -140,6 +140,9 @@ local function ensure_limit_and_format(sql, limit)
 
     if not has_real_limit(lower) then
         s = s .. " LIMIT " .. tostring(limit)
+        if (tonumber(offset or 0) or 0) > 0 then
+            s = s .. " OFFSET " .. tostring(offset)
+        end
         lower = string.lower(s)
     end
 
@@ -158,6 +161,7 @@ function nauthilus_run_hook(logging, session)
 
     local action = nauthilus_http_request.get_http_query_param("action") or "recent"
     local limit = clamp(nauthilus_http_request.get_http_query_param("limit") or 100, 1, 10000)
+    local offset = clamp(nauthilus_http_request.get_http_query_param("offset") or 0, 0, 100000000)
 
     local base = os.getenv("CLICKHOUSE_SELECT_BASE") or ""
     local table_name = os.getenv("CLICKHOUSE_TABLE") or "nauthilus.logins"
@@ -179,11 +183,12 @@ function nauthilus_run_hook(logging, session)
             result.clickhouse = {
                 action = action,
                 limit = limit,
+                offset = offset,
                 table = table_name,
             }
             return result
         end
-        sql = ensure_limit_and_format(safe_or_reason, limit)
+        sql = ensure_limit_and_format(safe_or_reason, limit, offset)
     else
         local where_clauses = {}
         if action == "by_user" then
@@ -253,7 +258,11 @@ function nauthilus_run_hook(logging, session)
             "xssl_protocol","xssl_cipher","ssl_fingerprint"
         }, ",")
 
-        sql = "SELECT " .. fields .. " FROM " .. safe_table .. where .. " ORDER BY ts DESC LIMIT " .. tostring(limit) .. " FORMAT JSON"
+        local limit_clause = " LIMIT " .. tostring(limit)
+        if (tonumber(offset or 0) or 0) > 0 then
+            limit_clause = limit_clause .. " OFFSET " .. tostring(offset)
+        end
+        sql = "SELECT " .. fields .. " FROM " .. safe_table .. where .. " ORDER BY ts DESC" .. limit_clause .. " FORMAT JSON"
     end
 
     local endpoint = build_select_endpoint(base)
@@ -301,6 +310,7 @@ function nauthilus_run_hook(logging, session)
             result.clickhouse = {
                 action = action,
                 limit = limit,
+                offset = offset,
                 table = table_name,
                 query_result = decoded,
                 debug = debug_info,
@@ -335,6 +345,7 @@ function nauthilus_run_hook(logging, session)
         result.clickhouse = {
             action = action,
             limit = limit,
+            offset = offset,
             table = table_name,
             raw = sanitize_json_string(tostring(res.body or "")),
             parse_error = (not ok and sanitize_json_string(tostring(decoded))) or nil,
