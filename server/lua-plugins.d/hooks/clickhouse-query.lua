@@ -184,77 +184,29 @@ local NUM_COL = {
     prot_backoff=true, prot_delay_ms=true
 }
 
--- Recognize bare ISO 3166-1 alpha-2 country codes to map to geoip filters
-local ISO2 = {
-    AD=true, AE=true, AF=true, AG=true, AI=true, AL=true, AM=true, AO=true, AQ=true, AR=true, AS=true, AT=true, AU=true, AW=true, AX=true, AZ=true,
-    BA=true, BB=true, BD=true, BE=true, BF=true, BG=true, BH=true, BI=true, BJ=true, BL=true, BM=true, BN=true, BO=true, BQ=true, BR=true, BS=true, BT=true, BV=true, BW=true, BY=true, BZ=true,
-    CA=true, CC=true, CD=true, CF=true, CG=true, CH=true, CI=true, CK=true, CL=true, CM=true, CN=true, CO=true, CR=true, CU=true, CV=true, CW=true, CX=true, CY=true, CZ=true,
-    DE=true, DJ=true, DK=true, DM=true, DO=true, DZ=true,
-    EC=true, EE=true, EG=true, EH=true, ER=true, ES=true, ET=true,
-    FI=true, FJ=true, FK=true, FM=true, FO=true, FR=true,
-    GA=true, GB=true, GD=true, GE=true, GF=true, GG=true, GH=true, GI=true, GL=true, GM=true, GN=true, GP=true, GQ=true, GR=true, GS=true, GT=true, GU=true, GW=true, GY=true,
-    HK=true, HM=true, HN=true, HR=true, HT=true, HU=true,
-    ID=true, IE=true, IL=true, IM=true, IN=true, IO=true, IQ=true, IR=true, IS=true, IT=true,
-    JE=true, JM=true, JO=true, JP=true,
-    KE=true, KG=true, KH=true, KI=true, KM=true, KN=true, KP=true, KR=true, KW=true, KY=true, KZ=true,
-    LA=true, LB=true, LC=true, LI=true, LK=true, LR=true, LS=true, LT=true, LU=true, LV=true, LY=true,
-    MA=true, MC=true, MD=true, ME=true, MF=true, MG=true, MH=true, MK=true, ML=true, MM=true, MN=true, MO=true, MP=true, MQ=true, MR=true, MS=true, MT=true, MU=true, MV=true, MW=true, MX=true, MY=true, MZ=true,
-    NA=true, NC=true, NE=true, NF=true, NG=true, NI=true, NL=true, NO=true, NP=true, NR=true, NU=true, NZ=true,
-    OM=true,
-    PA=true, PE=true, PF=true, PG=true, PH=true, PK=true, PL=true, PM=true, PN=true, PR=true, PS=true, PT=true, PW=true, PY=true,
-    QA=true,
-    RE=true, RO=true, RS=true, RU=true, RW=true,
-    SA=true, SB=true, SC=true, SD=true, SE=true, SG=true, SH=true, SI=true, SJ=true, SK=true, SL=true, SM=true, SN=true, SO=true, SR=true, SS=true, ST=true, SV=true, SX=true, SY=true, SZ=true,
-    TC=true, TD=true, TF=true, TG=true, TH=true, TJ=true, TK=true, TL=true, TM=true, TN=true, TO=true, TR=true, TT=true, TV=true, TW=true, TZ=true,
-    UA=true, UG=true, UM=true, US=true, UY=true, UZ=true,
-    VA=true, VC=true, VE=true, VG=true, VI=true, VN=true, VU=true,
-    WF=true, WS=true,
-    YE=true, YT=true,
-    ZA=true, ZM=true, ZW=true,
-    EU=true
-}
-
-local function is_iso2(term)
-    if type(term) ~= 'string' then return false end
-    if #term ~= 2 then return false end
-    local up = string.upper(term)
-    return ISO2[up] == true, up
-end
-
-local function country_pred(cc)
-    local upper = string.upper(tostring(cc or ''))
-    -- Strict compare on geoip_country, plus substring in iso_codes array string as a fallback
-    local esc = escape_sql_literal(upper)
-    return "(toString(geoip_country) = '"..esc.."' OR positionCaseInsensitiveUTF8(toString(geoip_iso_codes), '"..esc.."') > 0)"
-end
-
 local function is_allowed_key(key)
     if BOOL_COL[key] or NUM_COL[key] then return true end
     for _,k in ipairs(TEXT_COLS) do if k==key then return true end end
     return false
 end
 
-local function free_text_pred(term)
-    term = tostring(term or "")
-    local esc = escape_sql_literal(term)
-    local ors = {}
-    for _, col in ipairs(TEXT_COLS) do
-        table.insert(ors, "positionCaseInsensitiveUTF8(toString("..col.."), '"..esc.."') > 0")
-    end
-    if #ors == 0 then return "1" end
-    return "(".. table.concat(ors, " OR ") .. ")"
-end
-
-local function regex_pred(pattern, flags)
+local function regex_pred(pattern, flags, col)
     if #pattern > REGEX_MAX_LEN then
         return nil, "regex too long"
     end
     local esc = escape_sql_literal(pattern)
     local prefix = ""
     if flags and flags:match("i") then prefix = "(?i)" end
+
+    -- If a specific column is provided and allowed, only match on that column
+    if col and is_allowed_key(col) then
+        return "match(toString("..col.."), '"..prefix..esc.."')"
+    end
+
+    -- Otherwise, match across all text columns (global regex search)
     local ors = {}
-    for _, col in ipairs(TEXT_COLS) do
-        table.insert(ors, "match(toString("..col.."), '"..prefix..esc.."')")
+    for _, c in ipairs(TEXT_COLS) do
+        table.insert(ors, "match(toString("..c.."), '"..prefix..esc.."')")
     end
     if #ors == 0 then return "1" end
     return "(".. table.concat(ors, " OR ") .. ")"
@@ -422,33 +374,26 @@ local function tokenize_filter(s)
     return tokens
 end
 
--- Rewrite shortcut: field NOT value  => field != value
--- Only applies when:
---   - field is a TERM(kind='string') that is a known/allowed key
---   - followed by NOT
---   - followed by TERM(kind='string'|'regex') value
--- This preserves regular unary NOT (e.g., NOT (...)) and does not affect other constructs.
-local function rewrite_not_shortcut(tokens)
+local function rewrite_implicit_and_before_not_between_expressions(tokens)
+    if #tokens < 3 then return tokens end
     local out = {}
     local i = 1
     while i <= #tokens do
-        local a = tokens[i]
-        local b = tokens[i+1]
-        local c = tokens[i+2]
-        local matched = false
-        if a and b and c and a.type == 'TERM' and (a.kind == 'string' or a.kind == nil) and type(a.value) == 'string' and is_allowed_key(a.value) and b.type == 'NOT' then
-            if c.type == 'TERM' and c.kind == 'regex' then
-                table.insert(out, { type='COMP', key=a.value, op='!=', valueType='regex', pattern=c.pattern, flags=c.flags })
-                i = i + 3
-                matched = true
-            elseif c.type == 'TERM' and (c.kind == 'string' or c.kind == nil) then
-                table.insert(out, { type='COMP', key=a.value, op='!=', valueType='raw', value=c.value })
-                i = i + 3
-                matched = true
-            end
-        end
-        if not matched then
-            table.insert(out, a)
+        local prev = tokens[i]
+        local cur  = tokens[i+1]
+        local next = tokens[i+2]
+        if prev and cur and next
+            and (prev.type == 'COMP' or prev.type == 'RPAREN')
+            and cur.type == 'NOT'
+            and (next.type == 'COMP' or next.type == 'LPAREN') then
+            -- emit prev, AND, NOT, next
+            table.insert(out, prev)
+            table.insert(out, { type = 'AND' })
+            table.insert(out, cur)
+            table.insert(out, next)
+            i = i + 3
+        else
+            table.insert(out, prev)
             i = i + 1
         end
     end
@@ -483,7 +428,8 @@ local function comp_to_sql(t)
     else
         -- text columns
         if t.valueType == 'regex' then
-            local ok, pred = pcall(regex_pred, t.pattern or '', t.flags or '')
+            -- field-specific regex: restrict match() to this key
+            local ok, pred = pcall(regex_pred, t.pattern or '', t.flags or '', key)
             if not ok then return "1" end
             if op == '==' then return pred elseif op == '!=' then return "NOT "..pred else return "1" end
         else
@@ -495,27 +441,13 @@ local function comp_to_sql(t)
     end
 end
 
-local function term_to_sql(t)
-    if t.kind == 'regex' then
-        local ok, pred = pcall(regex_pred, t.pattern or '', t.flags or '')
-        if ok then return pred else return "1" end
-    else
-        local v = t.value or ''
-        local is_cc, up = is_iso2(v)
-        if is_cc then
-            return country_pred(up)
-        end
-        return free_text_pred(v)
-    end
-end
-
 local function parse_filter_to_where(s)
     if not s or s == '' then return nil end
     if #s > FILTER_MAX_LEN then error("filter too long") end
     local ok, tokens = pcall(tokenize_filter, s)
     if not ok then return nil, tokens end
-    -- Apply JS-style shortcut rewrite: field NOT value => field != value
-    tokens = rewrite_not_shortcut(tokens)
+    -- Insert implicit AND for EXPRESSION NOT EXPRESSION (no shortcut for field NOT value)
+    tokens = rewrite_implicit_and_before_not_between_expressions(tokens)
     local pos = 1
     local function peek() return tokens[pos] end
     local function take()
@@ -531,7 +463,7 @@ local function parse_filter_to_where(s)
             elseif t2 and t2.type == 'COMP' then
                 take(); return comp_to_sql(t2)
             elseif t2 and t2.type == 'TERM' then
-                take(); return term_to_sql(t2)
+                error('bare terms are disabled; use field comparisons')
             else
                 error('unexpected token')
             end
