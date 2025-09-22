@@ -1421,7 +1421,12 @@ func setupRouter(router *gin.Engine) {
 					for _, role := range claims.Roles {
 						if role == definitions.RoleSecurity {
 							// User has security role, allow access
-							promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
+							h := promhttp.HandlerFor(
+								prometheus.DefaultGatherer,
+								promhttp.HandlerOpts{DisableCompression: true},
+							)
+
+							h.ServeHTTP(ctx.Writer, ctx.Request)
 
 							return
 						}
@@ -1433,7 +1438,12 @@ func setupRouter(router *gin.Engine) {
 		// Check Basic Auth using shared helper; if it fails and is enabled, helper already responded 401
 		if checkAndRequireBasicAuth(ctx) {
 			// authorized or basic auth disabled
-			promhttp.Handler().ServeHTTP(ctx.Writer, ctx.Request)
+			h := promhttp.HandlerFor(
+				prometheus.DefaultGatherer,
+				promhttp.HandlerOpts{DisableCompression: true},
+			)
+
+			h.ServeHTTP(ctx.Writer, ctx.Request)
 		}
 	})
 
