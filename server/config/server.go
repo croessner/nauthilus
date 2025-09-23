@@ -1622,10 +1622,18 @@ func (d *DefaultHTTPRequestHeader) GetOIDCCID() string {
 // Compression represents the configuration for HTTP response compression.
 type Compression struct {
 	Enabled bool `mapstructure:"enabled"`
-	Level   int  `mapstructure:"level" validate:"omitempty,gte=1,lte=9"`
+	// Deprecated: level is deprecated in favor of level_gzip since 1.9.9. It will be removed in a future release.
+	Level int `mapstructure:"level" validate:"omitempty,gte=1,lte=9"`
+	// LevelGzip defines the gzip compression level (1-9, where 1 is fastest and 9 is best compression).
+	// If not set (0), the server will fall back to the deprecated 'level' value for backward compatibility.
+	LevelGzip int `mapstructure:"level_gzip" validate:"omitempty,gte=1,lte=9"`
 	// Deprecated: content_types has no effect since 1.9.2 and will be removed in a future release.
 	ContentTypes []string `mapstructure:"content_types" validate:"omitempty,dive,printascii"`
 	MinLength    int      `mapstructure:"min_length" validate:"omitempty,gte=0"`
+	// Algorithms defines the enabled compression algorithms in order of preference, e.g. ["zstd", "gzip"].
+	Algorithms []string `mapstructure:"algorithms" validate:"omitempty,dive,printascii"`
+	// LevelZstd configures the zstd compression level mapping (0=Default, 1=BestSpeed, 2=BetterCompression, 3=BestCompression).
+	LevelZstd int `mapstructure:"level_zstd" validate:"omitempty,gte=0,lte=3"`
 }
 
 // IsEnabled returns true if compression is enabled, otherwise false.
@@ -1638,11 +1646,27 @@ func (c *Compression) IsEnabled() bool {
 	return c.Enabled
 }
 
-// GetLevel returns the compression level (1-9, where 1 is fastest and 9 is best compression).
+// GetLevel returns the (deprecated) gzip compression level (1-9).
+// Deprecated: Use GetLevelGzip() instead. This remains for backward compatibility.
 // Returns 0 if the Compression is nil.
 func (c *Compression) GetLevel() int {
 	if c == nil {
 		return 0
+	}
+
+	return c.Level
+}
+
+// GetLevelGzip returns the configured gzip compression level (1-9).
+// If LevelGzip is not set (>0), it falls back to the deprecated Level field for backward compatibility.
+// Returns 0 if the Compression is nil.
+func (c *Compression) GetLevelGzip() int {
+	if c == nil {
+		return 0
+	}
+
+	if c.LevelGzip > 0 {
+		return c.LevelGzip
 	}
 
 	return c.Level
@@ -1666,6 +1690,61 @@ func (c *Compression) GetMinLength() int {
 	}
 
 	return c.MinLength
+}
+
+// GetAlgorithms returns the enabled compression algorithms in order of preference.
+// Returns an empty slice if the Compression is nil.
+func (c *Compression) GetAlgorithms() []string {
+	if c == nil {
+		return []string{}
+	}
+
+	return c.Algorithms
+}
+
+// GetLevelZstd returns the configured zstd compression level mapping.
+// Returns 0 if the Compression is nil.
+func (c *Compression) GetLevelZstd() int {
+	if c == nil {
+		return 0
+	}
+
+	return c.LevelZstd
+}
+
+// SetAlgorithms sets the enabled compression algorithms.
+func (c *Compression) SetAlgorithms(algs []string) {
+	if c == nil {
+		return
+	}
+
+	c.Algorithms = algs
+}
+
+// SetLevelGzip sets the gzip compression level (1-9).
+func (c *Compression) SetLevelGzip(level int) {
+	if c == nil {
+		return
+	}
+	c.LevelGzip = level
+}
+
+// SetLevelZstd sets the zstd compression level mapping.
+func (c *Compression) SetLevelZstd(level int) {
+	if c == nil {
+		return
+	}
+
+	c.LevelZstd = level
+}
+
+// SetMinLength sets the minimum content length for compression.
+func (c *Compression) SetMinLength(n int) {
+	if c == nil {
+		return
+	}
+
+	c.MinLength = n
 }
 
 // KeepAlive represents the configuration for HTTP connection keep-alive optimization.
