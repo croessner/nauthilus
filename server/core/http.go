@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/middleware/zstdmw"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -1384,8 +1386,9 @@ func setupRouter(router *gin.Engine) {
 
 	// Add request decompression middleware if enabled - should be early in the chain
 	router.Use(DecompressRequestMiddleware())
+	router.Use(DecompressZstdRequestMiddleware())
 
-	// Add response compression middleware if enabled (gzip only)
+	// Add response compression middleware if enabled (supports zstd and gzip)
 	if config.GetFile().GetServer().GetCompression().IsEnabled() {
 		// Warn: content_types is deprecated and ignored since 1.9.2
 		if len(config.GetFile().GetServer().GetCompression().GetContentTypes()) > 0 {
@@ -1394,12 +1397,66 @@ func setupRouter(router *gin.Engine) {
 			)
 		}
 
-		compressionLevel := config.GetFile().GetServer().GetCompression().GetLevel()
-		if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
-			compressionLevel = gzip.DefaultCompression
+		cmp := config.GetFile().GetServer().GetCompression()
+		algs := cmp.GetAlgorithms()
+		minLen := cmp.GetMinLength()
+
+		// helper to add zstd middleware
+		useZstd := func() {
+			zlvl := cmp.GetLevelZstd()
+
+			// map int to zstdmw.Level
+			var lvl zstdmw.Level
+			switch zlvl {
+			case 1:
+				lvl = zstdmw.BestSpeed
+			case 2:
+				lvl = zstdmw.BetterCompression
+			case 3:
+				lvl = zstdmw.BestCompression
+			default:
+				lvl = zstdmw.DefaultCompression
+			}
+
+			opts := zstdmw.NewOptions()
+			if minLen > 0 {
+				opts = opts.WithMinLength(minLen)
+			}
+
+			router.Use(zstdmw.ZstdWith(lvl, opts))
 		}
 
-		router.Use(gzipmw.Gzip(compressionLevel))
+		// helper to add gzip middleware
+		useGzip := func() {
+			compressionLevel := cmp.GetLevelGzip()
+			if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
+				compressionLevel = gzip.DefaultCompression
+			}
+
+			router.Use(gzipmw.Gzip(compressionLevel))
+		}
+
+		// Choose middleware based on configured algorithms order.
+		chosen := false
+		for _, a := range algs {
+			if strings.EqualFold(a, "zstd") || strings.EqualFold(a, "zst") || strings.EqualFold(a, "zstandard") {
+				useZstd()
+				chosen = true
+
+				break
+			}
+
+			if strings.EqualFold(a, "gzip") {
+				useGzip()
+				chosen = true
+
+				break
+			}
+		}
+
+		if !chosen {
+			useZstd()
+		}
 	}
 
 	// Add Prometheus middleware for metrics collection
