@@ -140,6 +140,8 @@ func (o *optionsImpl) apply(dst *config) {
 	}
 }
 
+var _ Options = &optionsImpl{}
+
 // ZstdWith returns the middleware configured with the fluent Options builder.
 func ZstdWith(level Level, o Options) gin.HandlerFunc {
 	cfg := &config{level: level}
