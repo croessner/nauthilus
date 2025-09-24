@@ -333,6 +333,11 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Extract token
 		tokenString, err := ExtractJWTToken(ctx)
 		if err != nil {
+			if maybeThrottleAuthByIP(ctx) {
+				return
+			}
+
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 
 			return
@@ -341,6 +346,11 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Validate token
 		claims, err := ValidateJWTToken(ctx, tokenString)
 		if err != nil {
+			if maybeThrottleAuthByIP(ctx) {
+				return
+			}
+
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 
 			return
@@ -390,8 +400,18 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 	var request JWTRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
+		// Treat malformed input similar to an auth failure to avoid side channels
+		if maybeThrottleAuthByIP(ctx) {
+			return
+		}
+		applyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 
+		return
+	}
+
+	// Blocked IPs get fast-fail 429
+	if maybeThrottleAuthByIP(ctx) {
 		return
 	}
 
@@ -420,6 +440,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token generation failed: authentication failed",
 			)
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
 
 			return
@@ -621,9 +642,15 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		return
 	}
 
+	// Blocked IPs get fast-fail 429
+	if maybeThrottleAuthByIP(ctx) {
+		return
+	}
+
 	// Extract refresh token
 	refreshToken := ctx.GetHeader("X-Refresh-Token")
 	if refreshToken == "" {
+		applyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "refresh token is required"})
 
 		return
@@ -639,6 +666,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	})
 
 	if err != nil || !token.Valid {
+		applyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
 
 		return
@@ -647,6 +675,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	// Get claims
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
 	if !ok {
+		applyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token claims"})
 
 		return
@@ -662,6 +691,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				"error", err,
 				"username", claims.Subject,
 			)
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token not found in Redis"})
 
 			return
@@ -674,6 +704,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyMsg, "Refresh token does not match the one in Redis",
 				"username", claims.Subject,
 			)
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token does not match the one in Redis"})
 
 			return
@@ -703,6 +734,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token refresh failed: user not found in configuration",
 			)
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 
 			return
