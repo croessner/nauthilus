@@ -3,6 +3,7 @@ module github.com/croessner/nauthilus
 go 1.25
 
 require (
+	github.com/andybalholm/brotli v1.2.0
 	github.com/biter777/countries v1.7.5
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
 	github.com/coreos/go-oidc/v3 v3.15.0
