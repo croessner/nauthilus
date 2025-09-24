@@ -28,8 +28,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
-
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -422,11 +423,23 @@ func CacheHandler(ctx *gin.Context) {
 					return
 				}
 			} else {
+				if maybeThrottleAuthByIP(ctx) {
+					return
+				}
+
+				applyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
 				return
 			}
 		} else {
+			if maybeThrottleAuthByIP(ctx) {
+				return
+			}
+
+			applyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+
 			return
 		}
 	}
@@ -550,6 +563,130 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
 }
 
+// --- Minimal brute-force protection helpers (per-IP) ---
+// These helpers implement a tiny in-memory backoff and blocking for repeated auth failures.
+// They are intentionally simple and local to this process.
+
+type failState struct {
+	count         int32 // number of failures in current window
+	resetAtUnix   int64 // unix nano when window resets
+	blockedToUnix int64 // unix nano until which IP is blocked
+}
+
+var authFailCounts sync.Map // key: ip(string) -> *failState
+
+const (
+	bfWindow      = 1 * time.Minute
+	bfThreshold   = 5
+	bfBlockTime   = 2 * time.Minute
+	bfSleepOnFail = 300 * time.Millisecond
+)
+
+// authRateLimitExceededForIP checks if given IP is currently blocked. It also resets the window when elapsed.
+// Returns (exceeded, remainingBlockDuration).
+func authRateLimitExceededForIP(ip string) (bool, time.Duration) {
+	now := time.Now()
+	v, _ := authFailCounts.LoadOrStore(ip, &failState{resetAtUnix: now.Add(bfWindow).UnixNano()})
+	st := v.(*failState)
+
+	// Fast check: is currently blocked?
+	blockedTo := atomic.LoadInt64(&st.blockedToUnix)
+	if blockedTo > 0 {
+		if now.UnixNano() < blockedTo {
+			return true, time.Until(time.Unix(0, blockedTo))
+		}
+	}
+
+	// Maintain/reset the sliding window without locks
+	for {
+		resetAt := atomic.LoadInt64(&st.resetAtUnix)
+		if resetAt == 0 {
+			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
+				break
+			}
+
+			continue
+		}
+
+		if now.UnixNano() <= resetAt {
+			break
+		}
+
+		// window elapsed -> set new window and reset count
+		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
+			atomic.StoreInt32(&st.count, 0)
+
+			break
+		}
+		// CAS failed due to race; retry loop
+	}
+
+	return false, 0
+}
+
+// noteAuthFailureForIP increments failure count and possibly sets a block.
+func noteAuthFailureForIP(ip string) {
+	now := time.Now()
+	v, _ := authFailCounts.LoadOrStore(ip, &failState{resetAtUnix: now.Add(bfWindow).UnixNano()})
+	st := v.(*failState)
+
+	// Maintain/reset the sliding window without locks
+	for {
+		resetAt := atomic.LoadInt64(&st.resetAtUnix)
+		if resetAt == 0 {
+			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
+				break
+			}
+
+			continue
+		}
+
+		if now.UnixNano() <= resetAt {
+			break
+		}
+
+		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
+			atomic.StoreInt32(&st.count, 0)
+
+			break
+		}
+	}
+
+	newCount := atomic.AddInt32(&st.count, 1)
+	if newCount >= bfThreshold {
+		atomic.StoreInt64(&st.blockedToUnix, now.Add(bfBlockTime).UnixNano())
+	}
+}
+
+// maybeThrottleAuthByIP aborts with 429 if the IP is currently blocked.
+// Returns true if request was aborted.
+func maybeThrottleAuthByIP(ctx *gin.Context) bool {
+	ip := ctx.ClientIP()
+	if ip == "" {
+		return false
+	}
+
+	exceeded, remaining := authRateLimitExceededForIP(ip)
+	if exceeded {
+		ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
+		ctx.AbortWithStatus(http.StatusTooManyRequests)
+
+		return true
+	}
+
+	return false
+}
+
+// applyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
+func applyAuthBackoffOnFailure(ctx *gin.Context) {
+	ip := ctx.ClientIP()
+	if ip != "" {
+		noteAuthFailureForIP(ip)
+	}
+
+	time.Sleep(bfSleepOnFail)
+}
+
 // checkAndRequireBasicAuth validates HTTP Basic Auth against configured credentials.
 // Returns true if authorized. If not authorized and basic auth is enabled, it writes
 // a WWW-Authenticate header with the provided realm and aborts with 401. If basic auth
@@ -559,10 +696,18 @@ func checkAndRequireBasicAuth(ctx *gin.Context) bool {
 		return true
 	}
 
+	// Simple per-IP throttling for repeated failures
+	if maybeThrottleAuthByIP(ctx) {
+		return false
+	}
+
 	username, password, ok := ctx.Request.BasicAuth()
 	if ok && secureCompare(username, config.GetFile().GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, config.GetFile().GetServer().GetBasicAuth().GetPassword()) {
 		return true
 	}
+
+	// Failure: count + small fixed delay, then respond uniformly
+	applyAuthBackoffOnFailure(ctx)
 
 	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
 	ctx.AbortWithStatus(http.StatusUnauthorized)
