@@ -39,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/middleware/brmw"
 	"github.com/croessner/nauthilus/server/middleware/zstdmw"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
@@ -1365,6 +1366,99 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 	}
 }
 
+// useGzipCompression applies gzip compression to the provided gin.Engine if compression is enabled in the configuration.
+// It uses the compression level specified by cmp.GetLevelGzip(), falling back to a default if the value is out of range.
+func useGzipCompression(router *gin.Engine, alg string, cmp *config.Compression) bool {
+	if cmp == nil || !cmp.IsEnabled() {
+		return false
+	}
+
+	if !strings.EqualFold(alg, "gzip") {
+		return false
+	}
+
+	compressionLevel := cmp.GetLevelGzip()
+	if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
+		compressionLevel = gzip.DefaultCompression
+	}
+
+	router.Use(gzipmw.Gzip(compressionLevel))
+
+	return true
+}
+
+// useZstdCompression applies Zstandard compression middleware to the given router with specified compression level and min length.
+// It maps the level from the config to predefined zstdmw.Level constants and sets the minimum content length if specified.
+func useZstdCompression(router *gin.Engine, alg string, cmp *config.Compression, minLen int) bool {
+	if cmp == nil || !cmp.IsEnabled() {
+		return false
+	}
+
+	if !(strings.EqualFold(alg, "zstd") || strings.EqualFold(alg, "zst") || strings.EqualFold(alg, "zstandard")) {
+		return false
+	}
+
+	zlvl := cmp.GetLevelZstd()
+
+	// map int to zstdmw.Level
+	var lvl zstdmw.Level
+	switch zlvl {
+	case 1:
+		lvl = zstdmw.BestSpeed
+	case 2:
+		lvl = zstdmw.BetterCompression
+	case 3:
+		lvl = zstdmw.BestCompression
+	default:
+		lvl = zstdmw.DefaultCompression
+	}
+
+	opts := zstdmw.NewOptions()
+	if minLen > 0 {
+		opts = opts.WithMinLength(minLen)
+	}
+
+	router.Use(zstdmw.ZstdWith(lvl, opts))
+
+	return true
+}
+
+// useBrotliCompression enables Brotli compression middleware for the provided router, based on the given configuration.
+// The function checks if compression is enabled and applies the Brotli compression level and options accordingly.
+func useBrotliCompression(router *gin.Engine, alg string, cmp *config.Compression, minLen int) bool {
+	if cmp == nil || !cmp.IsEnabled() {
+		return false
+	}
+
+	if !(strings.EqualFold(alg, "br") || strings.EqualFold(alg, "brotli")) {
+		return false
+	}
+
+	brlvl := cmp.GetLevelBrotli()
+
+	// map int to zstdmw.Level
+	var lvl brmw.Level
+	switch brlvl {
+	case 1:
+		lvl = brmw.BestSpeed
+	case 2:
+		lvl = brmw.BetterCompression
+	case 3:
+		lvl = brmw.BestCompression
+	default:
+		lvl = brmw.DefaultCompression
+	}
+
+	opts := brmw.NewOptions()
+	if minLen > 0 {
+		opts = opts.WithMinLength(minLen)
+	}
+
+	router.Use(brmw.BrotliWith(lvl, opts))
+
+	return true
+}
+
 // setupRouter sets up the router for the HTTP server.
 //
 // It takes in one parameter:
@@ -1387,75 +1481,32 @@ func setupRouter(router *gin.Engine) {
 	// Add request decompression middleware if enabled - should be early in the chain
 	router.Use(DecompressRequestMiddleware())
 	router.Use(DecompressZstdRequestMiddleware())
+	router.Use(DecompressBrRequestMiddleware())
 
 	// Add response compression middleware if enabled (supports zstd and gzip)
 	if config.GetFile().GetServer().GetCompression().IsEnabled() {
-		// Warn: content_types is deprecated and ignored since 1.9.2
-		if len(config.GetFile().GetServer().GetCompression().GetContentTypes()) > 0 {
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyMsg, "compression.content_types is deprecated and ignored as of 1.9.2; remove it from configuration",
-			)
-		}
-
 		cmp := config.GetFile().GetServer().GetCompression()
 		algs := cmp.GetAlgorithms()
 		minLen := cmp.GetMinLength()
 
-		// helper to add zstd middleware
-		useZstd := func() {
-			zlvl := cmp.GetLevelZstd()
-
-			// map int to zstdmw.Level
-			var lvl zstdmw.Level
-			switch zlvl {
-			case 1:
-				lvl = zstdmw.BestSpeed
-			case 2:
-				lvl = zstdmw.BetterCompression
-			case 3:
-				lvl = zstdmw.BestCompression
-			default:
-				lvl = zstdmw.DefaultCompression
-			}
-
-			opts := zstdmw.NewOptions()
-			if minLen > 0 {
-				opts = opts.WithMinLength(minLen)
-			}
-
-			router.Use(zstdmw.ZstdWith(lvl, opts))
-		}
-
-		// helper to add gzip middleware
-		useGzip := func() {
-			compressionLevel := cmp.GetLevelGzip()
-			if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
-				compressionLevel = gzip.DefaultCompression
-			}
-
-			router.Use(gzipmw.Gzip(compressionLevel))
-		}
-
 		// Choose middleware based on configured algorithms order.
 		chosen := false
-		for _, a := range algs {
-			if strings.EqualFold(a, "zstd") || strings.EqualFold(a, "zst") || strings.EqualFold(a, "zstandard") {
-				useZstd()
-				chosen = true
-
+		for _, alg := range algs {
+			if chosen = useBrotliCompression(router, alg, cmp, minLen); chosen {
 				break
 			}
 
-			if strings.EqualFold(a, "gzip") {
-				useGzip()
-				chosen = true
+			if chosen = useZstdCompression(router, alg, cmp, minLen); chosen {
+				break
+			}
 
+			if chosen = useGzipCompression(router, alg, cmp); chosen {
 				break
 			}
 		}
 
 		if !chosen {
-			useZstd()
+			useZstdCompression(router, "zstd", cmp, minLen)
 		}
 	}
 
