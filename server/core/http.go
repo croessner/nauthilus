@@ -16,10 +16,7 @@
 package core
 
 import (
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	stderrors "errors"
@@ -28,24 +25,22 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/hook"
-	"github.com/croessner/nauthilus/server/middleware/brmw"
-	"github.com/croessner/nauthilus/server/middleware/zstdmw"
-	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 
-	gzipmw "github.com/gin-contrib/gzip"
+	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
+	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
+	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
+	// extracted middleware packages
+	approuter "github.com/croessner/nauthilus/server/router"
+
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -56,13 +51,11 @@ import (
 	"github.com/gwatts/gin-adapter"
 	"github.com/justinas/nosurf"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"github.com/patrickmn/go-cache"
 	"github.com/pires/go-proxyproto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/segmentio/ksuid"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http2"
 )
@@ -94,96 +87,6 @@ type RESTResult struct {
 	// Result represents the result field in the RESTResult struct. It can hold any type of value.
 	// The field is annotated with the json tag "result".
 	Result any `json:"result"`
-}
-
-// LimitCounter tracks the current number of active connections and limits them based on a specified maximum.
-type LimitCounter struct {
-	// MaxConnections defines the maximum number of concurrent connections allowed.
-	MaxConnections int32
-
-	// CurrentConnections tracks the current number of active connections in the LimitCounter middleware.
-	CurrentConnections int32
-}
-
-// NewLimitCounter creates a new LimitCounter instance with the specified maximum number of concurrent connections.
-func NewLimitCounter(maxConnections int32) *LimitCounter {
-	return &LimitCounter{
-		MaxConnections: maxConnections,
-	}
-}
-
-// Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
-// It is context-aware and prioritizes certain types of requests.
-func (lc *LimitCounter) Middleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		// Always allow health check and metrics endpoints regardless of connection limits
-		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
-			ctx.Next()
-
-			return
-		}
-
-		// Check if we're at the connection limit
-		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
-		if currentConnections >= lc.MaxConnections {
-			// For API requests, return 429 status code
-			ctx.JSON(http.StatusTooManyRequests, gin.H{
-				definitions.LogKeyMsg: "Too many requests",
-				"current":             currentConnections,
-				"max":                 lc.MaxConnections,
-			})
-
-			ctx.Abort()
-
-			return
-		}
-
-		// Store the request start time in the context for performance tracking
-		startTime := time.Now()
-		ctx.Set(definitions.CtxRequestStartTimeKey, startTime)
-
-		// Increment the connection counter
-		atomic.AddInt32(&lc.CurrentConnections, 1)
-		currentConnections = atomic.LoadInt32(&lc.CurrentConnections)
-
-		// Update metrics
-		stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
-
-		// Add connection info to the context
-		ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
-		ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
-
-		// Process the request and decrement the counter when done
-		defer func() {
-			atomic.AddInt32(&lc.CurrentConnections, -1)
-
-			// Calculate and log request duration for performance monitoring
-			if startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey); exists {
-				if startTime, ok := startTimeValue.(time.Time); ok {
-					duration := time.Since(startTime)
-					ctx.Set(definitions.CtxRequestDurationKey, duration)
-
-					// Log long-running requests for further optimization
-					if duration > 500*time.Millisecond {
-						// Get GUID from context if available, otherwise generate a new one
-						guid, exists := ctx.Get(definitions.CtxGUIDKey)
-						if !exists {
-							guid = ksuid.New().String()
-						}
-
-						level.Warn(log.Logger).Log(
-							definitions.LogKeyGUID, guid,
-							definitions.LogKeyMsg, "Long-running request detected",
-							"path", ctx.FullPath(),
-							"duration_ms", duration.Milliseconds(),
-						)
-					}
-				}
-			}
-		}()
-
-		ctx.Next()
-	}
 }
 
 // customWriter represents a type that logs data based on a specified log level.
@@ -401,21 +304,21 @@ func CacheHandler(ctx *gin.Context) {
 					return
 				}
 			} else {
-				if maybeThrottleAuthByIP(ctx) {
+				if mdauth.MaybeThrottleAuthByIP(ctx) {
 					return
 				}
 
-				applyAuthBackoffOnFailure(ctx)
+				mdauth.ApplyAuthBackoffOnFailure(ctx)
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 
 				return
 			}
 		} else {
-			if maybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx) {
 				return
 			}
 
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 
 			return
@@ -438,401 +341,14 @@ func CacheHandler(ctx *gin.Context) {
 	}
 }
 
-// ProtectEndpointMiddleware is a Gin middleware that performs authentication and security checks for HTTP requests.
-// It handles client IP extraction, brute force detection, protocol handling, and various authentication features.
-func ProtectEndpointMiddleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
-
-		protocol := &config.Protocol{}
-		protocol.Set(definitions.ProtoHTTP)
-
-		clientIP := ctx.GetHeader("Client-IP")
-		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
-		method := "plain"
-
-		auth := &AuthState{
-			HTTPClientContext: ctx.Copy(),
-			NoAuth:            true,
-			GUID:              &guid,
-			Protocol:          protocol,
-			Method:            &method,
-		}
-
-		auth.WithUserAgent(ctx)
-		auth.WithXSSL(ctx)
-
-		if clientIP == "" {
-			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
-		}
-
-		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort, &auth.XSSL)
-
-		if clientIP == "" {
-			clientIP = definitions.NotAvailable
-		}
-
-		if clientPort == "" {
-			clientPort = definitions.NotAvailable
-		}
-
-		auth.ClientIP = clientIP
-		auth.XClientPort = clientPort
-
-		// Store remote client IP into connection context. It can be used for brute force updates.
-		ctx.Set(definitions.CtxClientIPKey, clientIP)
-
-		if auth.CheckBruteForce(ctx) {
-			auth.UpdateBruteForceBucketsCounter(ctx)
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
-			PutPassDBResultToPool(result)
-			auth.AuthFail(ctx)
-			ctx.Abort()
-
-			return
-		}
-
-		//nolint:exhaustive // Ignore some results
-		switch auth.HandleFeatures(ctx) {
-		case definitions.AuthResultFeatureTLS:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
-			PutPassDBResultToPool(result)
-			HandleErr(ctx, errors.ErrNoTLS)
-			ctx.Abort()
-
-			return
-		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
-			PutPassDBResultToPool(result)
-			auth.AuthFail(ctx)
-			ctx.Abort()
-
-			return
-		case definitions.AuthResultUnset:
-		case definitions.AuthResultOK:
-		case definitions.AuthResultFail:
-		case definitions.AuthResultTempFail:
-			result := GetPassDBResultFromPool()
-			auth.PostLuaAction(result)
-			PutPassDBResultToPool(result)
-			auth.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-
-			return
-		case definitions.AuthResultEmptyUsername:
-		case definitions.AuthResultEmptyPassword:
-		}
-
-		ctx.Next()
-	}
-}
-
-// secureCompare compares two strings in constant time by hashing them first.
-func secureCompare(a, b string) bool {
-	h1 := sha256.Sum256([]byte(a))
-	h2 := sha256.Sum256([]byte(b))
-
-	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
-}
-
-// --- Minimal brute-force protection helpers (per-IP) ---
-// These helpers implement a tiny in-memory backoff and blocking for repeated auth failures.
-// They are intentionally simple and local to this process.
-
-type failState struct {
-	count         int32 // number of failures in current window
-	resetAtUnix   int64 // unix nano when window resets
-	blockedToUnix int64 // unix nano until which IP is blocked
-}
-
-var authFailCache = cache.New(1*time.Hour, 10*time.Minute) // key: ip(string) -> *failState, TTL-based
-
-const (
-	bfWindow      = 1 * time.Minute
-	bfThreshold   = 5
-	bfBlockTime   = 2 * time.Minute
-	bfSleepOnFail = 300 * time.Millisecond
-)
-
-// authRateLimitExceededForIP checks if given IP is currently blocked. It also resets the window when elapsed.
-// Returns (exceeded, remainingBlockDuration).
-func authRateLimitExceededForIP(ip string) (bool, time.Duration) {
-	now := time.Now()
-	var st *failState
-	if v, found := authFailCache.Get(ip); found {
-		st = v.(*failState)
-	} else {
-		st = &failState{resetAtUnix: now.Add(bfWindow).UnixNano()}
-		authFailCache.Set(ip, st, cache.DefaultExpiration)
-	}
-
-	// Fast check: is currently blocked?
-	blockedTo := atomic.LoadInt64(&st.blockedToUnix)
-	if blockedTo > 0 {
-		if now.UnixNano() < blockedTo {
-			authFailCache.Set(ip, st, cache.DefaultExpiration)
-
-			return true, time.Until(time.Unix(0, blockedTo))
-		}
-	}
-
-	// Maintain/reset the sliding window without locks
-	for {
-		resetAt := atomic.LoadInt64(&st.resetAtUnix)
-		if resetAt == 0 {
-			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
-				break
-			}
-
-			continue
-		}
-
-		if now.UnixNano() <= resetAt {
-			break
-		}
-
-		// window elapsed -> set new window and reset count
-		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
-			atomic.StoreInt32(&st.count, 0)
-
-			break
-		}
-		// CAS failed due to race; retry loop
-	}
-
-	authFailCache.Set(ip, st, cache.DefaultExpiration)
-
-	return false, 0
-}
-
-// noteAuthFailureForIP increments failure count and possibly sets a block.
-func noteAuthFailureForIP(ip string) {
-	now := time.Now()
-
-	var st *failState
-	if v, found := authFailCache.Get(ip); found {
-		st = v.(*failState)
-	} else {
-		st = &failState{resetAtUnix: now.Add(bfWindow).UnixNano()}
-		authFailCache.Set(ip, st, cache.DefaultExpiration)
-	}
-
-	// Maintain/reset the sliding window without locks
-	for {
-		resetAt := atomic.LoadInt64(&st.resetAtUnix)
-		if resetAt == 0 {
-			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
-				break
-			}
-
-			continue
-		}
-
-		if now.UnixNano() <= resetAt {
-			break
-		}
-
-		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
-			atomic.StoreInt32(&st.count, 0)
-
-			break
-		}
-	}
-
-	newCount := atomic.AddInt32(&st.count, 1)
-	if newCount >= bfThreshold {
-		atomic.StoreInt64(&st.blockedToUnix, now.Add(bfBlockTime).UnixNano())
-	}
-
-	authFailCache.Set(ip, st, cache.DefaultExpiration)
-}
-
-// maybeThrottleAuthByIP aborts with 429 if the IP is currently blocked.
-// Returns true if request was aborted.
-func maybeThrottleAuthByIP(ctx *gin.Context) bool {
-	ip := ctx.ClientIP()
-	if ip == "" {
-		return false
-	}
-
-	exceeded, remaining := authRateLimitExceededForIP(ip)
-	if exceeded {
-		ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
-		ctx.AbortWithStatus(http.StatusTooManyRequests)
-
-		return true
-	}
-
-	return false
-}
-
-// applyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
-func applyAuthBackoffOnFailure(ctx *gin.Context) {
-	ip := ctx.ClientIP()
-	if ip != "" {
-		noteAuthFailureForIP(ip)
-	}
-
-	time.Sleep(bfSleepOnFail)
-}
-
-// checkAndRequireBasicAuth enforces basic authentication if it's enabled in the server configuration.
-// It validates credentials provided in the request against the configured username and password.
-// Returns true if authentication is successful or not required, false if the authentication fails or is throttled.
-func checkAndRequireBasicAuth(ctx *gin.Context) bool {
-	if !config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-		return true
-	}
-
-	// Simple per-IP throttling for repeated failures
-	if maybeThrottleAuthByIP(ctx) {
-		return false
-	}
-
-	username, password, ok := ctx.Request.BasicAuth()
-	if ok && secureCompare(username, config.GetFile().GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, config.GetFile().GetServer().GetBasicAuth().GetPassword()) {
-		return true
-	}
-
-	// Failure: count + small fixed delay, then respond uniformly
-	applyAuthBackoffOnFailure(ctx)
-
-	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
-	ctx.AbortWithStatus(http.StatusUnauthorized)
-
-	return false
-}
-
-// BasicAuthMiddleware provides HTTP Basic Authentication for protected routes in a Gin application.
-// It validates credentials against configured username and password, and challenges unauthorized requests.
-// If basic auth is disabled or bypassed based on the route configuration, it allows the request to proceed.
-func BasicAuthMiddleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		guid := ctx.GetString(definitions.CtxGUIDKey)
-
-		// Note: Chicken-egg problem.
-		if ctx.Param("category") == definitions.CatAuth && ctx.Param("service") == definitions.ServBasic {
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Disabling HTTP basic Auth",
-				"category", ctx.Param("category"),
-				"service", ctx.Param("service"),
-			)
-
-			return
-		}
-
-		// Use shared helper to validate or challenge for Basic Auth
-		if !checkAndRequireBasicAuth(ctx) {
-			return
-		}
-
-		ctx.Next()
-	}
-}
-
-// LoggerMiddleware creates a middleware for logging HTTP requests and responses, including latency and client details.
-// It assigns a unique identifier (GUID) to each request and logs authentication methods, TLS info, and status codes.
-func LoggerMiddleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		var (
-			logWrapper func(logger kitlog.Logger) kitlog.Logger
-		)
-
-		guid := ksuid.New().String()
-		ctx.Set(definitions.CtxGUIDKey, guid)
-		ctx.Set(definitions.CtxLocalCacheAuthKey, false)
-
-		// Start timer
-		start := time.Now()
-
-		// Process request
-		ctx.Next()
-
-		err := ctx.Errors.Last()
-
-		// Decide which logger to use
-		if err != nil {
-			logWrapper = level.Error
-		} else {
-			logWrapper = level.Info
-		}
-
-		// Stop timer
-		end := time.Now()
-		latency := end.Sub(start)
-
-		negotiatedProtocol := definitions.NotAvailable
-		cipherSuiteName := definitions.NotAvailable
-
-		if ctx.Request.TLS != nil {
-			negotiatedProtocol = tls.VersionName(ctx.Request.TLS.Version)
-			cipherSuiteName = tls.CipherSuiteName(ctx.Request.TLS.CipherSuite)
-		}
-
-		// Determine authentication information
-		authType := "none"
-
-		// Check if authentication was attempted
-		if ctx.Request.Header.Get("Authorization") != "" {
-			if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Basic ") {
-				authType = "basic"
-			} else if strings.HasPrefix(ctx.Request.Header.Get("Authorization"), "Bearer ") {
-				authType = "bearer"
-			} else {
-				authType = "other"
-			}
-		}
-
-		logWrapper(log.Logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyClientIP, ctx.ClientIP(),
-			definitions.LogKeyMethod, ctx.Request.Method,
-			definitions.LogKeyProtocol, ctx.Request.Proto,
-			definitions.LogKeyHTTPStatus, ctx.Writer.Status(),
-			definitions.LogKeyLatency, latency,
-			definitions.LogKeyUserAgent, func() string {
-				if ctx.Request.UserAgent() != "" {
-					return ctx.Request.UserAgent()
-				}
-
-				return definitions.NotAvailable
-			}(),
-			definitions.LogKeyTLSSecure, negotiatedProtocol,
-			definitions.LogKeyTLSCipher, cipherSuiteName,
-			definitions.LogKeyUriPath, ctx.Request.URL.Path,
-			definitions.LogKeyAuthMethod, authType,
-			definitions.LogKeyMsg, func() string {
-				if err != nil {
-					return err.Error()
-				}
-
-				return "HTTP request"
-			}(),
-		)
-	}
-}
-
-// LuaContextMiddleware sets up a Lua context and adds it to the Gin context for use throughout the request lifecycle.
-func LuaContextMiddleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-		ctx.Next()
-	}
-}
-
 // createMiddlewareChain constructs a chain of middleware handlers for session management, language handling, and security.
 func createMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		sessions.Sessions(definitions.SessionName, sessionStore),
 		adapter.Wrap(nosurf.NewPure),
-		LuaContextMiddleware(),
+		mdlua.LuaContextMiddleware(),
 		WithLanguageMiddleware(),
-		ProtectEndpointMiddleware(),
+		mdauth.ProtectEndpointMiddleware(),
 	}
 }
 
@@ -928,40 +444,6 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 	return server
 }
 
-// PrometheusMiddleware is a Gin middleware for tracking HTTP request metrics using Prometheus timers and counters.
-// It records request counts and response times based on the request path and mode query parameter.
-// Metrics include the total number of requests and the duration of HTTP responses.
-// The middleware respects configuration settings for enabling Prometheus timers and uses predefined labels for tracking.
-func PrometheusMiddleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		var timer *prometheus.Timer
-
-		mode := ctx.Query("mode")
-		if mode == "" {
-			mode = "auth"
-		}
-
-		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
-		path := ctx.FullPath()
-
-		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
-			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))
-		}
-
-		ctx.Next()
-
-		stats.GetMetrics().GetHttpRequestsTotal().WithLabelValues(path).Inc()
-
-		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
-			timer.ObserveDuration()
-		}
-
-		if stopTimer != nil {
-			stopTimer()
-		}
-	}
-}
-
 // setupHydraEndpoints configures routing for Hydra-related endpoints, including login, device authentication, consent, and logout.
 func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
 	// This page handles the user login endpoint
@@ -1006,8 +488,8 @@ func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
 	group := router.Group(viper.GetString("notify_page"))
 
 	group.Use(sessions.Sessions(definitions.SessionName, sessionStore))
-	group.GET("/", LuaContextMiddleware(), ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
-	group.GET("/:languageTag", LuaContextMiddleware(), ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
+	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
+	group.GET("/:languageTag", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
 }
 
 // setupBackChannelEndpoints configures API endpoints for JWT authentication, authorization, and service request handling.
@@ -1016,7 +498,7 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 	// Create public JWT endpoints first (for token generation and refresh)
 	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() && !config.GetFile().GetServer().GetEndpoint().IsAuthJWTDisabled() {
 		jwtGroup := router.Group("/api/v1/jwt")
-		jwtGroup.Use(LuaContextMiddleware())
+		jwtGroup.Use(mdlua.LuaContextMiddleware())
 
 		// Token generation endpoint
 		jwtGroup.POST("/token", HandleJWTTokenGeneration)
@@ -1032,7 +514,7 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 
 	// Apply authentication middleware based on configuration
 	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-		group.Use(BasicAuthMiddleware())
+		group.Use(mdauth.BasicAuthMiddleware())
 	}
 
 	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
@@ -1040,7 +522,7 @@ func setupBackChannelEndpoints(router *gin.Engine) {
 	}
 
 	// Add LuaContextMiddleware to all routes
-	group.Use(LuaContextMiddleware())
+	group.Use(mdlua.LuaContextMiddleware())
 
 	// Set up the main API endpoints
 	group.GET("/:category/:service", RequestHandler)
@@ -1269,195 +751,51 @@ func configureTLS() *tls.Config {
 	return tlsConfig
 }
 
-// DecompressRequestMiddleware returns a middleware that decompresses HTTP requests with gzip Content-Encoding.
-// It checks if the request has a Content-Encoding header with value "gzip" and if so, replaces the request body
-// with a decompressed version.
-func DecompressRequestMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		compressionConfig := config.GetFile().GetServer().GetCompression()
+// HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
+// It takes a context.Context parameter.
+func HTTPApp(ctx context.Context) {
+	var err error
 
-		// Skip if compression is disabled
-		if !compressionConfig.IsEnabled() {
-			c.Next()
+	mdauth.SetProtectMiddleware(ProtectEndpointMiddleware)
 
-			return
-		}
+	webAuthn, err = setupWebAuthn()
+	if err != nil {
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
 
-		// Check if request is gzip compressed
-		if c.Request.Header.Get("Content-Encoding") == "gzip" {
-			// Get the compressed body
-			compressedBody := c.Request.Body
-
-			defer compressedBody.Close()
-
-			// Create a gzip reader
-			gzipReader, err := gzip.NewReader(compressedBody)
-			if err != nil {
-				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to decompress request body: %w", err))
-
-				return
-			}
-
-			defer gzipReader.Close()
-
-			// Replace the request body with the decompressed content
-			c.Request.Body = gzipReader
-
-			// Remove Content-Encoding header since we've decompressed the body
-			c.Request.Header.Del("Content-Encoding")
-
-			// Update Content-Length if it exists
-			c.Request.Header.Del("Content-Length")
-		}
-
-		c.Next()
-	}
-}
-
-// useGzipCompression applies gzip compression to the provided gin.Engine if compression is enabled in the configuration.
-// It uses the compression level specified by cmp.GetLevelGzip(), falling back to a default if the value is out of range.
-func useGzipCompression(router *gin.Engine, alg string, cmp *config.Compression) bool {
-	if cmp == nil || !cmp.IsEnabled() {
-		return false
+		os.Exit(-1)
 	}
 
-	if !strings.EqualFold(alg, "gzip") {
-		return false
+	setupGinLoggers()
+
+	router := gin.New()
+
+	if config.GetFile().GetServer().GetInsights().IsPprofEnabled() {
+		pprof.Register(router)
 	}
 
-	compressionLevel := cmp.GetLevelGzip()
-	if compressionLevel < gzip.BestSpeed || compressionLevel > gzip.BestCompression {
-		compressionLevel = gzip.DefaultCompression
-	}
+	limitCounter := mdlimit.NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
 
-	router.Use(gzipmw.Gzip(compressionLevel))
+	router.Use(limitCounter.Middleware())
 
-	return true
-}
+	// Wrap the GoKit logger
+	router.Use(mdlog.LoggerMiddleware())
 
-// useZstdCompression applies Zstandard compression middleware to the given router with specified compression level and min length.
-// It maps the level from the config to predefined zstdmw.Level constants and sets the minimum content length if specified.
-func useZstdCompression(router *gin.Engine, alg string, cmp *config.Compression, minLen int) bool {
-	if cmp == nil || !cmp.IsEnabled() {
-		return false
-	}
+	httpServer := setupHTTPServer(router)
 
-	if !(strings.EqualFold(alg, "zstd") || strings.EqualFold(alg, "zst") || strings.EqualFold(alg, "zstandard")) {
-		return false
-	}
+	// Switch to router builder object to assemble middlewares and routes without changing logic
+	rbuilder := approuter.NewRouter(config.GetFile())
+	// Reuse the created engine so that early middlewares (limit, logger, pprof) stay first
+	rbuilder.Engine = router
+	// Core middlewares and routes in the same order as before
+	rbuilder.
+		WithRecovery().
+		WithTrustedProxies().
+		WithRequestDecompression().
+		WithResponseCompression().
+		WithMetricsMiddleware()
 
-	zlvl := cmp.GetLevelZstd()
-
-	// map int to zstdmw.Level
-	var lvl zstdmw.Level
-	switch zlvl {
-	case 1:
-		lvl = zstdmw.BestSpeed
-	case 2:
-		lvl = zstdmw.BetterCompression
-	case 3:
-		lvl = zstdmw.BestCompression
-	default:
-		lvl = zstdmw.DefaultCompression
-	}
-
-	opts := zstdmw.NewOptions()
-	if minLen > 0 {
-		opts = opts.WithMinLength(minLen)
-	}
-
-	router.Use(zstdmw.ZstdWith(lvl, opts))
-
-	return true
-}
-
-// useBrotliCompression enables Brotli compression middleware for the provided router, based on the given configuration.
-// The function checks if compression is enabled and applies the Brotli compression level and options accordingly.
-func useBrotliCompression(router *gin.Engine, alg string, cmp *config.Compression, minLen int) bool {
-	if cmp == nil || !cmp.IsEnabled() {
-		return false
-	}
-
-	if !(strings.EqualFold(alg, "br") || strings.EqualFold(alg, "brotli")) {
-		return false
-	}
-
-	brlvl := cmp.GetLevelBrotli()
-
-	// map int to zstdmw.Level
-	var lvl brmw.Level
-	switch brlvl {
-	case 1:
-		lvl = brmw.BestSpeed
-	case 2:
-		lvl = brmw.BetterCompression
-	case 3:
-		lvl = brmw.BestCompression
-	default:
-		lvl = brmw.DefaultCompression
-	}
-
-	opts := brmw.NewOptions()
-	if minLen > 0 {
-		opts = opts.WithMinLength(minLen)
-	}
-
-	router.Use(brmw.BrotliWith(lvl, opts))
-
-	return true
-}
-
-// setupRouter initializes and configures the provided Gin router with middleware, routes, and functionality.
-func setupRouter(router *gin.Engine) {
-	// Recovery middleware recovers from any panics and writes a 500 if there was one.
-	// This should be first in the chain to catch panics in other middleware
-	router.Use(gin.Recovery())
-
-	// Add trusted proxies
-	router.SetTrustedProxies(viper.GetStringSlice("trusted_proxies"))
-
-	// Critical path middleware - these should be executed first for all requests
-	// as they handle basic request processing and metrics
-
-	// Add request decompression middleware if enabled - should be early in the chain
-	router.Use(DecompressRequestMiddleware())
-	router.Use(DecompressZstdRequestMiddleware())
-	router.Use(DecompressBrRequestMiddleware())
-
-	// Add response compression middleware if enabled (supports zstd and gzip)
-	if config.GetFile().GetServer().GetCompression().IsEnabled() {
-		cmp := config.GetFile().GetServer().GetCompression()
-		algs := cmp.GetAlgorithms()
-		minLen := cmp.GetMinLength()
-
-		// Choose middleware based on configured algorithms order.
-		chosen := false
-		for _, alg := range algs {
-			if chosen = useBrotliCompression(router, alg, cmp, minLen); chosen {
-				break
-			}
-
-			if chosen = useZstdCompression(router, alg, cmp, minLen); chosen {
-				break
-			}
-
-			if chosen = useGzipCompression(router, alg, cmp); chosen {
-				break
-			}
-		}
-
-		if !chosen {
-			useZstdCompression(router, "zstd", cmp, minLen)
-		}
-	}
-
-	// Add Prometheus middleware for metrics collection
-	router.Use(PrometheusMiddleware())
-
-	// Define high-priority endpoints that should be fast and always available
-
-	// Prometheus endpoint with authentication
-	router.GET("/metrics", func(ctx *gin.Context) {
+	// Register /metrics route with identical auth logic as before
+	rbuilder.WithMetricsRoute(func(ctx *gin.Context) {
 		// Check if JWT auth is enabled
 		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
 			// Extract token
@@ -1485,7 +823,7 @@ func setupRouter(router *gin.Engine) {
 		}
 
 		// Check Basic Auth using shared helper; if it fails and is enabled, helper already responded 401
-		if checkAndRequireBasicAuth(ctx) {
+		if mdauth.CheckAndRequireBasicAuth(ctx) {
 			// authorized or basic auth disabled
 			h := promhttp.HandlerFor(
 				prometheus.DefaultGatherer,
@@ -1496,60 +834,29 @@ func setupRouter(router *gin.Engine) {
 		}
 	})
 
-	// Healthcheck - keep this simple and fast
-	router.GET("/ping", RequestHandler)
+	// Healthcheck
+	rbuilder.WithHealth(RequestHandler)
 
-	// Setup static content early as it's often cached and doesn't require complex processing
-	setupStaticContent(router)
+	// Static content
+	rbuilder.WithStatic(setupStaticContent)
 
-	// Setup frontend endpoints if enabled
+	// Frontend endpoints
 	if config.GetFile().GetServer().Frontend.Enabled {
-		// Parse static folder for template files
+		// Parse static folder for template files (same as before)
 		router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
 		store := setupSessionStore()
+		// Wrap original setup functions to match builder signature
+		setupHydra := func(e *gin.Engine) { setupHydraEndpoints(e, store) }
+		setup2FA := func(e *gin.Engine) { setup2FAEndpoints(e, store) }
+		setupWebAuthn := func(e *gin.Engine) { setupWebAuthnEndpoints(e, store) }
+		setupNotify := func(e *gin.Engine) { setupNotifyEndpoint(e, store) }
 
-		// Group related endpoint setup functions for better organization and potential parallel initialization
-		setupHydraEndpoints(router, store)
-		setup2FAEndpoints(router, store)
-		setupWebAuthnEndpoints(router, store)
-		setupNotifyEndpoint(router, store)
+		rbuilder.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify)
 	}
 
-	// Setup back channel endpoints last as they may depend on other components
-	setupBackChannelEndpoints(router)
-}
-
-// HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
-// It takes a context.Context parameter.
-func HTTPApp(ctx context.Context) {
-	var err error
-
-	webAuthn, err = setupWebAuthn()
-	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
-
-		os.Exit(-1)
-	}
-
-	setupGinLoggers()
-
-	router := gin.New()
-
-	if config.GetFile().GetServer().GetInsights().IsPprofEnabled() {
-		pprof.Register(router)
-	}
-
-	limitCounter := NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
-
-	router.Use(limitCounter.Middleware())
-
-	// Wrap the GoKit logger
-	router.Use(LoggerMiddleware())
-
-	httpServer := setupHTTPServer(router)
-
-	setupRouter(router)
+	// Backchannel endpoints last
+	rbuilder.WithBackchannel(func(e *gin.Engine) { setupBackChannelEndpoints(e) })
 
 	go waitForShutdown(httpServer, ctx)
 
