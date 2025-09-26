@@ -13,36 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package webauthn
+package common
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/tags"
-
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
-type Handler struct {
-	Store sessions.Store
-	Deps  *deps.Deps
-}
+// RouterGroup creates a new group under the given path with the standard frontend middleware
+// and wires GET and POST handlers matching the old pattern.
+func RouterGroup(path string, router gin.IRouter, store sessions.Store, getHandler gin.HandlerFunc, postHandler gin.HandlerFunc) *gin.RouterGroup {
+	group := router.Group(path, CreateMiddlewareChain(store)...)
 
-func New(store sessions.Store, d *deps.Deps) *Handler {
-	return &Handler{Store: store, Deps: d}
-}
+	group.GET("/", getHandler)
+	group.GET("/:languageTag", getHandler)
 
-func (h *Handler) Register(r gin.IRouter) {
-	if !tags.IsDevelopment {
-		return
-	}
+	group.POST("/post", postHandler)
+	group.POST("/post/:languageTag", postHandler)
 
-	group := r.Group(definitions.TwoFAv1Root)
-
-	regGroup := group.Group(viper.GetString("webauthn_page"))
-	regGroup.Use(sessions.Sessions(definitions.SessionName, h.Store))
-	regGroup.GET("/register/begin", h.Deps.Svc.BeginRegistration())
-	regGroup.POST("/register/finish", h.Deps.Svc.FinishRegistration())
+	return group
 }

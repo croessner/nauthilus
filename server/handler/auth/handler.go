@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package auth
 
 import (
@@ -9,9 +24,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ cfg config.File }
+type Handler struct {
+	cfg config.File
+}
 
-func New(cfg config.File) *Handler { return &Handler{cfg: cfg} }
+func New(cfg config.File) *Handler {
+	return &Handler{cfg: cfg}
+}
 
 func (h *Handler) Register(r gin.IRouter) {
 	ag := r.Group("/" + definitions.CatAuth)
@@ -30,62 +49,80 @@ func (h *Handler) Register(r gin.IRouter) {
 func (h *Handler) basic(c *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
+
 		return
 	}
+
 	h.process(c, definitions.ServBasic)
 }
 
 func (h *Handler) json(c *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthJSONDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
+
 		return
 	}
+
 	h.process(c, definitions.ServJSON)
 }
 
 func (h *Handler) header(c *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
+
 		return
 	}
+
 	h.process(c, definitions.ServHeader)
 }
 
 func (h *Handler) nginx(c *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthNginxDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
+
 		return
 	}
+
 	h.process(c, definitions.ServNginx)
 }
 
 func (h *Handler) saslAuthd(c *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthSASLAuthdDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
+
 		return
 	}
+
 	// Same pre-processing flow but use the specific SASL handler
 	auth := core.NewAuthStateWithSetup(c)
 	if auth == nil {
 		c.AbortWithStatus(http.StatusBadRequest)
+
 		return
 	}
+
 	defer core.PutAuthState(auth)
+
 	if reject := auth.PreproccessAuthRequest(c); reject { //nolint:gosimple // match existing signature
 		return
 	}
+
 	auth.HandleSASLAuthdAuthentication(c)
 }
 
 func (h *Handler) process(c *gin.Context, service string) {
 	auth := core.NewAuthStateWithSetup(c)
+
 	if auth == nil {
 		c.AbortWithStatus(http.StatusBadRequest)
+
 		return
 	}
+
 	defer core.PutAuthState(auth)
 	if reject := auth.PreproccessAuthRequest(c); reject {
 		return
 	}
+
 	auth.HandleAuthentication(c)
 }

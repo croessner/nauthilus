@@ -30,15 +30,10 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/lualib/hook"
-	"github.com/croessner/nauthilus/server/tags"
-	"github.com/croessner/nauthilus/server/util"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
-	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
-	// extracted middleware packages
 	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-contrib/pprof"
@@ -48,12 +43,8 @@ import (
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/gwatts/gin-adapter"
-	"github.com/justinas/nosurf"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/pires/go-proxyproto"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/spf13/viper"
@@ -71,23 +62,6 @@ var (
 	// It represents a language bundle which is used for localization and internationalization purposes in the application.
 	LangBundle *i18n.Bundle
 )
-
-// RESTResult is a handleAuthentication JSON result object for the Nauthilus REST API.
-type RESTResult struct {
-	// GUID represents a unique identifier for a session. It is a string field used in the RESTResult struct
-	// and is also annotated with the json tag "session".
-	GUID string `json:"session"`
-
-	// Object represents a string field used in the RESTResult struct. It is annotated with the json tag "object".
-	Object string `json:"object"`
-
-	// Operation represents a string field used in the RESTResult struct. It is annotated with the json tag "operation".
-	Operation string `json:"operation"`
-
-	// Result represents the result field in the RESTResult struct. It can hold any type of value.
-	// The field is annotated with the json tag "result".
-	Result any `json:"result"`
-}
 
 // customWriter represents a type that logs data based on a specified log level.
 type customWriter struct {
@@ -116,257 +90,8 @@ func (w *customWriter) Write(data []byte) (numBytes int, err error) {
 	return len(data), nil
 }
 
-//nolint:gocognit // Main logic
-func RequestHandler(ctx *gin.Context) {
-	if ctx.FullPath() == "/ping" {
-		HealthCheck(ctx)
-	} else {
-		switch ctx.Param("category") {
-		case definitions.CatAuth:
-			disabledEndpointMap := map[string]bool{
-				definitions.ServHeader:    config.GetFile().GetServer().GetEndpoint().IsAuthHeaderDisabled(),
-				definitions.ServJSON:      config.GetFile().GetServer().GetEndpoint().IsAuthJSONDisabled(),
-				definitions.ServBasic:     config.GetFile().GetServer().GetEndpoint().IsAuthBasicDisabled(),
-				definitions.ServNginx:     config.GetFile().GetServer().GetEndpoint().IsAuthNginxDisabled(),
-				definitions.ServSaslauthd: config.GetFile().GetServer().GetEndpoint().IsAuthSASLAuthdDisabled(),
-			}
-
-			if disabledEndpointMap[ctx.Param("service")] {
-				ctx.AbortWithStatus(http.StatusNotFound)
-
-				return
-			}
-
-			auth := NewAuthStateWithSetup(ctx)
-			if auth == nil {
-				ctx.AbortWithStatus(http.StatusBadRequest)
-
-				return
-			}
-
-			defer PutAuthState(auth)
-
-			if reject := auth.PreproccessAuthRequest(ctx); reject {
-				return
-			}
-
-			switch ctx.Param("service") {
-			case definitions.ServBasic, definitions.ServNginx, definitions.ServHeader, definitions.ServJSON:
-				auth.HandleAuthentication(ctx)
-			case definitions.ServSaslauthd:
-				auth.HandleSASLAuthdAuthentication(ctx)
-			default:
-				ctx.AbortWithStatus(http.StatusNotFound)
-			}
-
-		case definitions.CatBruteForce:
-			switch ctx.Param("service") {
-			case definitions.ServList:
-				HanldeBruteForceList(ctx)
-			default:
-				ctx.AbortWithStatus(http.StatusNotFound)
-			}
-
-		case definitions.CatConfig:
-			switch ctx.Param("service") {
-			case definitions.ServLoad:
-				if config.GetFile().GetServer().GetEndpoint().IsConfigurationDisabled() {
-					ctx.AbortWithStatus(http.StatusNotFound)
-				}
-
-				HandleConfigLoad(ctx)
-			default:
-				ctx.AbortWithStatus(http.StatusNotFound)
-			}
-		default:
-			ctx.AbortWithStatus(http.StatusNotFound)
-		}
-	}
-}
-
-// CustomRequestHandler processes custom Lua hooks. Responds with JSON if hook returns a result, otherwise handles errors.
-// If JWT is enabled, it checks if the user has the required roles for the hook.
-func CustomRequestHandler(ctx *gin.Context) {
-	guid := ctx.GetString(definitions.CtxGUIDKey)
-
-	// Check if custom hooks are enabled
-	if config.GetFile().GetServer().GetEndpoint().IsCustomHooksDisabled() {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Custom hooks are disabled",
-		)
-		ctx.AbortWithStatus(http.StatusNotFound)
-
-		return
-	}
-
-	// Get the hook name and method from the request
-	hookName := ctx.Param("hook")
-	hookMethod := ctx.Request.Method
-
-	util.DebugModule(
-		definitions.DbgHTTP,
-		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("Processing custom hook: %s %s", hookMethod, hookName),
-	)
-
-	// Log JWT claims for debugging
-	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
-	if exists {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims found in context, type: %T", claimsValue),
-		)
-	} else {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "No JWT claims found in context",
-		)
-	}
-
-	// Check if the user has the required roles for this hook
-	if !hook.HasRequiredRoles(ctx, hookName, hookMethod) {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("User does not have required roles for hook: %s %s", hookMethod, hookName),
-		)
-		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
-
-		return
-	}
-
-	util.DebugModule(
-		definitions.DbgHTTP,
-		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, fmt.Sprintf("User has required roles for hook: %s %s, executing hook", hookMethod, hookName),
-	)
-
-	// Execute the hook
-	if result, err := hook.RunLuaHook(ctx); err != nil {
-		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),
-			"error", err,
-		)
-		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
-	} else if result != nil {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully: %s %s", hookMethod, hookName),
-		)
-
-		// If Lua already wrote the response, do not override with JSON
-		if ctx.GetBool(definitions.CtxResponseWrittenKey) || ctx.Writer.Written() {
-			return
-		}
-
-		if ctx.Writer != nil {
-			ctx.JSON(http.StatusOK, result)
-		}
-	} else {
-		util.DebugModule(
-			definitions.DbgHTTP,
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, fmt.Sprintf("Hook executed successfully with no JSON result: %s %s status: %d size: %d written: %t encoding: %s",
-				hookMethod, hookName, ctx.Writer.Status(), ctx.Writer.Size(), ctx.Writer.Written(), ctx.Writer.Header().Get("Content-Encoding")),
-		)
-	}
-}
-
-// CacheHandler processes HTTP requests for caching and brute-force rule operations.
-// It validates user authentication and ensures necessary roles are present if JWT authentication is enabled.
-// Based on the request parameters, it handles cache flush or brute force rule flush actions.
-func CacheHandler(ctx *gin.Context) {
-	// Check if JWT auth is enabled
-	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-		// Extract token
-		tokenString, err := ExtractJWTToken(ctx)
-		if err == nil {
-			// Validate token
-			claims, err := ValidateJWTToken(ctx, tokenString)
-			if err == nil {
-				// Check if user has the security or admin role
-				hasRequiredRole := false
-				for _, role := range claims.Roles {
-					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
-						hasRequiredRole = true
-						break
-					}
-				}
-
-				if !hasRequiredRole {
-					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
-					return
-				}
-			} else {
-				if mdauth.MaybeThrottleAuthByIP(ctx) {
-					return
-				}
-
-				mdauth.ApplyAuthBackoffOnFailure(ctx)
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-
-				return
-			}
-		} else {
-			if mdauth.MaybeThrottleAuthByIP(ctx) {
-				return
-			}
-
-			mdauth.ApplyAuthBackoffOnFailure(ctx)
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-
-			return
-		}
-	}
-
-	//nolint:gocritic // Prepared for future commands
-	switch ctx.Param("category") {
-	case definitions.CatCache:
-		switch ctx.Param("service") {
-		case definitions.ServFlush:
-			HandleUserFlush(ctx)
-		}
-
-	case definitions.CatBruteForce:
-		switch ctx.Param("service") {
-		case definitions.ServFlush:
-			HandleBruteForceRuleFlush(ctx)
-		}
-	}
-}
-
-// createMiddlewareChain constructs a chain of middleware handlers for session management, language handling, and security.
-func createMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
-	return []gin.HandlerFunc{
-		sessions.Sessions(definitions.SessionName, sessionStore),
-		adapter.Wrap(nosurf.NewPure),
-		mdlua.LuaContextMiddleware(),
-		WithLanguageMiddleware(),
-		mdauth.ProtectEndpointMiddleware(),
-	}
-}
-
-// routerGroup creates a new gin.RouterGroup with specified path, adds middleware and defines GET and POST routes.
-func routerGroup(path string, router gin.IRouter, store sessions.Store, getHandler gin.HandlerFunc, postHandler gin.HandlerFunc) *gin.RouterGroup {
-	group := router.Group(path, createMiddlewareChain(store)...)
-
-	group.GET("/", getHandler)
-	group.GET("/:languageTag", getHandler)
-
-	group.POST("/post", postHandler)
-	group.POST("/post/:languageTag", postHandler)
-
-	return group
-}
-
-// setupWebAuthn initializes and returns a new WebAuthn instance configured with values from the environment.
-func setupWebAuthn() (*webauthn.WebAuthn, error) {
+// initWebAuthn initializes and returns a new WebAuthn instance configured with values from the environment.
+func initWebAuthn() (*webauthn.WebAuthn, error) {
 	return webauthn.New(&webauthn.Config{
 		RPDisplayName: viper.GetString("webauthn_display_name"),
 		RPID:          viper.GetString("webauthn_rp_id"),
@@ -386,8 +111,8 @@ func setupWebAuthn() (*webauthn.WebAuthn, error) {
 	})
 }
 
-// setupSessionStore initializes and returns a session store configured with cookie-based storage and security options.
-func setupSessionStore() sessions.Store {
+// SetupSessionStore initializes and returns a session store configured with cookie-based storage and security options.
+func SetupSessionStore() sessions.Store {
 	sessionStore := cookie.NewStore([]byte(config.GetFile().GetServer().Frontend.CookieStoreAuthKey), []byte(config.GetFile().GetServer().Frontend.CookieStoreEncKey))
 	sessionStore.Options(sessions.Options{
 		Path:     "/",
@@ -442,106 +167,6 @@ func setupHTTPServer(router *gin.Engine) *http.Server {
 	}
 
 	return server
-}
-
-// setupHydraEndpoints configures routing for Hydra-related endpoints, including login, device authentication, consent, and logout.
-func setupHydraEndpoints(router *gin.Engine, store sessions.Store) {
-	// This page handles the user login endpoint
-	routerGroup(viper.GetString("login_page"), router, store, LoginGETHandler, LoginPOSTHandler)
-
-	// This page handles the U2F/FIDO2 login endpoint
-	routerGroup(viper.GetString("device_page"), router, store, DeviceGETHandler, DevicePOSTHandler)
-
-	// This page handles the user consent endpoint
-	routerGroup(viper.GetString("consent_page"), router, store, ConsentGETHandler, ConsentPOSTHandler)
-
-	// This page handles the user logout endpoint
-	routerGroup(viper.GetString("logout_page"), router, store, LogoutGETHandler, LogoutPOSTHandler)
-}
-
-// setup2FAEndpoints initializes routes for two-factor authentication (2FA) endpoints if 2FA feature is enabled.
-func setup2FAEndpoints(router *gin.Engine, sessionStore sessions.Store) {
-	if tags.Register2FA {
-		group := router.Group(definitions.TwoFAv1Root)
-
-		// This page handles the user login request to do a two-factor authentication
-		twoFactorGroup := routerGroup(viper.GetString("login_2fa_page"), group, sessionStore, LoginGET2FAHandler, LoginPOST2FAHandler)
-		twoFactorGroup.GET("/home", Register2FAHomeHandler)
-		twoFactorGroup.GET("/home/:languageTag", Register2FAHomeHandler)
-
-		// This page handles the TOTP registration
-		routerGroup(viper.GetString("totp_page"), group, sessionStore, RegisterTotpGETHandler, RegisterTotpPOSTHandler)
-	}
-}
-
-// setupStaticContent configures routes to serve static content such as images, CSS, JS, and fonts.
-func setupStaticContent(router *gin.Engine) {
-	router.StaticFile("/favicon.ico", viper.GetString("html_static_content_path")+"/img/favicon.ico")
-	router.Static("/static/css", viper.GetString("html_static_content_path")+"/css")
-	router.Static("/static/js", viper.GetString("html_static_content_path")+"/js")
-	router.Static("/static/img", viper.GetString("html_static_content_path")+"/img")
-	router.Static("/static/fonts", viper.GetString("html_static_content_path")+"/fonts")
-}
-
-// setupNotifyEndpoint initializes the notify endpoint within the given router, applying middlewares and assigning handlers.
-func setupNotifyEndpoint(router *gin.Engine, sessionStore sessions.Store) {
-	group := router.Group(viper.GetString("notify_page"))
-
-	group.Use(sessions.Sessions(definitions.SessionName, sessionStore))
-	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
-	group.GET("/:languageTag", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), WithLanguageMiddleware(), NotifyGETHandler)
-}
-
-// setupBackChannelEndpoints configures API endpoints for JWT authentication, authorization, and service request handling.
-// It initializes routes for token generation/refresh and applies middleware as per the server configuration.
-func setupBackChannelEndpoints(router *gin.Engine) {
-	// Create public JWT endpoints first (for token generation and refresh)
-	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() && !config.GetFile().GetServer().GetEndpoint().IsAuthJWTDisabled() {
-		jwtGroup := router.Group("/api/v1/jwt")
-		jwtGroup.Use(mdlua.LuaContextMiddleware())
-
-		// Token generation endpoint
-		jwtGroup.POST("/token", HandleJWTTokenGeneration)
-
-		// Token refresh endpoint
-		if config.GetFile().GetServer().GetJWTAuth().IsRefreshTokenEnabled() {
-			jwtGroup.POST("/refresh", HandleJWTTokenRefresh)
-		}
-	}
-
-	// Create the main API group with appropriate authentication
-	group := router.Group("/api/v1")
-
-	// Apply authentication middleware based on configuration
-	if config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
-		group.Use(mdauth.BasicAuthMiddleware())
-	}
-
-	if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-		group.Use(JWTAuthMiddleware())
-	}
-
-	// Add LuaContextMiddleware to all routes
-	group.Use(mdlua.LuaContextMiddleware())
-
-	// Set up the main API endpoints
-	group.GET("/:category/:service", RequestHandler)
-	group.POST("/:category/:service", RequestHandler)
-	group.DELETE("/:category/:service", CacheHandler)
-
-	group.Any("/custom/*hook", CustomRequestHandler)
-}
-
-// setupWebAuthnEndpoints sets up WebAuthn routes for 2FA registration in development mode using the provided router and session store.
-func setupWebAuthnEndpoints(router *gin.Engine, sessionStore sessions.Store) {
-	if tags.IsDevelopment {
-		group := router.Group(definitions.TwoFAv1Root)
-
-		regGroup := group.Group(viper.GetString("webauthn_page"))
-		regGroup.Use(sessions.Sessions(definitions.SessionName, sessionStore))
-		regGroup.GET("/register/begin", BeginRegistration)
-		regGroup.POST("/register/finish", FinishRegistration)
-	}
 }
 
 // waitForShutdown gracefully shuts down the HTTP server when the given context is canceled or deadline expires.
@@ -751,14 +376,15 @@ func configureTLS() *tls.Config {
 	return tlsConfig
 }
 
-// HTTPApp is a function that starts the HTTP server and sets up the necessary middlewares and endpoints.
-// It takes a context.Context parameter.
-func HTTPApp(ctx context.Context) {
+// HTTPApp starts the HTTP server and sets up middlewares and endpoints.
+// Frontend and backchannel routes are provided via callbacks to avoid import cycles.
+// Health and metrics routes are provided via callbacks to keep core free of handler imports.
+func HTTPApp(ctx context.Context, setupHealth func(*gin.Engine), setupMetrics func(*gin.Engine), setupHydra, setup2FA, setupWebAuthn, setupNotify func(*gin.Engine), setupBackchannel func(*gin.Engine)) {
 	var err error
 
 	mdauth.SetProtectMiddleware(ProtectEndpointMiddleware)
 
-	webAuthn, err = setupWebAuthn()
+	webAuthn, err = initWebAuthn()
 	if err != nil {
 		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
 
@@ -794,69 +420,27 @@ func HTTPApp(ctx context.Context) {
 		WithResponseCompression().
 		WithMetricsMiddleware()
 
-	// Register /metrics route with identical auth logic as before
-	rbuilder.WithMetricsRoute(func(ctx *gin.Context) {
-		// Check if JWT auth is enabled
-		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
-			// Extract token
-			tokenString, err := ExtractJWTToken(ctx)
-			if err == nil {
-				// Validate token
-				claims, err := ValidateJWTToken(ctx, tokenString)
-				if err == nil {
-					// Check if user has the security role
-					for _, role := range claims.Roles {
-						if role == definitions.RoleSecurity {
-							// User has security role, allow access
-							h := promhttp.HandlerFor(
-								prometheus.DefaultGatherer,
-								promhttp.HandlerOpts{DisableCompression: true},
-							)
+	// Healthcheck via injected callback
+	if setupHealth != nil {
+		setupHealth(router)
+	}
 
-							h.ServeHTTP(ctx.Writer, ctx.Request)
-
-							return
-						}
-					}
-				}
-			}
-		}
-
-		// Check Basic Auth using shared helper; if it fails and is enabled, helper already responded 401
-		if mdauth.CheckAndRequireBasicAuth(ctx) {
-			// authorized or basic auth disabled
-			h := promhttp.HandlerFor(
-				prometheus.DefaultGatherer,
-				promhttp.HandlerOpts{DisableCompression: true},
-			)
-
-			h.ServeHTTP(ctx.Writer, ctx.Request)
-		}
-	})
-
-	// Healthcheck
-	rbuilder.WithHealth(RequestHandler)
-
-	// Static content
-	rbuilder.WithStatic(setupStaticContent)
+	// Metrics via injected callback
+	if setupMetrics != nil {
+		setupMetrics(router)
+	}
 
 	// Frontend endpoints
 	if config.GetFile().GetServer().Frontend.Enabled {
 		// Parse static folder for template files (same as before)
 		router.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
 
-		store := setupSessionStore()
-		// Wrap original setup functions to match builder signature
-		setupHydra := func(e *gin.Engine) { setupHydraEndpoints(e, store) }
-		setup2FA := func(e *gin.Engine) { setup2FAEndpoints(e, store) }
-		setupWebAuthn := func(e *gin.Engine) { setupWebAuthnEndpoints(e, store) }
-		setupNotify := func(e *gin.Engine) { setupNotifyEndpoint(e, store) }
-
+		// Use provided setup callbacks to register endpoints
 		rbuilder.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify)
 	}
 
 	// Backchannel endpoints last
-	rbuilder.WithBackchannel(func(e *gin.Engine) { setupBackChannelEndpoints(e) })
+	rbuilder.WithBackchannel(setupBackchannel)
 
 	go waitForShutdown(httpServer, ctx)
 

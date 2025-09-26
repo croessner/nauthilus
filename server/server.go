@@ -45,6 +45,17 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
+	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
+	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
+	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
+	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
+	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
+	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
+
+	"github.com/gin-gonic/gin"
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	jsoniter "github.com/json-iterator/go"
@@ -708,7 +719,45 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 		}
 	}
 
-	go core.HTTPApp(store.server.ctx)
+	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
+	var setupHealth func(*gin.Engine)
+	var setupMetrics func(*gin.Engine)
+	var setupHydra, setup2FA, setupWebAuthn, setupNotify func(*gin.Engine)
+	var setupBackchannel func(*gin.Engine)
+
+	// Health endpoint (always register)
+	setupHealth = func(e *gin.Engine) {
+		handlerhealth.New().Register(e)
+	}
+
+	// Metrics endpoint (always register)
+	setupMetrics = func(e *gin.Engine) {
+		handlermetrics.New().Register(e)
+	}
+
+	// Frontend handlers only if enabled (keeps logic parity)
+	if config.GetFile().GetServer().Frontend.Enabled {
+		sessStore := core.SetupSessionStore()
+		deps := &handlerdeps.Deps{Cfg: config.GetFile(), Logger: log.Logger, Svc: handlerdeps.NewDefaultServices()}
+
+		setupHydra = func(e *gin.Engine) {
+			handlerhydra.New(sessStore, deps).Register(e)
+		}
+		setup2FA = func(e *gin.Engine) {
+			handlertwofa.New(sessStore, deps).Register(e)
+		}
+		setupWebAuthn = func(e *gin.Engine) {
+			handlerwebauthn.New(sessStore, deps).Register(e)
+		}
+		setupNotify = func(e *gin.Engine) {
+			handlernotify.New(sessStore, deps).Register(e)
+		}
+	}
+
+	// Backchannel API
+	setupBackchannel = handlerbackchannel.Setup
+
+	go core.HTTPApp(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel)
 }
 
 // startStatsLoop runs a loop that periodically gathers and stores system statistics using a given ticker and context.

@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package metrics
 
 import (
@@ -6,7 +21,9 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -15,7 +32,9 @@ import (
 // Handler registers the metrics endpoint with identical auth semantics as before.
 type Handler struct{}
 
-func New() *Handler { return &Handler{} }
+func New() *Handler {
+	return &Handler{}
+}
 
 func (h *Handler) Register(r gin.IRouter) {
 	r.GET("/metrics", func(ctx *gin.Context) {
@@ -31,6 +50,7 @@ func (h *Handler) Register(r gin.IRouter) {
 								promhttp.HandlerOpts{DisableCompression: true},
 							)
 							h.ServeHTTP(ctx.Writer, ctx.Request)
+
 							return
 						}
 					}
@@ -44,7 +64,9 @@ func (h *Handler) Register(r gin.IRouter) {
 				prometheus.DefaultGatherer,
 				promhttp.HandlerOpts{DisableCompression: true},
 			)
+
 			h.ServeHTTP(ctx.Writer, ctx.Request)
+
 			return
 		}
 

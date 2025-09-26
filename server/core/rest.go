@@ -248,13 +248,6 @@ func (a *AuthState) HandleSASLAuthdAuthentication(ctx *gin.Context) {
 	}
 }
 
-// HealthCheck handles the health check functionality by logging a message and returning "pong" as the response.
-func HealthCheck(ctx *gin.Context) {
-	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
-
-	ctx.String(http.StatusOK, "pong")
-}
-
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
 func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedIPAddresses, error) {
 	blockedIPAddresses := &BlockedIPAddresses{}

@@ -13,19 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package custom
+package router
 
 import (
+	"net/http"
+
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/gin-gonic/gin"
+	"github.com/go-kit/log/level"
 )
 
-// Handler registers custom Lua hook endpoint(s).
-type Handler struct{}
+// HealthCheck handles the health check functionality by logging a message and returning "pong" as the response.
+func HealthCheck(ctx *gin.Context) {
+	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
 
-func New() *Handler {
-	return &Handler{}
-}
-
-func (h *Handler) Register(r gin.IRouter) {
-	r.Any("/custom/*hook", CustomRequestHandler)
+	ctx.String(http.StatusOK, "pong")
 }
