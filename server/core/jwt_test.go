@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,7 @@ func TestJWTTokenParsing(t *testing.T) {
 	// t.Skip("Skipping JWT token parsing test")
 
 	// Create a valid token for testing
-	claims := JWTClaims{
+	claims := jwtclaims.Claims{
 		Username: "testuser",
 		Roles:    []string{"user", "admin"},
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -56,7 +57,7 @@ func TestJWTTokenParsing(t *testing.T) {
 	}
 
 	// Parse the token
-	parsedToken, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	parsedToken, err := jwt.ParseWithClaims(tokenString, &jwtclaims.Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte("test-secret"), nil
 	})
 
@@ -65,7 +66,7 @@ func TestJWTTokenParsing(t *testing.T) {
 	assert.True(t, parsedToken.Valid)
 
 	// Check that the claims were parsed correctly
-	parsedClaims, ok := parsedToken.Claims.(*JWTClaims)
+	parsedClaims, ok := parsedToken.Claims.(*jwtclaims.Claims)
 	assert.True(t, ok)
 	assert.Equal(t, "testuser", parsedClaims.Username)
 	assert.Equal(t, []string{"user", "admin"}, parsedClaims.Roles)
@@ -110,7 +111,7 @@ func TestJWTClaimsInContext(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 
 	// Create test claims
-	claims := &JWTClaims{
+	claims := &jwtclaims.Claims{
 		Username: "testuser",
 		Roles:    []string{"user", "admin"},
 	}
@@ -123,7 +124,7 @@ func TestJWTClaimsInContext(t *testing.T) {
 	assert.True(t, exists)
 
 	// Check that the claims are of the correct type
-	retrievedClaims, ok := claimsValue.(*JWTClaims)
+	retrievedClaims, ok := claimsValue.(*jwtclaims.Claims)
 	assert.True(t, ok)
 
 	// Check that the claims have the correct values
@@ -141,7 +142,7 @@ func TestJWTTokenGenerationAndRefresh(t *testing.T) {
 	roles := []string{"user", "authenticated"}
 
 	// Create claims for the token
-	claims := JWTClaims{
+	claims := jwtclaims.Claims{
 		Username: username,
 		Roles:    roles,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -174,13 +175,13 @@ func TestJWTTokenGenerationAndRefresh(t *testing.T) {
 	assert.NotEmpty(t, refreshTokenString, "Refresh token string should not be empty")
 
 	// Step 3: Validate the initial token
-	parsedToken, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	parsedToken, err := jwt.ParseWithClaims(tokenString, &jwtclaims.Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte(secretKey), nil
 	})
 	assert.NoError(t, err, "Failed to parse token")
 	assert.True(t, parsedToken.Valid, "Token should be valid")
 
-	parsedClaims, ok := parsedToken.Claims.(*JWTClaims)
+	parsedClaims, ok := parsedToken.Claims.(*jwtclaims.Claims)
 	assert.True(t, ok, "Claims should be of type JWTClaims")
 	assert.Equal(t, username, parsedClaims.Username, "Username in claims should match")
 	assert.Equal(t, roles, parsedClaims.Roles, "Roles in claims should match")
@@ -199,7 +200,7 @@ func TestJWTTokenGenerationAndRefresh(t *testing.T) {
 	// Step 5: Use the refresh token to generate a new token
 	// This simulates what happens in HandleJWTTokenRefresh
 	newRoles := []string{"user", "authenticated", "refreshed"}
-	newClaims := JWTClaims{
+	newClaims := jwtclaims.Claims{
 		Username: username,
 		Roles:    newRoles,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -231,13 +232,13 @@ func TestJWTTokenGenerationAndRefresh(t *testing.T) {
 	assert.NotEmpty(t, newRefreshTokenString, "New refresh token string should not be empty")
 
 	// Step 7: Validate the new token
-	parsedNewToken, err := jwt.ParseWithClaims(newTokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	parsedNewToken, err := jwt.ParseWithClaims(newTokenString, &jwtclaims.Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte(secretKey), nil
 	})
 	assert.NoError(t, err, "Failed to parse new token")
 	assert.True(t, parsedNewToken.Valid, "New token should be valid")
 
-	parsedNewClaims, ok := parsedNewToken.Claims.(*JWTClaims)
+	parsedNewClaims, ok := parsedNewToken.Claims.(*jwtclaims.Claims)
 	assert.True(t, ok, "Claims should be of type JWTClaims")
 	assert.Equal(t, username, parsedNewClaims.Username, "Username in new claims should match")
 	assert.Equal(t, newRoles, parsedNewClaims.Roles, "Roles in new claims should match")
