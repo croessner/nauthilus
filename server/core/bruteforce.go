@@ -191,7 +191,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if !bruteForceProtocolEnabled {
 		level.Warn(log.Logger).Log(
-			definitions.LogKeyGUID, a.GUID,
+			definitions.LogKeyGUID, *a.GUID,
 			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
 		return false
@@ -209,6 +209,10 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		bm = bm.WithOIDCCID(a.OIDCCID)
 	}
 
+	// IMPORTANT: set request attributes before running checks
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
+	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
+
 	network := &net.IPNet{}
 
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
@@ -222,10 +226,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			return false
 		}
 	}
-
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
-
-	bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
@@ -323,6 +323,10 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	if a.OIDCCID != "" {
 		bm = bm.WithOIDCCID(a.OIDCCID)
 	}
+
+	// IMPORTANT: set request attributes before saving counters
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
+	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
