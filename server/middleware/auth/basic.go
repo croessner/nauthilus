@@ -20,6 +20,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -217,6 +218,24 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 		svc := ctx.GetString(definitions.CtxServiceKey)
 
 		if cat == "" || svc == "" {
+			full := ctx.FullPath()
+			if full != "" {
+				parts := strings.Split(strings.Trim(full, "/"), "/")
+				if len(parts) >= 4 && parts[0] == "api" && parts[1] == "v1" {
+					if cat == "" {
+						cat = parts[2]
+						ctx.Set(definitions.CtxCategoryKey, cat)
+					}
+
+					if svc == "" {
+						svc = parts[3]
+						ctx.Set(definitions.CtxServiceKey, svc)
+					}
+				}
+			}
+		}
+
+		if cat == "" || svc == "" {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "missing routing context keys",
@@ -224,6 +243,7 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 				"service", svc,
 			)
 			ctx.AbortWithStatus(http.StatusInternalServerError)
+
 			return
 		}
 
