@@ -213,13 +213,27 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 
+		cat := ctx.GetString(definitions.CtxCategoryKey)
+		svc := ctx.GetString(definitions.CtxServiceKey)
+
+		if cat == "" || svc == "" {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "missing routing context keys",
+				"category", cat,
+				"service", svc,
+			)
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
 		// Note: Chicken-egg problem.
-		if ctx.Param("category") == definitions.CatAuth && ctx.Param("service") == definitions.ServBasic {
+		if cat == definitions.CatAuth && svc == definitions.ServBasic {
 			level.Warn(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "Disabling HTTP basic Auth",
-				"category", ctx.Param("category"),
-				"service", ctx.Param("service"),
+				"category", cat,
+				"service", svc,
 			)
 
 			return

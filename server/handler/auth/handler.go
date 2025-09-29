@@ -32,97 +32,104 @@ func New(cfg config.File) *Handler {
 	return &Handler{cfg: cfg}
 }
 
-func (h *Handler) Register(r gin.IRouter) {
-	ag := r.Group("/" + definitions.CatAuth)
+func (h *Handler) Register(router gin.IRouter) {
+	authGroup := router.Group("/" + definitions.CatAuth)
 
-	ag.GET("/"+definitions.ServBasic, h.basic)
-	ag.POST("/"+definitions.ServBasic, h.basic)
-	ag.GET("/"+definitions.ServJSON, h.json)
-	ag.POST("/"+definitions.ServJSON, h.json)
-	ag.GET("/"+definitions.ServHeader, h.header)
-	ag.POST("/"+definitions.ServHeader, h.header)
-	ag.GET("/"+definitions.ServNginx, h.nginx)
-	ag.POST("/"+definitions.ServNginx, h.nginx)
-	ag.POST("/"+definitions.ServSaslauthd, h.saslAuthd)
+	withService := func(service string, next gin.HandlerFunc) gin.HandlerFunc {
+		return func(ctx *gin.Context) {
+			ctx.Set(definitions.CtxCategoryKey, definitions.CatAuth)
+			ctx.Set(definitions.CtxServiceKey, service)
+
+			next(ctx)
+		}
+	}
+
+	authGroup.GET("/"+definitions.ServBasic, withService(definitions.ServBasic, h.basic))
+	authGroup.POST("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
+	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
+	authGroup.GET("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
+	authGroup.POST("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
+	authGroup.POST("/"+definitions.ServSaslauthd, withService(definitions.ServSaslauthd, h.saslAuthd))
 }
 
-func (h *Handler) basic(c *gin.Context) {
+func (h *Handler) basic(ctx *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthBasicDisabled() {
-		c.AbortWithStatus(http.StatusNotFound)
+		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	h.process(c, definitions.ServBasic)
+	h.process(ctx)
 }
 
-func (h *Handler) json(c *gin.Context) {
+func (h *Handler) json(ctx *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthJSONDisabled() {
-		c.AbortWithStatus(http.StatusNotFound)
+		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	h.process(c, definitions.ServJSON)
+	h.process(ctx)
 }
 
-func (h *Handler) header(c *gin.Context) {
+func (h *Handler) header(ctx *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthHeaderDisabled() {
-		c.AbortWithStatus(http.StatusNotFound)
+		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	h.process(c, definitions.ServHeader)
+	h.process(ctx)
 }
 
-func (h *Handler) nginx(c *gin.Context) {
+func (h *Handler) nginx(ctx *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthNginxDisabled() {
-		c.AbortWithStatus(http.StatusNotFound)
+		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	h.process(c, definitions.ServNginx)
+	h.process(ctx)
 }
 
-func (h *Handler) saslAuthd(c *gin.Context) {
+func (h *Handler) saslAuthd(ctx *gin.Context) {
 	if h.cfg.GetServer().GetEndpoint().IsAuthSASLAuthdDisabled() {
-		c.AbortWithStatus(http.StatusNotFound)
+		ctx.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
 	// Same pre-processing flow but use the specific SASL handler
-	auth := core.NewAuthStateWithSetup(c)
+	auth := core.NewAuthStateWithSetup(ctx)
 	if auth == nil {
-		c.AbortWithStatus(http.StatusBadRequest)
+		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
 	}
 
 	defer core.PutAuthState(auth)
 
-	if reject := auth.PreproccessAuthRequest(c); reject { //nolint:gosimple // match existing signature
+	if reject := auth.PreproccessAuthRequest(ctx); reject { //nolint:gosimple // match existing signature
 		return
 	}
 
-	auth.HandleSASLAuthdAuthentication(c)
+	auth.ProcessAuthentication(ctx)
 }
 
-func (h *Handler) process(c *gin.Context, service string) {
-	auth := core.NewAuthStateWithSetup(c)
+func (h *Handler) process(ctx *gin.Context) {
+	auth := core.NewAuthStateWithSetup(ctx)
 
 	if auth == nil {
-		c.AbortWithStatus(http.StatusBadRequest)
+		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return
 	}
 
 	defer core.PutAuthState(auth)
-	if reject := auth.PreproccessAuthRequest(c); reject {
+
+	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return
 	}
 
-	auth.HandleAuthentication(c)
+	auth.HandleAuthentication(ctx)
 }

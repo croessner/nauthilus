@@ -13,21 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package health
+package jwt
 
-import (
-	"github.com/gin-gonic/gin"
-
-	approuter "github.com/croessner/nauthilus/server/router"
-)
-
-// Handler registers the health endpoints.
-type Handler struct{}
-
-func New() *Handler {
-	return &Handler{}
+// Request represents the request body for JWT token generation
+type Request struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
-func (h *Handler) Register(router gin.IRouter) {
-	router.GET("/ping", approuter.HealthCheck)
+// Response represents the response body for JWT token generation
+type Response struct {
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    int64  `json:"expires_at"`
 }

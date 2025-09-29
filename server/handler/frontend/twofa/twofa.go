@@ -35,16 +35,17 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 	return &Handler{Store: store, Deps: d}
 }
 
-func (h *Handler) Register(r gin.IRouter) {
+func (h *Handler) Register(router gin.IRouter) {
 	if !tags.Register2FA {
 		return
 	}
 
 	// Register 2FA routes under TwoFAv1Root
-	group := r.Group(definitions.TwoFAv1Root)
+	group := router.Group(definitions.TwoFAv1Root)
 
 	// This page handles the user login request to do a two-factor authentication
 	twoFactorGroup := common.RouterGroup(viper.GetString("login_2fa_page"), group, h.Store, h.Deps.Svc.LoginGET2FAHandler(), h.Deps.Svc.LoginPOST2FAHandler())
+
 	twoFactorGroup.GET("/home", h.Deps.Svc.Register2FAHomeHandler())
 	twoFactorGroup.GET("/home/:languageTag", h.Deps.Svc.Register2FAHomeHandler())
 

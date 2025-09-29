@@ -42,9 +42,12 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
+	"github.com/croessner/nauthilus/server/model/authdto"
+	mfa "github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -94,69 +97,6 @@ func (n *BackendServer) GetTotalServers() int {
 // It returns a pointer to the newly created BackendServer.
 func NewBackendServer() *BackendServer {
 	return &BackendServer{}
-}
-
-// JSONRequest is a data structure containing the details of a client's request in JSON format.
-type JSONRequest struct {
-	// Username is the identifier of the client/user sending the request.
-	Username string `json:"username" binding:"required"`
-
-	// Password is the authentication credential of the client/user sending the request.
-	Password string `json:"password,omitempty"`
-
-	// ClientIP is the IP address of the client/user making the request.
-	ClientIP string `json:"client_ip,omitempty"`
-
-	// ClientPort is the port number from which the client/user is sending the request.
-	ClientPort string `json:"client_port,omitempty"`
-
-	// ClientHostname is the hostname of the client which is sending the request.
-	ClientHostname string `json:"client_hostname,omitempty"`
-
-	// ClientID is the unique identifier of the client/user, usually assigned by the application.
-	ClientID string `json:"client_id,omitempty"`
-
-	// UserAgent optionally provides the user agent via JSON when headers are unavailable.
-	UserAgent string `json:"user_agent,omitempty"`
-
-	// LocalIP is the IP address of the server or endpoint receiving the request.
-	LocalIP string `json:"local_ip,omitempty"`
-
-	// LocalPort is the port number of the server or endpoint receiving the request.
-	LocalPort string `json:"local_port,omitempty"`
-
-	// Protocol is the application protocol used by the client (e.g., imap, smtp, pop3, http).
-	Protocol string `json:"protocol,omitempty"`
-
-	// Method is the HTTP/SASL method used in the request (e.g., PLAIN, LOGIN, etc.)
-	Method string `json:"method,omitempty"`
-
-	// AuthLoginAttempt is a flag indicating if the request is an attempt to authenticate (login). This is expressed as an unsigned integer where applicable flags/types are usually interpreted from the application's specific logic.
-	AuthLoginAttempt uint `json:"auth_login_attempt,omitempty"`
-
-	XSSL                string `json:"ssl,omitempty"`
-	XSSLSessionID       string `json:"ssl_session_id,omitempty"`
-	XSSLClientVerify    string `json:"ssl_client_verify,omitempty"`
-	XSSLClientDN        string `json:"ssl_client_dn,omitempty"`
-	XSSLClientCN        string `json:"ssl_client_cn,omitempty"`
-	XSSLIssuer          string `json:"ssl_issuer,omitempty"`
-	XSSLClientNotBefore string `json:"ssl_client_notbefore,omitempty"`
-	XSSLClientNotAfter  string `json:"ssl_client_notafter,omitempty"`
-	XSSLSubjectDN       string `json:"ssl_subject_dn,omitempty"`
-	XSSLIssuerDN        string `json:"ssl_issuer_dn,omitempty"`
-	XSSLClientSubjectDN string `json:"ssl_client_subject_dn,omitempty"`
-	XSSLClientIssuerDN  string `json:"ssl_client_issuer_dn,omitempty"`
-	XSSLProtocol        string `json:"ssl_protocol,omitempty"`
-	XSSLCipher          string `json:"ssl_cipher,omitempty"`
-
-	// SSLSerial represents the serial number of an SSL certificate as a string.
-	SSLSerial string `json:"ssl_serial,omitempty"`
-
-	// SSLFingerprint represents the fingerprint of an SSL certificate.
-	SSLFingerprint string `json:"ssl_fingerprint,omitempty"`
-
-	// OIDCCID represents the OIDC Client ID used for authentication.
-	OIDCCID string `json:"oidc_cid,omitempty"`
 }
 
 // State is implemented by AuthState and defines the methods to interact with the authentication process.
@@ -318,8 +258,12 @@ type State interface {
 	// HandlePassword processes the password-based authentication for a user and returns the authentication result.
 	HandlePassword(ctx *gin.Context) definitions.AuthResult
 
-	// HandleSASLAuthdAuthentication processes authentication requests using the SASL auth daemon protocol.
-	HandleSASLAuthdAuthentication(ctx *gin.Context)
+	// ProcessFeatures evaluates and processes feature-related data from the request context.
+	// It returns a boolean indicating whether the process should abort further execution.
+	ProcessFeatures(ctx *gin.Context) (abort bool)
+
+	// ProcessAuthentication processes authentication requests using.
+	ProcessAuthentication(ctx *gin.Context)
 
 	// FilterLua applies Lua-based filtering logic to the provided PassDBResult and execution context.
 	// It returns an AuthResult indicating the outcome of the filtering process.
@@ -716,7 +660,7 @@ type (
 type WebAuthnCredentialDBFunc func(uniqueUserID string) ([]webauthn.Credential, error)
 
 // AddTOTPSecretFunc is a function signature that takes a *AuthState and *TOTPSecret as arguments and returns an error.
-type AddTOTPSecretFunc func(auth *AuthState, totp *TOTPSecret) (err error)
+type AddTOTPSecretFunc func(auth *AuthState, totp *mfa.TOTPSecret) (err error)
 
 var BackendServers = NewBackendServer()
 
@@ -2739,7 +2683,7 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 // Otherwise, it calls the setAuthenticationFields function with the AuthState object and the JSONRequest object,
 // and sets additional fields in the AuthState object using the XSSL method.
 func processApplicationJSON(ctx *gin.Context, auth State) {
-	var jsonRequest JSONRequest
+	var jsonRequest authdto.Request
 
 	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
 		HandleJSONError(ctx, err)
@@ -2760,34 +2704,8 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 	}
 }
 
-// setAuthenticationFields populates the fields of the AuthState struct with values from the JSONRequest.
-// It takes a pointer to the AuthState struct and a pointer to the JSONRequest struct as input.
-// It sets the values of the Method, UserAgent, Username, Password, ClientIP, XClientPort,
-// ClientHost, XLocalIP, XPort, and Service fields of the AuthState struct with the corresponding values
-// from the JSONRequest struct.
-// It then returns the pointer to the modified AuthState struct.
-//
-// Example usage:
-// auth := &AuthState{}
-//
-//		request := &JSONRequest{
-//		    Method:          "POST",
-//		    ClientID:        "client123",
-//		    Username:        "john",
-//		    Password:        "password",
-//		    ClientIP:        "192.168.1.100",
-//		    ClientPort:      "8080",
-//		    ClientHostname:  "example.com",
-//		    LocalIP:         "127.0.0.1",
-//		    LocalPort:       "3000",
-//		    Service:         "auth",
-//		    AuthLoginAttempt: 1,
-//	     ...
-//		}
-//
-// setAuthenticationFields(auth, request)
-// // After the function call, the fields of auth would be populated with the values from request
-func setAuthenticationFields(auth State, request *JSONRequest) {
+// setAuthenticationFields updates the provided authentication state with data from the request, if available.
+func setAuthenticationFields(auth State, request *authdto.Request) {
 	if request.Method != "" {
 		auth.SetMethod(request.Method)
 	}
@@ -2968,7 +2886,8 @@ func (a *AuthState) InitMethodAndUserAgent() State {
 func setupAuth(ctx *gin.Context, auth State) {
 	auth.SetProtocol(&config.Protocol{})
 
-	switch ctx.Param("service") {
+	svc := ctx.GetString(definitions.CtxServiceKey)
+	switch svc {
 	case definitions.ServNginx, definitions.ServHeader:
 		setupHeaderBasedAuth(ctx, auth)
 	case definitions.ServSaslauthd, definitions.ServJSON:
@@ -2977,7 +2896,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 		setupHTTPBasicAuth(ctx, auth)
 	}
 
-	if ctx.Query("mode") != "list-accounts" && ctx.Param("service") != definitions.ServBasic {
+	if ctx.Query("mode") != "list-accounts" && svc != definitions.ServBasic {
 		if !util.ValidateUsername(auth.GetUsername()) {
 			auth.SetUsername("")
 			ctx.Error(errors.ErrInvalidUsername)
@@ -2997,7 +2916,14 @@ func setupAuth(ctx *gin.Context, auth State) {
 func NewAuthStateWithSetup(ctx *gin.Context) State {
 	auth := NewAuthStateFromContext(ctx)
 
-	auth.SetStatusCodes(ctx.Param("service"))
+	svc := ctx.GetString(definitions.CtxServiceKey)
+	if svc == "" {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return nil
+	}
+
+	auth.SetStatusCodes(svc)
 	setupAuth(ctx, auth)
 
 	if ctx.Errors.Last() != nil {
@@ -3043,7 +2969,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	a.GUID = &guidStr
 	a.UsedPassDBBackend = definitions.BackendUnknown
 	a.PasswordsAccountSeen = 0
-	a.Service = ctx.Param("service")
+	a.Service = ctx.GetString(definitions.CtxServiceKey)
 	a.Context = ctx.MustGet(definitions.CtxDataExchangeKey).(*lualib.Context)
 
 	if a.Service == definitions.ServBasic {

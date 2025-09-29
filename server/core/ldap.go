@@ -26,8 +26,10 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/go-ldap/ldap/v3"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -407,7 +409,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 }
 
 // AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
-func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
+func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error) {
 	var (
 		filter      string
 		baseDN      string
@@ -442,7 +444,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err
 		return
 	}
 
-	configField = totp.getLDAPTOTPSecret(protocol)
+	configField = totp.GetLDAPTOTPSecret(protocol)
 	if configField == "" {
 		err = errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
@@ -471,7 +473,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err
 	}
 
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)
-	ldapRequest.ModifyAttributes[configField] = []string{totp.getValue()}
+	ldapRequest.ModifyAttributes[configField] = []string{totp.GetValue()}
 
 	// Determine priority based on NoAuth flag and whether the user is already authenticated
 	priority := priorityqueue.PriorityLow

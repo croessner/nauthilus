@@ -13,21 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package core
+package rest
 
-// RESTResult is a handleAuthentication JSON result object for the Nauthilus REST API.
-type RESTResult struct {
-	// GUID represents a unique identifier for a session. It is a string field used in the RESTResult struct
+// Result is a handleAuthentication JSON result object for the Nauthilus REST API.
+type Result struct {
+	// GUID represents a unique identifier for a session. It is a string field used in the Result struct
 	// and is also annotated with the json tag "session".
 	GUID string `json:"session"`
 
-	// Object represents a string field used in the RESTResult struct. It is annotated with the json tag "object".
+	// Object represents a string field used in the Result struct. It is annotated with the json tag "object".
 	Object string `json:"object"`
 
-	// Operation represents a string field used in the RESTResult struct. It is annotated with the json tag "operation".
+	// Operation represents a string field used in the Result struct. It is annotated with the json tag "operation".
 	Operation string `json:"operation"`
 
-	// Result represents the result field in the RESTResult struct. It can hold any type of value.
+	// Result represents the result field in the Result struct. It can hold any type of value.
 	// The field is annotated with the json tag "result".
 	Result any `json:"result"`
 }

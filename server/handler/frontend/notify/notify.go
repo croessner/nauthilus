@@ -37,8 +37,9 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 	return &Handler{Store: store, Deps: d}
 }
 
-func (h *Handler) Register(r gin.IRouter) {
-	group := r.Group(viper.GetString("notify_page"))
+func (h *Handler) Register(router gin.IRouter) {
+	group := router.Group(viper.GetString("notify_page"))
+
 	group.Use(sessions.Sessions(definitions.SessionName, h.Store))
 	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), core.WithLanguageMiddleware(), h.Deps.Svc.NotifyGETHandler())
 	group.GET("/:languageTag", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), core.WithLanguageMiddleware(), h.Deps.Svc.NotifyGETHandler())

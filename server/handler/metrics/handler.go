@@ -36,8 +36,8 @@ func New() *Handler {
 	return &Handler{}
 }
 
-func (h *Handler) Register(r gin.IRouter) {
-	r.GET("/metrics", func(ctx *gin.Context) {
+func (h *Handler) Register(router gin.IRouter) {
+	router.GET("/metrics", func(ctx *gin.Context) {
 		// If JWT is enabled, allow only users with RoleSecurity
 		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
 			tokenString, err := core.ExtractJWTToken(ctx)
@@ -49,6 +49,7 @@ func (h *Handler) Register(r gin.IRouter) {
 								prometheus.DefaultGatherer,
 								promhttp.HandlerOpts{DisableCompression: true},
 							)
+
 							h.ServeHTTP(ctx.Writer, ctx.Request)
 
 							return

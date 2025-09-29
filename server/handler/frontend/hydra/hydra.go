@@ -35,9 +35,9 @@ func New(store sessions.Store, d *deps.Deps) *Handler {
 	return &Handler{Store: store, Deps: d}
 }
 
-func (h *Handler) Register(r gin.IRouter) {
+func (h *Handler) Register(router gin.IRouter) {
 	// Static assets (favicon, css, js, img, fonts) for Hydra frontend
-	g := r.Group("/")
+	g := router.Group("/")
 
 	g.StaticFile("/favicon.ico", viper.GetString("html_static_content_path")+"/img/favicon.ico")
 	g.Static("/static/css", viper.GetString("html_static_content_path")+"/css")
@@ -46,14 +46,14 @@ func (h *Handler) Register(r gin.IRouter) {
 	g.Static("/static/fonts", viper.GetString("html_static_content_path")+"/fonts")
 
 	// Login page
-	common.RouterGroup(viper.GetString("login_page"), r, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
+	common.RouterGroup(viper.GetString("login_page"), router, h.Store, h.Deps.Svc.LoginGETHandler(), h.Deps.Svc.LoginPOSTHandler())
 
 	// Device/U2F/FIDO2 login page
-	common.RouterGroup(viper.GetString("device_page"), r, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
+	common.RouterGroup(viper.GetString("device_page"), router, h.Store, h.Deps.Svc.DeviceGETHandler(), h.Deps.Svc.DevicePOSTHandler())
 
 	// Consent page
-	common.RouterGroup(viper.GetString("consent_page"), r, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
+	common.RouterGroup(viper.GetString("consent_page"), router, h.Store, h.Deps.Svc.ConsentGETHandler(), h.Deps.Svc.ConsentPOSTHandler())
 
 	// Logout page
-	common.RouterGroup(viper.GetString("logout_page"), r, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
+	common.RouterGroup(viper.GetString("logout_page"), router, h.Store, h.Deps.Svc.LogoutGETHandler(), h.Deps.Svc.LogoutPOSTHandler())
 }

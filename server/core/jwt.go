@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	jwtapi "github.com/croessner/nauthilus/server/model/jwt"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -37,22 +38,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
-
-// JWTClaims is an alias for jwtclaims.JWTClaims
-type JWTClaims = jwtclaims.JWTClaims
-
-// JWTRequest represents the request body for JWT token generation
-type JWTRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
-// JWTResponse represents the response body for JWT token generation
-type JWTResponse struct {
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    int64  `json:"expires_at"`
-}
 
 // GenerateJWTToken generates a JWT token for the given username and roles
 func GenerateJWTToken(username string, roles []string) (string, int64, error) {
@@ -70,7 +55,7 @@ func GenerateJWTToken(username string, roles []string) (string, int64, error) {
 	}
 
 	// Create claims
-	claims := JWTClaims{
+	claims := jwtclaims.Claims{
 		Username: username,
 		Roles:    roles,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -235,7 +220,7 @@ func GetRefreshTokenFromRedis(ctx context.Context, username string) (string, err
 }
 
 // ValidateJWTToken validates a JWT token and returns the claims
-func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, error) {
+func ValidateJWTToken(ctx context.Context, tokenString string) (*jwtclaims.Claims, error) {
 	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() {
@@ -243,7 +228,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, erro
 	}
 
 	// Parse token
-	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (any, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &jwtclaims.Claims{}, func(token *jwt.Token) (any, error) {
 		// Validate signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
@@ -262,7 +247,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, erro
 	}
 
 	// Get claims
-	claims, ok := token.Claims.(*JWTClaims)
+	claims, ok := token.Claims.(*jwtclaims.Claims)
 	if !ok {
 		return nil, errors.New("invalid claims")
 	}
@@ -400,7 +385,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	var request JWTRequest
+	var request jwtapi.Request
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		// Treat malformed input similar to an auth failure to avoid side channels
 		if mdauth.MaybeThrottleAuthByIP(ctx) {
@@ -464,7 +449,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			return
 		}
 
-		response := JWTResponse{
+		response := jwtapi.Response{
 			Token:     token,
 			ExpiresAt: expiresAt,
 		}
@@ -579,7 +564,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	response := JWTResponse{
+	response := jwtapi.Response{
 		Token:     token,
 		ExpiresAt: expiresAt,
 	}
@@ -804,7 +789,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		definitions.LogKeyMsg, "JWT token refreshed successfully",
 	)
 
-	ctx.JSON(http.StatusOK, JWTResponse{
+	ctx.JSON(http.StatusOK, jwtapi.Response{
 		Token:        newToken,
 		RefreshToken: newRefreshToken,
 		ExpiresAt:    expiresAt,

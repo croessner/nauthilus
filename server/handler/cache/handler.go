@@ -13,21 +13,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package health
+package cache
 
 import (
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/gin-gonic/gin"
-
-	approuter "github.com/croessner/nauthilus/server/router"
 )
 
-// Handler registers the health endpoints.
-type Handler struct{}
+// Handler exposes cache-related routes.
+// It mirrors the legacy behavior and delegates logic to core while honoring endpoint feature flags.
+type Handler struct {
+	cfg config.File
+}
 
-func New() *Handler {
-	return &Handler{}
+func New(cfg config.File) *Handler {
+	return &Handler{cfg: cfg}
 }
 
 func (h *Handler) Register(router gin.IRouter) {
-	router.GET("/ping", approuter.HealthCheck)
+	cg := router.Group("/" + definitions.CatCache)
+
+	cg.DELETE("/"+definitions.ServFlush, h.flush)
+}
+
+func (h *Handler) flush(ctx *gin.Context) {
+	core.HandleUserFlush(ctx)
 }

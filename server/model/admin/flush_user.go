@@ -13,21 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package health
+package admin
 
-import (
-	"github.com/gin-gonic/gin"
+// FlushUserCmdStatus represents an user's command status.
+type FlushUserCmdStatus struct {
+	// User holds the identifier of a user.
+	User string `json:"user"`
 
-	approuter "github.com/croessner/nauthilus/server/router"
-)
+	// RemovedKeys contains a list of keys that have been removed during the user's command execution.
+	RemovedKeys []string `json:"removed_keys"`
 
-// Handler registers the health endpoints.
-type Handler struct{}
-
-func New() *Handler {
-	return &Handler{}
+	// Status represents the status of the user's command.
+	Status string `json:"status"`
 }
 
-func (h *Handler) Register(router gin.IRouter) {
-	router.GET("/ping", approuter.HealthCheck)
+// FlushUserCmd is a data structure used to handle user commands for flushing data.
+type FlushUserCmd struct {
+	// User is the field representing the name of the user to be flushed.
+	User string `json:"user" binding:"required"`
 }

@@ -24,22 +24,61 @@ type ClaimsWithRoles interface {
 	HasRole(role string) bool
 }
 
-// JWTClaims represents the claims in a JWT token
-type JWTClaims struct {
+// Claims represents the claims in a JWT token
+type Claims struct {
 	Username string   `json:"username"`
 	Roles    []string `json:"roles,omitempty"`
+
 	jwt.RegisteredClaims
+
+	// internal cache to speed up repeated role checks; excluded from JSON
+	roleSet RoleSet
 }
 
-// HasRole checks if the JWTClaims contains the specified role
-func (c *JWTClaims) HasRole(role string) bool {
-	for _, r := range c.Roles {
-		if r == role {
-			return true
-		}
+// HasRole checks if the Claims contains the specified role (with a lazy RoleSet cache)
+func (c *Claims) HasRole(role string) bool {
+	if c == nil {
+		return false
 	}
 
-	return false
+	// Lazily build or refresh the set if sizes differ (simple, fast heuristic)
+	if c.roleSet == nil || len(c.roleSet) != len(c.Roles) {
+		c.roleSet = NewRoleSet(c.Roles)
+	}
+
+	return c.roleSet.HasRole(role)
 }
 
-var _ ClaimsWithRoles = (*JWTClaims)(nil)
+var _ ClaimsWithRoles = (*Claims)(nil)
+
+// RoleSet represents a set of roles with O(1) membership checks
+type RoleSet map[string]struct{}
+
+// NewRoleSet builds a RoleSet from a slice of roles, skipping empty strings
+func NewRoleSet(roles []string) RoleSet {
+	set := make(RoleSet, len(roles))
+
+	for _, r := range roles {
+		if r == "" {
+			continue
+		}
+
+		set[r] = struct{}{}
+	}
+
+	return set
+}
+
+// HasRole checks whether the role exists in the set
+func (rs RoleSet) HasRole(role string) bool {
+	if role == "" {
+		return false
+	}
+
+	_, ok := rs[role]
+
+	return ok
+}
+
+// Ensure RoleSet also satisfies ClaimsWithRoles
+var _ ClaimsWithRoles = (RoleSet)(nil)

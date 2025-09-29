@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/handler/auth"
 	"github.com/croessner/nauthilus/server/handler/bruteforce"
+	"github.com/croessner/nauthilus/server/handler/cache"
 	"github.com/croessner/nauthilus/server/handler/confighandler"
 	"github.com/croessner/nauthilus/server/handler/custom"
 
@@ -38,8 +39,10 @@ func Setup(router *gin.Engine) {
 	// Public JWT endpoints first (token and refresh)
 	if cfg.GetServer().GetJWTAuth().IsEnabled() && !cfg.GetServer().GetEndpoint().IsAuthJWTDisabled() {
 		jwtGroup := router.Group("/api/v1/jwt")
+
 		jwtGroup.Use(mdlua.LuaContextMiddleware())
 		jwtGroup.POST("/token", core.HandleJWTTokenGeneration)
+
 		if cfg.GetServer().GetJWTAuth().IsRefreshTokenEnabled() {
 			jwtGroup.POST("/refresh", core.HandleJWTTokenRefresh)
 		}
@@ -51,9 +54,11 @@ func Setup(router *gin.Engine) {
 	if cfg.GetServer().GetBasicAuth().IsEnabled() {
 		group.Use(mdauth.BasicAuthMiddleware())
 	}
+
 	if cfg.GetServer().GetJWTAuth().IsEnabled() {
 		group.Use(core.JWTAuthMiddleware())
 	}
+
 	group.Use(mdlua.LuaContextMiddleware())
 
 	// Register modules
@@ -61,4 +66,5 @@ func Setup(router *gin.Engine) {
 	bruteforce.New().Register(group)
 	confighandler.New(cfg).Register(group)
 	custom.New().Register(group)
+	cache.New(cfg).Register(group)
 }

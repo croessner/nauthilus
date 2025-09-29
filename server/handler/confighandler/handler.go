@@ -36,7 +36,6 @@ func (h *Handler) Register(r gin.IRouter) {
 	cg := r.Group("/" + definitions.CatConfig)
 
 	cg.GET("/"+definitions.ServLoad, h.load)
-	cg.POST("/"+definitions.ServLoad, h.load)
 }
 
 func (h *Handler) load(c *gin.Context) {
