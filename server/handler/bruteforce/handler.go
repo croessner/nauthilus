@@ -31,6 +31,7 @@ func New() *Handler {
 func (h *Handler) Register(router gin.IRouter) {
 	bg := router.Group("/" + definitions.CatBruteForce)
 
+	bg.GET("/"+definitions.ServList, core.HanldeBruteForceList)
 	bg.POST("/"+definitions.ServList, core.HanldeBruteForceList)
 	bg.DELETE("/"+definitions.ServFlush, core.HandleBruteForceRuleFlush)
 }
