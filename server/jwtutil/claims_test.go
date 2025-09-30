@@ -5,6 +5,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -40,14 +41,11 @@ func TestHasRole(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "Claims as struct pointer with matching role",
+			name: "Claims as *jwtclaims.Claims with matching role",
 			setup: func() *gin.Context {
 				ctx := gin.Context{}
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, &struct {
-					Username string   `json:"username"`
-					Roles    []string `json:"roles,omitempty"`
-				}{
+				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user", "admin"},
 				})
@@ -57,72 +55,13 @@ func TestHasRole(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "Claims as struct pointer with non-matching role",
+			name: "Claims as *jwtclaims.Claims with non-matching role",
 			setup: func() *gin.Context {
 				ctx := gin.Context{}
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, &struct {
-					Username string   `json:"username"`
-					Roles    []string `json:"roles,omitempty"`
-				}{
+				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user"},
-				})
-				return &ctx
-			},
-			role:     "admin",
-			expected: false,
-		},
-		{
-			name: "Claims as map[string]interface{} with matching role",
-			setup: func() *gin.Context {
-				ctx := gin.Context{}
-				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, map[string]interface{}{
-					"username": "testuser",
-					"roles":    []interface{}{"user", "admin"},
-				})
-				return &ctx
-			},
-			role:     "admin",
-			expected: true,
-		},
-		{
-			name: "Claims as map[string]interface{} with non-matching role",
-			setup: func() *gin.Context {
-				ctx := gin.Context{}
-				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, map[string]interface{}{
-					"username": "testuser",
-					"roles":    []interface{}{"user"},
-				})
-				return &ctx
-			},
-			role:     "admin",
-			expected: false,
-		},
-		{
-			name: "Claims as map[string]any with matching role",
-			setup: func() *gin.Context {
-				ctx := gin.Context{}
-				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, map[string]interface{}{
-					"username": "testuser",
-					"roles":    []string{"user", "admin"},
-				})
-				return &ctx
-			},
-			role:     "admin",
-			expected: true,
-		},
-		{
-			name: "Claims as map[string]any with non-matching role",
-			setup: func() *gin.Context {
-				ctx := gin.Context{}
-				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				ctx.Set(definitions.CtxJWTClaimsKey, map[string]any{
-					"username": "testuser",
-					"roles":    []string{"user"},
 				})
 				return &ctx
 			},

@@ -26,7 +26,7 @@ import (
 
 // HasRole checks if the user has the specified role in their JWT token.
 // It retrieves the JWT claims from the context and checks if the user has the required role.
-// If JWT authentication is not enabled or no claims are found, it returns false.
+// Only types that implement jwtclaims.ClaimsWithRoles are supported (which includes *jwtclaims.Claims).
 func HasRole(ctx *gin.Context, role string) bool {
 	// Get JWT claims from context
 	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
@@ -40,206 +40,35 @@ func HasRole(ctx *gin.Context, role string) bool {
 		return false
 	}
 
-	// First, try to handle the case where claims implements the ClaimsWithRoles interface
-	if claims, ok := claimsValue.(jwtclaims.ClaimsWithRoles); ok {
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "JWT claims matched ClaimsWithRoles interface",
-		)
-
-		if claims.HasRole(role) {
-			util.DebugModule(
-				definitions.DbgJWT,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-			)
-
-			return true
-		}
+	// Accept only real ClaimsWithRoles implementations
+	if cl, ok := claimsValue.(jwtclaims.ClaimsWithRoles); ok {
+		found := cl.HasRole(role)
+		msg := fmt.Sprintf("%s role %s in JWT claims", tern(found, "Found", "Missing"), role)
 
 		util.DebugModule(
 			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
+			definitions.LogKeyMsg, msg,
 		)
 
-		return false
-	}
-
-	// Try to handle the case where claims is a *jwtclaims.JWTClaims
-	if claims, ok := claimsValue.(*jwtclaims.JWTClaims); ok {
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched *jwtclaims.JWTClaims, roles: %v", claims.Roles),
-		)
-
-		if claims.HasRole(role) {
-			util.DebugModule(
-				definitions.DbgJWT,
-				definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-				definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-			)
-
-			return true
-		}
-
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
-		)
-
-		return false
-	}
-
-	// Try with a local struct that matches the structure of JWTClaims
-	type localClaimsWithRoles struct {
-		Username string
-		Roles    []string
-	}
-
-	// Check for struct pointer with Roles field
-	if claims, ok := claimsValue.(*localClaimsWithRoles); ok {
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched *localClaimsWithRoles struct, roles: %v", claims.Roles),
-		)
-
-		for _, r := range claims.Roles {
-			if r == role {
-				util.DebugModule(
-					definitions.DbgJWT,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-				)
-
-				return true
-			}
-		}
-
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
-		)
-
-		return false
-	}
-
-	// Try with the specific struct used in tests
-	if claims, ok := claimsValue.(*struct {
-		Username string   `json:"username"`
-		Roles    []string `json:"roles,omitempty"`
-	}); ok {
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched anonymous struct, roles: %v", claims.Roles),
-		)
-
-		for _, r := range claims.Roles {
-			if r == role {
-				util.DebugModule(
-					definitions.DbgJWT,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-				)
-
-				return true
-			}
-		}
-
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
-		)
-
-		return false
-	}
-
-	// Handle map[string]any claims, which are the most common case
-	if claims, ok := claimsValue.(map[string]any); ok {
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("JWT claims matched map[string]any, keys: %v", getMapKeys(claims)),
-		)
-
-		if rolesValue, exists := claims["roles"]; exists {
-			// Try as []string first
-			if roles, ok := rolesValue.([]string); ok {
-				util.DebugModule(
-					definitions.DbgJWT,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, fmt.Sprintf("JWT roles as []string: %v", roles),
-				)
-
-				for _, r := range roles {
-					if r == role {
-						util.DebugModule(
-							definitions.DbgJWT,
-							definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-							definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-						)
-
-						return true
-					}
-				}
-			}
-
-			// Then try as []any
-			if roles, ok := rolesValue.([]any); ok {
-				util.DebugModule(
-					definitions.DbgJWT,
-					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-					definitions.LogKeyMsg, fmt.Sprintf("JWT roles as []any: %v", roles),
-				)
-
-				for _, r := range roles {
-					if roleStr, ok := r.(string); ok && roleStr == role {
-						util.DebugModule(
-							definitions.DbgJWT,
-							definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-							definitions.LogKeyMsg, fmt.Sprintf("Found role %s in JWT claims", role),
-						)
-
-						return true
-					}
-				}
-			}
-		}
-
-		util.DebugModule(
-			definitions.DbgJWT,
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, fmt.Sprintf("Role %s not found in JWT claims", role),
-		)
-
-		return false
+		return found
 	}
 
 	// If we get here, the claims are in an unexpected format
 	util.DebugModule(
 		definitions.DbgJWT,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, fmt.Sprintf("JWT claims in unexpected format: %v", claimsValue),
+		definitions.LogKeyMsg, fmt.Sprintf("JWT claims in unexpected format: %T", claimsValue),
 	)
 
 	return false
 }
 
-// getMapKeys returns the keys of a map as a slice of strings
-// This is a helper function to avoid using reflection for getting map keys
-func getMapKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-
-	for k := range m {
-		keys = append(keys, k)
+// tiny generic ternary helper (local)
+func tern[T any](cond bool, a, b T) T {
+	if cond {
+		return a
 	}
 
-	return keys
+	return b
 }

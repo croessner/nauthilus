@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/stats"
 )
 
@@ -278,7 +279,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 }
 
 // AddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
-func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error) {
+func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error) {
 	var (
 		luaBackendResult *lualib.LuaBackendResult
 		protocol         *config.LuaSearchProtocol
@@ -313,7 +314,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err 
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandAddMFAValue,
 		Protocol:          auth.Protocol,
-		TOTPSecret:        totp.getValue(),
+		TOTPSecret:        totp.GetValue(),
 		HTTPClientContext: auth.HTTPClientContext,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,

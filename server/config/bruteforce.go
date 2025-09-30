@@ -41,6 +41,10 @@ type BruteForceSection struct {
 	// IPv6 scoping options for features that use password-history (PW_HIST), e.g., repeating-wrong-password.
 	// If set to >0, IPv6 addresses will be considered on the given CIDR instead of /128 for the respective context.
 	IPScoping IPScoping `mapstructure:"ip_scoping"`
+
+	// Cold-start grace: one-time grace for known accounts without negative PW history.
+	ColdStartGraceEnabled bool          `mapstructure:"cold_start_grace_enabled"`
+	ColdStartGraceTTL     time.Duration `mapstructure:"cold_start_grace_ttl" validate:"omitempty,gt=0,max=8760h"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -232,6 +236,29 @@ func (b *BruteForceSection) GetTolerationsIPv6CIDR() uint {
 	}
 
 	return b.IPScoping.TolerationsIPv6CIDR
+}
+
+// GetColdStartGraceEnabled tells whether the one-time cold-start grace is enabled.
+func (b *BruteForceSection) GetColdStartGraceEnabled() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.ColdStartGraceEnabled
+}
+
+// GetColdStartGraceTTL returns the TTL for the cold-start grace.
+// Defaults to 120s if not set or invalid.
+func (b *BruteForceSection) GetColdStartGraceTTL() time.Duration {
+	if b == nil {
+		return 120 * time.Second
+	}
+
+	if b.ColdStartGraceTTL <= 0 {
+		return 120 * time.Second
+	}
+
+	return b.ColdStartGraceTTL
 }
 
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).

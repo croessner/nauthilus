@@ -27,30 +27,17 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
+	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	jwtapi "github.com/croessner/nauthilus/server/model/jwt"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
-
-// JWTClaims is an alias for jwtclaims.JWTClaims
-type JWTClaims = jwtclaims.JWTClaims
-
-// JWTRequest represents the request body for JWT token generation
-type JWTRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
-// JWTResponse represents the response body for JWT token generation
-type JWTResponse struct {
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    int64  `json:"expires_at"`
-}
 
 // GenerateJWTToken generates a JWT token for the given username and roles
 func GenerateJWTToken(username string, roles []string) (string, int64, error) {
@@ -68,7 +55,7 @@ func GenerateJWTToken(username string, roles []string) (string, int64, error) {
 	}
 
 	// Create claims
-	claims := JWTClaims{
+	claims := jwtclaims.Claims{
 		Username: username,
 		Roles:    roles,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -233,7 +220,7 @@ func GetRefreshTokenFromRedis(ctx context.Context, username string) (string, err
 }
 
 // ValidateJWTToken validates a JWT token and returns the claims
-func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, error) {
+func ValidateJWTToken(ctx context.Context, tokenString string) (*jwtclaims.Claims, error) {
 	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() {
@@ -241,7 +228,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, erro
 	}
 
 	// Parse token
-	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (any, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &jwtclaims.Claims{}, func(token *jwt.Token) (any, error) {
 		// Validate signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
@@ -260,7 +247,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string) (*JWTClaims, erro
 	}
 
 	// Get claims
-	claims, ok := token.Claims.(*JWTClaims)
+	claims, ok := token.Claims.(*jwtclaims.Claims)
 	if !ok {
 		return nil, errors.New("invalid claims")
 	}
@@ -333,11 +320,11 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Extract token
 		tokenString, err := ExtractJWTToken(ctx)
 		if err != nil {
-			if maybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx) {
 				return
 			}
 
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 
 			return
@@ -346,11 +333,11 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Validate token
 		claims, err := ValidateJWTToken(ctx, tokenString)
 		if err != nil {
-			if maybeThrottleAuthByIP(ctx) {
+			if mdauth.MaybeThrottleAuthByIP(ctx) {
 				return
 			}
 
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 
 			return
@@ -398,20 +385,21 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	var request JWTRequest
+	var request jwtapi.Request
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		// Treat malformed input similar to an auth failure to avoid side channels
-		if maybeThrottleAuthByIP(ctx) {
+		if mdauth.MaybeThrottleAuthByIP(ctx) {
 			return
 		}
-		applyAuthBackoffOnFailure(ctx)
+
+		mdauth.ApplyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 
 		return
 	}
 
 	// Blocked IPs get fast-fail 429
-	if maybeThrottleAuthByIP(ctx) {
+	if mdauth.MaybeThrottleAuthByIP(ctx) {
 		return
 	}
 
@@ -440,7 +428,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token generation failed: authentication failed",
 			)
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
 
 			return
@@ -461,7 +449,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			return
 		}
 
-		response := JWTResponse{
+		response := jwtapi.Response{
 			Token:     token,
 			ExpiresAt: expiresAt,
 		}
@@ -576,7 +564,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		return
 	}
 
-	response := JWTResponse{
+	response := jwtapi.Response{
 		Token:     token,
 		ExpiresAt: expiresAt,
 	}
@@ -643,14 +631,14 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	}
 
 	// Blocked IPs get fast-fail 429
-	if maybeThrottleAuthByIP(ctx) {
+	if mdauth.MaybeThrottleAuthByIP(ctx) {
 		return
 	}
 
 	// Extract refresh token
 	refreshToken := ctx.GetHeader("X-Refresh-Token")
 	if refreshToken == "" {
-		applyAuthBackoffOnFailure(ctx)
+		mdauth.ApplyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "refresh token is required"})
 
 		return
@@ -666,7 +654,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	})
 
 	if err != nil || !token.Valid {
-		applyAuthBackoffOnFailure(ctx)
+		mdauth.ApplyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
 
 		return
@@ -675,7 +663,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	// Get claims
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
 	if !ok {
-		applyAuthBackoffOnFailure(ctx)
+		mdauth.ApplyAuthBackoffOnFailure(ctx)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token claims"})
 
 		return
@@ -691,7 +679,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				"error", err,
 				"username", claims.Subject,
 			)
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token not found in Redis"})
 
 			return
@@ -704,7 +692,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyMsg, "Refresh token does not match the one in Redis",
 				"username", claims.Subject,
 			)
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "refresh token does not match the one in Redis"})
 
 			return
@@ -734,7 +722,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token refresh failed: user not found in configuration",
 			)
-			applyAuthBackoffOnFailure(ctx)
+			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 
 			return
@@ -801,7 +789,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		definitions.LogKeyMsg, "JWT token refreshed successfully",
 	)
 
-	ctx.JSON(http.StatusOK, JWTResponse{
+	ctx.JSON(http.StatusOK, jwtapi.Response{
 		Token:        newToken,
 		RefreshToken: newRefreshToken,
 		ExpiresAt:    expiresAt,

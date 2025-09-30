@@ -45,6 +45,17 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
+	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
+	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
+	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
+	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
+	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
+	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
+
+	"github.com/gin-gonic/gin"
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	jsoniter "github.com/json-iterator/go"
@@ -80,6 +91,8 @@ type contextStore struct {
 	action                  *contextTuple
 	backendServerMonitoring *contextTuple
 	server                  *contextTuple
+	// signals holds server lifecycle channels via the interface (no globals)
+	signals core.ServerSignals
 }
 
 // newContextStore creates and initializes a new instance of the contextStore structure and returns a pointer to it.
@@ -248,20 +261,14 @@ func PreCompileHooks() error {
 // handleSignals sets up concurrent signal handlers for termination, reload, and user-defined signals.
 // It receives a context, cancel function, context store, statistics ticker, monitoring ticker, and action workers as parameters.
 func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
-	go handleTerminateSignal(ctx, cancel, statsTicker, *ngxMonitoringTicker, actionWorkers)
+	go handleTerminateSignal(ctx, cancel, store, statsTicker, *ngxMonitoringTicker, actionWorkers)
 	go handleUsr1Signal(ctx, store)
 	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
 }
 
-// closeChannels closes the HTTPEndChan and WorkerEndChan channels.
-func closeChannels() {
-	close(core.HTTPEndChan)
-	close(core.HTTP3EndChan)
-}
-
 // handleTerminateSignal handles termination signals like SIGINT and SIGTERM for gracefully shutting down the application.
 // It cancels context, stops tickers, waits for HTTP servers and action workers to conclude, and saves stats to Redis.
-func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
+func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -272,11 +279,13 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 
 	cancel()
 
-	// Wait for HTTP server termination
-	<-core.HTTPEndChan
-
-	if config.GetFile().GetServer().IsHTTP3Enabled() {
-		<-core.HTTP3EndChan
+	// Wait for HTTP server termination via ServerSignals
+	signals := store.signals
+	if signals != nil && signals.HTTPDone() != nil {
+		<-signals.HTTPDone()
+	}
+	if signals != nil && signals.HTTP3Done() != nil {
+		<-signals.HTTP3Done()
 	}
 
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
@@ -292,8 +301,6 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, stats
 
 	// Stop background janitors and process-wide resources
 	lualib.StopGlobalCache()
-
-	closeChannels()
 
 	statsTicker.Stop()
 	ngxMonitoringTicker.Stop()
@@ -461,10 +468,12 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 
 	stopContext(store.server)
 
-	<-core.HTTPEndChan
-
-	if config.GetFile().GetServer().IsHTTP3Enabled() {
-		<-core.HTTP3EndChan
+	// Wait for HTTP server termination via ServerSignals
+	if store.signals != nil && store.signals.HTTPDone() != nil {
+		<-store.signals.HTTPDone()
+	}
+	if store.signals != nil && store.signals.HTTP3Done() != nil {
+		<-store.signals.HTTP3Done()
 	}
 
 	startHTTPServer(ctx, store)
@@ -698,17 +707,53 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 
 	store.server = newContextTuple(ctx)
 
-	if core.HTTPEndChan == nil {
-		core.HTTPEndChan = make(chan core.Done)
+	enableHTTP3 := config.GetFile().GetServer().IsHTTP3Enabled()
+	signals := core.NewDefaultServerSignals(enableHTTP3)
+
+	// Store signals on the contextStore for consumption by signal handlers
+	store.signals = signals
+
+	// Build frontend/backchannel setup callbacks to avoid core->handler import cycles
+	var setupHealth func(*gin.Engine)
+	var setupMetrics func(*gin.Engine)
+	var setupHydra, setup2FA, setupWebAuthn, setupNotify func(*gin.Engine)
+	var setupBackchannel func(*gin.Engine)
+
+	// Health endpoint (always register)
+	setupHealth = func(e *gin.Engine) {
+		handlerhealth.New().Register(e)
 	}
 
-	if config.GetFile().GetServer().IsHTTP3Enabled() {
-		if core.HTTP3EndChan == nil {
-			core.HTTP3EndChan = make(chan core.Done)
+	// Metrics endpoint (always register)
+	setupMetrics = func(e *gin.Engine) {
+		handlermetrics.New().Register(e)
+	}
+
+	// Frontend handlers only if enabled (keeps logic parity)
+	if config.GetFile().GetServer().Frontend.Enabled {
+		sessStore := core.DefaultBootstrap{}.InitSessionStore()
+		deps := &handlerdeps.Deps{Cfg: config.GetFile(), Logger: log.Logger, Svc: handlerdeps.NewDefaultServices()}
+
+		setupHydra = func(e *gin.Engine) {
+			handlerhydra.New(sessStore, deps).Register(e)
+		}
+		setup2FA = func(e *gin.Engine) {
+			handlertwofa.New(sessStore, deps).Register(e)
+		}
+		setupWebAuthn = func(e *gin.Engine) {
+			handlerwebauthn.New(sessStore, deps).Register(e)
+		}
+		setupNotify = func(e *gin.Engine) {
+			handlernotify.New(sessStore, deps).Register(e)
 		}
 	}
 
-	go core.HTTPApp(store.server.ctx)
+	// Backchannel API
+	setupBackchannel = handlerbackchannel.Setup
+
+	app := core.NewDefaultHTTPApp()
+
+	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
 }
 
 // startStatsLoop runs a loop that periodically gathers and stores system statistics using a given ticker and context.

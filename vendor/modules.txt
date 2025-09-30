@@ -390,6 +390,9 @@ github.com/nicksnyder/go-i18n/v2/internal/plural
 # github.com/ory/hydra-client-go/v2 v2.2.1
 ## explicit; go 1.17
 github.com/ory/hydra-client-go/v2
+# github.com/patrickmn/go-cache v2.1.0+incompatible
+## explicit
+github.com/patrickmn/go-cache
 # github.com/pelletier/go-toml/v2 v2.2.4
 ## explicit; go 1.21.0
 github.com/pelletier/go-toml/v2

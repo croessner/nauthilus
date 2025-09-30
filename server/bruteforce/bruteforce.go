@@ -926,6 +926,31 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
 
+	// local helper to check cold-start seed key for current (IP, account/username, passwordHash)
+	checkSeed := func() bool {
+		scoped := bm.clientIP
+		if bm.scoper != nil {
+			scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+		}
+
+		acct := bm.accountName
+		if acct == "" {
+			acct = bm.username
+		}
+
+		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+		seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + passwordHash
+
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		if _, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, seedKey).Result(); err == nil {
+			return true
+		} else if !errors2.Is(err, redis.Nil) {
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		}
+		return false
+	}
+
 	if bm.passwordHistory != nil {
 		var (
 			counter       uint
@@ -933,6 +958,10 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		)
 
 		if counter, foundPassword = (*bm.passwordHistory)[passwordHash]; !foundPassword {
+			if checkSeed() {
+				return true, nil
+			}
+
 			return false, nil
 		}
 
@@ -961,7 +990,6 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		readAndMax(bm.getPasswordHistoryTotalRedisKey(true))
 		readAndMax(bm.getPasswordHistoryTotalRedisKey(false))
 
-		// Legacy fallback removed: only totals-based method is used
 		if total == counter {
 			// Prefer explicit username, fall back to accountName for logging
 			userForLog := bm.username
@@ -977,6 +1005,11 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 				"counter", counter,
 			)
 
+			return true, nil
+		}
+	} else {
+		// No PW_HIST loaded at all; check for seed as a precise indicator emitted during cold-start grace
+		if checkSeed() {
 			return true, nil
 		}
 	}
@@ -1012,22 +1045,72 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		} else if repeating {
 			return false, nil
 		} else if bm.passwordHistory == nil {
-			// No negative password cache present for a known account.
-			// This can legitimately happen right after a cache flush or first failed attempt.
-			// In this situation we should NOT enforce brute-force computation, otherwise
-			// the first spike of wrong-password retries (e.g. multiple devices after a password change)
-			// would immediately increase brute-force buckets and lock out the user.
-			// Instead, gracefully learn the client's IP for later unlock operations and skip enforcement.
-			level.Info(log.Logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyMsg, "No negative password cache present; not enforcing and learning IP",
-				definitions.LogKeyUsername, bm.username,
-				definitions.LogKeyClientIP, bm.clientIP,
+			// Known account but no negative history yet → apply one-time cold-start grace if enabled.
+			if !config.GetFile().GetBruteForce().GetColdStartGraceEnabled() {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "No negative password cache present; not enforcing and learning IP",
+					definitions.LogKeyUsername, bm.username,
+					definitions.LogKeyClientIP, bm.clientIP,
+				)
+				bm.ProcessPWHist()
+
+				return false, nil
+			}
+
+			// Build keys and perform an atomic cold-start + seed in Redis using preloaded Lua script
+			scoped := bm.clientIP
+			if bm.scoper != nil {
+				scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+			}
+
+			prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+			coldKey := prefix + "bf:cold:" + scoped
+
+			// Seed is per (ip-scope, account/username, password-hash)
+			acct := bm.accountName
+			if acct == "" {
+				acct = bm.username
+			}
+
+			pwHash := util.GetHash(util.PreparePassword(bm.password))
+			seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + pwHash
+			ttl := config.GetFile().GetBruteForce().GetColdStartGraceTTL()
+			argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+
+			res, err := rediscli.ExecuteScript(
+				bm.ctx,
+				"ColdStartGraceSeed",
+				rediscli.LuaScripts["ColdStartGraceSeed"],
+				[]string{coldKey, seedKey},
+				argTTL,
 			)
 
-			// Learn client's IP for PW_HIST related features (protocol/OIDC meta persisted with TTL)
-			bm.ProcessPWHist()
-			return false, nil
+			if err != nil {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, fmt.Sprintf("Cold-start grace ExecuteScript error: %v", err),
+				)
+				bm.ProcessPWHist()
+
+				return false, nil
+			}
+
+			// res==int64(1) means grace (first observation)
+			if v, ok := res.(int64); ok && v == 1 {
+				level.Info(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Cold-start grace: not enforcing and learning IP",
+					definitions.LogKeyUsername, bm.username,
+					definitions.LogKeyClientIP, bm.clientIP,
+				)
+				bm.ProcessPWHist()
+
+				return false, nil
+			}
+
+			// Subsequent observation within TTL: enforce computation so complex rules can fill/trigger.
+			return true, nil
 		}
 	}
 

@@ -1874,3 +1874,9 @@ const (
 	// LuaFnCachePopAll represents the function name for popping all values from a list under a key
 	LuaFnCachePopAll = "cache_pop_all"
 )
+
+// Context keys for routing meta information (category/service)
+const (
+	CtxServiceKey  = "service"
+	CtxCategoryKey = "category"
+)

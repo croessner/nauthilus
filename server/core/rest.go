@@ -31,103 +31,19 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/model/admin"
+	bf "github.com/croessner/nauthilus/server/model/bruteforce"
+	restdto "github.com/croessner/nauthilus/server/model/rest"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/redis/go-redis/v9"
 )
 
 // For brief documentation of this file please have a look at the Markdown document REST-API.md.
-
-// FlushUserCmdStatus represents an user's command status.
-type FlushUserCmdStatus struct {
-	// User holds the identifier of a user.
-	User string `json:"user"`
-
-	// RemovedKeys contains a list of keys that have been removed during the user's command execution.
-	RemovedKeys []string `json:"removed_keys"`
-
-	// Status represents the status of the user's command.
-	Status string `json:"status"`
-}
-
-// FlushUserCmd is a data structure used to handle user commands for flushing data.
-type FlushUserCmd struct {
-	// User is the field representing the name of the user to be flushed.
-	User string `json:"user" binding:"required"`
-}
-
-// FlushRuleCmdStatus is a structure representing the status of a Flush Rule command
-type FlushRuleCmdStatus struct {
-	// IPAddress is the IP address that the rule was applied to
-	IPAddress string `json:"ip_address"`
-
-	// RuleName is the name of the rule that was flushed
-	RuleName string `json:"rule_name"`
-
-	// Protocol is the protocol associated with the rule that was flushed
-	Protocol string `json:"protocol,omitempty"`
-
-	// OIDCCID is the OIDC Client ID associated with the rule that was flushed
-	OIDCCID string `json:"oidc_cid,omitempty"`
-
-	// RemovedKeys contains a list of Redis keys that were successfully removed during the flush operation.
-	RemovedKeys []string `json:"removed_keys"`
-
-	// Status is the current status of the rule following the Flush Command
-	Status string `json:"status"`
-}
-
-// FlushRuleCmd represents a command to flush a specific rule.
-// It contains the necessary information needed to identify the rule to be flushed.
-type FlushRuleCmd struct {
-	// IPAddress is the IP address associated with the rule to be flushed.
-	// It must be in a format valid for an IP address.
-	IPAddress string `json:"ip_address" binding:"required,ip"`
-
-	// RuleName is the name of the rule to be flushed.
-	// This value should reference an existing rule.
-	RuleName string `json:"rule_name" binding:"required"`
-
-	// Protocol is the optional protocol associated with the rule to be flushed.
-	// If specified, only rules with matching protocol will be flushed.
-	Protocol string `json:"protocol,omitempty"`
-
-	// OIDCCID is the optional OIDC Client ID associated with the rule to be flushed.
-	// If specified, only rules with matching OIDC Client ID will be flushed.
-	OIDCCID string `json:"oidc_cid,omitempty"`
-}
-
-// BlockedIPAddresses represents a structure to hold blocked IP addresses retrieved from Redis.
-// IPAddresses maps IP addresses to their corresponding rules/buckets.
-// Error holds any error encountered during the retrieval process.
-type BlockedIPAddresses struct {
-	// IPAddresses maps IP addresses to their respective buckets/rules that triggered blocking.
-	IPAddresses map[string]string `json:"ip_addresses"`
-
-	// Error holds any error encountered during the retrieval process.
-	Error *string `json:"error"`
-}
-
-// BlockedAccounts represents a list of blocked user accounts and potential error information.
-type BlockedAccounts struct {
-	// Accounts represents a list of user accounts.
-	Accounts map[string][]string `json:"accounts"`
-
-	// Error represents the error message, if any, encountered during the account retrieval process.
-	Error *string `json:"error"`
-}
-
-// FilterCmd defines a struct for command filters with optional fields for Accounts and IP Address.
-type FilterCmd struct {
-	// Accounts represents an optional filter criterion for user accounts in the FilterCmd struct.
-	Accounts []string `json:"accounts,omitempty"`
-
-	// IPAddress represents an optional filter criterion for IP addresses in the FilterCmd struct.
-	IPAddress []string `json:"ip_addresses,omitempty"`
-}
 
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
@@ -167,65 +83,54 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 
 		level.Info(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMode, ctx.Query("mode"))
 	} else {
-		if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
-			//nolint:exhaustive // Ignore some results
-			switch a.HandleFeatures(ctx) {
-			case definitions.AuthResultFeatureTLS:
-				result := GetPassDBResultFromPool()
-				a.PostLuaAction(result)
-				PutPassDBResultToPool(result)
-				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
-				ctx.Abort()
-
-				return
-			case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
-				result := GetPassDBResultFromPool()
-				a.PostLuaAction(result)
-				PutPassDBResultToPool(result)
-				a.AuthFail(ctx)
-				ctx.Abort()
-
-				return
-			case definitions.AuthResultUnset:
-			case definitions.AuthResultOK:
-			case definitions.AuthResultTempFail:
-				a.AuthTempFail(ctx, definitions.TempFailDefault)
-				ctx.Abort()
-
-				return
-			default:
-				ctx.AbortWithStatus(a.StatusCodeInternalError)
-
-				return
-			}
-		}
-
-		//nolint:exhaustive // Ignore some results
-		switch a.HandlePassword(ctx) {
-		case definitions.AuthResultOK:
-			tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, true)
-			a.AuthOK(ctx)
-		case definitions.AuthResultFail:
-			tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, false)
-			a.AuthFail(ctx)
-			ctx.Abort()
-		case definitions.AuthResultTempFail:
-			a.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-		case definitions.AuthResultEmptyUsername:
-			a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
-			ctx.Abort()
-		case definitions.AuthResultEmptyPassword:
-			a.AuthFail(ctx)
-			ctx.Abort()
-		default:
-			ctx.AbortWithStatus(a.StatusCodeInternalError)
+		if abort := a.ProcessFeatures(ctx); !abort {
+			a.ProcessAuthentication(ctx)
 		}
 	}
 }
 
-// HandleSASLAuthdAuthentication handles the authentication logic for the HandleSASLAuthdAuthentication service.
-func (a *AuthState) HandleSASLAuthdAuthentication(ctx *gin.Context) {
+// ProcessFeatures handles the processing of authentication-related features for a given context.
+// It determines the action to take based on various authentication results and applies the necessary response.
+func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
+	if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
+		switch a.HandleFeatures(ctx) {
+		case definitions.AuthResultFeatureTLS:
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(result)
+			PutPassDBResultToPool(result)
+			a.AuthTempFail(ctx, definitions.TempFailNoTLS)
+			ctx.Abort()
+
+			return true
+		case definitions.AuthResultFeatureRelayDomain, definitions.AuthResultFeatureRBL, definitions.AuthResultFeatureLua:
+			result := GetPassDBResultFromPool()
+			a.PostLuaAction(result)
+			PutPassDBResultToPool(result)
+			a.AuthFail(ctx)
+			ctx.Abort()
+
+			return true
+		case definitions.AuthResultUnset:
+			return true
+		case definitions.AuthResultOK:
+			return false
+		case definitions.AuthResultTempFail:
+			a.AuthTempFail(ctx, definitions.TempFailDefault)
+			ctx.Abort()
+
+			return true
+		default:
+			ctx.AbortWithStatus(a.StatusCodeInternalError)
+
+			return true
+		}
+	}
+
+	return false
+}
+
+// ProcessAuthentication handles the authentication logic for all services.
+func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
 		tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, true)
@@ -248,16 +153,9 @@ func (a *AuthState) HandleSASLAuthdAuthentication(ctx *gin.Context) {
 	}
 }
 
-// HealthCheck handles the health check functionality by logging a message and returning "pong" as the response.
-func HealthCheck(ctx *gin.Context) {
-	level.Info(log.Logger).Log(definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey), definitions.LogKeyMsg, "Health check")
-
-	ctx.String(http.StatusOK, "pong")
-}
-
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
-func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedIPAddresses, error) {
-	blockedIPAddresses := &BlockedIPAddresses{}
+func listBlockedIPAddresses(ctx context.Context, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
+	blockedIPAddresses := &bf.BlockedIPAddresses{}
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
@@ -302,8 +200,8 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *FilterCmd, guid stri
 }
 
 // listBlockedAccounts retrieves a list of blocked user accounts from Redis and returns them along with any potential errors.
-func listBlockedAccounts(ctx context.Context, filterCmd *FilterCmd, guid string) (*BlockedAccounts, error) {
-	blockedAccounts := &BlockedAccounts{Accounts: make(map[string][]string)}
+func listBlockedAccounts(ctx context.Context, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedAccounts, error) {
+	blockedAccounts := &bf.BlockedAccounts{Accounts: make(map[string][]string)}
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 
@@ -409,13 +307,13 @@ func HanldeBruteForceList(ctx *gin.Context) {
 		}
 	}
 
-	var filterCmd *FilterCmd
+	var filterCmd *bf.FilterCmd
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	httpStatusCode := http.StatusOK
 
 	if ctx.Request.Method == http.MethodPost {
-		filterCmd = &FilterCmd{}
+		filterCmd = &bf.FilterCmd{}
 
 		if err := ctx.ShouldBindJSON(filterCmd); err != nil {
 			HandleJSONError(ctx, err)
@@ -436,7 +334,7 @@ func HanldeBruteForceList(ctx *gin.Context) {
 
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, definitions.ServList)
 
-	ctx.JSON(httpStatusCode, &RESTResult{
+	ctx.JSON(httpStatusCode, &restdto.Result{
 		GUID:      guid,
 		Object:    definitions.CatBruteForce,
 		Operation: definitions.ServList,
@@ -491,7 +389,7 @@ func HandleConfigLoad(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, &RESTResult{
+	ctx.JSON(http.StatusOK, &restdto.Result{
 		GUID:      guid,
 		Object:    definitions.CatConfig,
 		Operation: definitions.ServLoad,
@@ -499,36 +397,10 @@ func HandleConfigLoad(ctx *gin.Context) {
 	})
 }
 
-// HandleUserFlush is a handler function for a Gin HTTP server. It takes a gin.Context as a parameter
-// and attempts to flush the cache according to the *FlushUserCmd in the request's JSON body.
-//
-// Parameters:
-//   - ctx:  A pointer to gin.Context. The context is used for retrieving a *FlushUserCmd
-//     payload from the request and for sending HTTP responses. The context also carries a
-//     globally unique identifier (GUID) for logging purposes.
-//
-// Local variables:
-//   - userCmd:   A pointer to a FlushUserCmd object. This object is populated with data from the
-//     request's JSON body.
-//   - guid:      The globally unique identifier retrieved from the context for logging.
-//   - useCache:  A flag indicating whether the cache backend is currently in use by the application.
-//     When true, the function can remove password history keys from the cache.
-//   - statusMsg: A variable for storing the status message. This message will be either "flushed"
-//     or "not flushed", based on the outcome of the cache flush operation.
-//
-// Procedure:
-//  1. The function first retrieves the GUID from the context.
-//  2. Then, it logs the GUID along with the flushing information.
-//  3. It attempts to bind the JSON payload from the request to a FlushUserCmd object.
-//  4. If any error occurs during this binding, the function logs the error and the GUID.
-//     After that, it aborts the current HTTP request by sending a 400 (Bad Request)
-//     status code as a response. Then the function returns.
-//  5. If there are no binding errors, the function processes the cache flush.
-//  6. Based on the useCache flag and the outcome of the cache flush operation, the function
-//     updates the statusMsg and sends the cache status to the client.
+// HandleUserFlush handles a user cache flush request by processing the input, flushing relevant cache keys, and sending a response.
 func HandleUserFlush(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
-	userCmd := &FlushUserCmd{}
+	userCmd := &admin.FlushUserCmd{}
 
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatCache, definitions.ServFlush)
 
@@ -554,7 +426,7 @@ func HandleUserFlush(ctx *gin.Context) {
 // If it is, it sets useCache to true and calls processUserCmd to process the user command.
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
-func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
+func processFlushCache(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		if backendType.Get() != definitions.BackendCache {
 			continue
@@ -575,7 +447,7 @@ func processFlushCache(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (re
 // 3. Calls the prepareRedisUserKeys function to set the user keys using the user command and account name.
 // 4. Calls the removeUserFromCache function to remove the user from the cache by providing the user command, user keys, guid, and removeHash flag.
 // 5. Returns false.
-func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
+func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	var (
 		result        int64
 		removeHash    bool
@@ -595,7 +467,7 @@ func processUserCmd(ctx *gin.Context, userCmd *FlushUserCmd, guid string) (remov
 
 	// Remove all buckets (bf) associated with the user
 	for _, ipAddress := range ipAddresses {
-		_, removedIPKeys, err = processBruteForceRules(ctx, &FlushRuleCmd{
+		_, removedIPKeys, err = processBruteForceRules(ctx, &bf.FlushRuleCmd{
 			IPAddress: ipAddress,
 			RuleName:  "*",
 		}, guid)
@@ -654,16 +526,7 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 	return ips, nil
 }
 
-// prepareRedisUserKeys populates a string set with user keys based on the given FlushUserCmd and accountName.
-// The function creates a new empty string set using the NewStringSet function from the config package.
-// It then sets two keys in the string set: one is a concatenation of the RedisPrefix constant from the config package,
-// "ucp:__default__:", and the accountName parameter. The other key is a concatenation of the RedisPrefix constant,
-// the RedisPwHashKey constant from the global package, ":", the User field from the userCmd parameter, and ":*".
-// Next, it iterates over the protocols obtained from the GetFile().GetAllProtocols function from the config package.
-// For each protocol, it retrieves the cache names using the backend.GetCacheNames function from the backend package,
-// passing the protocol and the definitions.CacheAll constant. For each cache name, it sets a key in the string set
-// by concatenating the RedisPrefix constant, "ucp:", the cache name, ":", and the accountName parameter.
-// Finally, the function returns the populated string set.
+// prepareRedisUserKeys generates a set of Redis keys related to the provided user and their IPs for cleanup or processing.
 func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
 	ips, err := getIPsFromPWHistSet(ctx, accountName)
 	if err != nil {
@@ -744,13 +607,11 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 	return ips, userKeys
 }
 
-// removeUserFromCache removes a user from the cache based on the given parameters.
-// If removeHash is true, it deletes the entire Redis hash map associated with the user.
-// Otherwise, it only removes the specific user key from the hash map.
-// It also deletes other user keys stored in the userKeys string set.
-// If any error occurs during the removal process, it logs the error and immediately returns.
-// After successful removal, it logs the keys that have been flushed.
-func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
+// removeUserFromCache removes a user and related keys from the cache based on the given parameters and context.
+// Parameters: ctx is the request context, userCmd contains user info, userKeys is a set of keys to remove,
+// guid is a unique identifier for logs, and removeHash indicates whether to delete the entire hash or specific fields.
+// Returns a slice of strings representing the removed keys.
+func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
 	removedKeys := make([]string, 0)
 
 	redisKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
@@ -799,25 +660,17 @@ func removeUserFromCache(ctx context.Context, userCmd *FlushUserCmd, userKeys co
 	return removedKeys
 }
 
-// sendCacheStatus is a function that sends the cache status as a response to the client.
-// If the useCache parameter is true, it sends a JSON response with the cache status message and the user command details.
-// If useCache is false, it sends a JSON response with an error message indicating that the cache backend is not enabled.
-//
-// Parameters:
-// - ctx: The gin.Context object representing the HTTP request and response context.
-// - guid: The GUID string associated with the request.
-// - userCmd: A pointer to a FlushUserCmd object containing user command details.
-// - statusMsg: The status message to be included in the response.
-func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, statusMsg string, removedKeys []string) {
+// sendCacheStatus sends a JSON response with the cache flush status, including user details and removed keys.
+func sendCacheStatus(ctx *gin.Context, guid string, userCmd *admin.FlushUserCmd, statusMsg string, removedKeys []string) {
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, statusMsg)
 
 	sort.Strings(removedKeys)
 
-	ctx.JSON(http.StatusOK, &RESTResult{
+	ctx.JSON(http.StatusOK, &restdto.Result{
 		GUID:      guid,
 		Object:    definitions.CatCache,
 		Operation: definitions.ServFlush,
-		Result: &FlushUserCmdStatus{
+		Result: &admin.FlushUserCmdStatus{
 			User:        userCmd.User,
 			RemovedKeys: removedKeys,
 			Status:      statusMsg,
@@ -825,12 +678,9 @@ func sendCacheStatus(ctx *gin.Context, guid string, userCmd *FlushUserCmd, statu
 	})
 }
 
-// HandleBruteForceRuleFlush handles the flushing of a brute force rule by processing the provided IP command and updating the necessary data.
-// It logs information about the action, including the GUID, brute force category, and flush operation.
-// If the IP command fails to bind, an error is logged, and a bad request status is returned.
-// If there is an error processing the brute force rules, an error is logged, and an internal server error status is returned.
-// If the rule flush error flag is true, the status message is set to "not flushed".
-// The function then logs the status message and returns a JSON response containing the GUID, brute force category, flush operation, and the result of the command, including the IP address
+// HandleBruteForceRuleFlush handles the flushing of brute force rules for a given IP address and rule criteria.
+// It processes the request, binds JSON input, validates data, performs the flush operation, and returns the result.
+// The function logs the operation details, including rule applicability, flushed keys, and any encountered errors.
 func HandleBruteForceRuleFlush(ctx *gin.Context) {
 	var (
 		ruleFlushError bool
@@ -842,7 +692,7 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 
 	level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.CatBruteForce, definitions.ServFlush)
 
-	ipCmd := &FlushRuleCmd{}
+	ipCmd := &bf.FlushRuleCmd{}
 
 	if err = ctx.ShouldBindJSON(ipCmd); err != nil {
 		HandleJSONError(ctx, err)
@@ -870,11 +720,11 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 
 	sort.Strings(removedKeys)
 
-	ctx.JSON(http.StatusOK, &RESTResult{
+	ctx.JSON(http.StatusOK, &restdto.Result{
 		GUID:      guid,
 		Object:    definitions.CatBruteForce,
 		Operation: definitions.ServFlush,
-		Result: &FlushRuleCmdStatus{
+		Result: &bf.FlushRuleCmdStatus{
 			IPAddress:   ipCmd.IPAddress,
 			RuleName:    ipCmd.RuleName,
 			Protocol:    ipCmd.Protocol,
@@ -885,21 +735,7 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 	})
 }
 
-// processBruteForceRules handles the deletion of IP brute force rules and flushing of brute force buckets in Redis.
-// It takes the current Gin context, the command containing the IP address and rule name to be flushed, and a GUID as parameters.
-// It returns a boolean indicating if there was an error while flushing the rules or not, and an error object if any occurred.
-//
-// The function loops through all the brute force rules defined in the loaded configuration.
-// If the rule name matches the one provided in the command or the command specifies to flush all rules,
-// it proceeds with deleting the matching rule from Redis.
-// If the rule has a corresponding brute force bucket Redis key, it deletes that key as well.
-// If any errors occur during the deletion or Redis operations, it sets the ruleFlushError flag to true,
-// returns the error, and exits the loop.
-//
-// Finally, it returns the ruleFlushError flag indicating if there was any error during rule flushing,
-// and a nil error value if no error occurred.
-// deleteKeyIfExists checks if a key exists in Redis and deletes it if it does.
-// It returns the key if it was deleted, an empty string otherwise, and any error that occurred.
+// deleteKeyIfExists checks if a Redis key exists, deletes it if present, and returns the key or error if any occurs.
 func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, error) {
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -952,7 +788,7 @@ func createBucketManager(ctx context.Context, guid string, ipAddress string, pro
 }
 
 // isRuleApplicable determines if a brute force rule is applicable based on IP version and rule name criteria.
-func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *FlushRuleCmd) bool {
+func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *bf.FlushRuleCmd) bool {
 	if r.IPv4 != isIPv4 {
 		return false
 	}
@@ -965,7 +801,7 @@ func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *FlushRuleCmd) b
 // If no protocol filters are set, it iterates only through OIDC CIDs as a fallback.
 // Adds a final safety net to ensure every protocol in the configuration file is processed.
 // Returns a slice of removed entries and an error if any issues occur.
-func iterateCombinations(ctx *gin.Context, guid string, cmd *FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
+func iterateCombinations(ctx *gin.Context, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
 	// 1) Cartesian product of FilterByProtocol × FilterByOIDCCID
 	for _, proto := range rule.FilterByProtocol {
 		oidcCids := rule.FilterByOIDCCID
@@ -1038,7 +874,7 @@ func flushKey(ctx *gin.Context, key string, guid string, removed []string) ([]st
 
 // processBruteForceRules processes and flushes brute force rules based on the provided command and context.
 // It evaluates rule applicability, flushes matched rules, and removes derived and tolerable combinations.
-func processBruteForceRules(ctx *gin.Context, cmd *FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
+func processBruteForceRules(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
 	var trSuffixes = []string{":P", ":N"}
 
 	// Detect address family once – saves many To4() calls later

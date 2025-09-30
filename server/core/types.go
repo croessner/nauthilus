@@ -15,6 +15,8 @@
 
 package core
 
+import "github.com/croessner/nauthilus/server/model/mfa"
+
 // Done is the value for channels to finish workers
 type Done struct{}
 
@@ -27,5 +29,5 @@ type BackendManager interface {
 	AccountDB(auth *AuthState) (accounts AccountList, err error)
 
 	// AddTOTPSecret adds the specified TOTP secret to the user's authentication state in the backend.
-	AddTOTPSecret(auth *AuthState, totp *TOTPSecret) (err error)
+	AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error)
 }
