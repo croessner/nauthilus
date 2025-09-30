@@ -45,7 +45,9 @@ func (h *Handler) Register(router gin.IRouter) {
 	}
 
 	authGroup.GET("/"+definitions.ServBasic, withService(definitions.ServBasic, h.basic))
+	authGroup.GET("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
 	authGroup.POST("/"+definitions.ServJSON, withService(definitions.ServJSON, h.json))
+	authGroup.GET("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.POST("/"+definitions.ServHeader, withService(definitions.ServHeader, h.header))
 	authGroup.GET("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
 	authGroup.POST("/"+definitions.ServNginx, withService(definitions.ServNginx, h.nginx))
