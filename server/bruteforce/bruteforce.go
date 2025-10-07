@@ -22,6 +22,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
@@ -371,8 +372,6 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
 			return true, false, ruleNumber
-		} else if network == nil {
-			continue
 		}
 
 		// At this point, we've found at least one rule that matches our criteria
@@ -448,8 +447,6 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
 
 			return true, false, ruleNumber
-		} else if network == nil {
-			continue
 		}
 
 		// At this point, we've found at least one rule that matches our criteria
@@ -905,17 +902,12 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 	}
 }
 
-// isRepeatingWrongPassword checks if the current password has been repeatedly entered incorrectly and may indicate brute force.
-// It returns true if the password repetition exceeds the predefined threshold; otherwise, it returns false.
-// The method also logs attempts that meet the brute force detection criteria.
+// isRepeatingWrongPassword implements the RWP allowance logic.
+// It returns true if the current wrong password should be tolerated (i.e., buckets should NOT be increased),
+// based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
+// hashes are always tolerated within the window.
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
-	// Load account-scoped PW_HIST to obtain the current password's counter
-	if key := bm.getPasswordHistoryRedisHashKey(true); key != "" {
-		bm.loadPasswordHistoryFromRedis(key)
-	}
-
 	if bm.password == "" {
-		// Skip processing if password is empty
 		level.Debug(log.Logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
@@ -926,92 +918,68 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
 
-	// local helper to check cold-start seed key for current (IP, account/username, passwordHash)
-	checkSeed := func() bool {
-		scoped := bm.clientIP
-		if bm.scoper != nil {
-			scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-		}
-
-		acct := bm.accountName
-		if acct == "" {
-			acct = bm.username
-		}
-
-		prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
-		seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + passwordHash
-
-		stats.GetMetrics().GetRedisReadCounter().Inc()
-
-		if _, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, seedKey).Result(); err == nil {
-			return true
-		} else if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-		}
-		return false
+	// Build scope (IP scoping may reduce IPv6 precision) and account identifier
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
-	if bm.passwordHistory != nil {
-		var (
-			counter       uint
-			foundPassword bool
+	acct := bm.accountName
+	if acct == "" {
+		acct = bm.username
+	}
+
+	cfg := config.GetFile().GetBruteForce()
+	threshold := cfg.GetRWPAllowedUniqueHashes()
+	if threshold < 1 {
+		threshold = 1
+	}
+
+	ttl := cfg.GetRWPWindow()
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	allowKey := prefix + "bf:rwp:allow:" + scoped + ":" + acct
+
+	// Atomically check/add using Lua script
+	argThreshold := strconv.FormatUint(uint64(threshold), 10)
+	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+
+	res, execErr := rediscli.ExecuteScript(
+		bm.ctx,
+		"RWPAllowSet",
+		rediscli.LuaScripts["RWPAllowSet"],
+		[]string{allowKey},
+		argThreshold, argTTL, passwordHash,
+	)
+	if execErr != nil {
+		// On Redis/script error, be conservative and do not apply the allowance
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, fmt.Sprintf("RWPAllowSet script error: %v", execErr),
 		)
 
-		if counter, foundPassword = (*bm.passwordHistory)[passwordHash]; !foundPassword {
-			if checkSeed() {
-				return true, nil
-			}
+		return false, nil
+	}
 
-			return false, nil
+	if v, ok := res.(int64); ok && v == 1 {
+		// Allowance applies
+		userForLog := bm.username
+		if userForLog == "" {
+			userForLog = bm.accountName
 		}
 
-		// Compute total via O(1) counters across both scopes, but avoid double counting.
-		// If both totals exist for the same account+IP, they represent the same stream of events.
-		// Therefore, use the maximum of the two instead of the sum.
-		total := uint(0)
-		readAndMax := func(key string) {
-			if key == "" {
-				return
-			}
+		level.Info(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyBruteForce, "RWP allowance active",
+			definitions.LogKeyUsername, userForLog,
+			definitions.LogKeyClientIP, bm.clientIP,
+			"allowed_unique_hashes", threshold,
+		)
 
-			stats.GetMetrics().GetRedisReadCounter().Inc()
-
-			if val, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, key).Result(); err == nil {
-				if n, convErr := strconv.Atoi(val); convErr == nil {
-					if uint(n) > total {
-						total = uint(n)
-					}
-				}
-			} else if !errors2.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
-			}
-		}
-
-		readAndMax(bm.getPasswordHistoryTotalRedisKey(true))
-		readAndMax(bm.getPasswordHistoryTotalRedisKey(false))
-
-		if total == counter {
-			// Prefer explicit username, fall back to accountName for logging
-			userForLog := bm.username
-			if userForLog == "" {
-				userForLog = bm.accountName
-			}
-
-			level.Info(log.Logger).Log(
-				definitions.LogKeyGUID, bm.guid,
-				definitions.LogKeyBruteForce, "Repeating wrong password",
-				definitions.LogKeyUsername, userForLog,
-				definitions.LogKeyClientIP, bm.clientIP,
-				"counter", counter,
-			)
-
-			return true, nil
-		}
-	} else {
-		// No PW_HIST loaded at all; check for seed as a precise indicator emitted during cold-start grace
-		if checkSeed() {
-			return true, nil
-		}
+		return true, nil
 	}
 
 	return false, nil
@@ -1119,7 +1087,7 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 
 // getNetwork parses the client IP and generates a network object based on the provided brute force rule configuration.
 // Returns the network object if valid, or an error if the IP address is incorrect or fails parsing.
-func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet, error) {
+func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *net.IPNet, err error) {
 	ipAddress := net.ParseIP(bm.clientIP)
 
 	if ipAddress == nil {
@@ -1127,7 +1095,7 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 	}
 
 	if strings.Contains(ipAddress.String(), ":") {
-		_, err := netaddr.ParseIPv6(bm.clientIP)
+		_, err = netaddr.ParseIPv6(bm.clientIP)
 		if err != nil {
 			return nil, err
 		}
@@ -1143,7 +1111,7 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (*net.IPNet
 		}
 	}
 
-	_, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, rule.CIDR))
+	_, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, rule.CIDR))
 	if err != nil {
 		return nil, err
 	}

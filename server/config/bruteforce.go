@@ -45,6 +45,10 @@ type BruteForceSection struct {
 	// Cold-start grace: one-time grace for known accounts without negative PW history.
 	ColdStartGraceEnabled bool          `mapstructure:"cold_start_grace_enabled"`
 	ColdStartGraceTTL     time.Duration `mapstructure:"cold_start_grace_ttl" validate:"omitempty,gt=0,max=8760h"`
+
+	// RWP allowance: tolerate up to N unique wrong password hashes in a time window
+	AllowedUniqueWrongPWHashes uint          `mapstructure:"rwp_allowed_unique_hashes" validate:"omitempty,min=1,max=100"`
+	RWPWindow                  time.Duration `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -259,6 +263,34 @@ func (b *BruteForceSection) GetColdStartGraceTTL() time.Duration {
 	}
 
 	return b.ColdStartGraceTTL
+}
+
+// GetRWPAllowedUniqueHashes returns how many distinct wrong password hashes are tolerated within the window.
+// Defaults to 3 if not set or if the receiver is nil.
+func (b *BruteForceSection) GetRWPAllowedUniqueHashes() uint {
+	if b == nil {
+		return 3
+	}
+
+	if b.AllowedUniqueWrongPWHashes == 0 {
+		return 3
+	}
+
+	return b.AllowedUniqueWrongPWHashes
+}
+
+// GetRWPWindow returns the time window for tracking tolerated unique wrong password hashes.
+// Defaults to 15 minutes if not set or invalid.
+func (b *BruteForceSection) GetRWPWindow() time.Duration {
+	if b == nil {
+		return 15 * time.Minute
+	}
+
+	if b.RWPWindow <= 0 {
+		return 15 * time.Minute
+	}
+
+	return b.RWPWindow
 }
 
 // Tolerate represents a configuration item for toleration settings based on IP, percentage, and Time-to-Live (TTL).

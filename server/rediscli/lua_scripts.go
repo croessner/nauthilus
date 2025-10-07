@@ -88,8 +88,35 @@ end
 -- Calculate maximum allowed negative attempts
 local max_negative = math.floor((percent * positive) / 100)
 
--- Return the calculated percentage, max negative attempts, positive count, negative count, and factor
+-- Return the calculated percentage, max negative attempts, positive count, positive count, and factor
 return {percent, max_negative, positive, negative, 1}
+`,
+
+	// RWPAllowSet atomically checks whether a password hash is already in the allow-set or can be added
+	// within the configured threshold. Returns 1 if RWP allowance applies, 0 otherwise.
+	// KEYS[1] - The allow-set key (a Redis Set)
+	// ARGV[1] - Threshold (max unique hashes)
+	// ARGV[2] - TTL in seconds
+	// ARGV[3] - Current password hash
+	"RWPAllowSet": `
+local key = KEYS[1]
+local threshold = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local hash = ARGV[3]
+
+if redis.call('SISMEMBER', key, hash) == 1 then
+  redis.call('EXPIRE', key, ttl)
+  return 1
+end
+
+local card = redis.call('SCARD', key)
+if card < threshold then
+  redis.call('SADD', key, hash)
+  redis.call('EXPIRE', key, ttl)
+  return 1
+end
+
+return 0
 `,
 
 	// ColdStartGraceSeed atomically sets a one-time cold-start grace key and seeds a per-password evidence key.
