@@ -16,6 +16,8 @@
 package limit
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -88,6 +90,27 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 		// Process the request and decrement the counter when done
 		defer func() {
 			atomic.AddInt32(&lc.CurrentConnections, -1)
+
+			// Detect client-canceled requests (context canceled) and mark/log as 499 if possible
+			if err := ctx.Request.Context().Err(); errors.Is(err, context.Canceled) {
+				// Log cancellation; use GUID if present
+				guid, exists := ctx.Get(definitions.CtxGUIDKey)
+				if !exists {
+					guid = ksuid.New().String()
+				}
+
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
+					"path", ctx.FullPath(),
+					"status", definitions.StatusClientClosedRequest,
+				)
+
+				// If nothing was written yet and handler didn't abort, respond with 499
+				if !ctx.Writer.Written() && !ctx.IsAborted() {
+					ctx.AbortWithStatus(definitions.StatusClientClosedRequest)
+				}
+			}
 
 			// Calculate and log request duration for performance monitoring
 			if startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey); exists {

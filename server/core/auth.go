@@ -43,7 +43,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/model/authdto"
-	mfa "github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -53,7 +53,10 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
 	"github.com/spf13/viper"
+	"golang.org/x/sync/singleflight"
 )
+
+var backchanSF singleflight.Group
 
 // ClaimHandler represents a claim handler struct.
 // A claim handler in this context is something to work with JSON Web Tokens (JWT), often used for APIs.
@@ -1868,12 +1871,53 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		return a.handleLocalCache(ctx)
 	}
 
-	useCache, backendPos, passDBs := a.handleBackendTypes()
+	// In-process singleflight deduplication (backchannel only)
+	key := a.generateSingleflightKey()
+	reqCtx := ctx.Request.Context()
 
-	// Further control flow based on whether cache is used and authentication status
-	authResult = a.authenticateUser(ctx, useCache, backendPos, passDBs)
+	// Derive wait deadline from request context, with a small safety cap if none
+	var timer *time.Timer
 
-	return authResult
+	if dl, ok := reqCtx.Deadline(); ok {
+		d := time.Until(dl)
+		if d <= 0 {
+			backchanSF.Forget(key)
+
+			return definitions.AuthResultTempFail
+		}
+
+		timer = time.NewTimer(d)
+	} else {
+		timer = time.NewTimer(definitions.SingleflightWaitCap)
+	}
+
+	defer timer.Stop()
+
+	ch := backchanSF.DoChan(key, func() (any, error) {
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		return res, nil
+	})
+
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return definitions.AuthResultTempFail
+		}
+
+		return r.Val.(definitions.AuthResult)
+	case <-reqCtx.Done():
+		backchanSF.Forget(key)
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+
+		return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+	case <-timer.C:
+		backchanSF.Forget(key)
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+
+		return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+	}
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -3472,6 +3516,33 @@ func (a *AuthState) generateLocalCacheKey() string {
 			return a.ClientIP
 		}(),
 	)
+}
+
+// generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
+// Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID]
+func (a *AuthState) generateSingleflightKey() string {
+	// Try to enrich account if present in cache already
+	account := a.refreshUserAccount()
+	if account == "" {
+		account = a.GetAccount()
+	}
+
+	clientIP := a.ClientIP
+	if clientIP == "" {
+		clientIP = "0.0.0.0"
+	}
+
+	sslFlag := "0"
+	if a.XSSL != "" || a.XSSLProtocol != "" {
+		sslFlag = "1"
+	}
+
+	sep := "\x00"
+	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + account + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
+	if a.OIDCCID != "" {
+		return base + sep + a.OIDCCID
+	}
+	return base
 }
 
 // GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.

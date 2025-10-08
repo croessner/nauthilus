@@ -17,6 +17,19 @@ package definitions
 
 import "time"
 
+// SingleflightWaitCap defines the maximum time a follower waits for an in-process
+// singleflight result when no request deadline is present.
+// It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.
+const SingleflightWaitCap = 800 * time.Millisecond
+
+// StatusClientClosedRequest is a non-standard HTTP status used by some proxies (e.g. Nginx) to indicate
+// the client closed the connection before the server could send a response.
+// Useful for logging/metrics when ctx.Request.Context() is canceled.
+const StatusClientClosedRequest = 499
+
+// MsgClientClosedRequest is a human-readable message for client-closed requests.
+const MsgClientClosedRequest = "Client Closed Request"
+
 // Role constants for JWT authentication
 const (
 	// RoleAdmin represents the admin role with full access to all features
