@@ -47,6 +47,7 @@ type ServerSection struct {
 	Redis                     Redis                    `mapstructure:"redis" vslidate:"required"`
 	MasterUser                MasterUser               `mapstructure:"master_user" validate:"omitempty"`
 	Frontend                  Frontend                 `mapstructure:"frontend" validate:"omitempty"`
+	Dedup                     Dedup                    `mapstructure:"dedup" validate:"omitempty"`
 	PrometheusTimer           PrometheusTimer          `mapstructure:"prometheus_timer" validate:"omitempty"`
 	DefaultHTTPRequestHeader  DefaultHTTPRequestHeader `mapstructure:"default_http_request_header" validate:"omitempty"`
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
@@ -1777,4 +1778,30 @@ func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 	}
 
 	return k.MaxIdleConnsPerHost
+}
+
+// Dedup controls in-process vs distributed request deduplication behavior.
+// If DistributedEnabled is true, Redis-based coordination (result cache + lock + pub/sub)
+// is enabled to deduplicate across instances. Default is false.
+type Dedup struct {
+	DistributedEnabled bool `mapstructure:"distributed_enabled"`
+}
+
+// GetDedup returns the Dedup configuration section. If ServerSection is nil,
+// it returns a zero-value Dedup.
+func (s *ServerSection) GetDedup() *Dedup {
+	if s == nil {
+		return &Dedup{}
+	}
+
+	return &s.Dedup
+}
+
+// IsDistributedEnabled reports whether distributed (Redis) deduplication is enabled.
+func (d *Dedup) IsDistributedEnabled() bool {
+	if d == nil {
+		return false
+	}
+
+	return d.DistributedEnabled
 }

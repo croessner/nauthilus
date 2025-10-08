@@ -17,6 +17,22 @@ package definitions
 
 import "time"
 
+// SingleflightWaitCap defines the maximum time a follower waits for an in-process
+// singleflight result when no request deadline is present.
+// It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.
+const SingleflightWaitCap = 800 * time.Millisecond
+
+// StatusClientClosedRequest is a non-standard HTTP status used by some proxies (e.g. Nginx) to indicate
+// the client closed the connection before the server could send a response.
+// Useful for logging/metrics when ctx.Request.Context() is canceled.
+const StatusClientClosedRequest = 499
+
+// MsgClientClosedRequest is a human-readable message for client-closed requests.
+const MsgClientClosedRequest = "Client Closed Request"
+
+// LogKeyLeadership is the log attribute name for recording singleflight role (leader/follower) in large logs.
+const LogKeyLeadership = "leadership"
+
 // Role constants for JWT authentication
 const (
 	// RoleAdmin represents the admin role with full access to all features
@@ -1855,28 +1871,60 @@ const LuaCtxBuiltin = "__lua_ctx_builtin__"
 const (
 	// LuaFnCacheSet represents the function name for setting a cache entry
 	LuaFnCacheSet = "cache_set"
+
 	// LuaFnCacheGet represents the function name for getting a cache entry
 	LuaFnCacheGet = "cache_get"
+
 	// LuaFnCacheDelete represents the function name for deleting a cache entry
 	LuaFnCacheDelete = "cache_delete"
+
 	// LuaFnCacheExists represents the function name for checking if a cache entry exists
 	LuaFnCacheExists = "cache_exists"
+
 	// LuaFnCacheUpdate represents the function name for atomically updating a cache entry
 	LuaFnCacheUpdate = "cache_update"
+
 	// LuaFnCacheKeys represents the function name for listing cache keys
 	LuaFnCacheKeys = "cache_keys"
+
 	// LuaFnCacheSize represents the function name for retrieving current cache size
 	LuaFnCacheSize = "cache_size"
+
 	// LuaFnCacheFlush represents the function name for flushing the cache
 	LuaFnCacheFlush = "cache_flush"
+
 	// LuaFnCachePush represents the function name for pushing a value into a list under a key
 	LuaFnCachePush = "cache_push"
+
 	// LuaFnCachePopAll represents the function name for popping all values from a list under a key
 	LuaFnCachePopAll = "cache_pop_all"
 )
 
-// Context keys for routing meta information (category/service)
 const (
-	CtxServiceKey  = "service"
+	// CtxServiceKey is a context key used to store and retrieve the service name within Gin HTTP request contexts.
+	CtxServiceKey = "service"
+
+	// CtxCategoryKey is a context key used to store and retrieve the category name within Gin HTTP request contexts.
 	CtxCategoryKey = "category"
+)
+
+// RedisSFResultTTL Redis Singleflight (distributed) tunables
+// TTL for distributed singleflight result key in Redis
+const RedisSFResultTTL = 2 * time.Second
+
+// RedisSFLockTTL TTL for the distributed lock
+const RedisSFLockTTL = 5 * time.Second
+
+const (
+	// RedisSFPrefixResult defines the prefix used for storing results related to specific Redis operations.
+	RedisSFPrefixResult = "sf:res:"
+
+	// RedisSFPrefixLock defines the prefix used for Redis keys associated with locking mechanisms.
+	RedisSFPrefixLock = "sf:lock:"
+
+	// RedisSFPrefixChannel defines the prefix used for Redis channel names specific to certain operations or communication.
+	RedisSFPrefixChannel = "sf:ch:"
+
+	// RedisBFBurstPrefix is the Redis key prefix for brute-force burst gating keys
+	RedisBFBurstPrefix = "bf:burst:"
 )

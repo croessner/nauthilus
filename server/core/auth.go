@@ -17,7 +17,10 @@ package core
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	stderrors "errors"
 	"fmt"
 	"math"
@@ -43,7 +46,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/model/authdto"
-	mfa "github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -52,8 +55,12 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	openapi "github.com/ory/hydra-client-go/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
+	"golang.org/x/sync/singleflight"
 )
+
+var backchanSF singleflight.Group
 
 // ClaimHandler represents a claim handler struct.
 // A claim handler in this context is something to work with JSON Web Tokens (JWT), often used for APIs.
@@ -1852,6 +1859,104 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	return false
 }
 
+// sfAuthResult encapsulates the auth result along with the LeaderID so that
+// followers can determine if they were leader or follower for logging.
+type sfAuthResult struct {
+	AuthResult definitions.AuthResult
+	LeaderID   string
+}
+
+// --- Distributed singleflight (Redis) helpers ---
+
+// sfKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
+func (a *AuthState) sfKeyHash() string {
+	sum := sha1.Sum([]byte(a.generateSingleflightKey()))
+
+	return hex.EncodeToString(sum[:])
+}
+
+// sfRedisKeys builds the Redis keys (result, lock) and channel name for a given auth request.
+func (a *AuthState) sfRedisKeys() (resKey, lockKey, ch string) {
+	suf := a.sfKeyHash()
+
+	return definitions.RedisSFPrefixResult + suf, definitions.RedisSFPrefixLock + suf, definitions.RedisSFPrefixChannel + suf
+}
+
+// sfReadResult reads a short-lived AuthResult from Redis. Returns (result, found, error).
+func (a *AuthState) sfReadResult(ctx context.Context, rdb redis.UniversalClient, resKey string) (definitions.AuthResult, bool, error) {
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	s, err := rdb.Get(ctx, resKey).Result()
+	if stderrors.Is(err, redis.Nil) {
+		return 0, false, nil
+	}
+
+	if err != nil {
+		return 0, false, err
+	}
+
+	v, convErr := strconv.Atoi(s)
+	if convErr != nil {
+		return 0, false, convErr
+	}
+
+	return definitions.AuthResult(v), true, nil
+}
+
+// sfWriteResult writes the AuthResult to Redis with a short TTL.
+func (a *AuthState) sfWriteResult(ctx context.Context, rdb redis.UniversalClient, resKey string, r definitions.AuthResult) error {
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	return rdb.Set(ctx, resKey, strconv.Itoa(int(r)), definitions.RedisSFResultTTL).Err()
+}
+
+// sfTryLock tries to acquire a short lock in Redis with a random token.
+func (a *AuthState) sfTryLock(ctx context.Context, rdb redis.UniversalClient, lockKey string) (token string, ok bool, err error) {
+	// lightweight token; uniqueness is sufficient here
+	token = fmt.Sprintf("%s-%d", a.Username, time.Now().UnixNano())
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	ok, err = rdb.SetNX(ctx, lockKey, token, definitions.RedisSFLockTTL).Result()
+
+	return
+}
+
+// sfUnlock releases the lock if the token still matches (best effort).
+func (a *AuthState) sfUnlock(ctx context.Context, lockKey, token string) {
+	// Use central Redis Lua script executor which uploads scripts and tracks stats
+	_, _ = rediscli.ExecuteScript(ctx, "UnlockIfTokenMatches", rediscli.LuaScripts["UnlockIfTokenMatches"], []string{lockKey}, token)
+}
+
+// sfPubSubWait subscribes to a channel and waits for a wakeup, checking the result key after subscribe and upon messages.
+func (a *AuthState) sfPubSubWait(ctx context.Context, rdb redis.UniversalClient, channel string, check func() (definitions.AuthResult, bool, error)) (definitions.AuthResult, bool) {
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	pubsub := rdb.Subscribe(ctx, channel)
+	defer pubsub.Close()
+
+	// After subscribing, immediately check for an already present result
+	if r, ok, err := check(); err == nil && ok {
+		return r, true
+	}
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, false
+		case msg := <-ch:
+			if msg == nil {
+				return 0, false
+			}
+
+			if r, ok, err := check(); err == nil && ok {
+				return r, true
+			}
+		}
+	}
+}
+
 // HandlePassword handles the authentication process for the password flow.
 // It performs common validation checks and then proceeds based on the value of ctx.Value(definitions.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
@@ -1868,12 +1973,135 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		return a.handleLocalCache(ctx)
 	}
 
-	useCache, backendPos, passDBs := a.handleBackendTypes()
+	// In-process singleflight deduplication (backchannel only)
+	key := a.generateSingleflightKey()
+	reqCtx := ctx.Request.Context()
 
-	// Further control flow based on whether cache is used and authentication status
-	authResult = a.authenticateUser(ctx, useCache, backendPos, passDBs)
+	// Distributed result shortcut (cluster-wide): if another instance already finished
+	// this key very recently, use its result immediately to avoid extra work.
+	var redisWrite redis.UniversalClient
+	var redisRead redis.UniversalClient
 
-	return authResult
+	// Option A: allow disabling distributed dedup via configuration (default: disabled)
+	distEnabled := config.GetFile().GetServer().GetDedup().IsDistributedEnabled()
+	if distEnabled {
+		if rc := rediscli.GetClient(); rc != nil {
+			redisWrite = rc.GetWriteHandle()
+			redisRead = rc.GetReadHandle()
+
+			if redisRead != nil {
+				resKey, _, _ := a.sfRedisKeys()
+				if r, ok, _ := a.sfReadResult(reqCtx, redisRead, resKey); ok {
+					// Take distributed result
+					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "dist_follower")
+
+					return r
+				}
+			}
+		}
+	}
+
+	// Prepare per-request ID for leadership detection (prefer GUID)
+	reqID := ""
+	if a.GUID != nil {
+		reqID = *a.GUID
+	} else {
+		reqID = fmt.Sprintf("no-guid-%d", time.Now().UnixNano())
+	}
+
+	// Derive wait deadline from request context, with a small safety cap if none
+	var timer *time.Timer
+
+	if dl, ok := reqCtx.Deadline(); ok {
+		d := time.Until(dl)
+		if d <= 0 {
+			backchanSF.Forget(key)
+
+			return definitions.AuthResultTempFail
+		}
+
+		timer = time.NewTimer(d)
+	} else {
+		timer = time.NewTimer(definitions.SingleflightWaitCap)
+	}
+
+	defer timer.Stop()
+
+	ch := backchanSF.DoChan(key, func() (any, error) {
+		// If distributed dedup is enabled and Redis is available, coordinate across instances
+		if distEnabled && redisWrite != nil {
+			resKey, lockKey, chName := a.sfRedisKeys()
+
+			if token, got, _ := a.sfTryLock(reqCtx, redisWrite, lockKey); got {
+				defer a.sfUnlock(reqCtx, lockKey, token)
+
+				useCache, backendPos, passDBs := a.handleBackendTypes()
+				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+				_ = a.sfWriteResult(reqCtx, redisWrite, resKey, r)
+
+				stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
+
+				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
+			}
+
+			// Didn't get the lock: wait via Pub/Sub for result, then read once
+			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
+				return a.sfReadResult(reqCtx, redisRead, resKey)
+			}); ok {
+				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
+			}
+			// Timeout/cancel: fallthrough to compute locally
+		}
+
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		// Leader returns its reqID for followers to compare
+		return sfAuthResult{AuthResult: res, LeaderID: reqID}, nil
+	})
+
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return definitions.AuthResultTempFail
+		}
+
+		sfa := r.Val.(sfAuthResult)
+
+		role := "follower"
+		if sfa.LeaderID == reqID {
+			role = "leader"
+		}
+
+		// Log leadership role for large log output
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, role)
+
+		return sfa.AuthResult
+	case <-reqCtx.Done():
+		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
+		backchanSF.Forget(key)
+
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		// Log fallback as follower information as requested
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_ctx_canceled")
+
+		return res
+	case <-timer.C:
+		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
+		backchanSF.Forget(key)
+
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		// Log fallback info
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_timeout")
+
+		return res
+	}
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
@@ -2166,13 +2394,32 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 		definitions.LogKeyMsg, "Calling saveFailedPasswordCounterInRedis()",
 	)
 
-	// Increase counters
+	// Increase counters (burst-deduplicated)
 	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)
 
-	bm.SaveFailedPasswordCounterInRedis()
+	// Redis burst gate: only the first within a short window should increase BF counters
+	// Build burst key from strict singleflight hash to match auth dedup semantics
+	ttl := definitions.SingleflightWaitCap
+	if ttl < time.Second {
+		ttl = time.Second
+	}
+	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
+	if res, err := rediscli.ExecuteScript(ctx.Request.Context(), "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
+		if v, ok := res.(int64); ok && v == 1 {
+			bm.SaveFailedPasswordCounterInRedis()
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
+		} else {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_follower")
+		}
+	} else {
+		// Fail-open: still count, but log error as follower for visibility
+		bm.SaveFailedPasswordCounterInRedis()
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
+	}
 }
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
@@ -3472,6 +3719,33 @@ func (a *AuthState) generateLocalCacheKey() string {
 			return a.ClientIP
 		}(),
 	)
+}
+
+// generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
+// Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID]
+func (a *AuthState) generateSingleflightKey() string {
+	// Try to enrich account if present in cache already
+	account := a.refreshUserAccount()
+	if account == "" {
+		account = a.GetAccount()
+	}
+
+	clientIP := a.ClientIP
+	if clientIP == "" {
+		clientIP = "0.0.0.0"
+	}
+
+	sslFlag := "0"
+	if a.XSSL != "" || a.XSSLProtocol != "" {
+		sslFlag = "1"
+	}
+
+	sep := "\x00"
+	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + account + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
+	if a.OIDCCID != "" {
+		return base + sep + a.OIDCCID
+	}
+	return base
 }
 
 // GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.

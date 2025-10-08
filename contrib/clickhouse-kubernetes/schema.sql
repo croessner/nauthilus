@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   INDEX idx_client_ip  client_ip  TYPE tokenbf_v1(1024, 3, 0) GRANULARITY 64
 ) ENGINE = MergeTree
 ORDER BY (ts)
+TTL ts + INTERVAL 1 WEEK DELETE
 SETTINGS index_granularity = 8192;
 
 /*

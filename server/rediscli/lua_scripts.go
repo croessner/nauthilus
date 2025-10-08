@@ -88,8 +88,35 @@ end
 -- Calculate maximum allowed negative attempts
 local max_negative = math.floor((percent * positive) / 100)
 
--- Return the calculated percentage, max negative attempts, positive count, negative count, and factor
+-- Return the calculated percentage, max negative attempts, positive count, positive count, and factor
 return {percent, max_negative, positive, negative, 1}
+`,
+
+	// RWPAllowSet atomically checks whether a password hash is already in the allow-set or can be added
+	// within the configured threshold. Returns 1 if RWP allowance applies, 0 otherwise.
+	// KEYS[1] - The allow-set key (a Redis Set)
+	// ARGV[1] - Threshold (max unique hashes)
+	// ARGV[2] - TTL in seconds
+	// ARGV[3] - Current password hash
+	"RWPAllowSet": `
+local key = KEYS[1]
+local threshold = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local hash = ARGV[3]
+
+if redis.call('SISMEMBER', key, hash) == 1 then
+  redis.call('EXPIRE', key, ttl)
+  return 1
+end
+
+local card = redis.call('SCARD', key)
+if card < threshold then
+  redis.call('SADD', key, hash)
+  redis.call('EXPIRE', key, ttl)
+  return 1
+end
+
+return 0
 `,
 
 	// ColdStartGraceSeed atomically sets a one-time cold-start grace key and seeds a per-password evidence key.
@@ -100,5 +127,16 @@ return {percent, max_negative, positive, negative, 1}
 local c = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
 redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1])
 if c then return 1 else return 0 end
+`,
+
+	// UnlockIfTokenMatches deletes the lock key only if the stored token matches the provided token
+	// KEYS[1] - The lock key
+	// ARGV[1] - The expected token
+	"UnlockIfTokenMatches": `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
 `,
 }
