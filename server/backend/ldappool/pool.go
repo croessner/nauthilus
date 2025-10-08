@@ -79,6 +79,9 @@ type ldapPoolImpl struct {
 
 	// conf refers to the configuration details for the LDAP connections in the pool.
 	conf []*config.LDAPConf
+
+	// tokens is a counting semaphore limiting concurrent usage to poolSize.
+	tokens chan struct{}
 }
 
 // StartHouseKeeper is a background task responsible for managing and cleaning up idle LDAP connections in the pool.
@@ -121,7 +124,7 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldapWaitGroup *sync.WaitGroup) error {
 	ldapWaitGroup.Add(1)
 
-	connNumber, err := l.getConnection(ldapRequest.GUID, ldapWaitGroup)
+	connNumber, err := l.getConnection(ldapRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -137,7 +140,7 @@ func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest, ldap
 func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest, ldapWaitGroup *sync.WaitGroup) error {
 	ldapWaitGroup.Add(1)
 
-	connNumber, err := l.getConnection(ldapAuthRequest.GUID, ldapWaitGroup)
+	connNumber, err := l.getConnection(ldapAuthRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -294,7 +297,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		"idle_pool_size", idlePoolSize,
 	)
 
-	return &ldapPoolImpl{
+	lp := &ldapPoolImpl{
 		numberOfWorkers: numberOfWorkers,
 		poolType:        poolType,
 		poolSize:        poolSize,
@@ -304,6 +307,14 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		conn:            conn,
 		conf:            conf,
 	}
+
+	// Initialize semaphore with poolSize tokens
+	lp.tokens = make(chan struct{}, poolSize)
+	for i := 0; i < poolSize; i++ {
+		lp.tokens <- struct{}{}
+	}
+
+	return lp
 }
 
 // logCompletion logs a debug message indicating that the houseKeeper() method of LDAPPool has been terminated.
@@ -502,65 +513,66 @@ func (l *ldapPoolImpl) logConnectionError(guid *string, err error) {
 	)
 }
 
-// waitForFreeConnection waits for a free connection if the LDAP connection pool is exhausted and logs related events.
-func (l *ldapPoolImpl) waitForFreeConnection(guid *string, ldapConnIndex int, ldapWaitGroup *sync.WaitGroup) error {
+// acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.
+func (l *ldapPoolImpl) acquireTokenWithTimeout() error {
 	connectAbortTimeout := config.GetFile().GetLDAPConfigConnectAbortTimeout()
 	if connectAbortTimeout == 0 {
 		connectAbortTimeout = 10 * time.Second
 	}
 
 	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
-
 	defer cancel()
 
-	if ldapConnIndex == definitions.LDAPPoolExhausted {
-		level.Warn(log.Logger).Log(
-			definitions.LogKeyLDAPPoolName, l.name,
-			definitions.LogKeyGUID, *guid,
-			definitions.LogKeyMsg, "Pool exhausted. Waiting for a free connection")
-
-		done := make(chan struct{})
-
-		go func() {
-			ldapWaitGroup.Wait()
-
-			close(done)
-		}()
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context timeout while waiting for LDAP availability")
-
-		case <-done:
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyLDAPPoolName, l.name,
-				definitions.LogKeyGUID, *guid,
-				definitions.LogKeyMsg, "Pool got free connections")
-
-			return nil
-		}
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context timeout while waiting for LDAP token")
+	case <-l.tokens:
+		return nil
 	}
-
-	return nil
 }
 
-// getConnection retrieves an available LDAP connection number from the pool and waits if the pool is exhausted.
-func (l *ldapPoolImpl) getConnection(guid *string, ldapWaitGroup *sync.WaitGroup) (connNumber int, err error) {
-EndlessLoop:
+// releaseToken returns one capacity token to the pool.
+func (l *ldapPoolImpl) releaseToken() {
+	// Non-blocking in normal flow due to buffer size == poolSize
+	l.tokens <- struct{}{}
+}
+
+// getConnection retrieves an available LDAP connection number from the pool using a semaphore.
+func (l *ldapPoolImpl) getConnection(guid *string) (connNumber int, err error) {
+	// Acquire capacity token with timeout
+	if err := l.acquireTokenWithTimeout(); err != nil {
+		return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
+	}
+
+	// Also bound the search for a free connection by the same timeout to avoid infinite wait when all are busy.
+	connectAbortTimeout := config.GetFile().GetLDAPConfigConnectAbortTimeout()
+	if connectAbortTimeout == 0 {
+		connectAbortTimeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
+	defer cancel()
+
 	for {
 		for index := 0; index < len(l.conn); index++ {
 			connNumber = l.processConnection(index, guid)
 			if connNumber != definitions.LDAPPoolExhausted {
-				break EndlessLoop
+				return connNumber, nil
 			}
 		}
 
-		if err = l.waitForFreeConnection(guid, connNumber, ldapWaitGroup); err != nil {
-			return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
+		// Check for timeout/cancel to prevent hanging if all connections remain busy
+		select {
+		case <-ctx.Done():
+			// Release the token since we are aborting without acquiring a connection
+			l.releaseToken()
+
+			return definitions.LDAPPoolExhausted, fmt.Errorf("context timeout while waiting for free LDAP connection")
+		default:
+			// Short backoff; token guarantees capacity, a subsequent scan should find a free/connected slot soon.
+			time.Sleep(1 * time.Millisecond)
 		}
 	}
-
-	return connNumber, nil
 }
 
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.
@@ -689,10 +701,11 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 	request.GetLDAPReplyChan() <- ldapReply
 
 	ldapPool.conn[index].GetMutex().Lock()
-
 	ldapPool.conn[index].SetState(definitions.LDAPStateFree)
-
 	ldapPool.conn[index].GetMutex().Unlock()
+
+	// Release capacity token back to the pool
+	ldapPool.releaseToken()
 }
 
 // processLookupSearchRequest processes an LDAP search request on a specific connection index in the LDAP pool.
@@ -763,7 +776,7 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 	ldapReply := &bktype.LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapRequest.GUID, index); ldapReply.Err != nil {
-		ldapRequest.LDAPReplyChan <- ldapReply
+		sendLDAPReplyAndUnlockState(l, index, ldapRequest, ldapReply)
 
 		return
 	}
@@ -813,7 +826,7 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDA
 	ldapReply := &bktype.LDAPReply{}
 
 	if ldapReply.Err = l.checkConnection(ldapAuthRequest.GUID, index); ldapReply.Err != nil {
-		ldapAuthRequest.LDAPReplyChan <- ldapReply
+		sendLDAPReplyAndUnlockState(l, index, ldapAuthRequest, ldapReply)
 
 		return
 	}

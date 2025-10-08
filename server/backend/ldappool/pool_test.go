@@ -32,27 +32,25 @@ import (
 )
 
 type mockLDAPConnection struct {
-	state     int32
-	mutex     sync.Mutex
-	connError error
-	bindError error
+	state       int32
+	mutex       sync.Mutex
+	connError   error
+	bindError   error
+	searchDelay time.Duration
 }
 
-func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {
-	panic("implement me")
-}
+func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
-func (m *mockLDAPConnection) IsClosing() bool {
-	panic("implement me")
-}
+func (m *mockLDAPConnection) IsClosing() bool { return false }
 
 func (m *mockLDAPConnection) Search(_ *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+	if m.searchDelay > 0 {
+		time.Sleep(m.searchDelay)
+	}
 	return nil, nil, nil
 }
 
-func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error {
-	panic("implement me")
-}
+func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error { return nil }
 
 func (m *mockLDAPConnection) GetState() definitions.LDAPState {
 	// false positive Data Race - this is thread-safe, verified by inspection
@@ -160,6 +158,13 @@ func TestHandleLookupRequest(t *testing.T) {
 				ctx:      ctx,
 				conn:     mockConns,
 				conf:     dummyLDAPConf,
+				poolSize: len(mockConns),
+				tokens:   make(chan struct{}, len(mockConns)),
+			}
+
+			// Prefill tokens to simulate available capacity equal to poolSize
+			for i := 0; i < len(mockConns); i++ {
+				pool.tokens <- struct{}{}
 			}
 
 			// Reset metrics (you may skip if not using real stats library)
@@ -187,3 +192,43 @@ func TestHandleLookupRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestSemaphoreTimeout(t *testing.T) {
+	log.SetupLogging(definitions.LogLevelNone, false, false, "")
+
+	config.SetTestFile(&config.FileSettings{
+		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},
+		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ConnectAbortTimeout: 100 * time.Millisecond}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// One connection that sleeps to hold the token
+	mockConns := []LDAPConnection{
+		&mockLDAPConnection{state: int32(definitions.LDAPStateFree), searchDelay: 300 * time.Millisecond},
+	}
+
+	pool := &ldapPoolImpl{
+		poolType: definitions.LDAPPoolLookup,
+		name:     "test-timeout",
+		ctx:      ctx,
+		conn:     mockConns,
+		conf:     []*config.LDAPConf{{}},
+		poolSize: 1,
+		tokens:   make(chan struct{}, 1),
+	}
+	pool.tokens <- struct{}{}
+
+	wg := &sync.WaitGroup{}
+
+	// First request consumes the single token and sleeps inside Search
+	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r1"), HTTPClientContext: ctx}, wg)
+	assert.NoError(t, err1)
+
+	// Second request should time out acquiring a token
+	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r2"), HTTPClientContext: ctx}, wg)
+	assert.Error(t, err2)
+}
+
+func utilPtr(s string) *string { return &s }
