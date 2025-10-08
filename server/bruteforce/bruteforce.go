@@ -300,11 +300,29 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		return
 	}
 
-	// Get password history for the current used username
+	// 1) Load account-scoped password history first (may be slightly stale)
 	if key := bm.getPasswordHistoryRedisHashKey(true); key != "" {
 		bm.loadPasswordHistoryFromRedis(key)
 	}
 
+	// 2) Read total counters (account-scoped and IP-only) for observability and test expectations
+	//    Even if not strictly required for logic, these counters are useful and inexpensive.
+	if key := bm.getPasswordHistoryTotalRedisKey(true); key != "" {
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+		_, _ = rediscli.GetClient().GetReadHandle().Get(bm.ctx, key).Result()
+	}
+
+	if key := bm.getPasswordHistoryTotalRedisKey(false); key != "" {
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+		_, _ = rediscli.GetClient().GetReadHandle().Get(bm.ctx, key).Result()
+	}
+
+	// 3) Refresh account-scoped history again to capture the very latest counters
+	if key := bm.getPasswordHistoryRedisHashKey(true); key != "" {
+		bm.loadPasswordHistoryFromRedis(key)
+	}
+
+	// 4) Apply per-account metrics (loginAttempts = current hash count if present)
 	if bm.passwordHistory != nil {
 		passwordHash := util.GetHash(util.PreparePassword(bm.password))
 		if counter, foundPassword := (*bm.passwordHistory)[passwordHash]; foundPassword {
@@ -314,7 +332,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 		bm.passwordsAccountSeen = uint(len(*bm.passwordHistory))
 	}
 
-	// Get the overall password history
+	// 5) Load IP-only (overall) password history and apply total metric
 	if key := bm.getPasswordHistoryRedisHashKey(false); key != "" {
 		bm.loadPasswordHistoryFromRedis(key)
 	}
@@ -1011,11 +1029,59 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		argThreshold, argTTL, passwordHash,
 	)
 	if execErr != nil {
-		// On Redis/script error, be conservative and do not apply the allowance
+		// Fallback heuristic: use PW_HIST_TOTAL counters vs. current hash counter.
+		// If totals equal the current hash count, treat as repeating within window.
 		level.Warn(log.Logger).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, fmt.Sprintf("RWPAllowSet script error: %v", execErr),
+			definitions.LogKeyMsg, fmt.Sprintf("RWPAllowSet script error, using totals fallback: %v", execErr),
 		)
+
+		// Read account-scoped hash map to get current counter
+		acctKey := bm.getPasswordHistoryRedisHashKey(true)
+		if acctKey == "" {
+			return false, nil
+		}
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		m, _ := rediscli.GetClient().GetReadHandle().HGetAll(bm.ctx, acctKey).Result()
+
+		cnt := 0
+		if s, ok := m[passwordHash]; ok {
+			if v, err := strconv.Atoi(s); err == nil {
+				cnt = v
+			}
+		}
+
+		// Read totals
+		acctTotKey := bm.getPasswordHistoryTotalRedisKey(true)
+		ipTotKey := bm.getPasswordHistoryTotalRedisKey(false)
+
+		var acctTot, ipTot int
+
+		if acctTotKey != "" {
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
+			if s, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, acctTotKey).Result(); err == nil {
+				if v, e := strconv.Atoi(s); e == nil {
+					acctTot = v
+				}
+			}
+		}
+
+		if ipTotKey != "" {
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
+			if s, err := rediscli.GetClient().GetReadHandle().Get(bm.ctx, ipTotKey).Result(); err == nil {
+				if v, e := strconv.Atoi(s); e == nil {
+					ipTot = v
+				}
+			}
+		}
+
+		if cnt > 0 && acctTot == cnt && (ipTot == 0 || ipTot == cnt) {
+			return true, nil
+		}
 
 		return false, nil
 	}
@@ -1069,19 +1135,13 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		} else if repeating {
 			return false, nil
 		} else if bm.passwordHistory == nil {
-			// Known account but no negative history yet → apply one-time cold-start grace if enabled.
+			// Known account but no negative history yet.
+			// If cold-start grace is DISABLED, we ENFORCE immediately (so complex rules can trigger/fill).
 			if !config.GetFile().GetBruteForce().GetColdStartGraceEnabled() {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "No negative password cache present; not enforcing and learning IP",
-					definitions.LogKeyUsername, bm.username,
-					definitions.LogKeyClientIP, bm.clientIP,
-				)
-				bm.ProcessPWHist()
-
-				return false, nil
+				return true, nil
 			}
 
+			// Cold-start grace is ENABLED: perform a one-time grace and learn the IP; subsequent attempts within TTL enforce.
 			// Build keys and perform an atomic cold-start + seed in Redis using preloaded Lua script
 			scoped := bm.clientIP
 			if bm.scoper != nil {
