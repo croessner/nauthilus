@@ -17,6 +17,8 @@ package bruteforce
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	errors2 "errors"
 	"fmt"
 	"net"
@@ -476,6 +478,55 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	return withError, ruleTriggered, ruleNumber
 }
 
+// bfBurstKey builds a short, privacy-safe Redis key for burst gating by hashing
+// salient request properties to collapse parallel identical attempts.
+func (bm *bucketManagerImpl) bfBurstKey() string {
+	// Build a strict semantic key: protocol|userOrAccount|scopedIP|oidcCID
+	user := bm.username
+	if user == "" && bm.accountName != "" {
+		user = bm.accountName
+	}
+
+	// Scope IP if scoper configured (e.g., to /64 for IPv6)
+	scoped := bm.clientIP
+	if bm.scoper != nil {
+		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+	}
+
+	proto := bm.protocol
+	if proto == "" {
+		proto = "-"
+	}
+
+	base := proto + "\x00" + user + "\x00" + scoped + "\x00" + bm.oidcCID
+	sum := sha1.Sum([]byte(base))
+	h := hex.EncodeToString(sum[:])
+
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + h
+}
+
+// burstLeaderGate returns true for the first caller within the small window; false for followers.
+func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
+	// Ensure at least 1s because the Lua uses EXPIRE seconds
+	ttl := time.Second
+	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+	key := bm.bfBurstKey()
+
+	res, err := rediscli.ExecuteScript(ctx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
+	if err != nil {
+		// Fail-open: better to overcount than miss, and avoid blocking auth
+		level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Burst gate script error: %v", err))
+
+		return true
+	}
+
+	if v, ok := res.(int64); ok && v == 1 {
+		return true
+	}
+
+	return false
+}
+
 // ProcessBruteForce evaluates and handles brute force detection logic, deciding whether further actions are necessary.
 func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
 	if alreadyTriggered || ruleTriggered {
@@ -538,8 +589,13 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		// For pre-blocked requests, authentication will not run and thus
 		// processCacheUserLoginFail will not increment counters. Ensure we
-		// count this failed attempt exactly once here.
-		bm.SaveFailedPasswordCounterInRedis()
+		// count this failed attempt exactly once here, but deduplicate bursts.
+		if bm.burstLeaderGate(bm.ctx) {
+			bm.SaveFailedPasswordCounterInRedis()
+			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_leader")
+		} else {
+			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_follower")
+		}
 
 		logBucketMatchingRule(bm, network, rule, message)
 

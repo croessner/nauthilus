@@ -128,4 +128,15 @@ local c = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
 redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1])
 if c then return 1 else return 0 end
 `,
+
+	// UnlockIfTokenMatches deletes the lock key only if the stored token matches the provided token
+	// KEYS[1] - The lock key
+	// ARGV[1] - The expected token
+	"UnlockIfTokenMatches": `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+`,
 }
