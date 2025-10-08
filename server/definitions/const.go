@@ -30,6 +30,9 @@ const StatusClientClosedRequest = 499
 // MsgClientClosedRequest is a human-readable message for client-closed requests.
 const MsgClientClosedRequest = "Client Closed Request"
 
+// LogKeyLeadership is the log attribute name for recording singleflight role (leader/follower) in large logs.
+const LogKeyLeadership = "leadership"
+
 // Role constants for JWT authentication
 const (
 	// RoleAdmin represents the admin role with full access to all features

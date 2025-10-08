@@ -1855,6 +1855,13 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	return false
 }
 
+// sfAuthResult encapsulates the auth result along with the LeaderID so that
+// followers can determine if they were leader or follower for logging.
+type sfAuthResult struct {
+	AuthResult definitions.AuthResult
+	LeaderID   string
+}
+
 // HandlePassword handles the authentication process for the password flow.
 // It performs common validation checks and then proceeds based on the value of ctx.Value(definitions.CtxLocalCacheAuthKey).
 // If it is true, it calls the handleLocalCache function.
@@ -1874,6 +1881,14 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 	// In-process singleflight deduplication (backchannel only)
 	key := a.generateSingleflightKey()
 	reqCtx := ctx.Request.Context()
+
+	// Prepare per-request ID for leadership detection (prefer GUID)
+	reqID := ""
+	if a.GUID != nil {
+		reqID = *a.GUID
+	} else {
+		reqID = fmt.Sprintf("no-guid-%d", time.Now().UnixNano())
+	}
 
 	// Derive wait deadline from request context, with a small safety cap if none
 	var timer *time.Timer
@@ -1897,7 +1912,8 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
 
-		return res, nil
+		// Leader returns its reqID for followers to compare
+		return sfAuthResult{AuthResult: res, LeaderID: reqID}, nil
 	})
 
 	select {
@@ -1906,17 +1922,39 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 			return definitions.AuthResultTempFail
 		}
 
-		return r.Val.(definitions.AuthResult)
+		sfa := r.Val.(sfAuthResult)
+
+		role := "follower"
+		if sfa.LeaderID == reqID {
+			role = "leader"
+		}
+
+		// Log leadership role for large log output
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, role)
+
+		return sfa.AuthResult
 	case <-reqCtx.Done():
+		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
-		useCache, backendPos, passDBs := a.handleBackendTypes()
 
-		return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		// Log fallback as follower information as requested
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_ctx_canceled")
+
+		return res
 	case <-timer.C:
+		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
-		useCache, backendPos, passDBs := a.handleBackendTypes()
 
-		return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		// Log fallback info
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_timeout")
+
+		return res
 	}
 }
 
