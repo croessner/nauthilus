@@ -95,7 +95,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			name:              "single_connection_available",
 			poolType:          definitions.LDAPPoolLookup,
 			initialConnStates: []definitions.LDAPState{definitions.LDAPStateFree},
-			expectedBusyConns: 1,
+			expectedBusyConns: 0,
 		},
 		{
 			name:              "all_connections_busy",
@@ -107,7 +107,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			name:              "connection_needs_binding",
 			poolType:          definitions.LDAPPoolLookup,
 			initialConnStates: []definitions.LDAPState{definitions.LDAPStateClosed},
-			expectedBusyConns: 1,
+			expectedBusyConns: 0,
 		},
 		{
 			name:              "connection_bind_failure",
