@@ -19,7 +19,6 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
@@ -33,7 +32,6 @@ import (
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
 func LDAPMainWorker(ctx context.Context, poolName string) {
-	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
 
@@ -64,8 +62,7 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 						continue
 					}
 
-					if err := ldapPool.HandleLookupRequest(ldapRequest, &ldapWaitGroup); err != nil {
-						ldapWaitGroup.Done()
+					if err := ldapPool.HandleLookupRequest(ldapRequest); err != nil {
 						ldapRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
 				}
@@ -78,7 +75,6 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
 // It now uses a priority queue instead of channels for better request handling.
 func LDAPAuthWorker(ctx context.Context, poolName string) {
-	var ldapWaitGroup sync.WaitGroup
 
 	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth, poolName)
 
@@ -109,8 +105,7 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 						continue
 					}
 
-					if err := ldapPool.HandleAuthRequest(ldapAuthRequest, &ldapWaitGroup); err != nil {
-						ldapWaitGroup.Done()
+					if err := ldapPool.HandleAuthRequest(ldapAuthRequest); err != nil {
 						ldapAuthRequest.LDAPReplyChan <- &bktype.LDAPReply{Err: err}
 					}
 				}
