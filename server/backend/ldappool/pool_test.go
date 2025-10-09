@@ -144,7 +144,6 @@ func TestHandleLookupRequest(t *testing.T) {
 				}
 			}
 
-			waitGroup := &sync.WaitGroup{}
 			ctx, cancel := context.WithCancel(context.Background())
 
 			defer cancel()
@@ -174,7 +173,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			pool.HandleLookupRequest(&bktype.LDAPRequest{
 				GUID:              &tc.name,
 				HTTPClientContext: ctx,
-			}, waitGroup)
+			})
 
 			// Give goroutines time to execute
 			time.Sleep(50 * time.Millisecond)
@@ -220,14 +219,12 @@ func TestSemaphoreTimeout(t *testing.T) {
 	}
 	pool.tokens <- struct{}{}
 
-	wg := &sync.WaitGroup{}
-
 	// First request consumes the single token and sleeps inside Search
-	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r1"), HTTPClientContext: ctx}, wg)
+	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r1"), HTTPClientContext: ctx})
 	assert.NoError(t, err1)
 
 	// Second request should time out acquiring a token
-	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r2"), HTTPClientContext: ctx}, wg)
+	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r2"), HTTPClientContext: ctx})
 	assert.Error(t, err2)
 }
 

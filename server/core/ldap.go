@@ -134,7 +134,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	passDBResult = GetPassDBResultFromPool()
 
-	ldapReplyChan := make(chan *bktype.LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
@@ -244,7 +244,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	totpSecretPre := saveMasterUserTOTPSecret(auth.MasterUserMode, ldapReply, protocol.TOTPSecretField)
 
 	if !auth.NoAuth {
-		ldapReplyChan = make(chan *bktype.LDAPReply)
+		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.GUID,
@@ -324,7 +324,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply)
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
 	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
