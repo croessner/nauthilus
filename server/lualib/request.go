@@ -263,7 +263,9 @@ func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
 	request.RawSetString(definitions.LuaRequestOIDCCID, lua.LString(c.OIDCCID))
 	request.RawSetString(definitions.LuaRequestBruteForceBucket, lua.LString(c.BruteForceName))
 	request.RawSetString(definitions.LuaRequestFeature, lua.LString(c.FeatureName))
-	request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
+	if c.StatusMessage != nil {
+		request.RawSetString(definitions.LuaRequestStatusMessage, lua.LString(*c.StatusMessage))
+	}
 	request.RawSetString(definitions.LuaRequestXSSL, lua.LString(c.XSSL))
 	request.RawSetString(definitions.LuaRequestXSSSLSessionID, lua.LString(c.XSSLSessionID))
 	request.RawSetString(definitions.LuaRequestXSSLClientVerify, lua.LString(c.XSSLClientVerify))

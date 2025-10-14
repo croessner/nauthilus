@@ -394,7 +394,11 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			return true, false, ruleNumber
 		}
 
-		// At this point, we've found at least one rule that matches our criteria
+		// Only consider this rule matched if it yields a valid network for the client IP
+		if *network == nil {
+			continue
+		}
+
 		matchedAnyRule = true
 
 		if ruleName, err = bm.getPreResultBruteForceRedis(&rules[ruleNumber]); ruleName != "" && err == nil {
@@ -469,7 +473,11 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			return true, false, ruleNumber
 		}
 
-		// At this point, we've found at least one rule that matches our criteria
+		// Only consider this rule matched if it yields a valid network for the client IP
+		if *network == nil {
+			continue
+		}
+
 		matchedAnyRule = true
 
 		bm.loadBruteForceBucketCounter(&rules[ruleNumber])

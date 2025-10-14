@@ -253,6 +253,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
+	// If neither path matched any rule/network, do not proceed further.
+	if !alreadyTriggered && !ruleTriggered {
+		return false
+	}
+
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
