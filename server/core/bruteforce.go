@@ -44,7 +44,12 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 
 		// Set the fields
 		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-		commonRequest.Repeating = alreadyTriggered
+		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
+		// brute-force bucket counter has reached or exceeded the rule limit.
+		bfCount := a.BruteForceCounter[rule.Name]
+		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
+
+		commonRequest.Repeating = isRepeating
 		commonRequest.UserFound = func() bool { return accountName != "" }()
 		commonRequest.Authenticated = false // unavailable
 		commonRequest.NoAuth = a.NoAuth
