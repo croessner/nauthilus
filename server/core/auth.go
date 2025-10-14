@@ -1724,9 +1724,92 @@ func executeLuaPostAction(
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
 
+	// Derive client_net and repeating for Post-Action as well, so ClickHouse rows have these fields even
+	// when the dedicated brute-force action is not used.
+	clientNet := ""
+	isRepeating := false
+
+	if config.GetFile().HasFeature(definitions.FeatureBruteForce) && clientIP != "" {
+		// Check if protocol is enabled for brute-force
+		bfProtoEnabled := false
+		for _, p := range config.GetFile().GetServer().GetBruteForceProtocols() {
+			if p.Get() == protocol {
+				bfProtoEnabled = true
+
+				break
+			}
+		}
+
+		if bfProtoEnabled {
+			ip := net.ParseIP(clientIP)
+			if ip != nil {
+				for i := range config.GetFile().GetBruteForceRules() {
+					r := &config.GetFile().GetBruteForceRules()[i]
+
+					// FilterByProtocol
+					if len(r.FilterByProtocol) > 0 && protocol != "" {
+						matched := false
+						for _, fp := range r.FilterByProtocol {
+							if fp == protocol {
+								matched = true
+								break
+							}
+						}
+
+						if !matched {
+							continue
+						}
+					}
+
+					// FilterByOIDCCID
+					if len(r.FilterByOIDCCID) > 0 && oidccid != "" {
+						matched := false
+						for _, cid := range r.FilterByOIDCCID {
+							if cid == oidccid {
+								matched = true
+								break
+							}
+						}
+
+						if !matched {
+							continue
+						}
+					}
+
+					// IP version
+					if ip.To4() != nil {
+						if !r.IPv4 {
+							continue
+						}
+					} else if ip.To16() != nil {
+						if !r.IPv6 {
+							continue
+						}
+					} else {
+						continue
+					}
+
+					if r.CIDR > 0 {
+						if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
+							clientNet = n.String()
+
+							// repeating from pre-result hash (long-lived info)
+							key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+							if exists, err := rediscli.GetClient().GetReadHandle().HExists(httpRequest.Context(), key, clientNet).Result(); err == nil && exists {
+								isRepeating = true
+							}
+
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Set the fields
 	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = false
+	commonRequest.Repeating = isRepeating
 	commonRequest.UserFound = userFound
 	commonRequest.Authenticated = authenticated
 	commonRequest.NoAuth = noAuth
@@ -1735,7 +1818,7 @@ func executeLuaPostAction(
 	commonRequest.Session = guid
 	commonRequest.ClientIP = clientIP
 	commonRequest.ClientPort = clientPort
-	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientNet = clientNet
 	commonRequest.ClientHost = clientHost
 	commonRequest.ClientID = clientID
 	commonRequest.LocalIP = localIP
