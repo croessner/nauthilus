@@ -45,6 +45,16 @@ local function exists_in_table(tbl, element)
     return false
 end
 
+-- Accept only ISO-3166-1 alpha-2 (two uppercase letters).
+-- Note: We intentionally do NOT sanitize custom logs to allow seeing raw values like "N/A" in logs.
+local function normalize_iso(code)
+    if type(code) ~= "string" then return nil end
+    -- trim whitespace and uppercase
+    local c = code:match("^%s*(.-)%s*$"):upper()
+    if c:match("^[A-Z][A-Z]$") then return c end
+    return nil
+end
+
 local function build_payload_and_cache_key(request)
     local nauthilus_util = require("nauthilus_util")
 
@@ -112,21 +122,28 @@ local function process_response_and_context(response)
     nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
 
     if response.object then
+        -- Keep logs raw to allow visibility of placeholders like "N/A"
         add_custom_logs(response.object)
         if nauthilus_util.is_table(response.object) then
             local result_iso_codes = {}
             for key, values in pairs(response.object) do
                 if key == "current_country_code" then
                     if nauthilus_util.is_string(values) then
-                        current_iso_code = values
+                        local norm = normalize_iso(values)
+                        if norm then
+                            current_iso_code = norm
+                        else
+                            current_iso_code = ""
+                        end
                     end
                 end
 
                 if key == "foreign_countries_seen" or key == "home_countries_seen" then
                     if nauthilus_util.is_table(values) then
                         for _, iso_code in ipairs(values) do
-                            if not exists_in_table(result_iso_codes, iso_code) then
-                                table.insert(result_iso_codes, iso_code)
+                            local norm = normalize_iso(iso_code)
+                            if norm and not exists_in_table(result_iso_codes, norm) then
+                                table.insert(result_iso_codes, norm)
                             end
                         end
                     end
