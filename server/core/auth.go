@@ -443,6 +443,12 @@ type AuthState struct {
 	// configuration file.
 	BruteForceCounter map[string]uint
 
+	// BFClientNet is a hint: the CIDR network chosen by the brute-force path for this request (if any).
+	BFClientNet string
+
+	// BFRepeating is a hint: whether the request belongs to a historically known brute-force CIDR.
+	BFRepeating bool
+
 	// SourcePassDBBackend is a marker for the Database that is responsible for a specific user. It is set by the
 	// password Database and stored in Redis to track the authentication flow across databases (including proxy).
 	SourcePassDBBackend definitions.Backend
@@ -539,6 +545,10 @@ func (a *AuthState) reset() {
 	a.SourcePassDBBackend = definitions.BackendUnknown
 	a.UsedPassDBBackend = definitions.BackendUnknown
 	a.MasterUserMode = false
+
+	// Reset brute-force hints
+	a.BFClientNet = ""
+	a.BFRepeating = false
 
 	// Reset pointer types
 	a.GUID = nil
@@ -1712,6 +1722,8 @@ func executeLuaPostAction(
 	sSLFingerprint string,
 	userFound bool,
 	authenticated bool,
+	bfClientNetHint string,
+	bfRepeatingHint bool,
 ) {
 	stopTimer := stats.PrometheusTimer(definitions.PromPostAction, "lua_post_action_request_total")
 
@@ -1724,9 +1736,122 @@ func executeLuaPostAction(
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
 
+	// Derive client_net and repeating for the Post-Action so that ClickHouse also receives these fields even when the dedicated brute-force action is not used.
+	// Prefer hints computed during the brute-force path if available.
+	clientNet := bfClientNetHint
+	isRepeating := bfRepeatingHint
+
+	if config.GetFile().HasFeature(definitions.FeatureBruteForce) && clientIP != "" {
+		// Check whether the protocol is enabled for brute-force processing
+		bfProtoEnabled := false
+		for _, p := range config.GetFile().GetServer().GetBruteForceProtocols() {
+			if p.Get() == protocol {
+				bfProtoEnabled = true
+
+				break
+			}
+		}
+
+		if bfProtoEnabled {
+			ip := net.ParseIP(clientIP)
+			if ip != nil {
+				var (
+					foundRepeatingNet string
+					foundRepeating    bool
+					bestCIDRRepeating uint = 0 // larger prefix = more specific
+					bestCIDRFallback  uint = 0 // for clientNet fallback if no hash-hit is found
+				)
+
+				for i := range config.GetFile().GetBruteForceRules() {
+					r := &config.GetFile().GetBruteForceRules()[i]
+
+					// FilterByProtocol
+					if len(r.FilterByProtocol) > 0 && protocol != "" {
+						matched := false
+						for _, fp := range r.FilterByProtocol {
+							if fp == protocol {
+								matched = true
+
+								break
+							}
+						}
+
+						if !matched {
+							continue
+						}
+					}
+
+					// FilterByOIDCCID
+					if len(r.FilterByOIDCCID) > 0 && oidccid != "" {
+						matched := false
+						for _, cid := range r.FilterByOIDCCID {
+							if cid == oidccid {
+								matched = true
+
+								break
+							}
+						}
+
+						if !matched {
+							continue
+						}
+					}
+
+					// IP version
+					if ip.To4() != nil {
+						if !r.IPv4 {
+							continue
+						}
+					} else if ip.To16() != nil {
+						if !r.IPv6 {
+							continue
+						}
+					} else {
+						continue
+					}
+
+					if r.CIDR > 0 {
+						if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
+							candidate := n.String()
+
+							// 1) Historical hit in the pre-result hash map?
+							if !isRepeating {
+								key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+
+								stats.GetMetrics().GetRedisReadCounter().Inc()
+
+								if exists, err := rediscli.GetClient().GetReadHandle().HExists(httpRequest.Context(), key, candidate).Result(); err == nil && exists {
+									if r.CIDR > bestCIDRRepeating {
+										bestCIDRRepeating = r.CIDR
+										foundRepeatingNet = candidate
+									}
+
+									foundRepeating = true
+								}
+							}
+
+							// 2) Fallback: choose the most specific network as clientNet if no hash hit is found (only if no hint was provided)
+							if bfClientNetHint == "" && (clientNet == "" || r.CIDR > bestCIDRFallback) {
+								bestCIDRFallback = r.CIDR
+								clientNet = candidate
+							}
+						}
+					}
+				}
+
+				if foundRepeating {
+					isRepeating = true
+					if foundRepeatingNet != "" {
+						clientNet = foundRepeatingNet
+					}
+				}
+			}
+		}
+	}
+
 	// Set the fields
 	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = false
+	commonRequest.Repeating = isRepeating
 	commonRequest.UserFound = userFound
 	commonRequest.Authenticated = authenticated
 	commonRequest.NoAuth = noAuth
@@ -1735,7 +1860,7 @@ func executeLuaPostAction(
 	commonRequest.Session = guid
 	commonRequest.ClientIP = clientIP
 	commonRequest.ClientPort = clientPort
-	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientNet = clientNet
 	commonRequest.ClientHost = clientHost
 	commonRequest.ClientID = clientID
 	commonRequest.LocalIP = localIP
@@ -1844,6 +1969,8 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 		a.SSLFingerprint,
 		userFound,
 		passDBResult.Authenticated,
+		a.BFClientNet,
+		a.BFRepeating,
 	)
 }
 

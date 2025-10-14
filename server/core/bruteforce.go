@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -34,7 +35,7 @@ import (
 )
 
 // handleBruteForceLuaAction handles the brute force Lua action based on the provided authentication state and rule config.
-func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
+func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
 	if config.GetFile().HaveLuaActions() {
 		finished := make(chan action.Done)
 		accountName := a.GetAccount()
@@ -44,7 +45,35 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 
 		// Set the fields
 		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-		commonRequest.Repeating = alreadyTriggered
+		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
+		// brute-force bucket counter has reached or exceeded the rule limit.
+		bfCount := a.BruteForceCounter[rule.Name]
+
+		// Derive client_net robustly: prefer provided network; fallback to CIDR from ClientIP and rule.
+		clientNet := ""
+
+		if network != nil && network.IP != nil && network.Mask != nil {
+			clientNet = network.String()
+		} else if a.ClientIP != "" && rule.CIDR > 0 {
+			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.ClientIP, rule.CIDR)); err == nil && n != nil {
+				clientNet = n.String()
+			}
+		}
+
+		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
+
+		// Fallback: if counter path didn't mark repeating, but this network is known in pre-result map, treat as repeating
+		if !isRepeating && clientNet != "" {
+			key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
+			if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, clientNet).Result(); err == nil && exists {
+				isRepeating = true
+			}
+		}
+
+		commonRequest.Repeating = isRepeating
 		commonRequest.UserFound = func() bool { return accountName != "" }()
 		commonRequest.Authenticated = false // unavailable
 		commonRequest.NoAuth = a.NoAuth
@@ -53,7 +82,7 @@ func (a *AuthState) handleBruteForceLuaAction(alreadyTriggered bool, rule *confi
 		commonRequest.Session = *a.GUID
 		commonRequest.ClientIP = a.ClientIP
 		commonRequest.ClientPort = a.XClientPort
-		commonRequest.ClientNet = network.String()
+		commonRequest.ClientNet = clientNet
 		commonRequest.ClientHost = a.ClientHost
 		commonRequest.ClientID = a.XClientID
 		commonRequest.LocalIP = a.XLocalIP
@@ -227,6 +256,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
+	// If neither path matched any rule/network, do not proceed further.
+	if !alreadyTriggered && !ruleTriggered {
+		return false
+	}
+
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
@@ -235,9 +269,36 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
 
-	if triggered {
+	// Compute and store brute-force hints for the Post-Action.
+	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
+	bfClientNet := ""
+	if network != nil && network.IP != nil && network.Mask != nil {
+		bfClientNet = network.String()
+	} else if a.ClientIP != "" && rules[ruleNumber].CIDR > 0 {
+		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.ClientIP, rules[ruleNumber].CIDR)); err == nil && n != nil {
+			bfClientNet = n.String()
+		}
+	}
+
+	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
+	bfRepeating := alreadyTriggered || (a.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
+	if !bfRepeating && bfClientNet != "" {
+		key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result(); err == nil && exists {
+			bfRepeating = true
+		}
+	}
+
+	// Store hints on AuthState for consumption by Post-Action
+	a.BFClientNet = bfClientNet
+	a.BFRepeating = bfRepeating
+
+	if triggered || alreadyTriggered {
 		updateLuaContext(a.Context, definitions.FeatureBruteForce)
-		a.handleBruteForceLuaAction(alreadyTriggered, &rules[ruleNumber], network)
+		a.handleBruteForceLuaAction(ctx, alreadyTriggered, &rules[ruleNumber], network)
 	}
 
 	return triggered
