@@ -198,7 +198,10 @@ function nauthilus_call_action(request)
             if rt.geoip_info.status and rt.geoip_info.status ~= "" then geoip_status = rt.geoip_info.status end
             if rt.geoip_info.iso_codes_seen and type(rt.geoip_info.iso_codes_seen) == "table" then
                 local parts = {}
-                for _, v in ipairs(rt.geoip_info.iso_codes_seen) do table.insert(parts, tostring(v)) end
+                for _, v in ipairs(rt.geoip_info.iso_codes_seen) do
+                    local s = tostring(v)
+                    if s:match("^[A-Z][A-Z]$") then table.insert(parts, s) end
+                end
                 if #parts > 0 then geoip_iso_codes = table.concat(parts, ",") end
             end
         end

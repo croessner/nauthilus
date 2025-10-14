@@ -449,10 +449,14 @@ function nauthilus_call_action(request)
     local iso_codes_seen = nauthilus_context.context_get("geoippolicyd_iso_codes_seen")
     local country_code = ""
 
-    -- Check if we have country code information
+    -- Pick the first valid ISO-3166 alpha-2 code (two uppercase letters)
     if iso_codes_seen and #iso_codes_seen > 0 then
-        -- Use the first country code from the list
-        country_code = iso_codes_seen[1]
+        for _, cc in ipairs(iso_codes_seen) do
+            if type(cc) == "string" and cc:match("^[A-Z][A-Z]$") then
+                country_code = cc
+                break
+            end
+        end
     end
 
     if country_code and country_code ~= "" then
