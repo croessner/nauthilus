@@ -553,6 +553,9 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		// capture context flag for downstream operations (e.g., PW_HIST behavior)
 		bm.alreadyTriggered = alreadyTriggered
 
+		// Ensure the brute-force counter for this rule is loaded for downstream consumers (e.g., Lua/ClickHouse)
+		bm.loadBruteForceBucketCounter(rule)
+
 		defer setter()
 		defer bm.LoadAllPasswordHistories()
 
