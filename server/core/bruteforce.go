@@ -65,6 +65,9 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		// Fallback: if counter path didn't mark repeating, but this network is known in pre-result map, treat as repeating
 		if !isRepeating && clientNet != "" {
 			key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+
 			if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, clientNet).Result(); err == nil && exists {
 				isRepeating = true
 			}
@@ -265,6 +268,33 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.LoginAttempts = bm.GetLoginAttempts()
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
+
+	// Compute and store brute-force hints for the Post-Action.
+	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
+	bfClientNet := ""
+	if network != nil && network.IP != nil && network.Mask != nil {
+		bfClientNet = network.String()
+	} else if a.ClientIP != "" && rules[ruleNumber].CIDR > 0 {
+		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", a.ClientIP, rules[ruleNumber].CIDR)); err == nil && n != nil {
+			bfClientNet = n.String()
+		}
+	}
+
+	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
+	bfRepeating := alreadyTriggered || (a.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
+	if !bfRepeating && bfClientNet != "" {
+		key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+
+		stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result(); err == nil && exists {
+			bfRepeating = true
+		}
+	}
+
+	// Store hints on AuthState for consumption by Post-Action
+	a.BFClientNet = bfClientNet
+	a.BFRepeating = bfRepeating
 
 	if triggered || alreadyTriggered {
 		updateLuaContext(a.Context, definitions.FeatureBruteForce)
