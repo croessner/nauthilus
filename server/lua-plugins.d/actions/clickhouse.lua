@@ -169,7 +169,6 @@ function nauthilus_call_action(request)
             password_hash = nauthilus_password.generate_password_hash(request.password)
         end
 
-        local unique_user_id = (request.unique_user_id ~= "" and request.unique_user_id) or ""
         local display_name = (request.display_name ~= "" and request.display_name) or ""
         local hostname = (request.client_hostname ~= "" and request.client_hostname) or ""
 
@@ -262,8 +261,6 @@ function nauthilus_call_action(request)
             local_port = request.local_port or "",
             display_name = display_name,
             account = account,
-            account_field = request.account_field or "",
-            unique_user_id = unique_user_id,
             username = username,
             password_hash = password_hash,
             pwnd_info = pwnd_info,
@@ -287,11 +284,9 @@ function nauthilus_call_action(request)
             prot_delay_ms = prot_delay_ms,
             dyn_threat = dyn_threat,
             dyn_response = dyn_response,
-            debug = (request.debug == true),
             repeating = (request.repeating == true),
             user_found = (request.user_found == true),
             authenticated = (request.authenticated == true),
-            no_auth = (request.no_auth == true),
             xssl_protocol = request.xssl_protocol or "",
             xssl_cipher = request.xssl_cipher or "",
             ssl_fingerprint = request.ssl_fingerprint or "",
