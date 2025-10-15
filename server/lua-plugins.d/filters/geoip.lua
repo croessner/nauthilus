@@ -150,6 +150,11 @@ local function process_response_and_context(response)
                 end
             end
 
+            -- Fallback: if union of seen lists is empty, include current country code (if valid)
+            if (#result_iso_codes == 0) and (current_iso_code ~= nil and current_iso_code ~= "") then
+                table.insert(result_iso_codes, current_iso_code)
+            end
+
             nauthilus_context.context_set(N .. "_iso_codes_seen", result_iso_codes)
         end
     end

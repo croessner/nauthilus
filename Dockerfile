@@ -10,7 +10,7 @@ RUN apk add --no-cache build-base git upx
 
 RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     GIT_COMMIT=$(git rev-parse --short HEAD) && echo "commit="${GIT_COMMIT}"" && \
-    cd server && go build -mod=vendor -tags="avx netgo" \
+    cd server && go build -mod=vendor -tags="netgo" \
     -trimpath \
     -ldflags="-s -w -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=${GIT_TAG}-${GIT_COMMIT}" \
     -o nauthilus . && \

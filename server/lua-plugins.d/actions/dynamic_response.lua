@@ -449,8 +449,18 @@ function nauthilus_call_action(request)
     local iso_codes_seen = nauthilus_context.context_get("geoippolicyd_iso_codes_seen")
     local country_code = ""
 
-    -- Pick the first valid ISO-3166 alpha-2 code (two uppercase letters)
-    if iso_codes_seen and #iso_codes_seen > 0 then
+    -- Prefer current_country_code from rt.geoip_info (Info-Mode works without auth)
+    do
+        local rt = nauthilus_context.context_get("rt") or {}
+        if type(rt) == "table" and rt.geoip_info and type(rt.geoip_info.current_country_code) == "string" then
+            if rt.geoip_info.current_country_code:match("^[A-Z][A-Z]$") then
+                country_code = rt.geoip_info.current_country_code
+            end
+        end
+    end
+
+    -- Fallback to first valid ISO code from iso_codes_seen
+    if country_code == "" and iso_codes_seen and #iso_codes_seen > 0 then
         for _, cc in ipairs(iso_codes_seen) do
             if type(cc) == "string" and cc:match("^[A-Z][A-Z]$") then
                 country_code = cc

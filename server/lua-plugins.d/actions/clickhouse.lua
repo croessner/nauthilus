@@ -202,7 +202,13 @@ function nauthilus_call_action(request)
                     local s = tostring(v)
                     if s:match("^[A-Z][A-Z]$") then table.insert(parts, s) end
                 end
-                if #parts > 0 then geoip_iso_codes = table.concat(parts, ",") end
+                if #parts == 0 then
+                    if rt.geoip_info.current_country_code and rt.geoip_info.current_country_code:match("^[A-Z][A-Z]$") then
+                        geoip_iso_codes = rt.geoip_info.current_country_code
+                    end
+                else
+                    geoip_iso_codes = table.concat(parts, ",")
+                end
             end
         end
 
