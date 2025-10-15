@@ -164,16 +164,21 @@ func loadLanguageBundle(lang string) {
 	}
 }
 
-// setTimeZone configures the application's time zone based on the TZ GetEnvironment() variable, logging any errors encountered.
+// setTimeZone configures the application's time zone based on the TZ environment variable.
+// It avoids using the global structured logger before it is initialized.
 func setTimeZone() {
 	var err error
 
 	// Manually set time zone
 	if tz := os.Getenv("TZ"); tz != "" {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
-			)
+			if log.Logger != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
+				)
+			} else {
+				stdlog.Printf("Error loading location '%s': %v", tz, err)
+			}
 		}
 	}
 }
