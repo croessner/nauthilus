@@ -424,21 +424,6 @@ const (
 	LogFormatJSON = "json"
 )
 
-// Custom defined types for claims.
-const (
-	// ClaimTypeString constant represents a string claim type
-	ClaimTypeString = "string"
-
-	// ClaimTypeBoolean constant represents a boolean claim type
-	ClaimTypeBoolean = "boolean"
-
-	// ClaimTypeFloat constant represents a float claim type
-	ClaimTypeFloat = "float"
-
-	// ClaimTypeInteger constant represents an integer claim type
-	ClaimTypeInteger = "integer"
-)
-
 // Pre-definied protocols with a fixed semantic.
 const (
 	// ProtoSMTP corresponds to the "smtp" protocol
@@ -452,9 +437,6 @@ const (
 
 	// ProtoHTTP corresponds to the "http" protocol
 	ProtoHTTP = "http"
-
-	// ProtoOryHydra corresponds to the "ory-hydra" protocol
-	ProtoOryHydra = "ory-hydra"
 
 	// ProtoDefault corresponds to the default protocol
 	ProtoDefault = "default"
@@ -558,9 +540,6 @@ const (
 	// ServBasic is a constant for the "basicauth" service.
 	ServBasic = "basic"
 
-	// ServOryHydra is a constant for the "ory_hydra" service.
-	ServOryHydra = "ory_hydra"
-
 	// ServJSON is a constant for the "json" service.
 	ServJSON = "json"
 
@@ -577,135 +556,9 @@ const (
 // TwoFAv1Root is the root path for the two-factor authentication (2FA) version 1 endpoints.
 const TwoFAv1Root = "/2fa/v1"
 
-const (
-	// ScopeOpenId constant represents the OAuth 2.0 OpenID scope.
-	ScopeOpenId = "openid"
-
-	// ScopeOfflineAccess constant represents the OAuth 2.0 offline access scope.
-	ScopeOfflineAccess = "offline_access"
-
-	// ScopeProfile constant represents the OAuth 2.0 user profile access scope.
-	ScopeProfile = "profile"
-
-	// ScopeEmail constant represents the OAuth 2.0 user email access scope.
-	ScopeEmail = "email"
-
-	// ScopeAddress constant represents the OAuth 2.0 user address access scope.
-	ScopeAddress = "address"
-
-	// ScopePhone constant represents the OAuth 2.0 user phone access scope.
-	ScopePhone = "phone"
-
-	// ScopeGroups constant represents the OAuth 2.0 user group access scope.
-	ScopeGroups = "groups"
-)
-
-const (
-	// ClaimName represents the name claim
-	ClaimName = "name"
-
-	// ClaimGivenName represents the given name claim
-	ClaimGivenName = "given_name"
-
-	// ClaimFamilyName represents the family name claim
-	ClaimFamilyName = "family_name"
-
-	// ClaimMiddleName represents the middle name claim
-	ClaimMiddleName = "middle_name"
-
-	// ClaimNickName represents the nickname claim
-	ClaimNickName = "nickname"
-
-	// ClaimPreferredUserName represents the preferred username claim
-	ClaimPreferredUserName = "preferred_username"
-
-	// ClaimWebsite represents the website claim
-	ClaimWebsite = "website"
-
-	// ClaimProfile represents the profile claim
-	ClaimProfile = "profile"
-
-	// ClaimPicture represents the picture claim
-	ClaimPicture = "picture"
-
-	// ClaimEmail represents the email claim
-	ClaimEmail = "email"
-
-	// ClaimEmailVerified represents the email verified claim
-	ClaimEmailVerified = "email_verified"
-
-	// ClaimGender represents the gender claim
-	ClaimGender = "gender"
-
-	// ClaimBirtDate represents the birth date claim
-	ClaimBirtDate = "birthdate"
-
-	// ClaimZoneInfo represents the zone information claim
-	ClaimZoneInfo = "zoneinfo"
-
-	// ClaimLocale represents the locale claim
-	ClaimLocale = "locale"
-
-	// ClaimPhoneNumber represents the phone number claim
-	ClaimPhoneNumber = "phone_number"
-
-	// ClaimPhoneNumberVerified represents the phone number verified claim
-	ClaimPhoneNumberVerified = "phone_number_verified"
-
-	// ClaimAddress represents the address claim
-	ClaimAddress = "address"
-
-	// ClaimUpdatedAt represents the update time claim
-	ClaimUpdatedAt = "updated_at"
-
-	// ClaimGroups represents the groups claim
-	ClaimGroups = "groups"
-)
-
 // Keys for the encrypted session cookie.
+// SessionName remains available in all builds; other cookie constants are gated under hydra.
 const (
-	// CookieAccount constant refers to the user's account
-	CookieAccount = "account"
-
-	// CookieHaveTOTP constant indicates whether the user has Time-Based One-Time Password (TOTP) already
-	CookieHaveTOTP = "already_have_totp"
-
-	// CookieTOTPURL constant is used for the URL related to TOTP
-	CookieTOTPURL = "totp_url"
-
-	// CookieUserBackend constant is related to the user backend
-	CookieUserBackend = "user_backend"
-
-	// CookieUniqueUserID constant represents a unique ID of the user
-	CookieUniqueUserID = "unique_userid"
-
-	// CookieDisplayName constant keeps track of the user's display name
-	CookieDisplayName = "display_name"
-
-	// CookieLang constant specifies the language preference of the user
-	CookieLang = "lang"
-
-	// CookieUsername constant keeps track of the user's username
-	CookieUsername = "username"
-
-	// CookieAuthResult constant stores the result of authentication
-	CookieAuthResult = "auth_result"
-
-	// CookieSubject constant can store the subject related to an authentication or authorization process
-	CookieSubject = "subject"
-
-	// CookieRemember constant indicates whether the user chose to be remembered in the session
-	CookieRemember = "remember"
-
-	// CookieRegistration constant could be used during the web authentication registration process
-	CookieRegistration = "webauthn_registration"
-
-	// CookieTOTPSecret constant indicates whether a user does have a TOTP secret
-	CookieTOTPSecret = "totp_secret"
-
-	// CookieHome constant indicates a logged-in user
-	CookieHome = "home"
-
 	// SessionName constant is for the name of the session
 	SessionName = "Nauthilus_session"
 )
@@ -849,8 +702,8 @@ const (
 	// DbgAuth is the debugging module for authentication processes.
 	DbgAuth
 
-	// DbgHydra is the debugging module for Hydra service related debugging.
-	DbgHydra
+	// _DbgHydraSlot reserves the Hydra debug iota position when Hydra is disabled.
+	_
 
 	// DbgWebAuthn is the debugging module for WebAuthn related processes.
 	DbgWebAuthn
@@ -907,9 +760,6 @@ const (
 
 	// DbgAuthName is the debug identifier for authentication
 	DbgAuthName = "auth"
-
-	// DbgHydraName is the debug identifier for 'hydra'
-	DbgHydraName = "hydra"
 
 	// DbgWebAuthnName is the debug identifier for web authentication
 	DbgWebAuthnName = "webauthn"

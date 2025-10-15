@@ -13,39 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build hydra
-// +build hydra
+//go:build !hydra
+// +build !hydra
 
-package webauthn
+package hydra
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/handler/deps"
-	"github.com/croessner/nauthilus/server/tags"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
+// Handler is a no-op frontend handler when built without the hydra build tag.
 type Handler struct {
 	Store sessions.Store
 	Deps  *deps.Deps
 }
 
-func New(store sessions.Store, d *deps.Deps) *Handler {
-	return &Handler{Store: store, Deps: d}
-}
+// New returns a new no-op Hydra Handler.
+func New(store sessions.Store, d *deps.Deps) *Handler { return &Handler{Store: store, Deps: d} }
 
-func (h *Handler) Register(r gin.IRouter) {
-	if !tags.IsDevelopment {
-		return
-	}
-
-	group := r.Group(definitions.TwoFAv1Root)
-
-	regGroup := group.Group(viper.GetString("webauthn_page"))
-	regGroup.Use(sessions.Sessions(definitions.SessionName, h.Store))
-	regGroup.GET("/register/begin", h.Deps.Svc.BeginRegistration())
-	regGroup.POST("/register/finish", h.Deps.Svc.FinishRegistration())
+// Register registers no routes when Hydra is disabled (no-op).
+func (h *Handler) Register(router gin.IRouter) {
+	// no-op: hydra disabled build
 }

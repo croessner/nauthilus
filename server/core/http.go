@@ -33,7 +33,6 @@ import (
 	"github.com/gin-gonic/gin"
 	kitlog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pires/go-proxyproto"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -52,35 +51,6 @@ import (
 
 // DefaultBootstrap wires the existing bootstrapping functions.
 type DefaultBootstrap struct{}
-
-// InitWebAuthn initializes the global WebAuthn configuration using values
-// from the environment/config. The legacy behavior (logging on error) is preserved.
-func (DefaultBootstrap) InitWebAuthn() error {
-	var err error
-	webAuthn, err = webauthn.New(&webauthn.Config{
-		RPDisplayName: viper.GetString("webauthn_display_name"),
-		RPID:          viper.GetString("webauthn_rp_id"),
-		RPOrigins:     viper.GetStringSlice("webauthn_rp_origins"),
-		Timeouts: webauthn.TimeoutsConfig{
-			Login: webauthn.TimeoutConfig{
-				Enforce:    true,
-				Timeout:    time.Second * 60,
-				TimeoutUVD: time.Second * 60,
-			},
-			Registration: webauthn.TimeoutConfig{
-				Enforce:    true,
-				Timeout:    time.Second * 60,
-				TimeoutUVD: time.Second * 60,
-			},
-		},
-	})
-
-	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
-	}
-
-	return err
-}
 
 // InitSessionStore creates and returns the secure cookie-backed Gin session store
 // with secure defaults (Secure, SameSite=Strict). The caller is responsible for

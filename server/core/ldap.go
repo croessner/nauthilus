@@ -31,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
@@ -494,14 +493,6 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	}
 
 	return ldapReply.Err
-}
-
-func ldapGetWebAuthnCredentials(uniqueUserID string) ([]webauthn.Credential, error) {
-	_ = uniqueUserID
-
-	// TODO: Use WebAuthn constructor!
-
-	return []webauthn.Credential{}, nil
 }
 
 var _ BackendManager = (*ldapManagerImpl)(nil)

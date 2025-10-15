@@ -54,6 +54,7 @@ import (
 	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
 	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
 	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
+	"github.com/croessner/nauthilus/server/tags"
 
 	"github.com/gin-gonic/gin"
 	kitlog "github.com/go-kit/log"
@@ -734,14 +735,16 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 		sessStore := core.DefaultBootstrap{}.InitSessionStore()
 		deps := &handlerdeps.Deps{Cfg: config.GetFile(), Logger: log.Logger, Svc: handlerdeps.NewDefaultServices()}
 
-		setupHydra = func(e *gin.Engine) {
-			handlerhydra.New(sessStore, deps).Register(e)
-		}
-		setup2FA = func(e *gin.Engine) {
-			handlertwofa.New(sessStore, deps).Register(e)
-		}
-		setupWebAuthn = func(e *gin.Engine) {
-			handlerwebauthn.New(sessStore, deps).Register(e)
+		if tags.HydraEnabled {
+			setupHydra = func(e *gin.Engine) {
+				handlerhydra.New(sessStore, deps).Register(e)
+			}
+			setup2FA = func(e *gin.Engine) {
+				handlertwofa.New(sessStore, deps).Register(e)
+			}
+			setupWebAuthn = func(e *gin.Engine) {
+				handlerwebauthn.New(sessStore, deps).Register(e)
+			}
 		}
 		setupNotify = func(e *gin.Engine) {
 			handlernotify.New(sessStore, deps).Register(e)
