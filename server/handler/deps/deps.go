@@ -13,6 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//go:build hydra
+// +build hydra
+
 package deps
 
 import (
@@ -94,6 +97,8 @@ type Services interface {
 // DefaultServices is the default implementation that delegates to core package handlers.
 type DefaultServices struct{}
 
+// NewDefaultServices constructs the default Services implementation
+// that delegates handler functions to the core package.
 func NewDefaultServices() *DefaultServices {
 	return &DefaultServices{}
 }

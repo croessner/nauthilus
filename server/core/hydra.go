@@ -13,6 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+//go:build hydra
+// +build hydra
+
 package core
 
 // See the markdown documentation for the login-, two-factor-, consent- and logout pages for a brief description.
