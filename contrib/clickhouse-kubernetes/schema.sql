@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   local_port           String,
   display_name         LowCardinality(String),
   account              LowCardinality(String),
-  account_field        LowCardinality(String),
-  unique_user_id       LowCardinality(String),
   username             LowCardinality(String),
   password_hash        String, -- may already be compressed effectively; keep as String
   pwnd_info            LowCardinality(String),
@@ -47,11 +45,9 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   prot_delay_ms        Nullable(UInt64),
   dyn_threat           Nullable(UInt64),
   dyn_response         LowCardinality(String),
-  debug                Nullable(Bool),
   repeating            Nullable(Bool),
   user_found           Nullable(Bool),
   authenticated        Nullable(Bool),
-  no_auth              Nullable(Bool),
   xssl_protocol        LowCardinality(String),
   xssl_cipher          LowCardinality(String),
   ssl_fingerprint      LowCardinality(String),
@@ -76,8 +72,6 @@ ALTER TABLE nauthilus.logins MODIFY COLUMN user_agent         LowCardinality(Str
 ALTER TABLE nauthilus.logins MODIFY COLUMN local_ip           LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN display_name       LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN account            LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN account_field      LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN unique_user_id     LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN username           LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN pwnd_info          LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN brute_force_bucket LowCardinality(String);
