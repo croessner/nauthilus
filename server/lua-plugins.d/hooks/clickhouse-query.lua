@@ -603,7 +603,7 @@ function nauthilus_run_hook(logging, session)
             "ts","session","service","features","client_ip","client_port","client_net","client_id",
             "hostname","proto","user_agent","local_ip","local_port",
             -- user/account info
-            "display_name","account","account_field","unique_user_id","username","password_hash",
+            "display_name","account","username","password_hash",
             -- security and feature info
             "pwnd_info","brute_force_bucket","brute_force_counter","oidc_cid",
             -- hotspot / geoip / pattern
@@ -614,7 +614,7 @@ function nauthilus_run_hook(logging, session)
             "prot_active","prot_reason","prot_backoff","prot_delay_ms",
             "dyn_threat","dyn_response",
             -- flags and TLS
-            "debug","repeating","user_found","authenticated","no_auth",
+            "repeating","user_found","authenticated",
             "xssl_protocol","xssl_cipher","ssl_fingerprint"
         }, ",")
 
