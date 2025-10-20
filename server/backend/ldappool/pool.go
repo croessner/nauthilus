@@ -22,17 +22,21 @@ import (
 	"math/rand"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
+	"golang.org/x/sync/singleflight"
 )
 
 // LDAPPool is an interface that represents a pool for managing LDAP connections and operations efficiently.
@@ -139,6 +143,15 @@ func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest) erro
 
 // HandleAuthRequest processes an LDAP authentication request using the connection pool and updates process metrics.
 func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest) error {
+	// Optional per-pool auth rate limit check
+	if v, ok := authLimiters.Load(l.name); ok {
+		if lim, ok2 := v.(*tokenBucket); ok2 {
+			if !lim.allow() {
+				return fmt.Errorf("auth rate limited for pool %s", l.name)
+			}
+		}
+	}
+
 	connNumber, err := l.getConnection(ldapAuthRequest.HTTPClientContext, ldapAuthRequest.GUID)
 	if err != nil {
 		return err
@@ -181,6 +194,78 @@ func (l *ldapPoolImpl) GetNumberOfWorkers() int {
 }
 
 var _ LDAPPool = (*ldapPoolImpl)(nil)
+
+var (
+	negCache     localcache.SimpleCache
+	negCacheOnce sync.Once
+	negSF        singleflight.Group
+
+	// per-pool auth rate limiters
+	authLimiters sync.Map // map[string]*tokenBucket
+)
+
+// simple token bucket limiter (local, no extra deps)
+type tokenBucket struct {
+	mu     sync.Mutex
+	rate   float64   // tokens per second
+	burst  int       // max tokens
+	tokens float64   // current tokens
+	last   time.Time // last refill
+}
+
+// newTokenBucket creates a new token bucket rate limiter with the specified rate (tokens per second) and burst capacity.
+func newTokenBucket(rps float64, burst int) *tokenBucket {
+	if burst <= 0 {
+		burst = 1
+	}
+
+	return &tokenBucket{
+		rate:   rps,
+		burst:  burst,
+		tokens: float64(burst),
+		last:   time.Now(),
+	}
+}
+
+// allow controls access based on token bucket rate limiting, returning true if a request is permitted, false otherwise.
+func (tb *tokenBucket) allow() bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(tb.last).Seconds()
+	if elapsed > 0 {
+		tb.tokens += elapsed * tb.rate
+
+		if tb.tokens > float64(tb.burst) {
+			tb.tokens = float64(tb.burst)
+		}
+
+		tb.last = now
+	}
+
+	if tb.tokens >= 1.0 {
+		tb.tokens -= 1.0
+
+		return true
+	}
+
+	return false
+}
+
+// initNegativeCache initializes the negative cache using the configuration provided in the LDAPConf object.
+// It supports either LRU cache or a shared sharded TTL memory cache based on the configuration settings.
+// This function ensures thread-safe lazy initialization using a sync.Once mechanism.
+func initNegativeCache(conf *config.LDAPConf) {
+	negCacheOnce.Do(func() {
+		if conf != nil && conf.GetCacheImpl() == "lru" {
+			negCache = localcache.NewLRU(conf.GetCacheMaxEntries())
+		} else {
+			// Use shared sharded TTL cache; per-call TTL will be respected.
+			negCache = localcache.LocalCache.MemoryShardedCache
+		}
+	})
+}
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
 func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
@@ -317,6 +402,17 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	// Start active target health checker for this pool
 	if len(conf) > 0 && conf[0] != nil {
 		go startHealthLoop(name, conf[0])
+	}
+
+	// Initialize per-pool auth rate limiter if configured
+	if poolType == definitions.LDAPPoolAuth && len(conf) > 0 && conf[0] != nil {
+		rps := conf[0].GetAuthRateLimitPerSecond()
+		burst := conf[0].GetAuthRateLimitBurst()
+
+		if rps > 0 {
+			lim := newTokenBucket(rps, burst)
+			authLimiters.Store(name, lim)
+		}
 	}
 
 	return lp
@@ -782,24 +878,68 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	)
 
 	conf := l.conf[index]
+
+	// Initialize negative cache engine lazily
+	initNegativeCache(conf)
+
 	// Set per-op timeout if configured
 	if to := conf.GetSearchTimeout(); to > 0 {
 		l.conn[index].GetConn().SetTimeout(to)
 	}
 
+	// Negative cache check by (pool|baseDN|filter)
+	negKey := l.name + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
+	if v, ok := negCache.Get(negKey); ok {
+		// Cache hit (negative)
+		_ = v // value unused; presence is enough
+		stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
+		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
+
+		ldapReply.Result = make(bktype.AttributeMapping)
+
+		// Optionally include raw result (none for negative)
+		if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
+			ldapReply.Err = ctxErr
+		}
+
+		return
+	}
+
+	stats.GetMetrics().GetLdapCacheMissesTotal().WithLabelValues(l.name, "neg").Inc()
+
 	maxRetries := conf.GetRetryMax()
 	base := conf.GetRetryBase()
 	maxBackoff := conf.GetRetryMaxBackoff()
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		result, rawResult, err = l.conn[index].Search(ldapRequest)
-		if err == nil || !isTransientNetworkError(err) {
-			break
+	// Singleflight protect identical misses to avoid stampedes
+	type sfRes struct {
+		res bktype.AttributeMapping
+		raw []*ldap.Entry
+		err error
+	}
+
+	val, _, _ := negSF.Do(negKey, func() (any, error) {
+		var e error
+		var r bktype.AttributeMapping
+		var raw []*ldap.Entry
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			r, raw, e = l.conn[index].Search(ldapRequest)
+			if e == nil || !isTransientNetworkError(e) {
+				break
+			}
+
+			// retry on transient errors only
+			time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
 		}
 
-		// retry on transient errors only
-		time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
-	}
+		return &sfRes{res: r, raw: raw, err: e}, nil
+	})
+
+	pack := val.(*sfRes)
+	err = pack.err
+	result = pack.res
+	rawResult = pack.raw
 
 	if err != nil {
 		var (
@@ -811,8 +951,13 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
 				doLog = true
 				ldapReply.Err = ldapError.Err
+			} else {
+				// Negative result: cache it
+				negTTL := conf.GetNegativeCacheTTL()
+
+				negCache.Set(negKey, true, negTTL)
+				stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
 			}
-			// Unknown user!
 		} else {
 			doLog = true
 			ldapReply.Err = err
@@ -828,7 +973,19 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	}
 
 	ldapReply.Result = result
-	ldapReply.RawResult = rawResult
+	if conf.GetIncludeRawResult() {
+		ldapReply.RawResult = rawResult
+	}
+
+	// Also cache negatives when result is empty without LDAP error
+	if err == nil {
+		if len(result) == 0 {
+			negTTL := conf.GetNegativeCacheTTL()
+
+			negCache.Set(negKey, true, negTTL)
+			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
+		}
+	}
 
 	if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
 		ldapReply.Err = ctxErr

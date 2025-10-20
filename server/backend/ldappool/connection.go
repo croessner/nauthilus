@@ -18,7 +18,9 @@ package ldappool
 import (
 	"crypto/tls"
 	"crypto/x509"
+	stderrors "errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/url"
@@ -84,6 +86,9 @@ type LDAPConnectionImpl struct {
 
 	// conn is the active LDAP connection. It is a pointer to a ldap.Conn object.
 	conn *ldap.Conn
+
+	// conf keeps a reference to the last used LDAPConf for this connection (used for guardrails/settings).
+	conf *config.LDAPConf
 }
 
 // SetState updates the current state of the LDAPConnectionImpl to the provided LDAPState value.
@@ -177,6 +182,9 @@ EndlessLoop:
 			cbOnSuccess(pool, target)
 			setHealth(pool, target, true)
 
+			// store conf for later guardrails (search limits)
+			l.conf = ldapConf
+
 			// other operations including SASL External setup unchanged...
 			connected = true
 		}
@@ -226,7 +234,9 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *bktype.LDAPRequest) (result bkt
 	var searchResult *ldap.SearchResult
 
 	if ldapRequest.MacroSource != nil {
-		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", ldapRequest.MacroSource.Username)
+		// Escape username for safe filter embedding (RFC 4515)
+		escaped := util.EscapeLDAPFilter(ldapRequest.MacroSource.Username)
+		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", escaped)
 		ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
 	}
 
@@ -234,12 +244,24 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *bktype.LDAPRequest) (result bkt
 
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
 
+	// Apply LDAP SizeLimit/TimeLimit from connection config if available
+	sizeLimit := 0
+	timeLimitSec := 0
+
+	if l.conf != nil {
+		sizeLimit = l.conf.GetSearchSizeLimit()
+
+		if tl := l.conf.GetSearchTimeLimit(); tl > 0 {
+			timeLimitSec = int(tl.Seconds())
+		}
+	}
+
 	searchRequest := ldap.NewSearchRequest(
 		ldapRequest.BaseDN,
 		ldapRequest.Scope.Get(),
 		ldap.NeverDerefAliases,
-		0,
-		0,
+		sizeLimit,
+		timeLimitSec,
 		false,
 		ldapRequest.Filter,
 		ldapRequest.SearchAttributes,
@@ -248,6 +270,12 @@ func (l *LDAPConnectionImpl) Search(ldapRequest *bktype.LDAPRequest) (result bkt
 
 	searchResult, err = l.conn.Search(searchRequest)
 	if err != nil {
+		// On transport errors, mark connection as lame-duck and close
+		if isTransportError(err) {
+			_ = l.conn.Close()
+			l.SetState(definitions.LDAPStateClosed)
+		}
+
 		return nil, nil, err
 	}
 
@@ -340,10 +368,51 @@ func (l *LDAPConnectionImpl) Modify(ldapRequest *bktype.LDAPRequest) (err error)
 		err = l.conn.Modify(modifyRequest)
 	}
 
+	// If a transport error occurred, close and mark connection for replacement
+	if err != nil && isTransportError(err) {
+		_ = l.conn.Close()
+		l.SetState(definitions.LDAPStateClosed)
+	}
+
 	return
 }
 
 var _ LDAPConnection = (*LDAPConnectionImpl)(nil)
+
+// isTransportError returns true for network/transport level LDAP errors that warrant closing the connection.
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// net errors or EOF
+	var ne net.Error
+	if stderrors.As(err, &ne) {
+		_ = ne
+
+		return true
+	}
+
+	if err == io.EOF {
+		return true
+	}
+
+	// ldap.Error may wrap transport issues
+	var le *ldap.Error
+	if stderrors.As(err, &le) {
+		// ResultCode 81 (server down) is typical transport failure
+		if le.ResultCode == uint16(ldap.ErrorNetwork) || uint16(le.ResultCode) == 81 {
+			return true
+		}
+
+		// Some transports set inner Err
+		if le.Err == io.EOF {
+			return true
+		}
+	}
+
+	return false
+}
 
 // --- Circuit breaker (per pool+target) and retry helpers ---
 

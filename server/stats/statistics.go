@@ -133,6 +133,18 @@ type Metrics interface {
 	// GetInstanceInfo provides metrics about the version information using a GaugeVec with a "version" label.
 	GetInstanceInfo() *prometheus.GaugeVec
 
+	// GetLdapCacheHitsTotal returns a counter vector tracking the total number of LDAP cache hits with specified labels.
+	GetLdapCacheHitsTotal() *prometheus.CounterVec
+
+	// GetLdapCacheMissesTotal returns a Prometheus CounterVec tracking the total number of LDAP cache misses.
+	GetLdapCacheMissesTotal() *prometheus.CounterVec
+
+	// GetLdapCacheEntries provides a metric gauge vector for tracking the current number of LDAP cache entries.
+	GetLdapCacheEntries() *prometheus.GaugeVec
+
+	// GetLdapCacheEvictionsTotal returns a CounterVec metric tracking the total number of LDAP cache evictions.
+	GetLdapCacheEvictionsTotal() *prometheus.CounterVec
+
 	// GetCurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
 	GetCurrentRequests() prometheus.Gauge
 
@@ -270,6 +282,10 @@ type metricsImpl struct {
 	ldapBreakerState        *prometheus.GaugeVec
 	ldapTargetHealth        *prometheus.GaugeVec
 	ldapTargetInflight      *prometheus.GaugeVec
+	ldapCacheHitsTotal      *prometheus.CounterVec
+	ldapCacheMissesTotal    *prometheus.CounterVec
+	ldapCacheEntries        *prometheus.GaugeVec
+	ldapCacheEvictionsTotal *prometheus.CounterVec
 	rblRejected             *prometheus.CounterVec
 	genericConnections      *prometheus.GaugeVec
 }
@@ -447,6 +463,26 @@ func (m *metricsImpl) GetLdapTargetHealth() *prometheus.GaugeVec {
 // GetLdapTargetInflight returns the ldapTargetInflight field.
 func (m *metricsImpl) GetLdapTargetInflight() *prometheus.GaugeVec {
 	return m.ldapTargetInflight
+}
+
+// GetLdapCacheHitsTotal returns the ldapCacheHitsTotal field, which tracks the total number of LDAP cache hit events.
+func (m *metricsImpl) GetLdapCacheHitsTotal() *prometheus.CounterVec {
+	return m.ldapCacheHitsTotal
+}
+
+// GetLdapCacheMissesTotal returns the ldapCacheMissesTotal field, which tracks the total number of LDAP cache miss events.
+func (m *metricsImpl) GetLdapCacheMissesTotal() *prometheus.CounterVec {
+	return m.ldapCacheMissesTotal
+}
+
+// GetLdapCacheEntries returns the ldapCacheEntries field, which tracks the current number of entries in the LDAP cache.
+func (m *metricsImpl) GetLdapCacheEntries() *prometheus.GaugeVec {
+	return m.ldapCacheEntries
+}
+
+// GetLdapCacheEvictionsTotal returns a prometheus.CounterVec tracking the total number of LDAP cache evictions.
+func (m *metricsImpl) GetLdapCacheEvictionsTotal() *prometheus.CounterVec {
+	return m.ldapCacheEvictionsTotal
 }
 
 func NewMetrics() Metrics {
@@ -651,6 +687,31 @@ func NewMetrics() Metrics {
 				Name: "ldap_target_inflight",
 				Help: "Current in-flight requests per LDAP target",
 			}, []string{"pool", "target"},
+		),
+		// A8 cache metrics
+		ldapCacheHitsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_cache_hits_total",
+				Help: "Total LDAP cache hits",
+			}, []string{"pool", "type"},
+		),
+		ldapCacheMissesTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_cache_misses_total",
+				Help: "Total LDAP cache misses",
+			}, []string{"pool", "type"},
+		),
+		ldapCacheEntries: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_cache_entries",
+				Help: "Number of entries in LDAP caches",
+			}, []string{"pool", "type"},
+		),
+		ldapCacheEvictionsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_cache_evictions_total",
+				Help: "Total LDAP cache evictions",
+			}, []string{"pool", "type"},
 		),
 		rblRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{

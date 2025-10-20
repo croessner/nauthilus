@@ -251,3 +251,16 @@ func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
 // LocalCache is a cache object with a default expiration duration of 5 minutes
 // and a cleanup interval of 10 minutes.
 var LocalCache = NewCache(5*time.Minute, 10*time.Minute)
+
+// Len returns the total number of items currently stored across all shards.
+func (sc *MemoryShardedCache) Len() int {
+	count := 0
+
+	for _, shard := range sc.shards {
+		shard.mu.RLock()
+		count += len(shard.items)
+		shard.mu.RUnlock()
+	}
+
+	return count
+}

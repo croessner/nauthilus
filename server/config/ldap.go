@@ -130,6 +130,9 @@ type LDAPConf struct {
 	SearchTimeout time.Duration `mapstructure:"search_timeout" validate:"omitempty,max=10m"`
 	BindTimeout   time.Duration `mapstructure:"bind_timeout" validate:"omitempty,max=10m"`
 	ModifyTimeout time.Duration `mapstructure:"modify_timeout" validate:"omitempty,max=10m"`
+	// Guardrails for search
+	SearchSizeLimit int           `mapstructure:"search_size_limit" validate:"omitempty,min=0,max=100000"`
+	SearchTimeLimit time.Duration `mapstructure:"search_time_limit" validate:"omitempty,max=10m"`
 	// Retry/backoff configuration
 	RetryMax        int           `mapstructure:"retry_max" validate:"omitempty,min=0,max=10"`
 	RetryBase       time.Duration `mapstructure:"retry_base" validate:"omitempty,max=1m"`
@@ -138,6 +141,18 @@ type LDAPConf struct {
 	CBFailureThreshold int           `mapstructure:"cb_failure_threshold" validate:"omitempty,min=1,max=1000"`
 	CBCooldown         time.Duration `mapstructure:"cb_cooldown" validate:"omitempty,max=10m"`
 	CBHalfOpenMax      int           `mapstructure:"cb_half_open_max" validate:"omitempty,min=1,max=100"`
+
+	// A8 cache options
+	DNCacheTTL         time.Duration `mapstructure:"dn_cache_ttl" validate:"omitempty,max=10m"`
+	MembershipCacheTTL time.Duration `mapstructure:"membership_cache_ttl" validate:"omitempty,max=10m"`
+	NegativeCacheTTL   time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=10m"`
+	CacheMaxEntries    int           `mapstructure:"cache_max_entries" validate:"omitempty,min=0,max=10000000"`
+	CacheImpl          string        `mapstructure:"cache_impl" validate:"omitempty,oneof=lru ttl"`
+	IncludeRawResult   bool          `mapstructure:"include_raw_result"`
+
+	// A9 optional auth rate limiting (per pool)
+	AuthRateLimitPerSecond float64 `mapstructure:"auth_rate_limit_per_second" validate:"omitempty,min=0"`
+	AuthRateLimitBurst     int     `mapstructure:"auth_rate_limit_burst" validate:"omitempty,min=0"`
 
 	ServerURIs []string `mapstructure:"server_uri" validate:"required,dive,uri"`
 	// Internal: set by pool to label metrics
@@ -634,6 +649,42 @@ func (l *LDAPConf) GetModifyTimeout() time.Duration {
 	return l.ModifyTimeout
 }
 
+// GetSearchSizeLimit returns LDAP size limit; 0 means server default (unlimited).
+func (l *LDAPConf) GetSearchSizeLimit() int {
+	if l == nil || l.SearchSizeLimit < 0 {
+		return 0
+	}
+
+	return l.SearchSizeLimit
+}
+
+// GetSearchTimeLimit returns LDAP time limit as a duration; 0 means default.
+func (l *LDAPConf) GetSearchTimeLimit() time.Duration {
+	if l == nil || l.SearchTimeLimit < 0 {
+		return 0
+	}
+
+	return l.SearchTimeLimit
+}
+
+// GetAuthRateLimitPerSecond returns tokens per second for auth limiter.
+func (l *LDAPConf) GetAuthRateLimitPerSecond() float64 {
+	if l == nil || l.AuthRateLimitPerSecond < 0 {
+		return 0
+	}
+
+	return l.AuthRateLimitPerSecond
+}
+
+// GetAuthRateLimitBurst returns burst size for auth limiter.
+func (l *LDAPConf) GetAuthRateLimitBurst() int {
+	if l == nil || l.AuthRateLimitBurst < 0 {
+		return 0
+	}
+
+	return l.AuthRateLimitBurst
+}
+
 // GetRetryMax returns the maximum number of retries for transient errors. Default 2 if unset.
 func (l *LDAPConf) GetRetryMax() int {
 	if l == nil || l.RetryMax == 0 {
@@ -686,6 +737,42 @@ func (l *LDAPConf) GetCBHalfOpenMax() int {
 	}
 
 	return l.CBHalfOpenMax
+}
+
+// GetNegativeCacheTTL returns TTL for negative cache entries. Default 20s.
+func (l *LDAPConf) GetNegativeCacheTTL() time.Duration {
+	if l == nil || l.NegativeCacheTTL == 0 {
+		return 20 * time.Second
+	}
+
+	return l.NegativeCacheTTL
+}
+
+// GetCacheMaxEntries returns max entries for LRU caches. Default 5000.
+func (l *LDAPConf) GetCacheMaxEntries() int {
+	if l == nil || l.CacheMaxEntries == 0 {
+		return 5000
+	}
+
+	return l.CacheMaxEntries
+}
+
+// GetCacheImpl returns selected cache implementation: "lru" or "ttl". Default "ttl".
+func (l *LDAPConf) GetCacheImpl() string {
+	if l == nil || l.CacheImpl == "" {
+		return "ttl"
+	}
+
+	return l.CacheImpl
+}
+
+// GetIncludeRawResult returns whether raw LDAP search entries should be included in replies. Default false.
+func (l *LDAPConf) GetIncludeRawResult() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.IncludeRawResult
 }
 
 // GetPoolName returns the pool name label set internally.
