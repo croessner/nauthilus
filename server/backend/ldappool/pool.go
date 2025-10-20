@@ -19,17 +19,24 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"math/rand"
+	"net"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
+	"golang.org/x/sync/singleflight"
 )
 
 // LDAPPool is an interface that represents a pool for managing LDAP connections and operations efficiently.
@@ -123,7 +130,7 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 
 // HandleLookupRequest processes an LDAP lookup request using a connection pool and manages asynchronous execution.
 func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest) error {
-	connNumber, err := l.getConnection(ldapRequest.GUID)
+	connNumber, err := l.getConnection(ldapRequest.HTTPClientContext, ldapRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -136,7 +143,19 @@ func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest) erro
 
 // HandleAuthRequest processes an LDAP authentication request using the connection pool and updates process metrics.
 func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest) error {
-	connNumber, err := l.getConnection(ldapAuthRequest.GUID)
+	// Optional per-pool auth rate limit check
+	if v, ok := authLimiters.Load(l.name); ok {
+		if lim, ok2 := v.(*tokenBucket); ok2 {
+			if !lim.allow() {
+				// increment rate-limit metric
+				stats.GetMetrics().GetLdapAuthRateLimitedTotal().WithLabelValues(l.name, "pool").Inc()
+
+				return fmt.Errorf("auth rate limited for pool %s", l.name)
+			}
+		}
+	}
+
+	connNumber, err := l.getConnection(ldapAuthRequest.HTTPClientContext, ldapAuthRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -178,6 +197,92 @@ func (l *ldapPoolImpl) GetNumberOfWorkers() int {
 }
 
 var _ LDAPPool = (*ldapPoolImpl)(nil)
+
+var (
+	negCaches sync.Map // map[string]localcache.SimpleCache
+	negSF     singleflight.Group
+
+	// per-pool auth rate limiters
+	authLimiters sync.Map // map[string]*tokenBucket
+)
+
+// simple token bucket limiter (local, no extra deps)
+type tokenBucket struct {
+	mu     sync.Mutex
+	rate   float64   // tokens per second
+	burst  int       // max tokens
+	tokens float64   // current tokens
+	last   time.Time // last refill
+}
+
+// newTokenBucket creates a new token bucket rate limiter with the specified rate (tokens per second) and burst capacity.
+func newTokenBucket(rps float64, burst int) *tokenBucket {
+	if burst <= 0 {
+		burst = 1
+	}
+
+	return &tokenBucket{
+		rate:   rps,
+		burst:  burst,
+		tokens: float64(burst),
+		last:   time.Now(),
+	}
+}
+
+// allow controls access based on token bucket rate limiting, returning true if a request is permitted, false otherwise.
+func (tb *tokenBucket) allow() bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(tb.last).Seconds()
+	if elapsed > 0 {
+		tb.tokens += elapsed * tb.rate
+
+		if tb.tokens > float64(tb.burst) {
+			tb.tokens = float64(tb.burst)
+		}
+
+		tb.last = now
+	}
+
+	if tb.tokens >= 1.0 {
+		tb.tokens -= 1.0
+
+		return true
+	}
+
+	return false
+}
+
+// getNegCache returns the negative cache for the given pool, creating it if necessary.
+// LRU caches are created per-pool (allowing eviction metrics). TTL cache shares the global sharded cache.
+func getNegCache(pool string, conf *config.LDAPConf) localcache.SimpleCache {
+	if v, ok := negCaches.Load(pool); ok {
+		if c, ok2 := v.(localcache.SimpleCache); ok2 {
+			return c
+		}
+	}
+
+	var c localcache.SimpleCache
+	if conf != nil && conf.GetCacheImpl() == "lru" {
+		lru := localcache.NewLRU(conf.GetCacheMaxEntries())
+
+		// Increment eviction metrics for this pool when entries are evicted.
+		lru.SetOnEvict(func(key string, value any) {
+			stats.GetMetrics().GetLdapCacheEvictionsTotal().WithLabelValues(pool, "neg").Inc()
+		})
+
+		c = lru
+	} else {
+		// Use shared sharded TTL cache; per-call TTL will be respected.
+		c = localcache.LocalCache.MemoryShardedCache
+	}
+
+	negCaches.Store(pool, c)
+
+	return c
+}
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
 func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
@@ -279,6 +384,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		conf[index].TLSClientCert = tlsClientCert
 		conf[index].TLSClientKey = tlsClientKey
 		conf[index].SASLExternal = saslExternal
+		conf[index].PoolName = name
 
 		conn[index].SetState(definitions.LDAPStateClosed)
 	}
@@ -308,6 +414,22 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	lp.tokens = make(chan struct{}, poolSize)
 	for i := 0; i < poolSize; i++ {
 		lp.tokens <- Token{}
+	}
+
+	// Start active target health checker for this pool
+	if len(conf) > 0 && conf[0] != nil {
+		go startHealthLoop(name, conf[0])
+	}
+
+	// Initialize per-pool auth rate limiter if configured
+	if poolType == definitions.LDAPPoolAuth && len(conf) > 0 && conf[0] != nil {
+		rps := conf[0].GetAuthRateLimitPerSecond()
+		burst := conf[0].GetAuthRateLimitBurst()
+
+		if rps > 0 {
+			lim := newTokenBucket(rps, burst)
+			authLimiters.Store(name, lim)
+		}
 	}
 
 	return lp
@@ -510,14 +632,37 @@ func (l *ldapPoolImpl) logConnectionError(guid *string, err error) {
 }
 
 // acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.
-func (l *ldapPoolImpl) acquireTokenWithTimeout() error {
+// It respects the provided context deadline and caps the wait by the configured connect_abort_timeout.
+func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 	connectAbortTimeout := config.GetFile().GetLDAPConfigConnectAbortTimeout()
 	if connectAbortTimeout == 0 {
 		connectAbortTimeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
-	defer cancel()
+	ctx := reqCtx
+	if ctx == nil {
+		ctx = l.ctx
+	}
+
+	// Ensure we never wait longer than connectAbortTimeout
+	var cancel func()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("context timeout while waiting for LDAP token")
+		}
+
+		if remaining > connectAbortTimeout {
+			ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+		}
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+	}
+
+	if cancel != nil {
+		defer cancel()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -534,9 +679,10 @@ func (l *ldapPoolImpl) releaseToken() {
 }
 
 // getConnection retrieves an available LDAP connection number from the pool using a semaphore.
-func (l *ldapPoolImpl) getConnection(guid *string) (connNumber int, err error) {
+// It honors the request context for waiting and scanning, bounded by connect_abort_timeout.
+func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid *string) (connNumber int, err error) {
 	// Acquire capacity token with timeout
-	if err := l.acquireTokenWithTimeout(); err != nil {
+	if err := l.acquireTokenWithTimeout(reqCtx); err != nil {
 		return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
 	}
 
@@ -546,8 +692,31 @@ func (l *ldapPoolImpl) getConnection(guid *string) (connNumber int, err error) {
 		connectAbortTimeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
-	defer cancel()
+	ctx := reqCtx
+	if ctx == nil {
+		ctx = l.ctx
+	}
+
+	var cancel func()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			l.releaseToken()
+
+			return definitions.LDAPPoolExhausted, fmt.Errorf("context timeout while waiting for free LDAP connection")
+		}
+
+		if remaining > connectAbortTimeout {
+			ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+		}
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+	}
+
+	if cancel != nil {
+		defer cancel()
+	}
 
 	for {
 		for index := 0; index < len(l.conn); index++ {
@@ -725,7 +894,75 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		rawResult []*ldap.Entry
 	)
 
-	if result, rawResult, err = l.conn[index].Search(ldapRequest); err != nil {
+	conf := l.conf[index]
+
+	// Obtain per-pool negative cache engine (LRU per pool or shared TTL)
+	cache := getNegCache(l.name, conf)
+
+	// Set per-op timeout if configured
+	if to := conf.GetSearchTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
+	// Negative cache check by (pool|baseDN|filter)
+	negKey := l.name + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
+	if v, ok := cache.Get(negKey); ok {
+		// Cache hit (negative)
+		_ = v // value unused; presence is enough
+		stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
+		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+
+		ldapReply.Result = make(bktype.AttributeMapping)
+
+		// Optionally include raw result (none for negative)
+		if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
+			ldapReply.Err = ctxErr
+		}
+
+		return
+	}
+
+	stats.GetMetrics().GetLdapCacheMissesTotal().WithLabelValues(l.name, "neg").Inc()
+
+	maxRetries := conf.GetRetryMax()
+	base := conf.GetRetryBase()
+	maxBackoff := conf.GetRetryMaxBackoff()
+
+	// Singleflight protect identical misses to avoid stampedes
+	type sfRes struct {
+		res bktype.AttributeMapping
+		raw []*ldap.Entry
+		err error
+	}
+
+	val, _, _ := negSF.Do(negKey, func() (any, error) {
+		var e error
+		var r bktype.AttributeMapping
+		var raw []*ldap.Entry
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			r, raw, e = l.conn[index].Search(ldapRequest)
+			if e == nil || !isTransientNetworkError(e) {
+				break
+			}
+
+			// retry on transient errors only
+			stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(l.name, "search").Inc()
+			time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
+		}
+
+		return &sfRes{res: r, raw: raw, err: e}, nil
+	})
+
+	pack := val.(*sfRes)
+	err = pack.err
+	result = pack.res
+	rawResult = pack.raw
+
+	if err != nil {
+		// error metric for search
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
+
 		var (
 			ldapError *ldap.Error
 			doLog     bool
@@ -735,9 +972,13 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
 				doLog = true
 				ldapReply.Err = ldapError.Err
-			}
+			} else {
+				// Negative result: cache it
+				negTTL := conf.GetNegativeCacheTTL()
 
-			// Unknown user!
+				cache.Set(negKey, true, negTTL)
+				stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+			}
 		} else {
 			doLog = true
 			ldapReply.Err = err
@@ -747,13 +988,25 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			level.Error(log.Logger).Log(
 				definitions.LogKeyLDAPPoolName, l.name,
 				definitions.LogKeyGUID, *ldapRequest.GUID,
-				definitions.LogKeyMsg, ldapError.Error(),
+				definitions.LogKeyMsg, err,
 			)
 		}
 	}
 
 	ldapReply.Result = result
-	ldapReply.RawResult = rawResult
+	if conf.GetIncludeRawResult() {
+		ldapReply.RawResult = rawResult
+	}
+
+	// Also cache negatives when result is empty without LDAP error
+	if err == nil {
+		if len(result) == 0 {
+			negTTL := conf.GetNegativeCacheTTL()
+
+			cache.Set(negKey, true, negTTL)
+			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+		}
+	}
 
 	if ctxErr := ldapRequest.HTTPClientContext.Err(); ctxErr != nil {
 		ldapReply.Err = ctxErr
@@ -763,8 +1016,16 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 // processLookupModifyRequest handles the Modify LDAP operation for the specified connection index.
 // It executes the Modify command and updates the LDAPReply's error field if an error occurs.
 func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
+	// Set per-op timeout if configured
+	if to := l.conf[index].GetModifyTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
 	if err := l.conn[index].Modify(ldapRequest); err != nil {
 		ldapReply.Err = err
+
+		// error metric
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "modify", ldapErrorCode(err)).Inc()
 	}
 }
 
@@ -802,9 +1063,16 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 // It attempts to bind to the LDAP server using the credentials provided in the LDAPAuthRequest.
 // If the bind operation or the HTTP client context encounters an error, it populates the LDAPReply with the error.
 func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
-	// Try to authenticate a user.
+	// Apply per-op bind timeout if configured
+	if to := l.conf[index].GetBindTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
+	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
 		ldapReply.Err = err
+
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
 	}
 
 	/*
@@ -840,4 +1108,75 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDA
 	l.processAuthBindRequest(index, ldapAuthRequest, ldapReply)
 
 	sendLDAPReplyAndUnlockState(l, index, ldapAuthRequest, ldapReply)
+}
+
+// helper to extract an LDAP error code string for metrics
+func ldapErrorCode(err error) string {
+	if err == nil {
+		return "0"
+	}
+
+	var le *ldap.Error
+	if stderrors.As(err, &le) {
+		return fmt.Sprintf("%d", le.ResultCode)
+	}
+
+	var ne net.Error
+	if stderrors.As(err, &ne) {
+		return "network"
+	}
+
+	return "other"
+}
+
+// --- Helpers for transient error detection and jittered backoff ---
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var ne net.Error
+
+	if stderrors.As(err, &ne) {
+		if ne.Timeout() {
+			return true
+		}
+
+		// Best-effort: some implementations expose Temporary()
+		type temporary interface{ Temporary() bool }
+
+		if t, ok := any(ne).(temporary); ok && t.Temporary() {
+			return true
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "eof") || strings.Contains(msg, "timeout") || strings.Contains(msg, "temporary") || strings.Contains(msg, "no route") {
+		return true
+	}
+
+	return false
+}
+
+// jitterBackoffDuration calculates a jittered backoff duration for retries based on base, attempt, and max durations.
+// The base duration is doubled with each attempt, capped at max, and random jitter is applied within the calculated bound.
+func jitterBackoffDuration(base time.Duration, attempt int, max time.Duration) time.Duration {
+	if base <= 0 {
+		base = 200 * time.Millisecond
+	}
+
+	if max <= 0 {
+		max = 2 * time.Second
+	}
+
+	b := base * time.Duration(1<<attempt)
+	if b > max {
+		b = max
+	}
+
+	if b <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int63n(int64(b) + 1))
 }

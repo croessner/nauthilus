@@ -41,6 +41,9 @@ type LDAPRequest struct {
 	// RequestID represents the globally unique identifier for an LDAP request. It is a pointer to a string.
 	RequestID *string
 
+	// PoolName is the target LDAP pool name this request must be processed by (e.g., "default" or "mail").
+	PoolName string
+
 	// Filter is the criteria that the LDAP request uses to filter during the search.
 	Filter string
 
@@ -87,6 +90,9 @@ type LDAPAuthRequest struct {
 	// GUID is the unique identifier for the LDAP auth request.
 	// It can be nil.
 	GUID *string
+
+	// PoolName is the target LDAP pool name this auth request must be processed by.
+	PoolName string
 
 	// BindDN is the Distinguished Name for binding to the LDAP server.
 	BindDN string

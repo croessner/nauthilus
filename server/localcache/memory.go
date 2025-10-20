@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/objpool"
+	"github.com/croessner/nauthilus/server/stats"
 )
 
 // Item represents a cached item with expiration time
@@ -188,6 +189,8 @@ func (sc *MemoryShardedCache) DeleteExpired() {
 			if item.Expiration > 0 && now > item.Expiration {
 				sc.resetAndReturnToPoolIfPassDBResult(item.Object)
 				delete(shard.items, k)
+				// eviction due to TTL expiration (shared cache)
+				stats.GetMetrics().GetLdapCacheEvictionsTotal().WithLabelValues("shared", "ttl").Inc()
 			}
 		}
 
@@ -251,3 +254,16 @@ func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
 // LocalCache is a cache object with a default expiration duration of 5 minutes
 // and a cleanup interval of 10 minutes.
 var LocalCache = NewCache(5*time.Minute, 10*time.Minute)
+
+// Len returns the total number of items currently stored across all shards.
+func (sc *MemoryShardedCache) Len() int {
+	count := 0
+
+	for _, shard := range sc.shards {
+		shard.mu.RLock()
+		count += len(shard.items)
+		shard.mu.RUnlock()
+	}
+
+	return count
+}

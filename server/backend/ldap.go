@@ -43,6 +43,25 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 	// Add the pool name to the queue
 	priorityqueue.LDAPQueue.AddPoolName(poolName)
 
+	// Configure queue length limit from config (0 = unlimited)
+	lookupLimit := 0
+	if poolName == definitions.DefaultBackendName {
+		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
+			if c, ok := cfg.(*config.LDAPConf); ok {
+				lookupLimit = c.GetLookupQueueLength()
+			}
+		}
+	} else {
+		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		if pools != nil {
+			if pc := pools[poolName]; pc != nil {
+				lookupLimit = pc.GetLookupQueueLength()
+			}
+		}
+	}
+
+	priorityqueue.LDAPQueue.SetMaxQueueLength(poolName, lookupLimit)
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {
 			for {
@@ -53,7 +72,7 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 					return
 				default:
 					// Get the next request from the priority queue
-					ldapRequest := priorityqueue.LDAPQueue.Pop()
+					ldapRequest := priorityqueue.LDAPQueue.Pop(poolName)
 
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(true); err != nil {
@@ -86,6 +105,25 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 	// Add the pool name to the queue
 	priorityqueue.LDAPAuthQueue.AddPoolName(poolName)
 
+	// Configure auth queue length limit from config (0 = unlimited)
+	authLimit := 0
+	if poolName == definitions.DefaultBackendName {
+		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
+			if c, ok := cfg.(*config.LDAPConf); ok {
+				authLimit = c.GetAuthQueueLength()
+			}
+		}
+	} else {
+		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		if pools != nil {
+			if pc := pools[poolName]; pc != nil {
+				authLimit = pc.GetAuthQueueLength()
+			}
+		}
+	}
+
+	priorityqueue.LDAPAuthQueue.SetMaxQueueLength(poolName, authLimit)
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {
 			for {
@@ -96,7 +134,7 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 					return
 				default:
 					// Get the next request from the priority queue
-					ldapAuthRequest := priorityqueue.LDAPAuthQueue.Pop()
+					ldapAuthRequest := priorityqueue.LDAPAuthQueue.Pop(poolName)
 
 					// Check that we have enough idle connections.
 					if err := ldapPool.SetIdleConnections(false); err != nil {
@@ -143,7 +181,7 @@ func LuaLDAPSearch(ctx context.Context) lua.LGFunction {
 			return 0
 		}
 
-		setDefaultPooöName(fieldValues)
+		setDefaultPoolName(fieldValues)
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPSearch)
 
@@ -171,7 +209,7 @@ func LuaLDAPModify(ctx context.Context) lua.LGFunction {
 			return 0
 		}
 
-		setDefaultPooöName(fieldValues)
+		setDefaultPoolName(fieldValues)
 
 		ldapRequest := createLDAPRequest(L, fieldValues, ctx, definitions.LDAPModify)
 
@@ -258,8 +296,8 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 	return fieldValues
 }
 
-// setDefaultPooöName sets a default pool name if the "pool_name" field in the provided map is an empty string.
-func setDefaultPooöName(fieldValues map[string]lua.LValue) {
+// setDefaultPoolName sets a default pool name if the "pool_name" field in the provided map is an empty string.
+func setDefaultPoolName(fieldValues map[string]lua.LValue) {
 	if fieldValues["pool_name"].String() == "default" {
 		fieldValues["pool_name"] = lua.LString(definitions.DefaultBackendName)
 	}
@@ -342,9 +380,13 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
+	poolName := fieldValues["pool_name"].String()
+
 	ldapRequest := &bktype.LDAPRequest{
 		// Common fields
 		GUID:              &guid,
+		RequestID:         nil,
+		PoolName:          poolName,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctx,
 

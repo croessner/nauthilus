@@ -162,8 +162,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	username := handleMasterUserMode(auth)
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:    auth.GUID,
-		Command: definitions.LDAPSearch,
+		GUID:     auth.GUID,
+		Command:  definitions.LDAPSearch,
+		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
 			Username:    username,
 			XLocalIP:    auth.XLocalIP,
@@ -247,6 +248,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.GUID,
+			PoolName:          lm.poolName,
 			BindDN:            dn,
 			BindPW:            auth.Password,
 			LDAPReplyChan:     ldapReplyChan,
@@ -350,8 +352,9 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	ldapRequest := &bktype.LDAPRequest{
-		GUID:    auth.GUID,
-		Command: definitions.LDAPSearch,
+		GUID:     auth.GUID,
+		Command:  definitions.LDAPSearch,
+		PoolName: lm.poolName,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,
 			XLocalIP:    auth.XLocalIP,
@@ -454,6 +457,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	ldapRequest := &bktype.LDAPRequest{
 		GUID:       auth.GUID,
 		Command:    definitions.LDAPModify,
+		PoolName:   lm.poolName,
 		SubCommand: definitions.LDAPModifyAdd,
 		MacroSource: &util.MacroSource{
 			Username:    auth.Username,

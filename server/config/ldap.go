@@ -116,6 +116,8 @@ type LDAPConf struct {
 	LookupIdlePoolSize int `mapstructure:"lookup_idle_pool_size" validate:"omitempty,min=0"`
 	AuthPoolSize       int `mapstructure:"auth_pool_size" validate:"validateAuthPoolRequired"`
 	AuthIdlePoolSize   int `mapstructure:"auth_idle_pool_size" validate:"omitempty,min=0"`
+	LookupQueueLength  int `mapstructure:"lookup_queue_length" validate:"omitempty,min=0"`
+	AuthQueueLength    int `mapstructure:"auth_queue_length" validate:"omitempty,min=0"`
 
 	BindDN        string `mapstructure:"bind_dn" validate:"omitempty,printascii"`
 	BindPW        string `mapstructure:"bind_pw" validate:"omitempty"`
@@ -124,7 +126,41 @@ type LDAPConf struct {
 	TLSClientKey  string `mapstructure:"tls_client_key" validate:"omitempty,file"`
 
 	ConnectAbortTimeout time.Duration `mapstructure:"connect_abort_timeout" validate:"omitempty,max=10m"`
-	ServerURIs          []string      `mapstructure:"server_uri" validate:"required,dive,uri"`
+	// Operation-specific timeouts (0 = library default)
+	SearchTimeout time.Duration `mapstructure:"search_timeout" validate:"omitempty,max=10m"`
+	BindTimeout   time.Duration `mapstructure:"bind_timeout" validate:"omitempty,max=10m"`
+	ModifyTimeout time.Duration `mapstructure:"modify_timeout" validate:"omitempty,max=10m"`
+	// Guardrails for search
+	SearchSizeLimit int           `mapstructure:"search_size_limit" validate:"omitempty,min=0,max=100000"`
+	SearchTimeLimit time.Duration `mapstructure:"search_time_limit" validate:"omitempty,max=10m"`
+	// Retry/backoff configuration
+	RetryMax        int           `mapstructure:"retry_max" validate:"omitempty,min=0,max=10"`
+	RetryBase       time.Duration `mapstructure:"retry_base" validate:"omitempty,max=1m"`
+	RetryMaxBackoff time.Duration `mapstructure:"retry_max_backoff" validate:"omitempty,max=5m"`
+	// Circuit breaker configuration
+	CBFailureThreshold int           `mapstructure:"cb_failure_threshold" validate:"omitempty,min=1,max=1000"`
+	CBCooldown         time.Duration `mapstructure:"cb_cooldown" validate:"omitempty,max=10m"`
+	CBHalfOpenMax      int           `mapstructure:"cb_half_open_max" validate:"omitempty,min=1,max=100"`
+
+	// Health check configuration
+	HealthCheckInterval time.Duration `mapstructure:"health_check_interval" validate:"omitempty,max=10m"`
+	HealthCheckTimeout  time.Duration `mapstructure:"health_check_timeout" validate:"omitempty,max=1m"`
+
+	// A8 cache options
+	DNCacheTTL         time.Duration `mapstructure:"dn_cache_ttl" validate:"omitempty,max=10m"`
+	MembershipCacheTTL time.Duration `mapstructure:"membership_cache_ttl" validate:"omitempty,max=10m"`
+	NegativeCacheTTL   time.Duration `mapstructure:"negative_cache_ttl" validate:"omitempty,max=10m"`
+	CacheMaxEntries    int           `mapstructure:"cache_max_entries" validate:"omitempty,min=0,max=10000000"`
+	CacheImpl          string        `mapstructure:"cache_impl" validate:"omitempty,oneof=lru ttl"`
+	IncludeRawResult   bool          `mapstructure:"include_raw_result"`
+
+	// A9 optional auth rate limiting (per pool)
+	AuthRateLimitPerSecond float64 `mapstructure:"auth_rate_limit_per_second" validate:"omitempty,min=0"`
+	AuthRateLimitBurst     int     `mapstructure:"auth_rate_limit_burst" validate:"omitempty,min=0"`
+
+	ServerURIs []string `mapstructure:"server_uri" validate:"required,dive,uri"`
+	// Internal: set by pool to label metrics
+	PoolName string `mapstructure:"-"`
 }
 
 // validateAuthPoolRequired validates the AuthPoolSize field in LDAPConf ensuring it's greater than 0 when PoolOnly is false.
@@ -570,4 +606,202 @@ func (p *LDAPSearchProtocol) GetProtocols() []string {
 	}
 
 	return p.Protocols
+}
+
+// GetLookupQueueLength returns the maximum queue length for lookup requests. Zero means unlimited.
+func (l *LDAPConf) GetLookupQueueLength() int {
+	if l == nil {
+		return 0
+	}
+
+	return l.LookupQueueLength
+}
+
+// GetAuthQueueLength returns the maximum queue length for auth requests. Zero means unlimited.
+func (l *LDAPConf) GetAuthQueueLength() int {
+	if l == nil {
+		return 0
+	}
+
+	return l.AuthQueueLength
+}
+
+// GetSearchTimeout returns the search timeout duration.
+func (l *LDAPConf) GetSearchTimeout() time.Duration {
+	if l == nil {
+		return 0
+	}
+
+	return l.SearchTimeout
+}
+
+// GetBindTimeout returns the bind timeout duration.
+func (l *LDAPConf) GetBindTimeout() time.Duration {
+	if l == nil {
+		return 0
+	}
+
+	return l.BindTimeout
+}
+
+// GetModifyTimeout returns the modify timeout duration.
+func (l *LDAPConf) GetModifyTimeout() time.Duration {
+	if l == nil {
+		return 0
+	}
+
+	return l.ModifyTimeout
+}
+
+// GetSearchSizeLimit returns LDAP size limit; 0 means server default (unlimited).
+func (l *LDAPConf) GetSearchSizeLimit() int {
+	if l == nil || l.SearchSizeLimit < 0 {
+		return 0
+	}
+
+	return l.SearchSizeLimit
+}
+
+// GetSearchTimeLimit returns LDAP time limit as a duration; 0 means default.
+func (l *LDAPConf) GetSearchTimeLimit() time.Duration {
+	if l == nil || l.SearchTimeLimit < 0 {
+		return 0
+	}
+
+	return l.SearchTimeLimit
+}
+
+// GetAuthRateLimitPerSecond returns tokens per second for auth limiter.
+func (l *LDAPConf) GetAuthRateLimitPerSecond() float64 {
+	if l == nil || l.AuthRateLimitPerSecond < 0 {
+		return 0
+	}
+
+	return l.AuthRateLimitPerSecond
+}
+
+// GetAuthRateLimitBurst returns burst size for auth limiter.
+func (l *LDAPConf) GetAuthRateLimitBurst() int {
+	if l == nil || l.AuthRateLimitBurst < 0 {
+		return 0
+	}
+
+	return l.AuthRateLimitBurst
+}
+
+// GetRetryMax returns the maximum number of retries for transient errors. Default 2 if unset.
+func (l *LDAPConf) GetRetryMax() int {
+	if l == nil || l.RetryMax == 0 {
+		return 2
+	}
+
+	return l.RetryMax
+}
+
+// GetRetryBase returns the base backoff duration for retries. Default 200ms if unset.
+func (l *LDAPConf) GetRetryBase() time.Duration {
+	if l == nil || l.RetryBase == 0 {
+		return 200 * time.Millisecond
+	}
+
+	return l.RetryBase
+}
+
+// GetRetryMaxBackoff returns the max backoff duration for retries. Default 2s if unset.
+func (l *LDAPConf) GetRetryMaxBackoff() time.Duration {
+	if l == nil || l.RetryMaxBackoff == 0 {
+		return 2 * time.Second
+	}
+
+	return l.RetryMaxBackoff
+}
+
+// GetCBFailureThreshold returns the number of failures before opening the breaker. Default 5.
+func (l *LDAPConf) GetCBFailureThreshold() int {
+	if l == nil || l.CBFailureThreshold == 0 {
+		return 5
+	}
+
+	return l.CBFailureThreshold
+}
+
+// GetCBCooldown returns the cooldown period for the breaker to remain open. Default 30s.
+func (l *LDAPConf) GetCBCooldown() time.Duration {
+	if l == nil || l.CBCooldown == 0 {
+		return 30 * time.Second
+	}
+
+	return l.CBCooldown
+}
+
+// GetCBHalfOpenMax returns the number of half-open probes allowed before deciding state. Default 1.
+func (l *LDAPConf) GetCBHalfOpenMax() int {
+	if l == nil || l.CBHalfOpenMax == 0 {
+		return 1
+	}
+
+	return l.CBHalfOpenMax
+}
+
+// GetHealthCheckInterval returns the interval for active LDAP health probes. Default 10s.
+func (l *LDAPConf) GetHealthCheckInterval() time.Duration {
+	if l == nil || l.HealthCheckInterval == 0 {
+		return 10 * time.Second
+	}
+
+	return l.HealthCheckInterval
+}
+
+// GetHealthCheckTimeout returns the per-probe timeout for LDAP health checks. Default 1.5s.
+func (l *LDAPConf) GetHealthCheckTimeout() time.Duration {
+	if l == nil || l.HealthCheckTimeout == 0 {
+		return 1500 * time.Millisecond
+	}
+
+	return l.HealthCheckTimeout
+}
+
+// GetNegativeCacheTTL returns TTL for negative cache entries. Default 20s.
+func (l *LDAPConf) GetNegativeCacheTTL() time.Duration {
+	if l == nil || l.NegativeCacheTTL == 0 {
+		return 20 * time.Second
+	}
+
+	return l.NegativeCacheTTL
+}
+
+// GetCacheMaxEntries returns max entries for LRU caches. Default 5000.
+func (l *LDAPConf) GetCacheMaxEntries() int {
+	if l == nil || l.CacheMaxEntries == 0 {
+		return 5000
+	}
+
+	return l.CacheMaxEntries
+}
+
+// GetCacheImpl returns selected cache implementation: "lru" or "ttl". Default "ttl".
+func (l *LDAPConf) GetCacheImpl() string {
+	if l == nil || l.CacheImpl == "" {
+		return "ttl"
+	}
+
+	return l.CacheImpl
+}
+
+// GetIncludeRawResult returns whether raw LDAP search entries should be included in replies. Default false.
+func (l *LDAPConf) GetIncludeRawResult() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.IncludeRawResult
+}
+
+// GetPoolName returns the pool name label set internally.
+func (l *LDAPConf) GetPoolName() string {
+	if l == nil {
+		return ""
+	}
+
+	return l.PoolName
 }
