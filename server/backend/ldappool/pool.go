@@ -147,6 +147,9 @@ func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest
 	if v, ok := authLimiters.Load(l.name); ok {
 		if lim, ok2 := v.(*tokenBucket); ok2 {
 			if !lim.allow() {
+				// increment rate-limit metric
+				stats.GetMetrics().GetLdapAuthRateLimitedTotal().WithLabelValues(l.name, "pool").Inc()
+
 				return fmt.Errorf("auth rate limited for pool %s", l.name)
 			}
 		}
@@ -196,9 +199,8 @@ func (l *ldapPoolImpl) GetNumberOfWorkers() int {
 var _ LDAPPool = (*ldapPoolImpl)(nil)
 
 var (
-	negCache     localcache.SimpleCache
-	negCacheOnce sync.Once
-	negSF        singleflight.Group
+	negCaches sync.Map // map[string]localcache.SimpleCache
+	negSF     singleflight.Group
 
 	// per-pool auth rate limiters
 	authLimiters sync.Map // map[string]*tokenBucket
@@ -253,18 +255,33 @@ func (tb *tokenBucket) allow() bool {
 	return false
 }
 
-// initNegativeCache initializes the negative cache using the configuration provided in the LDAPConf object.
-// It supports either LRU cache or a shared sharded TTL memory cache based on the configuration settings.
-// This function ensures thread-safe lazy initialization using a sync.Once mechanism.
-func initNegativeCache(conf *config.LDAPConf) {
-	negCacheOnce.Do(func() {
-		if conf != nil && conf.GetCacheImpl() == "lru" {
-			negCache = localcache.NewLRU(conf.GetCacheMaxEntries())
-		} else {
-			// Use shared sharded TTL cache; per-call TTL will be respected.
-			negCache = localcache.LocalCache.MemoryShardedCache
+// getNegCache returns the negative cache for the given pool, creating it if necessary.
+// LRU caches are created per-pool (allowing eviction metrics). TTL cache shares the global sharded cache.
+func getNegCache(pool string, conf *config.LDAPConf) localcache.SimpleCache {
+	if v, ok := negCaches.Load(pool); ok {
+		if c, ok2 := v.(localcache.SimpleCache); ok2 {
+			return c
 		}
-	})
+	}
+
+	var c localcache.SimpleCache
+	if conf != nil && conf.GetCacheImpl() == "lru" {
+		lru := localcache.NewLRU(conf.GetCacheMaxEntries())
+
+		// Increment eviction metrics for this pool when entries are evicted.
+		lru.SetOnEvict(func(key string, value any) {
+			stats.GetMetrics().GetLdapCacheEvictionsTotal().WithLabelValues(pool, "neg").Inc()
+		})
+
+		c = lru
+	} else {
+		// Use shared sharded TTL cache; per-call TTL will be respected.
+		c = localcache.LocalCache.MemoryShardedCache
+	}
+
+	negCaches.Store(pool, c)
+
+	return c
 }
 
 // NewPool creates and initializes a new LDAPPool based on the specified pool type and context for LDAP operations.
@@ -879,8 +896,8 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 
 	conf := l.conf[index]
 
-	// Initialize negative cache engine lazily
-	initNegativeCache(conf)
+	// Obtain per-pool negative cache engine (LRU per pool or shared TTL)
+	cache := getNegCache(l.name, conf)
 
 	// Set per-op timeout if configured
 	if to := conf.GetSearchTimeout(); to > 0 {
@@ -889,11 +906,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 
 	// Negative cache check by (pool|baseDN|filter)
 	negKey := l.name + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
-	if v, ok := negCache.Get(negKey); ok {
+	if v, ok := cache.Get(negKey); ok {
 		// Cache hit (negative)
 		_ = v // value unused; presence is enough
 		stats.GetMetrics().GetLdapCacheHitsTotal().WithLabelValues(l.name, "neg").Inc()
-		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
+		stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
 
 		ldapReply.Result = make(bktype.AttributeMapping)
 
@@ -959,8 +976,8 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 				// Negative result: cache it
 				negTTL := conf.GetNegativeCacheTTL()
 
-				negCache.Set(negKey, true, negTTL)
-				stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
+				cache.Set(negKey, true, negTTL)
+				stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
 			}
 		} else {
 			doLog = true
@@ -986,8 +1003,8 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		if len(result) == 0 {
 			negTTL := conf.GetNegativeCacheTTL()
 
-			negCache.Set(negKey, true, negTTL)
-			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(negCache.Len()))
+			cache.Set(negKey, true, negTTL)
+			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
 		}
 	}
 

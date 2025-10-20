@@ -252,6 +252,7 @@ func (l *LuaFilter) GetScriptPath() string {
 
 type LuaConf struct {
 	NumberOfWorkers   int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	QueueLength       int      `mapstructure:"queue_length" validate:"omitempty,min=0"`
 	PackagePath       string   `mapstructure:"package_path"`
 	BackendScriptPath string   `mapstructure:"backend_script_path" validate:"omitempty,file"`
 	InitScriptPath    string   `mapstructure:"init_script_path" validate:"omitempty,file"`
@@ -277,6 +278,15 @@ func (l *LuaConf) GetNumberOfWorkers() int {
 	}
 
 	return l.NumberOfWorkers
+}
+
+// GetQueueLength returns the max queue length for Lua backend requests; 0 means unlimited.
+func (l *LuaConf) GetQueueLength() int {
+	if l == nil || l.QueueLength < 0 {
+		return 0
+	}
+
+	return l.QueueLength
 }
 
 // GetPackagePath retrieves the PackagePath from the LuaConf. Returns an empty string if the LuaConf is nil.

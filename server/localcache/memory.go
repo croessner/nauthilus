@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/objpool"
+	"github.com/croessner/nauthilus/server/stats"
 )
 
 // Item represents a cached item with expiration time
@@ -188,6 +189,8 @@ func (sc *MemoryShardedCache) DeleteExpired() {
 			if item.Expiration > 0 && now > item.Expiration {
 				sc.resetAndReturnToPoolIfPassDBResult(item.Object)
 				delete(shard.items, k)
+				// eviction due to TTL expiration (shared cache)
+				stats.GetMetrics().GetLdapCacheEvictionsTotal().WithLabelValues("shared", "ttl").Inc()
 			}
 		}
 

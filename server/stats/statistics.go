@@ -136,6 +136,9 @@ type Metrics interface {
 	// GetLdapCacheHitsTotal returns a counter vector tracking the total number of LDAP cache hits with specified labels.
 	GetLdapCacheHitsTotal() *prometheus.CounterVec
 
+	// GetLdapAuthRateLimitedTotal returns a CounterVec for rate-limited auth requests.
+	GetLdapAuthRateLimitedTotal() *prometheus.CounterVec
+
 	// GetLdapCacheMissesTotal returns a Prometheus CounterVec tracking the total number of LDAP cache misses.
 	GetLdapCacheMissesTotal() *prometheus.CounterVec
 
@@ -247,6 +250,21 @@ type Metrics interface {
 	// GetLdapTargetInflight exposes current in-flight requests per LDAP target.
 	GetLdapTargetInflight() *prometheus.GaugeVec
 
+	// GetLuaQueueDepth returns a Prometheus GaugeVec metric tracking the depth of the Lua request queue per backend.
+	GetLuaQueueDepth() *prometheus.GaugeVec
+
+	// GetLuaQueueWaitSeconds returns a histogram vector tracking wait times for requests in the Lua script execution queue.
+	GetLuaQueueWaitSeconds() *prometheus.HistogramVec
+
+	// GetLuaQueueDroppedTotal returns a CounterVec metric that tracks the total number of Lua queue requests dropped.
+	GetLuaQueueDroppedTotal() *prometheus.CounterVec
+
+	// GetLuaVMInUse returns a prometheus.GaugeVec tracking the current number of Lua virtual machines in use.
+	GetLuaVMInUse() *prometheus.GaugeVec
+
+	// GetLuaVMReplacedTotal returns a prometheus.CounterVec that tracks the total count of replaced Lua virtual machines.
+	GetLuaVMReplacedTotal() *prometheus.CounterVec
+
 	// GetRblRejected tracks the total number of DNS RBL request rejections as a Prometheus CounterVec, categorized by RBL.
 	GetRblRejected() *prometheus.CounterVec
 
@@ -255,47 +273,53 @@ type Metrics interface {
 }
 
 type metricsImpl struct {
-	instanceInfo            *prometheus.GaugeVec
-	currentRequests         prometheus.Gauge
-	httpRequestsTotal       *prometheus.CounterVec
-	httpResponseTimeSeconds *prometheus.HistogramVec
-	loginsCounter           *prometheus.CounterVec
-	redisReadCounter        prometheus.Counter
-	redisWriteCounter       prometheus.Counter
-	functionDuration        *prometheus.HistogramVec
-	rblDuration             *prometheus.HistogramVec
-	cacheHits               prometheus.Counter
-	cacheMisses             prometheus.Counter
-	redisHits               *prometheus.CounterVec
-	redisMisses             *prometheus.CounterVec
-	redisTimeouts           *prometheus.CounterVec
-	redisTotalConns         *prometheus.GaugeVec
-	redisIdleConns          *prometheus.GaugeVec
-	redisStaleConns         *prometheus.GaugeVec
-	bruteForceRejected      *prometheus.CounterVec
-	bruteForceHits          *prometheus.CounterVec
-	rejectedProtocols       *prometheus.CounterVec
-	acceptedProtocols       *prometheus.CounterVec
-	backendServerStatus     *prometheus.GaugeVec
-	ldapPoolStatus          *prometheus.GaugeVec
-	ldapOpenConnections     *prometheus.GaugeVec
-	ldapStaleConnections    *prometheus.GaugeVec
-	ldapPoolSize            *prometheus.GaugeVec
-	ldapIdlePoolSize        *prometheus.GaugeVec
-	ldapQueueDepth          *prometheus.GaugeVec
-	ldapQueueWaitSeconds    *prometheus.HistogramVec
-	ldapQueueDroppedTotal   *prometheus.CounterVec
-	ldapBreakerState        *prometheus.GaugeVec
-	ldapTargetHealth        *prometheus.GaugeVec
-	ldapTargetInflight      *prometheus.GaugeVec
-	ldapCacheHitsTotal      *prometheus.CounterVec
-	ldapCacheMissesTotal    *prometheus.CounterVec
-	ldapCacheEntries        *prometheus.GaugeVec
-	ldapCacheEvictionsTotal *prometheus.CounterVec
-	ldapErrorsTotal         *prometheus.CounterVec
-	ldapRetriesTotal        *prometheus.CounterVec
-	rblRejected             *prometheus.CounterVec
-	genericConnections      *prometheus.GaugeVec
+	instanceInfo             *prometheus.GaugeVec
+	currentRequests          prometheus.Gauge
+	httpRequestsTotal        *prometheus.CounterVec
+	httpResponseTimeSeconds  *prometheus.HistogramVec
+	loginsCounter            *prometheus.CounterVec
+	redisReadCounter         prometheus.Counter
+	redisWriteCounter        prometheus.Counter
+	functionDuration         *prometheus.HistogramVec
+	rblDuration              *prometheus.HistogramVec
+	cacheHits                prometheus.Counter
+	cacheMisses              prometheus.Counter
+	redisHits                *prometheus.CounterVec
+	redisMisses              *prometheus.CounterVec
+	redisTimeouts            *prometheus.CounterVec
+	redisTotalConns          *prometheus.GaugeVec
+	redisIdleConns           *prometheus.GaugeVec
+	redisStaleConns          *prometheus.GaugeVec
+	bruteForceRejected       *prometheus.CounterVec
+	bruteForceHits           *prometheus.CounterVec
+	rejectedProtocols        *prometheus.CounterVec
+	acceptedProtocols        *prometheus.CounterVec
+	backendServerStatus      *prometheus.GaugeVec
+	ldapPoolStatus           *prometheus.GaugeVec
+	ldapOpenConnections      *prometheus.GaugeVec
+	ldapStaleConnections     *prometheus.GaugeVec
+	ldapPoolSize             *prometheus.GaugeVec
+	ldapIdlePoolSize         *prometheus.GaugeVec
+	ldapQueueDepth           *prometheus.GaugeVec
+	ldapQueueWaitSeconds     *prometheus.HistogramVec
+	ldapQueueDroppedTotal    *prometheus.CounterVec
+	ldapBreakerState         *prometheus.GaugeVec
+	ldapTargetHealth         *prometheus.GaugeVec
+	ldapTargetInflight       *prometheus.GaugeVec
+	ldapCacheHitsTotal       *prometheus.CounterVec
+	ldapCacheMissesTotal     *prometheus.CounterVec
+	ldapCacheEntries         *prometheus.GaugeVec
+	ldapCacheEvictionsTotal  *prometheus.CounterVec
+	ldapErrorsTotal          *prometheus.CounterVec
+	ldapRetriesTotal         *prometheus.CounterVec
+	ldapAuthRateLimitedTotal *prometheus.CounterVec
+	luaQueueDepth            *prometheus.GaugeVec
+	luaQueueWaitSeconds      *prometheus.HistogramVec
+	luaQueueDroppedTotal     *prometheus.CounterVec
+	luaVMInUse               *prometheus.GaugeVec
+	luaVMReplacedTotal       *prometheus.CounterVec
+	rblRejected              *prometheus.CounterVec
+	genericConnections       *prometheus.GaugeVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -458,6 +482,31 @@ func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
 	return m.genericConnections
 }
 
+// GetLuaQueueDepth returns a Prometheus GaugeVec representing the depth of the Lua job queue.
+func (m *metricsImpl) GetLuaQueueDepth() *prometheus.GaugeVec {
+	return m.luaQueueDepth
+}
+
+// GetLuaQueueWaitSeconds returns a prometheus.HistogramVec for monitoring Lua queue wait durations in seconds.
+func (m *metricsImpl) GetLuaQueueWaitSeconds() *prometheus.HistogramVec {
+	return m.luaQueueWaitSeconds
+}
+
+// GetLuaQueueDroppedTotal retrieves the prometheus CounterVec metric for tracking the total number of dropped Lua queue items.
+func (m *metricsImpl) GetLuaQueueDroppedTotal() *prometheus.CounterVec {
+	return m.luaQueueDroppedTotal
+}
+
+// GetLuaVMInUse returns a GaugeVec metric tracking the number of Lua virtual machines currently in use.
+func (m *metricsImpl) GetLuaVMInUse() *prometheus.GaugeVec {
+	return m.luaVMInUse
+}
+
+// GetLuaVMReplacedTotal returns the CounterVec metric tracking the total number of Lua VM replacements.
+func (m *metricsImpl) GetLuaVMReplacedTotal() *prometheus.CounterVec {
+	return m.luaVMReplacedTotal
+}
+
 // GetLdapBreakerState returns the ldapBreakerState field.
 func (m *metricsImpl) GetLdapBreakerState() *prometheus.GaugeVec {
 	return m.ldapBreakerState
@@ -501,6 +550,11 @@ func (m *metricsImpl) GetLdapErrorsTotal() *prometheus.CounterVec {
 // GetLdapRetriesTotal returns the ldapRetriesTotal field.
 func (m *metricsImpl) GetLdapRetriesTotal() *prometheus.CounterVec {
 	return m.ldapRetriesTotal
+}
+
+// GetLdapAuthRateLimitedTotal returns the ldapAuthRateLimitedTotal field.
+func (m *metricsImpl) GetLdapAuthRateLimitedTotal() *prometheus.CounterVec {
+	return m.ldapAuthRateLimitedTotal
 }
 
 func NewMetrics() Metrics {
@@ -743,6 +797,12 @@ func NewMetrics() Metrics {
 				Help: "Total LDAP retries by operation",
 			}, []string{"pool", "op"},
 		),
+		ldapAuthRateLimitedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_auth_rate_limited_total",
+				Help: "Total LDAP auth requests rate-limited",
+			}, []string{"pool", "dimension"},
+		),
 		rblRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "rbl_rejected_total",
@@ -754,6 +814,38 @@ func NewMetrics() Metrics {
 				Name: "generic_connections",
 				Help: "Current number of established connections to a target",
 			}, []string{"description", "target", "direction"},
+		),
+		// Lua metrics
+		luaQueueDepth: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "lua_queue_depth",
+				Help: "Current Lua queue depth",
+			}, []string{"backend"},
+		),
+		luaQueueWaitSeconds: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "lua_queue_wait_seconds",
+				Help:    "Time spent waiting in Lua queues",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+			}, []string{"backend"},
+		),
+		luaQueueDroppedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lua_queue_dropped_total",
+				Help: "Total Lua requests dropped due to queue overflow",
+			}, []string{"backend"},
+		),
+		luaVMInUse: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "lua_vm_in_use",
+				Help: "Number of Lua VMs currently in use",
+			}, []string{"key"},
+		),
+		luaVMReplacedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lua_vm_replaced_total",
+				Help: "Total Lua VMs replaced due to errors or timeouts",
+			}, []string{"key"},
 		),
 	}
 }

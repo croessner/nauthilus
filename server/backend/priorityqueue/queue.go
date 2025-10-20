@@ -203,6 +203,7 @@ type LuaRequestQueue struct {
 		queue    LuaRequestPriorityQueue
 		notEmpty *sync.Cond
 	}
+	maxLen map[string]int // per-backend max queue length; 0 means unlimited
 }
 
 // NewLDAPRequestQueue creates a new LDAPRequestQueue
@@ -241,6 +242,7 @@ func NewLuaRequestQueue() *LuaRequestQueue {
 			queue    LuaRequestPriorityQueue
 			notEmpty *sync.Cond
 		}),
+		maxLen: make(map[string]int),
 	}
 
 	return q
@@ -375,7 +377,7 @@ func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 	}
 
 	// Drop on overflow if a max length is configured (>0)
-	if max, has := q.maxLen[poolName]; has && max > 0 && p.queue.Len() >= max {
+	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
 		stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
 
 		return
@@ -479,7 +481,7 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 	}
 
 	// Drop on overflow if a max length is configured (>0)
-	if max, has := q.maxLen[poolName]; has && max > 0 && p.queue.Len() >= max {
+	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
 		stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
 
 		return
@@ -571,6 +573,24 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 		q.backendNames[backendName] = true
 	}
 
+	// Drop early if the request context is already canceled
+	if request.HTTPClientContext != nil && request.HTTPClientContext.Request != nil {
+		select {
+		case <-request.HTTPClientContext.Request.Context().Done():
+			stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
+
+			return
+		default:
+		}
+	}
+
+	// Drop on overflow if a max length is configured (>0)
+	if maxLen, has := q.maxLen[backendName]; has && maxLen > 0 && b.queue.Len() >= maxLen {
+		stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
+
+		return
+	}
+
 	item := &LuaRequestItem{
 		Request:    request,
 		Priority:   priority,
@@ -578,6 +598,8 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 	}
 
 	heap.Push(&b.queue, item)
+	// Update depth metric after enqueue
+	stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
 	b.notEmpty.Signal()
 }
 
@@ -604,13 +626,32 @@ func (q *LuaRequestQueue) Pop(backendName string) *bktype.LuaRequest {
 		q.backendNames[backendName] = true
 	}
 
-	for b.queue.Len() == 0 {
-		b.notEmpty.Wait()
+	for {
+		for b.queue.Len() == 0 {
+			b.notEmpty.Wait()
+		}
+
+		item := heap.Pop(&b.queue).(*LuaRequestItem)
+
+		// If the request context is already canceled, drop it and continue to next
+		if item.Request != nil && item.Request.HTTPClientContext != nil && item.Request.HTTPClientContext.Request != nil {
+			select {
+			case <-item.Request.HTTPClientContext.Request.Context().Done():
+				stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
+				// Update depth after drop and continue loop to fetch next item
+				stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
+
+				continue
+			default:
+			}
+		}
+
+		// Record queue wait time and new depth after dequeue
+		stats.GetMetrics().GetLuaQueueWaitSeconds().WithLabelValues(backendName).Observe(time.Since(item.InsertTime).Seconds())
+		stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
+
+		return item.Request
 	}
-
-	item := heap.Pop(&b.queue).(*LuaRequestItem)
-
-	return item.Request
 }
 
 // Global queue instances
@@ -644,4 +685,17 @@ func (q *LDAPAuthRequestQueue) SetMaxQueueLength(poolName string, n int) {
 	}
 
 	q.maxLen[poolName] = n
+}
+
+// SetMaxQueueLength sets the maximum queue length for a given Lua backend queue.
+// A value <= 0 disables the limit (unlimited).
+func (q *LuaRequestQueue) SetMaxQueueLength(backendName string, n int) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	if q.maxLen == nil {
+		q.maxLen = make(map[string]int)
+	}
+
+	q.maxLen[backendName] = n
 }

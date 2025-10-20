@@ -565,8 +565,10 @@ func ensureTargetState(pool, target string) *targetState {
 
 func setHealth(pool, target string, ok bool) {
 	ts := ensureTargetState(pool, target)
+
 	healthMu.Lock()
 	defer healthMu.Unlock()
+
 	ts.healthy = ok
 	if ok {
 		stats.GetMetrics().GetLdapTargetHealth().WithLabelValues(pool, target).Set(1)
@@ -577,19 +579,25 @@ func setHealth(pool, target string, ok bool) {
 
 func incInflight(pool, target string) {
 	ts := ensureTargetState(pool, target)
+
 	healthMu.Lock()
 	defer healthMu.Unlock()
+
 	ts.inflight++
+
 	stats.GetMetrics().GetLdapTargetInflight().WithLabelValues(pool, target).Set(float64(ts.inflight))
 }
 
 func decInflight(pool, target string) {
 	ts := ensureTargetState(pool, target)
+
 	healthMu.Lock()
 	defer healthMu.Unlock()
+
 	if ts.inflight > 0 {
 		ts.inflight--
 	}
+
 	stats.GetMetrics().GetLdapTargetInflight().WithLabelValues(pool, target).Set(float64(ts.inflight))
 }
 
@@ -597,6 +605,7 @@ func pickTarget(pool string, targets []string, conf *config.LDAPConf) string {
 	// First pass: healthy and breaker-allowed
 	best := ""
 	bestInflight := int(^uint(0) >> 1) // max int
+
 	for _, t := range targets {
 		ts := ensureTargetState(pool, t)
 		if ts.healthy && cbAllow(pool, t, conf) {
@@ -641,8 +650,8 @@ func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
 		return
 	}
 
-	interval := 10 * time.Second
-	probeTO := 1500 * time.Millisecond
+	interval := ldapConf.GetHealthCheckInterval()
+	probeTO := ldapConf.GetHealthCheckTimeout()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

@@ -142,6 +142,10 @@ type LDAPConf struct {
 	CBCooldown         time.Duration `mapstructure:"cb_cooldown" validate:"omitempty,max=10m"`
 	CBHalfOpenMax      int           `mapstructure:"cb_half_open_max" validate:"omitempty,min=1,max=100"`
 
+	// Health check configuration
+	HealthCheckInterval time.Duration `mapstructure:"health_check_interval" validate:"omitempty,max=10m"`
+	HealthCheckTimeout  time.Duration `mapstructure:"health_check_timeout" validate:"omitempty,max=1m"`
+
 	// A8 cache options
 	DNCacheTTL         time.Duration `mapstructure:"dn_cache_ttl" validate:"omitempty,max=10m"`
 	MembershipCacheTTL time.Duration `mapstructure:"membership_cache_ttl" validate:"omitempty,max=10m"`
@@ -737,6 +741,24 @@ func (l *LDAPConf) GetCBHalfOpenMax() int {
 	}
 
 	return l.CBHalfOpenMax
+}
+
+// GetHealthCheckInterval returns the interval for active LDAP health probes. Default 10s.
+func (l *LDAPConf) GetHealthCheckInterval() time.Duration {
+	if l == nil || l.HealthCheckInterval == 0 {
+		return 10 * time.Second
+	}
+
+	return l.HealthCheckInterval
+}
+
+// GetHealthCheckTimeout returns the per-probe timeout for LDAP health checks. Default 1.5s.
+func (l *LDAPConf) GetHealthCheckTimeout() time.Duration {
+	if l == nil || l.HealthCheckTimeout == 0 {
+		return 1500 * time.Millisecond
+	}
+
+	return l.HealthCheckTimeout
 }
 
 // GetNegativeCacheTTL returns TTL for negative cache entries. Default 20s.

@@ -33,14 +33,14 @@ func Put(L *lua.LState) {
 	}
 
 	// Reset the Lua state before returning it to the pool
-	resetLuaState(L)
+	ResetLuaState(L)
 
 	luaStatePool.Put(L)
 }
 
-// resetLuaState resets a Lua state to its initial state.
+// ResetLuaState resets a Lua state to its initial state.
 // This is a best-effort approach since gopher-lua doesn't provide a Reset method.
-func resetLuaState(L *lua.LState) {
+func ResetLuaState(L *lua.LState) {
 	// Clear the stack
 	L.SetTop(0)
 

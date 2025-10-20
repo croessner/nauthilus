@@ -29,7 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
 	"github.com/spf13/viper"
@@ -112,6 +112,28 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	// Add the backend name to the queue
 	priorityqueue.LuaQueue.AddBackendName(backendName)
 
+	// Configure queue length limit from config (0 = unlimited)
+	queueLen := 0
+	if backendName == definitions.DefaultBackendName {
+		if cfg := config.GetFile().GetLua().GetConfig(); cfg != nil {
+			if c, ok := cfg.(*config.LuaConf); ok {
+				queueLen = c.GetQueueLength()
+			}
+		}
+	} else {
+		optionalBackends := config.GetFile().GetLua().GetOptionalLuaBackends()
+		if optionalBackends != nil {
+			if bc := optionalBackends[backendName]; bc != nil {
+				queueLen = bc.GetQueueLength()
+			}
+		}
+	}
+
+	priorityqueue.LuaQueue.SetMaxQueueLength(backendName, queueLen)
+
+	// Create per-backend VM pool with MaxVMs equal to number of workers
+	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey("backend:"+backendName), vmpool.PoolOptions{MaxVMs: numberOfWorkers})
+
 	for i := 0; i < numberOfWorkers; i++ {
 		go func() {
 			for {
@@ -122,7 +144,7 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 					// Get the next request from the priority queue
 					luaRequest := priorityqueue.LuaQueue.Pop(backendName)
 
-					handleLuaRequest(ctx, luaRequest, compiledScript)
+					handleLuaRequest(ctx, luaRequest, compiledScript, vmPool)
 				}
 			}
 		}()
@@ -178,7 +200,7 @@ func registerModule(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRe
 // - ctx: The context for the Lua execution, including cancellation and timeout.
 // - luaRequest: The LuaRequest object containing details about the script execution request.
 // - compiledScript: The precompiled Lua script to be executed.
-func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto) {
+func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
 	var (
 		nret       int
 		luaCommand string
@@ -199,9 +221,25 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	defer luaCancel()
 
-	L := luapool.Get()
+	L, acqErr := vmPool.Acquire(luaCtx)
+	if acqErr != nil {
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
 
-	defer luapool.Put(L)
+		return
+	}
+
+	replaceVM := false
+	defer func() {
+		if r := recover(); r != nil {
+			replaceVM = true
+		}
+
+		if replaceVM {
+			vmPool.Replace(L)
+		} else {
+			vmPool.Release(L)
+		}
+	}()
 
 	L.SetContext(luaCtx)
 
@@ -226,6 +264,11 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
 
 	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+
+	// Decide whether to replace VM on hard error/timeout
+	if err != nil || luaCtx.Err() != nil {
+		replaceVM = true
+	}
 
 	// Handle the specific return types
 	if err == nil {

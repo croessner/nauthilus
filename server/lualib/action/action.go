@@ -27,7 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-kit/log/level"
@@ -253,9 +253,27 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	L := luapool.Get()
+	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
 
-	defer luapool.Put(L)
+	L, acqErr := pool.Acquire(aw.ctx)
+	if acqErr != nil {
+		aw.luaActionRequest.FinishedChan <- Done{}
+
+		return
+	}
+
+	replaceVM := false
+	defer func() {
+		if r := recover(); r != nil {
+			replaceVM = true
+		}
+
+		if replaceVM {
+			pool.Replace(L)
+		} else {
+			pool.Release(L)
+		}
+	}()
 
 	aw.registerDynamicLoader(L, httpRequest)
 
@@ -272,6 +290,10 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 			}
 
 			ret := aw.runScript(index, L, request, logs)
+			if ret < 0 {
+				replaceVM = true
+			}
+
 			logs.Set(aw.actionScripts[index].ScriptPath, aw.createResultLogMessage(ret))
 		}
 	}

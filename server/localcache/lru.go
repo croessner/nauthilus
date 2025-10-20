@@ -43,6 +43,7 @@ type LRUCache struct {
 	ll        *list.List
 	items     map[string]*list.Element
 	evictions int64
+	onEvict   func(key string, value any)
 }
 
 type lruEntry struct {
@@ -153,10 +154,24 @@ func (c *LRUCache) removeOldest() {
 
 var _ SimpleCache = (*LRUCache)(nil)
 
+// SetOnEvict registers a callback that will be invoked whenever an entry is evicted from the cache.
+// The callback receives the key and value of the evicted entry.
+func (c *LRUCache) SetOnEvict(cb func(key string, value any)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.onEvict = cb
+}
+
 // removeElement removes the specified element from the cache and updates eviction statistics.
 func (c *LRUCache) removeElement(e *list.Element) {
 	ent := e.Value.(*lruEntry)
 	delete(c.items, ent.key)
+
 	c.ll.Remove(e)
 	c.evictions++
+
+	if c.onEvict != nil {
+		c.onEvict(ent.key, ent.val)
+	}
 }
