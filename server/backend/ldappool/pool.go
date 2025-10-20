@@ -19,6 +19,9 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"math/rand"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -123,7 +126,7 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 
 // HandleLookupRequest processes an LDAP lookup request using a connection pool and manages asynchronous execution.
 func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest) error {
-	connNumber, err := l.getConnection(ldapRequest.GUID)
+	connNumber, err := l.getConnection(ldapRequest.HTTPClientContext, ldapRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -136,7 +139,7 @@ func (l *ldapPoolImpl) HandleLookupRequest(ldapRequest *bktype.LDAPRequest) erro
 
 // HandleAuthRequest processes an LDAP authentication request using the connection pool and updates process metrics.
 func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest) error {
-	connNumber, err := l.getConnection(ldapAuthRequest.GUID)
+	connNumber, err := l.getConnection(ldapAuthRequest.HTTPClientContext, ldapAuthRequest.GUID)
 	if err != nil {
 		return err
 	}
@@ -279,6 +282,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 		conf[index].TLSClientCert = tlsClientCert
 		conf[index].TLSClientKey = tlsClientKey
 		conf[index].SASLExternal = saslExternal
+		conf[index].PoolName = name
 
 		conn[index].SetState(definitions.LDAPStateClosed)
 	}
@@ -308,6 +312,11 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	lp.tokens = make(chan struct{}, poolSize)
 	for i := 0; i < poolSize; i++ {
 		lp.tokens <- Token{}
+	}
+
+	// Start active target health checker for this pool
+	if len(conf) > 0 && conf[0] != nil {
+		go startHealthLoop(name, conf[0])
 	}
 
 	return lp
@@ -510,14 +519,37 @@ func (l *ldapPoolImpl) logConnectionError(guid *string, err error) {
 }
 
 // acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.
-func (l *ldapPoolImpl) acquireTokenWithTimeout() error {
+// It respects the provided context deadline and caps the wait by the configured connect_abort_timeout.
+func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 	connectAbortTimeout := config.GetFile().GetLDAPConfigConnectAbortTimeout()
 	if connectAbortTimeout == 0 {
 		connectAbortTimeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
-	defer cancel()
+	ctx := reqCtx
+	if ctx == nil {
+		ctx = l.ctx
+	}
+
+	// Ensure we never wait longer than connectAbortTimeout
+	var cancel func()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("context timeout while waiting for LDAP token")
+		}
+
+		if remaining > connectAbortTimeout {
+			ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+		}
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+	}
+
+	if cancel != nil {
+		defer cancel()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -534,9 +566,10 @@ func (l *ldapPoolImpl) releaseToken() {
 }
 
 // getConnection retrieves an available LDAP connection number from the pool using a semaphore.
-func (l *ldapPoolImpl) getConnection(guid *string) (connNumber int, err error) {
+// It honors the request context for waiting and scanning, bounded by connect_abort_timeout.
+func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid *string) (connNumber int, err error) {
 	// Acquire capacity token with timeout
-	if err := l.acquireTokenWithTimeout(); err != nil {
+	if err := l.acquireTokenWithTimeout(reqCtx); err != nil {
 		return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
 	}
 
@@ -546,8 +579,31 @@ func (l *ldapPoolImpl) getConnection(guid *string) (connNumber int, err error) {
 		connectAbortTimeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(l.ctx, connectAbortTimeout)
-	defer cancel()
+	ctx := reqCtx
+	if ctx == nil {
+		ctx = l.ctx
+	}
+
+	var cancel func()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			l.releaseToken()
+
+			return definitions.LDAPPoolExhausted, fmt.Errorf("context timeout while waiting for free LDAP connection")
+		}
+
+		if remaining > connectAbortTimeout {
+			ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+		}
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, connectAbortTimeout)
+	}
+
+	if cancel != nil {
+		defer cancel()
+	}
 
 	for {
 		for index := 0; index < len(l.conn); index++ {
@@ -725,7 +781,27 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		rawResult []*ldap.Entry
 	)
 
-	if result, rawResult, err = l.conn[index].Search(ldapRequest); err != nil {
+	conf := l.conf[index]
+	// Set per-op timeout if configured
+	if to := conf.GetSearchTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
+	maxRetries := conf.GetRetryMax()
+	base := conf.GetRetryBase()
+	maxBackoff := conf.GetRetryMaxBackoff()
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		result, rawResult, err = l.conn[index].Search(ldapRequest)
+		if err == nil || !isTransientNetworkError(err) {
+			break
+		}
+
+		// retry on transient errors only
+		time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
+	}
+
+	if err != nil {
 		var (
 			ldapError *ldap.Error
 			doLog     bool
@@ -736,7 +812,6 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 				doLog = true
 				ldapReply.Err = ldapError.Err
 			}
-
 			// Unknown user!
 		} else {
 			doLog = true
@@ -747,7 +822,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			level.Error(log.Logger).Log(
 				definitions.LogKeyLDAPPoolName, l.name,
 				definitions.LogKeyGUID, *ldapRequest.GUID,
-				definitions.LogKeyMsg, ldapError.Error(),
+				definitions.LogKeyMsg, err,
 			)
 		}
 	}
@@ -763,6 +838,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 // processLookupModifyRequest handles the Modify LDAP operation for the specified connection index.
 // It executes the Modify command and updates the LDAPReply's error field if an error occurs.
 func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
+	// Set per-op timeout if configured
+	if to := l.conf[index].GetModifyTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
 	if err := l.conn[index].Modify(ldapRequest); err != nil {
 		ldapReply.Err = err
 	}
@@ -802,7 +882,12 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 // It attempts to bind to the LDAP server using the credentials provided in the LDAPAuthRequest.
 // If the bind operation or the HTTP client context encounters an error, it populates the LDAPReply with the error.
 func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
-	// Try to authenticate a user.
+	// Apply per-op bind timeout if configured
+	if to := l.conf[index].GetBindTimeout(); to > 0 {
+		l.conn[index].GetConn().SetTimeout(to)
+	}
+
+	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
 		ldapReply.Err = err
 	}
@@ -840,4 +925,56 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDA
 	l.processAuthBindRequest(index, ldapAuthRequest, ldapReply)
 
 	sendLDAPReplyAndUnlockState(l, index, ldapAuthRequest, ldapReply)
+}
+
+// --- Helpers for transient error detection and jittered backoff ---
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var ne net.Error
+
+	if stderrors.As(err, &ne) {
+		if ne.Timeout() {
+			return true
+		}
+
+		// Best-effort: some implementations expose Temporary()
+		type temporary interface{ Temporary() bool }
+
+		if t, ok := any(ne).(temporary); ok && t.Temporary() {
+			return true
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "eof") || strings.Contains(msg, "timeout") || strings.Contains(msg, "temporary") || strings.Contains(msg, "no route") {
+		return true
+	}
+
+	return false
+}
+
+// jitterBackoffDuration calculates a jittered backoff duration for retries based on base, attempt, and max durations.
+// The base duration is doubled with each attempt, capped at max, and random jitter is applied within the calculated bound.
+func jitterBackoffDuration(base time.Duration, attempt int, max time.Duration) time.Duration {
+	if base <= 0 {
+		base = 200 * time.Millisecond
+	}
+
+	if max <= 0 {
+		max = 2 * time.Second
+	}
+
+	b := base * time.Duration(1<<attempt)
+	if b > max {
+		b = max
+	}
+
+	if b <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int63n(int64(b) + 1))
 }

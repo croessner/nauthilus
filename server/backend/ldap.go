@@ -43,6 +43,25 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 	// Add the pool name to the queue
 	priorityqueue.LDAPQueue.AddPoolName(poolName)
 
+	// Configure queue length limit from config (0 = unlimited)
+	lookupLimit := 0
+	if poolName == definitions.DefaultBackendName {
+		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
+			if c, ok := cfg.(*config.LDAPConf); ok {
+				lookupLimit = c.GetLookupQueueLength()
+			}
+		}
+	} else {
+		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		if pools != nil {
+			if pc := pools[poolName]; pc != nil {
+				lookupLimit = pc.GetLookupQueueLength()
+			}
+		}
+	}
+
+	priorityqueue.LDAPQueue.SetMaxQueueLength(poolName, lookupLimit)
+
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {
 			for {
@@ -85,6 +104,25 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 	// Add the pool name to the queue
 	priorityqueue.LDAPAuthQueue.AddPoolName(poolName)
+
+	// Configure auth queue length limit from config (0 = unlimited)
+	authLimit := 0
+	if poolName == definitions.DefaultBackendName {
+		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
+			if c, ok := cfg.(*config.LDAPConf); ok {
+				authLimit = c.GetAuthQueueLength()
+			}
+		}
+	} else {
+		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		if pools != nil {
+			if pc := pools[poolName]; pc != nil {
+				authLimit = pc.GetAuthQueueLength()
+			}
+		}
+	}
+
+	priorityqueue.LDAPAuthQueue.SetMaxQueueLength(poolName, authLimit)
 
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
 		go func() {

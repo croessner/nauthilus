@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/url"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-ldap/ldap/v3"
 )
@@ -113,40 +115,42 @@ func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 // Returns an error if the connection could not be established or times out.
 func (l *LDAPConnectionImpl) Connect(guid *string, ldapConf *config.LDAPConf) error {
 	var (
-		connected   bool
-		timeout     bool
-		retryLimit  int
-		ldapCounter int
-		err         error
-		tlsConfig   *tls.Config
+		connected  bool
+		timeout    bool
+		retryCount int
+		err        error
+		tlsConfig  *tls.Config
 	)
 
+	// Overall connect timeout stays as before using ticker
 	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
-
 	ldapConnectTimeout := make(chan bktype.Done)
 	tickerEndChan := make(chan bktype.Done)
 
 	go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
+
+	maxRetries := ldapConf.GetRetryMax()
+	base := ldapConf.GetRetryBase()
+	maxBackoff := ldapConf.GetRetryMaxBackoff()
+	pool := ldapConf.GetPoolName()
 
 EndlessLoop:
 	for {
 		select {
 		case <-ldapConnectTimeout:
 			timeout = true
-
 		default:
-			if retryLimit > definitions.LDAPMaxRetries {
+			if retryCount > maxRetries {
 				return errors.ErrLDAPConnect.WithDetail(
 					fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
 			}
 
-			if ldapCounter > len(ldapConf.ServerURIs)-1 {
-				ldapCounter = 0
-			}
+			target := pickTarget(pool, ldapConf.ServerURIs, ldapConf)
+			idx := indexOfTarget(ldapConf.ServerURIs, target)
 
-			l.logURIInfo(guid, ldapConf, ldapCounter, retryLimit)
+			l.logURIInfo(guid, ldapConf, idx, retryCount)
 
-			u, _ := url.Parse(ldapConf.ServerURIs[ldapCounter])
+			u, _ := url.Parse(target)
 			if u.Scheme == "ldaps" || ldapConf.StartTLS {
 				tlsConfig, err = l.setTLSConfig(u, ldapConf)
 				if err != nil {
@@ -154,13 +158,24 @@ EndlessLoop:
 				}
 			}
 
-			err = l.dialAndStartTLS(guid, ldapConf, ldapCounter, tlsConfig)
+			incInflight(pool, target)
+			err = l.dialAndStartTLS(guid, ldapConf, idx, tlsConfig)
 			if err != nil {
-				ldapCounter++
-				retryLimit++
+				decInflight(pool, target)
+				cbOnFailure(pool, target, ldapConf)
+				setHealth(pool, target, false)
+
+				// Jittered backoff before next attempt
+				time.Sleep(jitterBackoff(base, retryCount, maxBackoff))
+
+				retryCount++
 
 				continue EndlessLoop
 			}
+
+			decInflight(pool, target)
+			cbOnSuccess(pool, target)
+			setHealth(pool, target, true)
 
 			// other operations including SASL External setup unchanged...
 			connected = true
@@ -180,7 +195,6 @@ EndlessLoop:
 	}
 
 	connectTicker.Stop()
-
 	tickerEndChan <- bktype.Done{}
 
 	return err
@@ -330,6 +344,294 @@ func (l *LDAPConnectionImpl) Modify(ldapRequest *bktype.LDAPRequest) (err error)
 }
 
 var _ LDAPConnection = (*LDAPConnectionImpl)(nil)
+
+// --- Circuit breaker (per pool+target) and retry helpers ---
+
+type cbState int
+
+const (
+	cbClosed cbState = iota
+	cbOpen
+	cbHalfOpen
+)
+
+type cb struct {
+	state             cbState
+	failures          int
+	openedAt          time.Time
+	halfOpenRemaining int
+}
+
+var (
+	cbMu  sync.Mutex
+	cbMap = make(map[string]*cb)
+)
+
+// cbKey creates a unique key by concatenating the pool and target strings with a "|" delimiter.
+func cbKey(pool, target string) string {
+	return pool + "|" + target
+}
+
+// getCB retrieves a circuit breaker (cb) instance for a given pool and target, creating a new one if it doesn't exist.
+func getCB(pool, target string) *cb {
+	key := cbKey(pool, target)
+	b, ok := cbMap[key]
+
+	if !ok {
+		b = &cb{state: cbClosed}
+		cbMap[key] = b
+	}
+
+	return b
+}
+
+// setCBMetric updates the Prometheus gauge for LDAP circuit breaker state with the given pool, target, and state.
+func setCBMetric(pool, target string, state cbState) {
+	stats.GetMetrics().GetLdapBreakerState().WithLabelValues(pool, target).Set(float64(state))
+}
+
+// cbAllow determines if access is allowed based on circuit breaker state for a given pool and target.
+func cbAllow(pool, target string, conf *config.LDAPConf) bool {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	b := getCB(pool, target)
+	switch b.state {
+	case cbClosed:
+		return true
+	case cbOpen:
+		// If cooldown passed, move to half-open
+		if time.Since(b.openedAt) >= conf.GetCBCooldown() {
+			b.state = cbHalfOpen
+			b.halfOpenRemaining = conf.GetCBHalfOpenMax()
+
+			setCBMetric(pool, target, b.state)
+
+			return true
+		}
+
+		return false
+	case cbHalfOpen:
+		if b.halfOpenRemaining > 0 {
+			b.halfOpenRemaining--
+
+			return true
+		}
+
+		return false
+	default:
+		return true
+	}
+}
+
+// cbOnSuccess resets the circuit breaker for the specified pool and target, setting its state to closed and clearing failures.
+func cbOnSuccess(pool, target string) {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	b := getCB(pool, target)
+	b.state = cbClosed
+	b.failures = 0
+	b.halfOpenRemaining = 0
+
+	setCBMetric(pool, target, b.state)
+}
+
+// cbOnFailure increments the failure count for a circuit breaker and transitions its state based on the failure threshold.
+func cbOnFailure(pool, target string, conf *config.LDAPConf) {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	b := getCB(pool, target)
+	b.failures++
+	threshold := conf.GetCBFailureThreshold()
+
+	if threshold <= 0 {
+		threshold = 5
+	}
+
+	if b.state == cbHalfOpen || b.failures >= threshold {
+		b.state = cbOpen
+		b.openedAt = time.Now()
+		b.halfOpenRemaining = 0
+
+		setCBMetric(pool, target, b.state)
+	}
+}
+
+// --- Health state and target selection ---
+
+type targetState struct {
+	healthy  bool
+	inflight int
+}
+
+var (
+	healthMu  sync.Mutex
+	healthMap = make(map[string]map[string]*targetState) // pool -> target -> state
+)
+
+func ensureTargetState(pool, target string) *targetState {
+	healthMu.Lock()
+	defer healthMu.Unlock()
+
+	m, ok := healthMap[pool]
+	if !ok {
+		m = make(map[string]*targetState)
+		healthMap[pool] = m
+	}
+
+	ts, ok := m[target]
+	if !ok {
+		ts = &targetState{healthy: true}
+		m[target] = ts
+		// default healthy=1 until proven otherwise
+		stats.GetMetrics().GetLdapTargetHealth().WithLabelValues(pool, target).Set(1)
+	}
+
+	return ts
+}
+
+func setHealth(pool, target string, ok bool) {
+	ts := ensureTargetState(pool, target)
+	healthMu.Lock()
+	defer healthMu.Unlock()
+	ts.healthy = ok
+	if ok {
+		stats.GetMetrics().GetLdapTargetHealth().WithLabelValues(pool, target).Set(1)
+	} else {
+		stats.GetMetrics().GetLdapTargetHealth().WithLabelValues(pool, target).Set(0)
+	}
+}
+
+func incInflight(pool, target string) {
+	ts := ensureTargetState(pool, target)
+	healthMu.Lock()
+	defer healthMu.Unlock()
+	ts.inflight++
+	stats.GetMetrics().GetLdapTargetInflight().WithLabelValues(pool, target).Set(float64(ts.inflight))
+}
+
+func decInflight(pool, target string) {
+	ts := ensureTargetState(pool, target)
+	healthMu.Lock()
+	defer healthMu.Unlock()
+	if ts.inflight > 0 {
+		ts.inflight--
+	}
+	stats.GetMetrics().GetLdapTargetInflight().WithLabelValues(pool, target).Set(float64(ts.inflight))
+}
+
+func pickTarget(pool string, targets []string, conf *config.LDAPConf) string {
+	// First pass: healthy and breaker-allowed
+	best := ""
+	bestInflight := int(^uint(0) >> 1) // max int
+	for _, t := range targets {
+		ts := ensureTargetState(pool, t)
+		if ts.healthy && cbAllow(pool, t, conf) {
+			if ts.inflight < bestInflight {
+				best = t
+				bestInflight = ts.inflight
+			}
+		}
+	}
+
+	if best != "" {
+		return best
+	}
+
+	// Second pass: breaker-allowed regardless of health (allow probing degraded)
+	for _, t := range targets {
+		if cbAllow(pool, t, conf) {
+			return t
+		}
+	}
+
+	// Fallback: first target
+	if len(targets) > 0 {
+		return targets[0]
+	}
+
+	return ""
+}
+
+func indexOfTarget(targets []string, target string) int {
+	for i, t := range targets {
+		if t == target {
+			return i
+		}
+	}
+
+	return 0
+}
+
+func startHealthLoop(pool string, ldapConf *config.LDAPConf) {
+	if ldapConf == nil {
+		return
+	}
+
+	interval := 10 * time.Second
+	probeTO := 1500 * time.Millisecond
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	probe := func(target string) {
+		opts := []ldap.DialOpt{ldap.DialWithDialer(&net.Dialer{Timeout: probeTO})}
+		// minimal TLS config if ldaps or StartTLS indicated
+		if strings.HasPrefix(strings.ToLower(target), "ldaps") || ldapConf.StartTLS {
+			tlsCfg := &tls.Config{InsecureSkipVerify: ldapConf.TLSSkipVerify}
+			opts = append(opts, ldap.DialWithTLSConfig(tlsCfg))
+		}
+
+		c, err := ldap.DialURL(target, opts...)
+		if err == nil {
+			_ = c.Close()
+			setHealth(pool, target, true)
+
+			return
+		}
+
+		setHealth(pool, target, false)
+	}
+
+	// initial probe
+	for _, t := range ldapConf.ServerURIs {
+		probe(t)
+	}
+
+	for range ticker.C {
+		for _, t := range ldapConf.ServerURIs {
+			probe(t)
+		}
+	}
+}
+
+// jitterBackoff applies exponential backoff with capped jitter to calculate the next retry duration.
+// base specifies the initial delay duration.
+// attempt is the current retry attempt count, used to calculate the exponential backoff.
+// max is the maximum delay duration to cap the backoff.
+func jitterBackoff(base time.Duration, attempt int, max time.Duration) time.Duration {
+	if base <= 0 {
+		base = 200 * time.Millisecond
+	}
+
+	if max <= 0 {
+		max = 2 * time.Second
+	}
+
+	// exponential backoff
+	b := base * time.Duration(1<<attempt)
+	if b > max {
+		b = max
+	}
+
+	if b <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int63n(int64(b) + 1))
+}
 
 // ldapConnectionState is a struct that helps manage LDAP connections,
 // by keeping track of the connection's current state.

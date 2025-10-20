@@ -211,6 +211,24 @@ type Metrics interface {
 	// GetLdapIdlePoolSize tracks the number of idle LDAP pool connections as a Prometheus GaugeVec.
 	GetLdapIdlePoolSize() *prometheus.GaugeVec
 
+	// GetLdapQueueDepth tracks the current depth of LDAP queues (lookup/auth) per pool as a Prometheus GaugeVec.
+	GetLdapQueueDepth() *prometheus.GaugeVec
+
+	// GetLdapQueueWaitSeconds tracks the time spent waiting in LDAP queues (enqueue to dequeue) as a Prometheus HistogramVec.
+	GetLdapQueueWaitSeconds() *prometheus.HistogramVec
+
+	// GetLdapQueueDroppedTotal counts dropped LDAP requests due to queue overflow as a Prometheus CounterVec.
+	GetLdapQueueDroppedTotal() *prometheus.CounterVec
+
+	// GetLdapBreakerState exposes circuit breaker state per LDAP target: 0=closed, 1=open, 2=half-open.
+	GetLdapBreakerState() *prometheus.GaugeVec
+
+	// GetLdapTargetHealth exposes 0/1 health status per LDAP target.
+	GetLdapTargetHealth() *prometheus.GaugeVec
+
+	// GetLdapTargetInflight exposes current in-flight requests per LDAP target.
+	GetLdapTargetInflight() *prometheus.GaugeVec
+
 	// GetRblRejected tracks the total number of DNS RBL request rejections as a Prometheus CounterVec, categorized by RBL.
 	GetRblRejected() *prometheus.CounterVec
 
@@ -246,6 +264,12 @@ type metricsImpl struct {
 	ldapStaleConnections    *prometheus.GaugeVec
 	ldapPoolSize            *prometheus.GaugeVec
 	ldapIdlePoolSize        *prometheus.GaugeVec
+	ldapQueueDepth          *prometheus.GaugeVec
+	ldapQueueWaitSeconds    *prometheus.HistogramVec
+	ldapQueueDroppedTotal   *prometheus.CounterVec
+	ldapBreakerState        *prometheus.GaugeVec
+	ldapTargetHealth        *prometheus.GaugeVec
+	ldapTargetInflight      *prometheus.GaugeVec
 	rblRejected             *prometheus.CounterVec
 	genericConnections      *prometheus.GaugeVec
 }
@@ -385,6 +409,21 @@ func (m *metricsImpl) GetLdapIdlePoolSize() *prometheus.GaugeVec {
 	return m.ldapIdlePoolSize
 }
 
+// GetLdapQueueDepth returns the ldapQueueDepth field.
+func (m *metricsImpl) GetLdapQueueDepth() *prometheus.GaugeVec {
+	return m.ldapQueueDepth
+}
+
+// GetLdapQueueWaitSeconds returns the ldapQueueWaitSeconds field.
+func (m *metricsImpl) GetLdapQueueWaitSeconds() *prometheus.HistogramVec {
+	return m.ldapQueueWaitSeconds
+}
+
+// GetLdapQueueDroppedTotal returns the ldapQueueDroppedTotal field.
+func (m *metricsImpl) GetLdapQueueDroppedTotal() *prometheus.CounterVec {
+	return m.ldapQueueDroppedTotal
+}
+
 // GetRblRejected returns the rblRejected field.
 func (m *metricsImpl) GetRblRejected() *prometheus.CounterVec {
 	return m.rblRejected
@@ -393,6 +432,21 @@ func (m *metricsImpl) GetRblRejected() *prometheus.CounterVec {
 // GetGenericConnections returns the genericConnections field.
 func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
 	return m.genericConnections
+}
+
+// GetLdapBreakerState returns the ldapBreakerState field.
+func (m *metricsImpl) GetLdapBreakerState() *prometheus.GaugeVec {
+	return m.ldapBreakerState
+}
+
+// GetLdapTargetHealth returns the ldapTargetHealth field.
+func (m *metricsImpl) GetLdapTargetHealth() *prometheus.GaugeVec {
+	return m.ldapTargetHealth
+}
+
+// GetLdapTargetInflight returns the ldapTargetInflight field.
+func (m *metricsImpl) GetLdapTargetInflight() *prometheus.GaugeVec {
+	return m.ldapTargetInflight
 }
 
 func NewMetrics() Metrics {
@@ -560,6 +614,43 @@ func NewMetrics() Metrics {
 				Name: "ldap_idle_pool_size",
 				Help: "Size of idle LDAP pool",
 			}, []string{"pool"},
+		),
+		ldapQueueDepth: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_queue_depth",
+				Help: "Current LDAP queue depth",
+			}, []string{"pool", "type"},
+		),
+		ldapQueueWaitSeconds: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "ldap_queue_wait_seconds",
+				Help:    "Time spent waiting in LDAP queues",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.75, 15),
+			}, []string{"pool", "type"},
+		),
+		ldapQueueDroppedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_queue_dropped_total",
+				Help: "Total LDAP requests dropped due to queue overflow",
+			}, []string{"pool", "type"},
+		),
+		ldapBreakerState: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_breaker_state",
+				Help: "Circuit breaker state per LDAP target (0=closed,1=open,2=half-open)",
+			}, []string{"pool", "target"},
+		),
+		ldapTargetHealth: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_target_health",
+				Help: "LDAP target health status (1=healthy,0=unhealthy)",
+			}, []string{"pool", "target"},
+		),
+		ldapTargetInflight: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "ldap_target_inflight",
+				Help: "Current in-flight requests per LDAP target",
+			}, []string{"pool", "target"},
 		),
 		rblRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{
