@@ -145,6 +145,12 @@ type Metrics interface {
 	// GetLdapCacheEvictionsTotal returns a CounterVec metric tracking the total number of LDAP cache evictions.
 	GetLdapCacheEvictionsTotal() *prometheus.CounterVec
 
+	// GetLdapErrorsTotal returns a CounterVec for LDAP errors with labels {pool, op, code}.
+	GetLdapErrorsTotal() *prometheus.CounterVec
+
+	// GetLdapRetriesTotal returns a CounterVec for LDAP retries with labels {pool, op}.
+	GetLdapRetriesTotal() *prometheus.CounterVec
+
 	// GetCurrentRequests is a Prometheus Gauge metric that tracks the number of current requests being processed by the server.
 	GetCurrentRequests() prometheus.Gauge
 
@@ -286,6 +292,8 @@ type metricsImpl struct {
 	ldapCacheMissesTotal    *prometheus.CounterVec
 	ldapCacheEntries        *prometheus.GaugeVec
 	ldapCacheEvictionsTotal *prometheus.CounterVec
+	ldapErrorsTotal         *prometheus.CounterVec
+	ldapRetriesTotal        *prometheus.CounterVec
 	rblRejected             *prometheus.CounterVec
 	genericConnections      *prometheus.GaugeVec
 }
@@ -483,6 +491,16 @@ func (m *metricsImpl) GetLdapCacheEntries() *prometheus.GaugeVec {
 // GetLdapCacheEvictionsTotal returns a prometheus.CounterVec tracking the total number of LDAP cache evictions.
 func (m *metricsImpl) GetLdapCacheEvictionsTotal() *prometheus.CounterVec {
 	return m.ldapCacheEvictionsTotal
+}
+
+// GetLdapErrorsTotal returns the ldapErrorsTotal field.
+func (m *metricsImpl) GetLdapErrorsTotal() *prometheus.CounterVec {
+	return m.ldapErrorsTotal
+}
+
+// GetLdapRetriesTotal returns the ldapRetriesTotal field.
+func (m *metricsImpl) GetLdapRetriesTotal() *prometheus.CounterVec {
+	return m.ldapRetriesTotal
 }
 
 func NewMetrics() Metrics {
@@ -712,6 +730,18 @@ func NewMetrics() Metrics {
 				Name: "ldap_cache_evictions_total",
 				Help: "Total LDAP cache evictions",
 			}, []string{"pool", "type"},
+		),
+		ldapErrorsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_errors_total",
+				Help: "Total LDAP errors by operation and LDAP result code",
+			}, []string{"pool", "op", "code"},
+		),
+		ldapRetriesTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ldap_retries_total",
+				Help: "Total LDAP retries by operation",
+			}, []string{"pool", "op"},
 		),
 		rblRejected: promauto.NewCounterVec(
 			prometheus.CounterOpts{

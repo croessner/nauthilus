@@ -170,6 +170,8 @@ EndlessLoop:
 				cbOnFailure(pool, target, ldapConf)
 				setHealth(pool, target, false)
 
+				// count retry and back off before next attempt
+				stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(pool, "connect").Inc()
 				// Jittered backoff before next attempt
 				time.Sleep(jitterBackoff(base, retryCount, maxBackoff))
 

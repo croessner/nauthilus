@@ -930,6 +930,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			}
 
 			// retry on transient errors only
+			stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(l.name, "search").Inc()
 			time.Sleep(jitterBackoffDuration(base, attempt, maxBackoff))
 		}
 
@@ -942,6 +943,9 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	rawResult = pack.raw
 
 	if err != nil {
+		// error metric for search
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
+
 		var (
 			ldapError *ldap.Error
 			doLog     bool
@@ -1002,6 +1006,9 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 
 	if err := l.conn[index].Modify(ldapRequest); err != nil {
 		ldapReply.Err = err
+
+		// error metric
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "modify", ldapErrorCode(err)).Inc()
 	}
 }
 
@@ -1047,6 +1054,8 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
 		ldapReply.Err = err
+
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
 	}
 
 	/*
@@ -1082,6 +1091,25 @@ func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDA
 	l.processAuthBindRequest(index, ldapAuthRequest, ldapReply)
 
 	sendLDAPReplyAndUnlockState(l, index, ldapAuthRequest, ldapReply)
+}
+
+// helper to extract an LDAP error code string for metrics
+func ldapErrorCode(err error) string {
+	if err == nil {
+		return "0"
+	}
+
+	var le *ldap.Error
+	if stderrors.As(err, &le) {
+		return fmt.Sprintf("%d", le.ResultCode)
+	}
+
+	var ne net.Error
+	if stderrors.As(err, &ne) {
+		return "network"
+	}
+
+	return "other"
 }
 
 // --- Helpers for transient error detection and jittered backoff ---
