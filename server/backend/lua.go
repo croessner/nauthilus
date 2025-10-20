@@ -120,7 +120,7 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 					return
 				default:
 					// Get the next request from the priority queue
-					luaRequest := priorityqueue.LuaQueue.Pop()
+					luaRequest := priorityqueue.LuaQueue.Pop(backendName)
 
 					handleLuaRequest(ctx, luaRequest, compiledScript)
 				}

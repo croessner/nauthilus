@@ -172,40 +172,45 @@ func (pq *LuaRequestPriorityQueue) Pop() any {
 	return item
 }
 
-// LDAPRequestQueue manages a priority queue for LDAP requests
+// LDAPRequestQueue manages per-pool priority queues for LDAP requests
 type LDAPRequestQueue struct {
-	queue     LDAPRequestPriorityQueue
 	mutex     sync.Mutex
-	notEmpty  *sync.Cond
 	poolNames map[string]bool
+	pools     map[string]*struct {
+		queue    LDAPRequestPriorityQueue
+		notEmpty *sync.Cond
+	}
 }
 
-// LDAPAuthRequestQueue manages a priority queue for LDAP auth requests
+// LDAPAuthRequestQueue manages per-pool priority queues for LDAP auth requests
 type LDAPAuthRequestQueue struct {
-	queue     LDAPAuthRequestPriorityQueue
 	mutex     sync.Mutex
-	notEmpty  *sync.Cond
 	poolNames map[string]bool
+	pools     map[string]*struct {
+		queue    LDAPAuthRequestPriorityQueue
+		notEmpty *sync.Cond
+	}
 }
 
-// LuaRequestQueue manages a priority queue for Lua requests
+// LuaRequestQueue manages per-backend priority queues for Lua requests
 type LuaRequestQueue struct {
-	queue        LuaRequestPriorityQueue
 	mutex        sync.Mutex
-	notEmpty     *sync.Cond
 	backendNames map[string]bool
+	backends     map[string]*struct {
+		queue    LuaRequestPriorityQueue
+		notEmpty *sync.Cond
+	}
 }
 
 // NewLDAPRequestQueue creates a new LDAPRequestQueue
 func NewLDAPRequestQueue() *LDAPRequestQueue {
 	q := &LDAPRequestQueue{
-		queue:     make(LDAPRequestPriorityQueue, 0),
 		poolNames: make(map[string]bool),
+		pools: make(map[string]*struct {
+			queue    LDAPRequestPriorityQueue
+			notEmpty *sync.Cond
+		}),
 	}
-
-	q.notEmpty = sync.NewCond(&q.mutex)
-
-	heap.Init(&q.queue)
 
 	return q
 }
@@ -213,13 +218,12 @@ func NewLDAPRequestQueue() *LDAPRequestQueue {
 // NewLDAPAuthRequestQueue creates a new LDAPAuthRequestQueue
 func NewLDAPAuthRequestQueue() *LDAPAuthRequestQueue {
 	q := &LDAPAuthRequestQueue{
-		queue:     make(LDAPAuthRequestPriorityQueue, 0),
 		poolNames: make(map[string]bool),
+		pools: make(map[string]*struct {
+			queue    LDAPAuthRequestPriorityQueue
+			notEmpty *sync.Cond
+		}),
 	}
-
-	q.notEmpty = sync.NewCond(&q.mutex)
-
-	heap.Init(&q.queue)
 
 	return q
 }
@@ -227,13 +231,12 @@ func NewLDAPAuthRequestQueue() *LDAPAuthRequestQueue {
 // NewLuaRequestQueue creates a new LuaRequestQueue
 func NewLuaRequestQueue() *LuaRequestQueue {
 	q := &LuaRequestQueue{
-		queue:        make(LuaRequestPriorityQueue, 0),
 		backendNames: make(map[string]bool),
+		backends: make(map[string]*struct {
+			queue    LuaRequestPriorityQueue
+			notEmpty *sync.Cond
+		}),
 	}
-
-	q.notEmpty = sync.NewCond(&q.mutex)
-
-	heap.Init(&q.queue)
 
 	return q
 }
@@ -243,7 +246,22 @@ func (q *LDAPRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
+	if q.poolNames[poolName] {
+		return
+	}
+
 	q.poolNames[poolName] = true
+	pq := make(LDAPRequestPriorityQueue, 0)
+
+	heap.Init(&pq)
+
+	q.pools[poolName] = &struct {
+		queue    LDAPRequestPriorityQueue
+		notEmpty *sync.Cond
+	}{
+		queue:    pq,
+		notEmpty: sync.NewCond(&q.mutex),
+	}
 }
 
 // GetPoolNames returns the pool names in the LDAPRequestQueue
@@ -264,7 +282,22 @@ func (q *LDAPAuthRequestQueue) AddPoolName(poolName string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
+	if q.poolNames[poolName] {
+		return
+	}
+
 	q.poolNames[poolName] = true
+	pq := make(LDAPAuthRequestPriorityQueue, 0)
+
+	heap.Init(&pq)
+
+	q.pools[poolName] = &struct {
+		queue    LDAPAuthRequestPriorityQueue
+		notEmpty *sync.Cond
+	}{
+		queue:    pq,
+		notEmpty: sync.NewCond(&q.mutex),
+	}
 }
 
 // GetPoolNames returns the pool names in the LDAPAuthRequestQueue
@@ -301,10 +334,29 @@ func (q *LuaRequestQueue) GetBackendNames() []string {
 	return names
 }
 
-// Push adds a request to the LDAPRequestQueue with the given priority
+// Push adds a request to the LDAPRequestQueue with the given priority, routed by PoolName
 func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
+	poolName := request.PoolName
+	p, ok := q.pools[poolName]
+	if !ok {
+		// initialize on the fly if not present
+		pq := make(LDAPRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
+	}
 
 	item := &LDAPRequestItem{
 		Request:    request,
@@ -312,30 +364,64 @@ func (q *LDAPRequestQueue) Push(request *bktype.LDAPRequest, priority int) {
 		InsertTime: time.Now(),
 	}
 
-	heap.Push(&q.queue, item)
-
-	q.notEmpty.Signal()
+	heap.Push(&p.queue, item)
+	p.notEmpty.Signal()
 }
 
-// Pop removes and returns the highest priority request from the LDAPRequestQueue
-// It blocks if the queue is empty
-func (q *LDAPRequestQueue) Pop() *bktype.LDAPRequest {
+// Pop removes and returns the highest priority request from the LDAPRequestQueue for a specific pool
+// It blocks if the queue for that pool is empty
+func (q *LDAPRequestQueue) Pop(poolName string) *bktype.LDAPRequest {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	for q.queue.Len() == 0 {
-		q.notEmpty.Wait()
+	p, ok := q.pools[poolName]
+	if !ok {
+		pq := make(LDAPRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
 	}
 
-	item := heap.Pop(&q.queue).(*LDAPRequestItem)
+	for p.queue.Len() == 0 {
+		p.notEmpty.Wait()
+	}
+
+	item := heap.Pop(&p.queue).(*LDAPRequestItem)
 
 	return item.Request
 }
 
-// Push adds a request to the LDAPAuthRequestQueue with the given priority
+// Push adds a request to the LDAPAuthRequestQueue with the given priority, routed by PoolName
 func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority int) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
+	poolName := request.PoolName
+	p, ok := q.pools[poolName]
+	if !ok {
+		pq := make(LDAPAuthRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPAuthRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
+	}
 
 	item := &LDAPAuthRequestItem{
 		Request:    request,
@@ -343,30 +429,64 @@ func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority in
 		InsertTime: time.Now(),
 	}
 
-	heap.Push(&q.queue, item)
-
-	q.notEmpty.Signal()
+	heap.Push(&p.queue, item)
+	p.notEmpty.Signal()
 }
 
-// Pop removes and returns the highest priority request from the LDAPAuthRequestQueue
+// Pop removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool
 // It blocks if the queue is empty
-func (q *LDAPAuthRequestQueue) Pop() *bktype.LDAPAuthRequest {
+func (q *LDAPAuthRequestQueue) Pop(poolName string) *bktype.LDAPAuthRequest {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	for q.queue.Len() == 0 {
-		q.notEmpty.Wait()
+	p, ok := q.pools[poolName]
+	if !ok {
+		pq := make(LDAPAuthRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPAuthRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
 	}
 
-	item := heap.Pop(&q.queue).(*LDAPAuthRequestItem)
+	for p.queue.Len() == 0 {
+		p.notEmpty.Wait()
+	}
+
+	item := heap.Pop(&p.queue).(*LDAPAuthRequestItem)
 
 	return item.Request
 }
 
-// Push adds a request to the LuaRequestQueue with the given priority
+// Push adds a request to the LuaRequestQueue with the given priority, routed by BackendName
 func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
+
+	backendName := request.BackendName
+	b, ok := q.backends[backendName]
+	if !ok {
+		pq := make(LuaRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		b = &struct {
+			queue    LuaRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.backends[backendName] = b
+		q.backendNames[backendName] = true
+	}
 
 	item := &LuaRequestItem{
 		Request:    request,
@@ -374,22 +494,38 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 		InsertTime: time.Now(),
 	}
 
-	heap.Push(&q.queue, item)
-
-	q.notEmpty.Signal()
+	heap.Push(&b.queue, item)
+	b.notEmpty.Signal()
 }
 
-// Pop removes and returns the highest priority request from the LuaRequestQueue
+// Pop removes and returns the highest priority request from the LuaRequestQueue for a specific backend
 // It blocks if the queue is empty
-func (q *LuaRequestQueue) Pop() *bktype.LuaRequest {
+func (q *LuaRequestQueue) Pop(backendName string) *bktype.LuaRequest {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	for q.queue.Len() == 0 {
-		q.notEmpty.Wait()
+	b, ok := q.backends[backendName]
+	if !ok {
+		pq := make(LuaRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		b = &struct {
+			queue    LuaRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.backends[backendName] = b
+		q.backendNames[backendName] = true
 	}
 
-	item := heap.Pop(&q.queue).(*LuaRequestItem)
+	for b.queue.Len() == 0 {
+		b.notEmpty.Wait()
+	}
+
+	item := heap.Pop(&b.queue).(*LuaRequestItem)
 
 	return item.Request
 }
