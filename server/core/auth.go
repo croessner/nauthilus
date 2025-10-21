@@ -2009,8 +2009,9 @@ type sfAuthEnvelope struct {
 	DisplayName     string `json:"dn,omitempty"`
 	TOTPSecretField string `json:"totp,omitempty"`
 
-	Attributes     bktype.AttributeMapping `json:"attr,omitempty"`
-	AdditionalFeat map[string]any          `json:"feat,omitempty"`
+	Attributes      bktype.AttributeMapping `json:"attr,omitempty"`
+	AdditionalFeat  map[string]any          `json:"feat,omitempty"`
+	LeaderSessionID string                  `json:"ls,omitempty"`
 
 	StatusMessage string `json:"sm,omitempty"`
 }
@@ -2285,6 +2286,10 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 					// Take distributed result with full attributes
 					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "dist_follower")
 
+					if env.LeaderSessionID != "" {
+						a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeaderSession, env.LeaderSessionID)
+					}
+
 					a.applyEnvelope(env)
 
 					return env.AuthResult
@@ -2330,6 +2335,10 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				useCache, backendPos, passDBs := a.handleBackendTypes()
 				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
 				env := a.buildEnvelopeFromState(r)
+
+				// Include leader session ID so followers can log it
+				env.LeaderSessionID = reqID
+
 				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
 				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
 
@@ -2337,6 +2346,8 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 			}
 
 			// Didn't get the lock: wait via Pub/Sub for result, then read once
+			var leaderID string
+
 			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
 				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
 				if err != nil || !ok {
@@ -2346,9 +2357,11 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				// Rehydrate state from leader envelope
 				a.applyEnvelope(env)
 
+				leaderID = env.LeaderSessionID
+
 				return env.AuthResult, true, nil
 			}); ok {
-				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
+				return sfAuthResult{AuthResult: r, LeaderID: leaderID}, nil
 			}
 			// Timeout/cancel: fallthrough to compute locally
 		}
@@ -2375,6 +2388,11 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 		// Log leadership role for large log output
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, role)
+
+		// If we are a follower and the leader ID is known, log it
+		if sfa.LeaderID != "" && sfa.LeaderID != reqID {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeaderSession, sfa.LeaderID)
+		}
 
 		return sfa.AuthResult
 	case <-reqCtx.Done():
