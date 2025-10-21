@@ -54,10 +54,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/singleflight"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 var backchanSF singleflight.Group
 
@@ -1988,6 +1991,171 @@ type sfAuthResult struct {
 	LeaderID   string
 }
 
+// sfAuthEnvelope is a rich result used for distributed singleflight to carry
+// not only the AuthResult but also all relevant user attributes and backend info.
+type sfAuthEnvelope struct {
+	Version    int                    `json:"v"`
+	AuthResult definitions.AuthResult `json:"ar"`
+
+	UserFound     bool `json:"uf"`
+	Authenticated bool `json:"au"`
+
+	BackendName         string              `json:"bn,omitempty"`
+	SourcePassDBBackend definitions.Backend `json:"sb,omitempty"`
+	UsedPassDBBackend   definitions.Backend `json:"ub,omitempty"`
+
+	AccountField    string `json:"af,omitempty"`
+	UniqueUserID    string `json:"uid,omitempty"`
+	DisplayName     string `json:"dn,omitempty"`
+	TOTPSecretField string `json:"totp,omitempty"`
+
+	Attributes     bktype.AttributeMapping `json:"attr,omitempty"`
+	AdditionalFeat map[string]any          `json:"feat,omitempty"`
+
+	StatusMessage string `json:"sm,omitempty"`
+}
+
+// sfWriteEnvelope writes the rich envelope to Redis with a short TTL.
+func (a *AuthState) sfWriteEnvelope(ctx context.Context, rdb redis.UniversalClient, resKey string, env *sfAuthEnvelope) error {
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	b, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+
+	return rdb.Set(ctx, resKey, b, definitions.RedisSFResultTTL).Err()
+}
+
+// sfReadEnvelope reads a rich envelope from Redis. It supports backward compatibility
+// with legacy integer-only values by converting them into a minimal envelope.
+func (a *AuthState) sfReadEnvelope(ctx context.Context, rdb redis.UniversalClient, resKey string) (*sfAuthEnvelope, bool, error) {
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	data, err := rdb.Get(ctx, resKey).Bytes()
+	if stderrors.Is(err, redis.Nil) {
+		return nil, false, nil
+	}
+
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Try legacy integer format first
+	if len(data) > 0 {
+		if v, convErr := strconv.Atoi(string(data)); convErr == nil {
+			return &sfAuthEnvelope{Version: 0, AuthResult: definitions.AuthResult(v)}, true, nil
+		}
+	}
+
+	var env sfAuthEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, false, err
+	}
+
+	if env.Version == 0 {
+		env.Version = 1
+	}
+
+	return &env, true, nil
+}
+
+// applyEnvelope hydrates the AuthState with data from the envelope.
+func (a *AuthState) applyEnvelope(env *sfAuthEnvelope) {
+	if env == nil {
+		return
+	}
+
+	if env.StatusMessage != "" {
+		a.StatusMessage = env.StatusMessage
+	}
+
+	if env.UserFound {
+		a.UserFound = true
+		a.SourcePassDBBackend = env.SourcePassDBBackend
+		a.UsedPassDBBackend = env.UsedPassDBBackend
+		a.BackendName = env.BackendName
+	}
+
+	if env.AccountField != "" {
+		af := env.AccountField
+		a.AccountField = &af
+	}
+
+	if env.UniqueUserID != "" {
+		uid := env.UniqueUserID
+		a.UniqueUserIDField = &uid
+	}
+
+	if env.DisplayName != "" {
+		dn := env.DisplayName
+		a.DisplayNameField = &dn
+	}
+
+	if env.TOTPSecretField != "" {
+		totp := env.TOTPSecretField
+		a.TOTPSecretField = &totp
+	}
+
+	if env.Attributes != nil && len(env.Attributes) > 0 {
+		a.Attributes = env.Attributes
+	}
+
+	if env.AdditionalFeat != nil && a.HTTPClientContext != nil {
+		a.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, env.AdditionalFeat)
+	}
+
+	if env.Authenticated {
+		localcache.AuthCache.Set(a.Username, true)
+	}
+}
+
+// buildEnvelopeFromState builds an envelope from the current AuthState and result.
+func (a *AuthState) buildEnvelopeFromState(r definitions.AuthResult) *sfAuthEnvelope {
+	env := &sfAuthEnvelope{
+		Version:             1,
+		AuthResult:          r,
+		UserFound:           a.UserFound,
+		BackendName:         a.BackendName,
+		SourcePassDBBackend: a.SourcePassDBBackend,
+		UsedPassDBBackend:   a.UsedPassDBBackend,
+		StatusMessage:       a.StatusMessage,
+	}
+
+	// Best effort for authenticated flag
+	env.Authenticated = r == definitions.AuthResultOK
+
+	if a.AccountField != nil {
+		env.AccountField = *a.AccountField
+	}
+
+	if a.UniqueUserIDField != nil {
+		env.UniqueUserID = *a.UniqueUserIDField
+	}
+
+	if a.DisplayNameField != nil {
+		env.DisplayName = *a.DisplayNameField
+	}
+
+	if a.TOTPSecretField != nil {
+		env.TOTPSecretField = *a.TOTPSecretField
+	}
+
+	if a.Attributes != nil && len(a.Attributes) > 0 {
+		env.Attributes = a.Attributes
+	}
+
+	if a.HTTPClientContext != nil {
+		if v, ok := a.HTTPClientContext.Get(definitions.CtxAdditionalFeaturesKey); ok {
+			if m, ok2 := v.(map[string]any); ok2 {
+				env.AdditionalFeat = m
+			}
+		}
+	}
+
+	return env
+}
+
 // --- Distributed singleflight (Redis) helpers ---
 
 // sfKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
@@ -2113,11 +2281,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 			if redisRead != nil {
 				resKey, _, _ := a.sfRedisKeys()
-				if r, ok, _ := a.sfReadResult(reqCtx, redisRead, resKey); ok {
-					// Take distributed result
+				if env, ok, _ := a.sfReadEnvelope(reqCtx, redisRead, resKey); ok {
+					// Take distributed result with full attributes
 					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "dist_follower")
 
-					return r
+					a.applyEnvelope(env)
+
+					return env.AuthResult
 				}
 			}
 		}
@@ -2159,10 +2329,8 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 				useCache, backendPos, passDBs := a.handleBackendTypes()
 				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
-				_ = a.sfWriteResult(reqCtx, redisWrite, resKey, r)
-
-				stats.GetMetrics().GetRedisWriteCounter().Inc()
-
+				env := a.buildEnvelopeFromState(r)
+				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
 				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
 
 				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
@@ -2170,7 +2338,15 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 			// Didn't get the lock: wait via Pub/Sub for result, then read once
 			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
-				return a.sfReadResult(reqCtx, redisRead, resKey)
+				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
+				if err != nil || !ok {
+					return 0, false, err
+				}
+
+				// Rehydrate state from leader envelope
+				a.applyEnvelope(env)
+
+				return env.AuthResult, true, nil
 			}); ok {
 				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
 			}
