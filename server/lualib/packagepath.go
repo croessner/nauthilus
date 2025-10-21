@@ -16,16 +16,50 @@
 package lualib
 
 import (
-	"fmt"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
 	lua "github.com/yuin/gopher-lua"
 )
 
-// PackagePath sets the Lua `package.path` by appending default and additional configured paths to the existing value.
-// It modifies the Lua state `L` to include paths necessary for locating Lua modules. Returns an error if the operation fails.
+// PackagePath ensures Lua package.path contains our required paths exactly once, without unbounded growth.
 func PackagePath(L *lua.LState) error {
-	defaultPath := "/usr/local/share/nauthilus/lua/?.lua;/usr/share/nauthilus/lua/?.lua;/usr/app/lua-plugins.d/share/?.lua"
+	const defaultPath = "/usr/local/share/nauthilus/lua/?.lua;/usr/share/nauthilus/lua/?.lua;/usr/app/lua-plugins.d/share/?.lua"
 
-	return L.DoString(fmt.Sprintf(`package.path = package.path .. ';%s;%s'`, defaultPath, config.GetFile().GetLuaPackagePath()))
+	cfgPath := config.GetFile().GetLuaPackagePath()
+	add := defaultPath
+	if cfgPath != "" {
+		add += ";" + cfgPath
+	}
+
+	pkg := L.GetGlobal("package")
+	tbl, ok := pkg.(*lua.LTable)
+	if !ok {
+		// package should exist after OpenLibs; if not, nothing to do
+		return nil
+	}
+
+	curVal := tbl.RawGetString("path")
+	cur := curVal.String()
+
+	// Idempotence: if paths already present, do nothing
+	already := strings.Contains(cur, defaultPath)
+	if cfgPath != "" {
+		already = already && strings.Contains(cur, cfgPath)
+	}
+
+	if already {
+		return nil
+	}
+
+	newPath := cur
+	if newPath != "" && !strings.HasSuffix(newPath, ";") {
+		newPath += ";"
+	}
+
+	newPath += add
+
+	tbl.RawSetString("path", lua.LString(newPath))
+
+	return nil
 }
