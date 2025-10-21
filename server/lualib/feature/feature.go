@@ -29,7 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
@@ -204,17 +204,9 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	L := luapool.Get()
+	pool := vmpool.GetManager().GetOrCreate("feature:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFeatureVMPoolSize()})
 
-	defer luapool.Put(L)
-
-	r.registerDynamicLoader(L, ctx)
-
-	r.setGlobals(L)
-
-	request := r.setRequest(L)
-
-	triggered, abortFeatures, err = r.executeScripts(ctx, L, request)
+	triggered, abortFeatures, err = r.executeScripts(ctx, pool)
 
 	return
 }
@@ -249,7 +241,7 @@ func (r *Request) setRequest(L *lua.LState) *lua.LTable {
 
 // executeScripts executes all Lua feature scripts in parallel. It waits for all to finish,
 // then aggregates their results considering error, abort, and triggered semantics.
-func (r *Request) executeScripts(ctx *gin.Context, _ *lua.LState, _ *lua.LTable) (triggered bool, abortFeatures bool, err error) {
+func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered bool, abortFeatures bool, err error) {
 	// Prepare synchronization primitives and results storage
 	type featResult struct {
 		name       string
@@ -285,9 +277,24 @@ func (r *Request) executeScripts(ctx *gin.Context, _ *lua.LState, _ *lua.LTable)
 				"name", feature.Name,
 			)
 
-			// Per-feature Lua state
-			Llocal := luapool.Get()
-			defer luapool.Put(Llocal)
+			// Per-feature Lua state from bounded vmpool
+			Llocal, acqErr := pool.Acquire(egCtx)
+			if acqErr != nil {
+				return acqErr
+			}
+
+			replaceVM := false
+			defer func() {
+				if r := recover(); r != nil {
+					replaceVM = true
+				}
+
+				if replaceVM {
+					pool.Replace(Llocal)
+				} else {
+					pool.Release(Llocal)
+				}
+			}()
 
 			// Register dynamic loader for this state
 			r.registerDynamicLoader(Llocal, ctx)

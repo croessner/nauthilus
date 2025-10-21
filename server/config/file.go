@@ -118,6 +118,18 @@ type File interface {
 	// GetLuaNumberOfWorkers returns the number of Lua workers configured for handling Lua scripts.
 	GetLuaNumberOfWorkers() int
 
+	// GetLuaActionNumberOfWorkers returns the number of Lua Action workers.
+	GetLuaActionNumberOfWorkers() int
+
+	// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
+	GetLuaFeatureVMPoolSize() int
+
+	// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
+	GetLuaFilterVMPoolSize() int
+
+	// GetLuaHookVMPoolSize returns the VM pool size for Lua hooks.
+	GetLuaHookVMPoolSize() int
+
 	// GetLuaScriptPath returns the path to the Lua script.
 	GetLuaScriptPath() string
 
@@ -793,6 +805,77 @@ func (f *FileSettings) GetLuaNumberOfWorkers() int {
 		return luaConf.GetNumberOfWorkers()
 	}
 
+	return definitions.DefaultNumberOfWorkers
+}
+
+// GetLuaActionNumberOfWorkers retrieves the number of workers configured for Lua actions or returns default (10) if unset.
+func (f *FileSettings) GetLuaActionNumberOfWorkers() int {
+	if f == nil {
+		return definitions.MaxActionWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.MaxActionWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetActionNumberOfWorkers()
+	}
+
+	return definitions.MaxActionWorkers
+}
+
+// GetLuaFeatureVMPoolSize returns the VM pool size for Lua features.
+func (f *FileSettings) GetLuaFeatureVMPoolSize() int {
+	if f == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetFeatureVMPoolSize()
+	}
+
+	return definitions.DefaultNumberOfWorkers
+}
+
+// GetLuaFilterVMPoolSize returns the VM pool size for Lua filters.
+func (f *FileSettings) GetLuaFilterVMPoolSize() int {
+	if f == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetFilterVMPoolSize()
+	}
+
+	return definitions.DefaultNumberOfWorkers
+}
+
+// GetLuaHookVMPoolSize returns the VM pool size for Lua hooks.
+func (f *FileSettings) GetLuaHookVMPoolSize() int {
+	if f == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.DefaultNumberOfWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetHookVMPoolSize()
+	}
 	return definitions.DefaultNumberOfWorkers
 }
 

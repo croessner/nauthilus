@@ -251,12 +251,17 @@ func (l *LuaFilter) GetScriptPath() string {
 }
 
 type LuaConf struct {
-	NumberOfWorkers   int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
-	QueueLength       int      `mapstructure:"queue_length" validate:"omitempty,min=0"`
-	PackagePath       string   `mapstructure:"package_path"`
-	BackendScriptPath string   `mapstructure:"backend_script_path" validate:"omitempty,file"`
-	InitScriptPath    string   `mapstructure:"init_script_path" validate:"omitempty,file"`
-	InitScriptPaths   []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
+	NumberOfWorkers        int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	BackendNumberOfWorkers int      `mapstructure:"backend_number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	QueueLength            int      `mapstructure:"queue_length" validate:"omitempty,min=0"`
+	PackagePath            string   `mapstructure:"package_path"`
+	BackendScriptPath      string   `mapstructure:"backend_script_path" validate:"omitempty,file"`
+	InitScriptPath         string   `mapstructure:"init_script_path" validate:"omitempty,file"`
+	InitScriptPaths        []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
+	ActionNumberOfWorkers  int      `mapstructure:"action_number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	FeatureVMPoolSize      int      `mapstructure:"feature_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	FilterVMPoolSize       int      `mapstructure:"filter_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 }
 
 func (l *LuaConf) String() string {
@@ -267,17 +272,65 @@ func (l *LuaConf) String() string {
 	return l.BackendScriptPath
 }
 
-// GetNumberOfWorkers returns the number of workers configured in the LuaConf object. Defaults to 0 if the receiver is nil.
+// GetNumberOfWorkers returns the number of backend workers.
+// Preference order (v1.10.0+):
+// 1) BackendNumberOfWorkers (new)
+// 2) NumberOfWorkers (deprecated)
+// 3) Default
 func (l *LuaConf) GetNumberOfWorkers() int {
 	if l == nil {
 		return definitions.DefaultNumberOfWorkers
 	}
 
-	if l.NumberOfWorkers == 0 {
-		return definitions.DefaultNumberOfWorkers
+	if l.BackendNumberOfWorkers > 0 {
+		return l.BackendNumberOfWorkers
 	}
 
-	return l.NumberOfWorkers
+	if l.NumberOfWorkers > 0 {
+		return l.NumberOfWorkers
+	}
+
+	return definitions.DefaultNumberOfWorkers
+}
+
+// GetActionNumberOfWorkers returns the configured number of action workers or a sane default (definitions.MaxActionWorkers) if unset.
+func (l *LuaConf) GetActionNumberOfWorkers() int {
+	if l == nil {
+		return int(definitions.MaxActionWorkers)
+	}
+
+	if l.ActionNumberOfWorkers == 0 {
+		return int(definitions.MaxActionWorkers)
+	}
+
+	return l.ActionNumberOfWorkers
+}
+
+// GetFeatureVMPoolSize retrieves the configured feature VM pool size or falls back to the worker count if unset or invalid.
+func (l *LuaConf) GetFeatureVMPoolSize() int {
+	if l == nil || l.FeatureVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.FeatureVMPoolSize
+}
+
+// GetFilterVMPoolSize returns the configured filter VM pool size or falls back to the number of workers if unset or invalid.
+func (l *LuaConf) GetFilterVMPoolSize() int {
+	if l == nil || l.FilterVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.FilterVMPoolSize
+}
+
+// GetHookVMPoolSize retrieves the hook VM pool size or defaults to the number of workers if unset or invalid.
+func (l *LuaConf) GetHookVMPoolSize() int {
+	if l == nil || l.HookVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.HookVMPoolSize
 }
 
 // GetQueueLength returns the max queue length for Lua backend requests; 0 means unlimited.
