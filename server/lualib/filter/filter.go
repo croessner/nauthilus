@@ -27,7 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -425,12 +425,29 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	g, egCtx := errgroup.WithContext(ctx)
 
+	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+
 	for _, script := range LuaFilters.LuaScripts {
 		sc := script
 		g.Go(func() error {
-			// Per-filter state
-			Llocal := luapool.Get()
-			defer luapool.Put(Llocal)
+			// Per-filter state from bounded vmpool
+			Llocal, acqErr := pool.Acquire(egCtx)
+			if acqErr != nil {
+				return acqErr
+			}
+
+			replaceVM := false
+			defer func() {
+				if r := recover(); r != nil {
+					replaceVM = true
+				}
+
+				if replaceVM {
+					pool.Replace(Llocal)
+				} else {
+					pool.Release(Llocal)
+				}
+			}()
 
 			// Local log and status to avoid races on r.Logs / r.StatusMessage
 			localLogs := new(lualib.CustomLogKeyValue)

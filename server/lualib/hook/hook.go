@@ -30,7 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-kit/log/level"
@@ -459,15 +459,29 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 	}
 
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
-
 	defer luaCancel()
 
-	L := luapool.Get()
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
 
-	defer luapool.Put(L)
+	L, acqErr := pool.Acquire(luaCtx)
+	if acqErr != nil {
+		return acqErr
+	}
+
+	replaceVM := false
+	defer func() {
+		if r := recover(); r != nil {
+			replaceVM = true
+		}
+
+		if replaceVM {
+			pool.Replace(L)
+		} else {
+			pool.Release(L)
+		}
+	}()
 
 	registerDynamicLoader(L, ctx)
-
 	L.SetContext(luaCtx)
 
 	logTable := setupLogging(L)
@@ -512,12 +526,26 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 
 	defer luaCancel()
 
-	L := luapool.Get()
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	L, acqErr := pool.Acquire(luaCtx)
+	if acqErr != nil {
+		return nil, acqErr
+	}
 
-	defer luapool.Put(L)
+	replaceVM := false
+	defer func() {
+		if r := recover(); r != nil {
+			replaceVM = true
+		}
+
+		if replaceVM {
+			pool.Replace(L)
+		} else {
+			pool.Release(L)
+		}
+	}()
 
 	registerDynamicLoader(L, ctx)
-
 	L.SetContext(luaCtx)
 
 	logTable := setupLogging(L)
