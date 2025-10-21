@@ -251,7 +251,6 @@ func (l *LuaFilter) GetScriptPath() string {
 }
 
 type LuaConf struct {
-	// Deprecated: use BackendNumberOfWorkers starting with v1.10.0
 	NumberOfWorkers        int      `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
 	BackendNumberOfWorkers int      `mapstructure:"backend_number_of_workers" validate:"omitempty,min=1,max=1000000"`
 	QueueLength            int      `mapstructure:"queue_length" validate:"omitempty,min=0"`
@@ -260,6 +259,9 @@ type LuaConf struct {
 	InitScriptPath         string   `mapstructure:"init_script_path" validate:"omitempty,file"`
 	InitScriptPaths        []string `mapstructure:"init_script_paths" validate:"omitempty,dive,file"`
 	ActionNumberOfWorkers  int      `mapstructure:"action_number_of_workers" validate:"omitempty,min=1,max=1000000"`
+	FeatureVMPoolSize      int      `mapstructure:"feature_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	FilterVMPoolSize       int      `mapstructure:"filter_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 }
 
 func (l *LuaConf) String() string {
@@ -302,6 +304,33 @@ func (l *LuaConf) GetActionNumberOfWorkers() int {
 	}
 
 	return l.ActionNumberOfWorkers
+}
+
+// GetFeatureVMPoolSize retrieves the configured feature VM pool size or falls back to the worker count if unset or invalid.
+func (l *LuaConf) GetFeatureVMPoolSize() int {
+	if l == nil || l.FeatureVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.FeatureVMPoolSize
+}
+
+// GetFilterVMPoolSize returns the configured filter VM pool size or falls back to the number of workers if unset or invalid.
+func (l *LuaConf) GetFilterVMPoolSize() int {
+	if l == nil || l.FilterVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.FilterVMPoolSize
+}
+
+// GetHookVMPoolSize retrieves the hook VM pool size or defaults to the number of workers if unset or invalid.
+func (l *LuaConf) GetHookVMPoolSize() int {
+	if l == nil || l.HookVMPoolSize <= 0 {
+		return l.GetNumberOfWorkers()
+	}
+
+	return l.HookVMPoolSize
 }
 
 // GetQueueLength returns the max queue length for Lua backend requests; 0 means unlimited.

@@ -425,7 +425,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	g, egCtx := errgroup.WithContext(ctx)
 
-	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFilterVMPoolSize()})
 
 	for _, script := range LuaFilters.LuaScripts {
 		sc := script

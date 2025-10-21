@@ -461,7 +461,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaHookVMPoolSize()})
 
 	L, acqErr := pool.Acquire(luaCtx)
 	if acqErr != nil {
@@ -526,7 +526,8 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaHookVMPoolSize()})
+
 	L, acqErr := pool.Acquire(luaCtx)
 	if acqErr != nil {
 		return nil, acqErr

@@ -204,7 +204,7 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 
 	defer LuaFeatures.Mu.RUnlock()
 
-	pool := vmpool.GetManager().GetOrCreate("feature:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("feature:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFeatureVMPoolSize()})
 
 	triggered, abortFeatures, err = r.executeScripts(ctx, pool)
 

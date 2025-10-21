@@ -253,7 +253,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaActionNumberOfWorkers()})
 
 	L, acqErr := pool.Acquire(aw.ctx)
 	if acqErr != nil {
