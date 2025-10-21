@@ -56,7 +56,7 @@ type Environment interface {
 	// GetPOP3BackendAddress returns the address of the POP3 backend server.
 	GetPOP3BackendAddress() string
 
-	// GetPOP3BackendPort returns the port of the POP3 backend server.
+	// GetPOP3BackendPort returns the port of the IMAP POP3 server.
 	GetPOP3BackendPort() int
 
 	// GetWaitDelay returns the delay between connection attempts in seconds.
@@ -67,9 +67,6 @@ type Environment interface {
 
 	// GetDevMode indicates whether the application is in developer mode.
 	GetDevMode() bool
-
-	// GetMaxActionWorkers returns the maximum number of simultaneous action workers.
-	GetMaxActionWorkers() uint16
 
 	// GetLocalCacheAuthTTL returns the time-to-live duration for local cache authentication.
 	GetLocalCacheAuthTTL() time.Duration
@@ -103,9 +100,6 @@ type EnvironmentSettings struct {
 
 	// DevMode indicates whether the application is running in developer mode.
 	DevMode bool
-
-	// MaxActionWorkers is the maximum number of action workers that can be run simultaneously.
-	MaxActionWorkers uint16
 
 	// LocalCacheAuthTTL
 	LocalCacheAuthTTL time.Duration
@@ -194,15 +188,6 @@ func (env *EnvironmentSettings) GetDevMode() bool {
 	return env.DevMode
 }
 
-// GetMaxActionWorkers retrieves the maximum number of action workers allowed from the EnvironmentSettings instance.
-func (env *EnvironmentSettings) GetMaxActionWorkers() uint16 {
-	if env == nil {
-		return 0
-	}
-
-	return env.MaxActionWorkers
-}
-
 // GetLocalCacheAuthTTL retrieves the time-to-live duration for local cache authentication from the EnvironmentSettings instance.
 func (env *EnvironmentSettings) GetLocalCacheAuthTTL() time.Duration {
 	if env == nil {
@@ -223,7 +208,6 @@ func setCommonDefaultEnvVars() {
 	viper.SetDefault("nginx_wait_delay", definitions.WaitDelay)
 	viper.SetDefault("max_login_attempts", definitions.MaxLoginAttempts)
 	viper.SetDefault("developer_mode", false)
-	viper.SetDefault("max_action_workers", definitions.MaxActionWorkers)
 	viper.SetDefault("lua_script_timeout", definitions.LuaMaxExecutionTime)
 }
 
@@ -383,19 +367,6 @@ func (env *EnvironmentSettings) setConfigMaxLoginAttempts() {
 	}
 }
 
-// setConfigMaxActionWorkers sets the MaxActionWorkers field based on the "max_action_workers" value from the configuration.
-func (env *EnvironmentSettings) setConfigMaxActionWorkers() {
-	if val := viper.GetUint("max_action_workers"); val > 1 {
-		if val < math.MaxUint16 {
-			env.MaxActionWorkers = uint16(val)
-		} else {
-			env.MaxActionWorkers = math.MaxUint16
-		}
-	} else {
-		env.MaxActionWorkers = 1
-	}
-}
-
 // setLocalCacheTTL sets the LocalCacheAuthTTL field based on the "local_cache_auth_ttl" configuration value using viper.
 // If the value is greater than 5 seconds but less than 1 hour, it is set directly; otherwise, it is capped accordingly.
 func (env *EnvironmentSettings) setLocalCacheTTL() {
@@ -414,7 +385,6 @@ func (env *EnvironmentSettings) setLocalCacheTTL() {
 func (env *EnvironmentSettings) setConfig() {
 	env.setConfigWaitDelay()
 	env.setConfigMaxLoginAttempts()
-	env.setConfigMaxActionWorkers()
 	env.setLocalCacheTTL()
 }
 

@@ -118,6 +118,9 @@ type File interface {
 	// GetLuaNumberOfWorkers returns the number of Lua workers configured for handling Lua scripts.
 	GetLuaNumberOfWorkers() int
 
+	// GetLuaActionNumberOfWorkers returns the number of Lua Action workers.
+	GetLuaActionNumberOfWorkers() int
+
 	// GetLuaScriptPath returns the path to the Lua script.
 	GetLuaScriptPath() string
 
@@ -794,6 +797,24 @@ func (f *FileSettings) GetLuaNumberOfWorkers() int {
 	}
 
 	return definitions.DefaultNumberOfWorkers
+}
+
+// GetLuaActionNumberOfWorkers retrieves the number of workers configured for Lua actions or returns default (10) if unset.
+func (f *FileSettings) GetLuaActionNumberOfWorkers() int {
+	if f == nil {
+		return definitions.MaxActionWorkers
+	}
+
+	getConfig := f.GetConfig(definitions.BackendLua)
+	if getConfig == nil {
+		return definitions.MaxActionWorkers
+	}
+
+	if luaConf, assertOk := getConfig.(*LuaConf); assertOk {
+		return luaConf.GetActionNumberOfWorkers()
+	}
+
+	return definitions.MaxActionWorkers
 }
 
 // GetLuaScriptPath retrieves the backend Lua script file path from the configuration. Returns an empty string if unavailable.
