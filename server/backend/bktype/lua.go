@@ -19,6 +19,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
+
 	"github.com/gin-gonic/gin"
 )
 
