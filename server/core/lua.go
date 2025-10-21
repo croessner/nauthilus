@@ -151,6 +151,10 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	accountField := luaBackendResult.AccountField
 	if accountField == "" {
+		// Harden: explicit negative result to avoid OK without attributes
+		passDBResult.Authenticated = false
+		passDBResult.UserFound = false
+
 		return
 	}
 
