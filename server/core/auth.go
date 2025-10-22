@@ -1986,9 +1986,11 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 
 // sfAuthResult encapsulates the auth result along with the LeaderID so that
 // followers can determine if they were leader or follower for logging.
+// It can also carry an optional Envelope to hydrate follower state.
 type sfAuthResult struct {
 	AuthResult definitions.AuthResult
 	LeaderID   string
+	Envelope   *sfAuthEnvelope
 }
 
 // sfAuthEnvelope is a rich result used for distributed singleflight to carry
@@ -2342,11 +2344,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
 				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
 
-				return sfAuthResult{AuthResult: r, LeaderID: reqID}, nil
+				return sfAuthResult{AuthResult: r, LeaderID: reqID, Envelope: env}, nil
 			}
 
 			// Didn't get the lock: wait via Pub/Sub for result, then read once
 			var leaderID string
+			var envCaptured *sfAuthEnvelope
 
 			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
 				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
@@ -2358,19 +2361,21 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				a.applyEnvelope(env)
 
 				leaderID = env.LeaderSessionID
+				envCaptured = env
 
 				return env.AuthResult, true, nil
 			}); ok {
-				return sfAuthResult{AuthResult: r, LeaderID: leaderID}, nil
+				return sfAuthResult{AuthResult: r, LeaderID: leaderID, Envelope: envCaptured}, nil
 			}
 			// Timeout/cancel: fallthrough to compute locally
 		}
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		env := a.buildEnvelopeFromState(res)
 
 		// Leader returns its reqID for followers to compare
-		return sfAuthResult{AuthResult: res, LeaderID: reqID}, nil
+		return sfAuthResult{AuthResult: res, LeaderID: reqID, Envelope: env}, nil
 	})
 
 	select {
@@ -2380,6 +2385,9 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		}
 
 		sfa := r.Val.(sfAuthResult)
+		if sfa.Envelope != nil {
+			a.applyEnvelope(sfa.Envelope)
+		}
 
 		role := "follower"
 		if sfa.LeaderID == reqID {
