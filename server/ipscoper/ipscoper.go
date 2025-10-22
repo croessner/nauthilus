@@ -18,7 +18,6 @@ package ipscoper
 import (
 	"fmt"
 	"net"
-	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
 )
@@ -33,6 +32,8 @@ const (
 	ScopeRepeatingWrongPassword ScopeContext = "repeating_wrong_password"
 	// ScopeTolerations is used when operating on tolerations keys.
 	ScopeTolerations ScopeContext = "tolerations"
+	// ScopeLuaGeneric is used for generic Lua-driven features (metrics, dedup) outside brute-force.
+	ScopeLuaGeneric ScopeContext = "lua_generic"
 )
 
 // IPScoper abstracts normalization of IP addresses into a stable identifier for storage/lookup.
@@ -57,32 +58,74 @@ func NewIPScoper() IPScoper {
 // This removes the need for duplicated switch-case logic in Scope and avoids early config access.
 func (s *configurableIPScoper) cidrFor(ctx ScopeContext) uint {
 	bf := config.GetFile().GetBruteForce()
-	if bf == nil {
-		return 0
+	luaSection := config.GetFile().GetLua()
+
+	var luaConf *config.LuaConf
+
+	if luaSection != nil {
+		if c, ok := luaSection.GetConfig().(*config.LuaConf); ok {
+			luaConf = c
+		}
 	}
 
 	switch ctx {
 	case ScopeRepeatingWrongPassword:
-		return bf.GetRWPIPv6CIDR()
+		if bf != nil {
+			return bf.GetRWPIPv6CIDR()
+		}
 	case ScopeTolerations:
-		return bf.GetTolerationsIPv6CIDR()
-	default:
-		return 0
+		if bf != nil {
+			return bf.GetTolerationsIPv6CIDR()
+		}
+
+	case ScopeLuaGeneric:
+		if luaConf != nil {
+			return luaConf.GetLuaIPv6CIDR()
+		}
 	}
+
+	return 0
 }
 
-// Scope processes the given IP based on the context and configuration, applying scoping rules like IPv6 CIDR, if applicable.
+// v4cidrFor returns the configured IPv4 CIDR for the given context (currently only Lua generic).
+func (s *configurableIPScoper) v4cidrFor(ctx ScopeContext) uint {
+	luaSection := config.GetFile().GetLua()
+	if luaSection == nil {
+		return 0
+	}
+
+	if c, ok := luaSection.GetConfig().(*config.LuaConf); ok && c != nil {
+		if ctx == ScopeLuaGeneric {
+			return c.GetLuaIPv4CIDR()
+		}
+	}
+
+	return 0
+}
+
+// Scope processes the given IP based on the context and configuration, applying scoping rules like IPv6/IPv4 CIDR, if applicable.
 func (s *configurableIPScoper) Scope(ctx ScopeContext, ip string) string {
 	if ip == "" {
 		return ip
 	}
 
 	parsed := net.ParseIP(ip)
-	isIPv6 := parsed != nil && strings.Contains(ip, ":") && parsed.To4() == nil
+	if parsed == nil {
+		return ip
+	}
+
+	isIPv4 := parsed.To4() != nil
+	isIPv6 := !isIPv4
 
 	if isIPv6 {
 		if cidr := s.cidrFor(ctx); cidr > 0 && cidr <= 128 {
 			if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, cidr)); err == nil && network != nil {
+				return network.String()
+			}
+		}
+	} else {
+		if v4cidr := s.v4cidrFor(ctx); v4cidr > 0 && v4cidr <= 32 {
+			if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, v4cidr)); err == nil && network != nil {
 				return network.String()
 			}
 		}

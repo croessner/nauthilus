@@ -27,6 +27,7 @@ import (
 	"github.com/biter777/countries"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
@@ -36,6 +37,7 @@ import (
 var exportsModMisc = map[string]lua.LGFunction{
 	definitions.LuaFnGetCountryName: getCountryName,
 	definitions.LuaFnWaitRandom:     waitRandom,
+	definitions.LuaFnScopedIP:       scopedIP,
 }
 
 // exportsModPassword is a map of Lua function names to their respective implementations for password-related operations.
@@ -252,6 +254,42 @@ func generatePasswordHash(L *lua.LState) int {
 
 	hash := util.GetHash(util.PreparePassword(password))
 	L.Push(lua.LString(hash))
+
+	return 1
+}
+
+// scopedIP exposes the Go IP scoper to Lua scripts via nauthilus_misc.scoped_ip(ctx, ip).
+// Usage from Lua: local scope = nauthilus_misc.scoped_ip("lua_generic", request.client_ip)
+func scopedIP(L *lua.LState) int {
+	// Accept either (ctx, ip) or (ip) with default context
+	var ctxStr string
+	var ip string
+
+	if L.GetTop() >= 2 {
+		ctxStr = L.OptString(1, "lua_generic")
+		ip = L.CheckString(2)
+	} else {
+		ctxStr = "lua_generic"
+		ip = L.CheckString(1)
+	}
+
+	var ctx ipscoper.ScopeContext
+
+	switch ctxStr {
+	case "rwp", string(ipscoper.ScopeRepeatingWrongPassword):
+		ctx = ipscoper.ScopeRepeatingWrongPassword
+	case "tolerations":
+		ctx = ipscoper.ScopeTolerations
+	case "lua_generic", "generic", "metrics":
+		ctx = "lua_generic"
+	default:
+		ctx = "lua_generic"
+	}
+
+	sc := ipscoper.NewIPScoper()
+	scoped := sc.Scope(ctx, ip)
+
+	L.Push(lua.LString(scoped))
 
 	return 1
 }

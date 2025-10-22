@@ -15,6 +15,9 @@ local nauthilus_util = require("nauthilus_util")
 dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
+dynamic_loader("nauthilus_misc")
+local nauthilus_misc = require("nauthilus_misc")
+
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
@@ -47,12 +50,14 @@ function nauthilus_call_feature(request)
     if username and username ~= "" then
         -- 1) Unique IPs per account using HLL for 24h and 7d
         if client_ip and client_ip ~= "" then
+            local scoped = nauthilus_misc.scoped_ip("lua_generic", client_ip)
+            if not scoped or scoped == "" then scoped = client_ip end
             local windows = { 86400, 604800 } -- 24h, 7d
             -- Batch HLL updates and TTLs via pipeline
             local pipe_cmds = {}
             for _, w in ipairs(windows) do
                 local hll_key = "ntc:hll:acct:" .. username .. ":ips:" .. w
-                table.insert(pipe_cmds, {"pfadd", hll_key, client_ip})
+                table.insert(pipe_cmds, {"pfadd", hll_key, scoped})
                 table.insert(pipe_cmds, {"expire", hll_key, w * 2})
             end
             if #pipe_cmds > 0 then
