@@ -1322,6 +1322,9 @@ const (
 	// LuaFnWaitRandom represents the constant value for the Lua function name "wait_random".
 	LuaFnWaitRandom = "wait_random"
 
+	// LuaFnScopedIP exposes IP scoping (network normalization) to Lua via nauthilus_misc.scoped_ip(ctx, ip).
+	LuaFnScopedIP = "scoped_ip"
+
 	// LuaFnGeneratePasswordHash is the function name for generating a Redis-compatible password hash
 	// used by Nauthilus (util.GetHash(util.PreparePassword(password))).
 	LuaFnGeneratePasswordHash = "generate_password_hash"

@@ -67,6 +67,13 @@ local function clamp(v, lo, hi)
     return v
 end
 
+-- Env switch: if false or unset (default), do not reject in protection mode (dry-run)
+local function protect_enforce_reject()
+    local v = os.getenv("PROTECT_ENFORCE_REJECT")
+    if v == nil or v == "" then return false end
+    return nauthilus_util.toboolean(v)
+end
+
 local function get_redis_client()
     local client = "default"
     local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
@@ -276,10 +283,18 @@ function nauthilus_call_filter(request)
             end
         end
 
-        -- Decide filter result: If authentication failed, we reject to enforce cooldown; if authenticated, accept
+        -- Decide filter result: If authentication failed, we either reject (enforcement) or allow (dry-run)
         if not request.authenticated then
-            nauthilus_builtin.status_message_set("Temporary protection active")
-            return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+            if protect_enforce_reject() then
+                nauthilus_builtin.status_message_set("Temporary protection active")
+                return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+            else
+                -- Dry-run mode: expose header for frontends and do not block here
+                pcall(function()
+                    nauthilus_http_response.set_http_response_header("X-Nauthilus-Protection-Mode", "dry-run")
+                end)
+                return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+            end
         end
     end
 

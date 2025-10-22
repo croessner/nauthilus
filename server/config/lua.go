@@ -262,6 +262,10 @@ type LuaConf struct {
 	FeatureVMPoolSize      int      `mapstructure:"feature_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	FilterVMPoolSize       int      `mapstructure:"filter_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
+
+	// Optional: generic IP scoping for Lua-driven features/metrics
+	LuaIPv6CIDR uint `mapstructure:"ip_scoping_v6_cidr" validate:"omitempty,min=1,max=128"`
+	LuaIPv4CIDR uint `mapstructure:"ip_scoping_v4_cidr" validate:"omitempty,min=1,max=32"`
 }
 
 func (l *LuaConf) String() string {
@@ -349,6 +353,22 @@ func (l *LuaConf) GetPackagePath() string {
 	}
 
 	return l.PackagePath
+}
+
+// GetLuaIPv6CIDR returns the configured IPv6 CIDR for generic Lua scoping; 0 means disabled.
+func (l *LuaConf) GetLuaIPv6CIDR() uint {
+	if l == nil {
+		return 0
+	}
+	return l.LuaIPv6CIDR
+}
+
+// GetLuaIPv4CIDR returns the configured IPv4 CIDR for generic Lua scoping; 0 means disabled.
+func (l *LuaConf) GetLuaIPv4CIDR() uint {
+	if l == nil {
+		return 0
+	}
+	return l.LuaIPv4CIDR
 }
 
 // GetBackendScriptPath retrieves the BackendScriptPath from the LuaConf. Returns an empty string if the LuaConf is nil.
