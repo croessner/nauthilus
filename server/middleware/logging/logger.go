@@ -17,14 +17,15 @@ package logging
 
 import (
 	"crypto/tls"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
+
 	"github.com/gin-gonic/gin"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/segmentio/ksuid"
 )
 
@@ -33,7 +34,7 @@ import (
 func LoggerMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
-			logWrapper func(logger kitlog.Logger) kitlog.Logger
+			logWrapper func(logger *slog.Logger) level.Logger
 		)
 
 		guid := ksuid.New().String()

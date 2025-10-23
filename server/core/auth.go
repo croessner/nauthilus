@@ -42,6 +42,7 @@ import (
 	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/filter"
@@ -52,7 +53,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"

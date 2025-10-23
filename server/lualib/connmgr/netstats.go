@@ -27,9 +27,9 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
-	"github.com/go-kit/log/level"
 	psnet "github.com/shirou/gopsutil/v4/net"
 	lua "github.com/yuin/gopher-lua"
 )

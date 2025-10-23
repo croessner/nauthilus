@@ -20,7 +20,7 @@ msan:
 	go test -msan -short ${PKG_LIST}
 
 build:
-	go build -mod=vendor -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
+	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT)" -o $(OUTPUT) ./server
 
 clean: ## Remove previous build
 	[ -x $(OUTPUT) ] && rm -f $(OUTPUT)

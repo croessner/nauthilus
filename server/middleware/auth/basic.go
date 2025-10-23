@@ -27,8 +27,9 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/patrickmn/go-cache"
 )
 

@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	stdlog "log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -34,7 +35,16 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
+	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
+	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
+	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
+	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
+	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
@@ -44,21 +54,10 @@ import (
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 
-	handlerbackchannel "github.com/croessner/nauthilus/server/handler/backchannel"
-	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
-	handlerhydra "github.com/croessner/nauthilus/server/handler/frontend/hydra"
-	handlernotify "github.com/croessner/nauthilus/server/handler/frontend/notify"
-	handlertwofa "github.com/croessner/nauthilus/server/handler/frontend/twofa"
-	handlerwebauthn "github.com/croessner/nauthilus/server/handler/frontend/webauthn"
-	handlerhealth "github.com/croessner/nauthilus/server/handler/health"
-	handlermetrics "github.com/croessner/nauthilus/server/handler/metrics"
-	"github.com/croessner/nauthilus/server/tags"
-
 	"github.com/gin-gonic/gin"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/prometheus/client_golang/prometheus"
@@ -69,6 +68,15 @@ import (
 
 // json is a package-level variable for jsoniter with standard configuration
 var json = jsoniter.ConfigFastest
+
+// slogStdWriter adapts the standard library logger to forward to slog via our level wrapper.
+type slogStdWriter struct{ logger *slog.Logger }
+
+func (w *slogStdWriter) Write(p []byte) (int, error) {
+	_ = level.Info(w.logger).Log("msg", string(p))
+
+	return len(p), nil
+}
 
 // contextTuple represents a tuple that contains a context and a cancel function.
 // This type is used for managing contexts and cancellations in various parts of the application.
@@ -138,9 +146,10 @@ func setupConfiguration() (err error) {
 		file.GetServer().GetLog().GetLogLevel(),
 		file.GetServer().GetLog().IsLogFormatJSON(),
 		file.GetServer().GetLog().IsLogUsesColor(),
+		file.GetServer().GetLog().IsAddSourceEnabled(),
 		file.GetServer().GetInstanceName(),
 	)
-	stdlog.SetOutput(kitlog.NewStdlibAdapter(log.Logger))
+	stdlog.SetOutput(&slogStdWriter{logger: log.Logger})
 
 	return nil
 }
@@ -534,6 +543,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 			config.GetFile().GetServer().GetLog().GetLogLevel(),
 			config.GetFile().GetServer().GetLog().IsLogFormatJSON(),
 			config.GetFile().GetServer().GetLog().IsLogUsesColor(),
+			config.GetFile().GetServer().GetLog().IsAddSourceEnabled(),
 			config.GetFile().GetServer().GetInstanceName(),
 		)
 

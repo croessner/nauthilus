@@ -48,7 +48,7 @@ build:
           mkdir -p ${FILEPATH}
           BIN_FILE_NAME="${FILEPATH}/${CI_PROJECT_NAME}-${GOOS}-${GOARCH}-${tag}"
           echo "Building ${BIN_FILE_NAME}"
-          GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -tags="netgo" -ldflags="-s -X main.version=${tag}-${CI_COMMIT_SHORT_SHA}" -o ${BIN_FILE_NAME} ./server
+          GOOS=${GOOS} GOARCH=${GOARCH} go build -mod=vendor -tags="netgo" -trimpath -ldflags="-s -X main.version=${tag}-${CI_COMMIT_SHORT_SHA}" -o ${BIN_FILE_NAME} ./server
       done
   artifacts:
     paths:

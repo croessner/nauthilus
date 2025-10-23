@@ -22,31 +22,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
+	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
+	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
+	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
+	approuter "github.com/croessner/nauthilus/server/router"
+
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/pires/go-proxyproto"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http2"
-
-	"github.com/croessner/nauthilus/server/config"
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
-
-	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
-	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
-	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
-	approuter "github.com/croessner/nauthilus/server/router"
 )
 
 // DefaultBootstrap wires the existing bootstrapping functions.
@@ -72,8 +71,8 @@ func (DefaultBootstrap) InitSessionStore() sessions.Store {
 // InitGinLogging configures Gin's writers to use the project's logger and sets
 // Gin mode (release/debug) and color output based on configuration.
 func (DefaultBootstrap) InitGinLogging() {
-	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.DebugValue()})
-	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, logLevel: level.ErrorValue()})
+	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, lvl: slog.LevelDebug})
+	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, lvl: slog.LevelError})
 
 	if config.GetFile().GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
@@ -493,23 +492,25 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	a.TransportRunner.Serve(ctx, srv, cert, key, proxy, signals)
 }
 
-// Helper: customWriter logs Gin output using go-kit logger at configured level.
+// Helper: customWriter logs Gin output using slog at configured level via the wrapper.
 type customWriter struct {
-	logger   kitlog.Logger
-	logLevel level.Value
+	logger *slog.Logger
+	lvl    slog.Level
 }
 
 // Write satisfies io.Writer and forwards Gin logs to the project's structured
 // logger at the configured level.
 func (w *customWriter) Write(data []byte) (int, error) {
-	switch w.logLevel {
-	case level.DebugValue():
-		return len(data), level.Debug(w.logger).Log("msg", string(data))
-	case level.ErrorValue():
-		return len(data), level.Error(w.logger).Log("msg", string(data))
+	switch w.lvl {
+	case slog.LevelDebug:
+		_ = level.Debug(w.logger).Log("msg", string(data))
+	case slog.LevelError:
+		_ = level.Error(w.logger).Log("msg", string(data))
 	default:
-		return len(data), level.Info(w.logger).Log("msg", string(data))
+		_ = level.Info(w.logger).Log("msg", string(data))
 	}
+
+	return len(data), nil
 }
 
 // Helper: log and exit with code 1 (preserves legacy behavior)

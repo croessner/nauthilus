@@ -16,12 +16,10 @@
 package log
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
+	"github.com/croessner/nauthilus/server/log/level"
 )
 
 func TestSetupLogging(t *testing.T) {
@@ -71,21 +69,19 @@ func TestSetupLogging(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buf := &bytes.Buffer{}
+			// Initialize logging
+			SetupLogging(tt.configLogLevel, tt.formatJSON, tt.useColor, true, tt.instance)
 
-			Logger = log.NewLogfmtLogger(log.NewSyncWriter(buf))
+			// Ensure global Logger is initialized
+			if Logger == nil {
+				t.Fatalf("Logger was not initialized")
+			}
 
-			SetupLogging(tt.configLogLevel, tt.formatJSON, tt.useColor, tt.instance)
-
-			// testing log level
-			level.Debug(Logger).Log("msg", "debug")
-			level.Info(Logger).Log("msg", "info")
-			level.Warn(Logger).Log("msg", "warn")
-			level.Error(Logger).Log("msg", "error")
-
-			// testing instance
-			logTest := log.With(Logger, definitions.LogKeyInstance, tt.instance)
-			logTest.Log("msg", "instance test")
+			// exercise wrapper functions; should not panic
+			_ = level.Debug(Logger).Log("msg", "debug")
+			_ = level.Info(Logger).Log("msg", "info")
+			_ = level.Warn(Logger).Log("msg", "warn")
+			_ = level.Error(Logger).Log("msg", "error")
 		})
 	}
 }

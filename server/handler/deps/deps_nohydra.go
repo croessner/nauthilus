@@ -19,13 +19,13 @@
 package deps
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 
 	"github.com/gin-gonic/gin"
-	kitlog "github.com/go-kit/log"
 )
 
 // Services defines the transport-agnostic business endpoints that HTTP handlers
@@ -146,6 +146,6 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() 
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
 	Cfg    config.File
-	Logger kitlog.Logger
+	Logger *slog.Logger
 	Svc    Services
 }

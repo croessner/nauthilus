@@ -707,6 +707,7 @@ type Log struct {
 	JSON       bool         `mapstructure:"json"`
 	Color      bool         `mapstructure:"color"`
 	Level      Verbosity    `mapstructure:"level"`
+	AddSource  bool         `mapstructure:"add_source"`
 	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
 }
 
@@ -758,6 +759,16 @@ func (l *Log) IsLogUsesColor() bool {
 	}
 
 	return l.Color
+}
+
+// IsAddSourceEnabled indicates whether slog should add source information (file:line) to log records.
+// Returns false if Log is nil; default behavior is configured via config defaults.
+func (l *Log) IsAddSourceEnabled() bool {
+	if l == nil {
+		return false
+	}
+
+	return l.AddSource
 }
 
 // Insights is a configuration structure for enabling profiling, block profiling, and connection monitoring capabilities.

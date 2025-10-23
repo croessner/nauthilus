@@ -8,7 +8,7 @@ COPY . ./
 ENV CGO_ENABLED=0
 
 RUN pwd && ls -a
-RUN cd blocklist && go build -mod=vendor -ldflags="-s" -o blocklist .
+RUN cd blocklist && go build -mod=vendor -trimpath -ldflags="-s" -o blocklist .
 
 FROM --platform=$BUILDPLATFORM alpine:3
 

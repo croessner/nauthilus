@@ -18,9 +18,9 @@ RUN GIT_TAG=$(git describe --tags --abbrev=0) && echo "tag="${GIT_TAG}"" && \
     -o nauthilus . && \
     upx --best --lzma nauthilus
 
-RUN cd docker-healthcheck && go build -mod=vendor -ldflags="-s -w" -o healthcheck . && upx --best --lzma healthcheck
-RUN cd contrib/smtp-server && go build -mod=vendor -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
-RUN cd contrib/imap-server && go build -mod=vendor -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
+RUN cd docker-healthcheck && go build -mod=vendor -trimpath -ldflags="-s -w" -o healthcheck . && upx --best --lzma healthcheck
+RUN cd contrib/smtp-server && go build -mod=vendor -trimpath -ldflags="-s -w" -o fakesmtp . && upx --best --lzma fakesmtp
+RUN cd contrib/imap-server && go build -mod=vendor -trimpath -ldflags="-s -w" -o fakeimap . && upx --best --lzma fakeimap
 
 FROM --platform=$BUILDPLATFORM alpine:3
 

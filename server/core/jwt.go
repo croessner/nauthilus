@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	jwtapi "github.com/croessner/nauthilus/server/model/jwt"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -34,7 +35,6 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )

@@ -31,7 +31,8 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
-	"github.com/go-kit/log/level"
+	"github.com/croessner/nauthilus/server/log/level"
+
 	"github.com/pires/go-proxyproto"
 )
 

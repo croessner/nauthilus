@@ -31,10 +31,10 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
-	"github.com/go-kit/log/level"
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/sync/singleflight"
 )

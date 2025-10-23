@@ -19,12 +19,13 @@
 package deps
 
 import (
-	"github.com/gin-gonic/gin"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-webauthn/webauthn/webauthn"
+	"log/slog"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // Services defines the transport-agnostic business endpoints that HTTP handlers
@@ -202,7 +203,7 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc {
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
 	Cfg      config.File
-	Logger   kitlog.Logger
+	Logger   *slog.Logger
 	WebAuthn *webauthn.WebAuthn
 	Svc      Services
 }
