@@ -23,8 +23,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	logcolor "github.com/croessner/nauthilus/server/log/color"
-
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -33,13 +31,6 @@ var (
 	// Logger is used for all messages that are printed to stdout
 	Logger *slog.Logger
 )
-
-// isTerminal checks if the given file descriptor corresponds to a terminal by verifying termios configuration.
-func isTerminal(w *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(w.Fd()), unix.TIOCGETA)
-
-	return err == nil
-}
 
 // SetupLogging initializes the global "Logger" object.
 func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
@@ -80,7 +71,7 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 	if formatJSON {
 		// JSON output should never be colored
 		handler = slog.NewJSONHandler(out, handlerOpts)
-	} else if useColor && isTerminal(os.Stdout) && configLogLevel != definitions.LogLevelNone {
+	} else if useColor && configLogLevel != definitions.LogLevelNone {
 		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
 		colors := logcolor.ThemeColorMap(termTheme)
 		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
