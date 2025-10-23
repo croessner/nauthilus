@@ -2993,13 +2993,11 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	for _, backendType := range config.GetFile().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			if !config.GetFile().LDAPHavePoolOnly(backendType.GetName()) {
-				mgr := NewLDAPManager(backendType.GetName())
-				accounts = append(accounts, &AccountListMap{
-					definitions.BackendLDAP,
-					mgr.AccountDB,
-				})
-			}
+			mgr := NewLDAPManager(backendType.GetName())
+			accounts = append(accounts, &AccountListMap{
+				definitions.BackendLDAP,
+				mgr.AccountDB,
+			})
 		case definitions.BackendLua:
 			mgr := NewLuaManager(backendType.GetName())
 			accounts = append(accounts, &AccountListMap{
