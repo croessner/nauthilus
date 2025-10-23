@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"reflect"
 	"runtime"
@@ -2028,6 +2029,186 @@ func (f *FileSettings) validate() (err error) {
 	return nil
 }
 
+// warnDeprecatedConfig logs deprecation warnings for all known deprecated config fields.
+func (f *FileSettings) warnDeprecatedConfig() {
+	if f == nil {
+		return
+	}
+
+	// LDAP: pool_only (deprecated) → lookup_pool_only
+	if f.LDAP != nil {
+		if cfg, _ := f.LDAP.GetConfig().(*LDAPConf); cfg != nil {
+			warnDeprecatedLDAP("default", cfg)
+		}
+
+		for name, cfg := range f.LDAP.GetOptionalLDAPPools() {
+			if cfg != nil {
+				warnDeprecatedLDAP(name, cfg)
+			}
+		}
+	}
+
+	// Server-level deprecations
+	srv := f.GetServer()
+	if srv != nil {
+		// TLS on server
+		warnDeprecatedTLS("server.tls", &srv.TLS)
+		// HTTP client TLS
+		warnDeprecatedTLS("server.http_client.tls", &srv.HTTPClient.TLS)
+		// Compression
+		warnDeprecatedCompression("server.compression", &srv.Compression)
+		// Redis Cluster
+		warnDeprecatedRedisCluster("server.redis.cluster", &srv.Redis.Cluster)
+		// Redis standalone replica
+		warnDeprecatedRedisReplica("server.redis.replica", &srv.Redis.Replica)
+		// Redis TLS
+		warnDeprecatedTLS("server.redis.tls", &srv.Redis.TLS)
+	}
+
+	// RBL deprecations
+	if rbl := f.GetRBLs(); rbl != nil {
+		for i := range rbl.Lists {
+			warnDeprecatedRBL(i, &rbl.Lists[i])
+		}
+	}
+}
+
+// safeWarn logs a warning using go-kit logger when available; otherwise falls back to slog.
+func safeWarn(keyvals ...any) {
+	var msg string
+
+	args := make([]any, 0, len(keyvals))
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		k, ok := keyvals[i].(string)
+		if !ok {
+			continue
+		}
+
+		if strings.EqualFold(k, "msg") {
+			if s, ok := keyvals[i+1].(string); ok {
+				msg = s
+
+				continue
+			}
+		}
+
+		args = append(args, slog.Any(k, keyvals[i+1]))
+	}
+
+	if msg == "" {
+		msg = "deprecated configuration"
+	}
+
+	slog.Warn(msg, args...)
+}
+
+// warnDeprecatedLDAP logs a warning if the 'pool_only' field in the LDAP configuration is used, as it is deprecated.
+func warnDeprecatedLDAP(backend string, cfg *LDAPConf) {
+	if cfg == nil {
+		return
+	}
+
+	if cfg.PoolOnly {
+		safeWarn(
+			"component", "config",
+			"backend", backend,
+			"deprecated", "ldap.config.pool_only",
+			"msg", "'pool_only' is deprecated – please migrate to 'lookup_pool_only'",
+		)
+	}
+}
+
+// warnDeprecatedTLS checks if the deprecated field `http_client_skip_verify` is used in the provided TLS config and logs a warning.
+func warnDeprecatedTLS(where string, t *TLS) {
+	if t == nil {
+		return
+	}
+
+	if t.HTTPClientSkipVerify {
+		safeWarn(
+			"component", "config",
+			"location", where,
+			"deprecated", "tls.http_client_skip_verify",
+			"msg", "'http_client_skip_verify' is deprecated – please use 'skip_verify'",
+		)
+	}
+}
+
+// warnDeprecatedCompression logs warnings for deprecated compression fields in the provided compression configuration.
+// It checks if compression.level and compression.content_types are used and issues warnings advising updates.
+// Parameter where specifies the configuration context location, and c is the Compression object to evaluate.
+func warnDeprecatedCompression(where string, c *Compression) {
+	if c == nil {
+		return
+	}
+
+	if c.Level > 0 {
+		safeWarn(
+			"component", "config",
+			"location", where,
+			"deprecated", "compression.level",
+			"msg", "'level' is deprecated – please use 'level_gzip'",
+		)
+	}
+
+	if len(c.ContentTypes) > 0 {
+		safeWarn(
+			"component", "config",
+			"location", where,
+			"deprecated", "compression.content_types",
+			"msg", "'content_types' is deprecated and has no effect",
+		)
+	}
+}
+
+// warnDeprecatedRedisCluster logs a warning if the Redis Cluster `read_only` field is used, as it is deprecated.
+func warnDeprecatedRedisCluster(where string, c *Cluster) {
+	if c == nil {
+		return
+	}
+
+	if c.ReadOnly {
+		safeWarn(
+			"component", "config",
+			"location", where,
+			"deprecated", "redis.cluster.read_only",
+			"msg", "'read_only' is deprecated – please use 'route_reads_to_replicas'",
+		)
+	}
+}
+
+// warnDeprecatedRedisReplica logs a deprecation warning if the "address" field is used instead of "addresses" in Redis replica configuration.
+func warnDeprecatedRedisReplica(where string, r *Replica) {
+	if r == nil {
+		return
+	}
+
+	if r.Address != "" {
+		safeWarn(
+			"component", "config",
+			"location", where,
+			"deprecated", "redis.replica.address",
+			"msg", "'address' is deprecated – please use 'addresses'",
+		)
+	}
+}
+
+// warnDeprecatedRBL logs a deprecation warning if the RBL's "return_code" field is used instead of "return_codes".
+func warnDeprecatedRBL(index int, r *RBL) {
+	if r == nil {
+		return
+	}
+
+	if r.ReturnCode != "" {
+		safeWarn(
+			"component", "config",
+			"list_index", index,
+			"deprecated", "rbl.lists[].return_code",
+			"msg", "'return_code' is deprecated – please use 'return_codes'",
+		)
+	}
+}
+
 // HasFeature checks if the given feature exists in the LoadableConfig's Features list
 func (f *FileSettings) HasFeature(feature string) bool {
 	if f == nil || f.Server == nil || f.Server.Features == nil {
@@ -2330,6 +2511,9 @@ func (f *FileSettings) HandleFile() (err error) {
 	if err = f.validate(); err != nil {
 		return err
 	}
+
+	// Emit deprecation warnings once after successful load/validation
+	f.warnDeprecatedConfig()
 
 	// Throw away unsupported keys
 	f.Other = nil

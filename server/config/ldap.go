@@ -106,10 +106,12 @@ func (l *LDAPSection) GetSearch() []LDAPSearchProtocol {
 }
 
 type LDAPConf struct {
-	PoolOnly      bool `mapstructure:"pool_only"`
-	StartTLS      bool
-	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
-	SASLExternal  bool `mapstructure:"sasl_external"`
+	// Deprecated: use lookup_pool_only
+	PoolOnly       bool `mapstructure:"pool_only"`
+	LookupPoolOnly bool `mapstructure:"lookup_pool_only"`
+	StartTLS       bool
+	TLSSkipVerify  bool `mapstructure:"tls_skip_verify"`
+	SASLExternal   bool `mapstructure:"sasl_external"`
 
 	NumberOfWorkers    int `mapstructure:"number_of_workers" validate:"omitempty,min=1,max=1000000"`
 	LookupPoolSize     int `mapstructure:"lookup_pool_size" validate:"required,min=1"`
@@ -163,7 +165,7 @@ type LDAPConf struct {
 	PoolName string `mapstructure:"-"`
 }
 
-// validateAuthPoolRequired validates the AuthPoolSize field in LDAPConf ensuring it's greater than 0 when PoolOnly is false.
+// validateAuthPoolRequired validates the AuthPoolSize field in LDAPConf ensuring it's greater than 0 when not in pool-only mode.
 func validateAuthPoolRequired(fl validator.FieldLevel) bool {
 	conf, ok := fl.Parent().Interface().(LDAPConf)
 
@@ -171,7 +173,7 @@ func validateAuthPoolRequired(fl validator.FieldLevel) bool {
 		return false
 	}
 
-	if !conf.PoolOnly && conf.AuthPoolSize <= 0 {
+	if !conf.IsPoolOnly() && conf.AuthPoolSize <= 0 {
 		return false
 	}
 
@@ -219,14 +221,18 @@ func (l *LDAPConf) GetNumberOfWorkers() int {
 	return l.NumberOfWorkers
 }
 
-// IsPoolOnly checks if the LDAPConf is configured for pool-only mode.
-// Returns false if the LDAPConf is nil.
+// IsPoolOnly determines the effective pool-only mode.
+// Rule: If deprecated 'pool_only' is set, it wins. Otherwise use 'lookup_pool_only'.
 func (l *LDAPConf) IsPoolOnly() bool {
 	if l == nil {
 		return false
 	}
 
-	return l.PoolOnly
+	if l.PoolOnly {
+		return true
+	}
+
+	return l.LookupPoolOnly
 }
 
 // IsStartTLS checks if StartTLS is enabled in the LDAPConf.
