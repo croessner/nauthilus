@@ -63,7 +63,7 @@ func TestBruteForceLogic(t *testing.T) {
 				}}},
 	})
 
-	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("IP already identified as brute forcer", func(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
@@ -604,7 +604,7 @@ func TestBruteForceFilters(t *testing.T) {
 		},
 	})
 
-	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("Bucket key includes protocol and OIDC when filters configured and context provided", func(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
@@ -701,7 +701,7 @@ func TestBruteForceFiltersNonMatching(t *testing.T) {
 		},
 	})
 
-	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("Key should not include non-matching protocol and rule should not match", func(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
@@ -758,7 +758,7 @@ func TestSaveFailedPasswordCounterTotals(t *testing.T) {
 		},
 	})
 
-	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("Write path increments total counters for both scopes", func(t *testing.T) {
 		const password = "<PASSWORD>"

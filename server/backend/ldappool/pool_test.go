@@ -118,7 +118,7 @@ func TestHandleLookupRequest(t *testing.T) {
 		},
 	}
 
-	log.SetupLogging(definitions.LogLevelNone, false, false, "")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
 
 	config.SetTestFile(&config.FileSettings{
 		Server: &config.ServerSection{
@@ -193,7 +193,7 @@ func TestHandleLookupRequest(t *testing.T) {
 }
 
 func TestSemaphoreTimeout(t *testing.T) {
-	log.SetupLogging(definitions.LogLevelNone, false, false, "")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
 
 	config.SetTestFile(&config.FileSettings{
 		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},

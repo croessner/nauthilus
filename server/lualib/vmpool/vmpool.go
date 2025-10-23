@@ -9,9 +9,10 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/stats"
-	"github.com/go-kit/log/level"
+
 	lua "github.com/yuin/gopher-lua"
 )
 

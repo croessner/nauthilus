@@ -34,11 +34,12 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-contrib/sessions"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/justinas/nosurf"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	openapi "github.com/ory/hydra-client-go/v2"

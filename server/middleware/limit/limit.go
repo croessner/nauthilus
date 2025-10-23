@@ -24,9 +24,10 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/segmentio/ksuid"
 )
 

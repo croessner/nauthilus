@@ -22,7 +22,7 @@ func TestHasRole(t *testing.T) {
 	})
 
 	// Set up logging
-	log.SetupLogging(definitions.LogLevelNone, false, false, "test")
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	tests := []struct {
 		name     string

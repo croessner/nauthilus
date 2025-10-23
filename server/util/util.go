@@ -38,8 +38,9 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-kit/log/level"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/simia-tech/crypt"
 	"github.com/spf13/viper"

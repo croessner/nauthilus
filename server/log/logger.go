@@ -16,84 +16,68 @@
 package log
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
-	"github.com/go-kit/log/term"
+	logcolor "github.com/croessner/nauthilus/server/log/color"
 )
 
 var (
 	mu sync.Mutex
 
 	// Logger is used for all messages that are printed to stdout
-	Logger log.Logger
+	Logger *slog.Logger
 )
 
 // SetupLogging initializes the global "Logger" object.
-func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, instance string) {
-	var logLevel level.Option
-
+func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
 	mu.Lock()
-
 	defer mu.Unlock()
 
-	if useColor {
-		colorFn := func(keyvals ...any) term.FgBgColor {
-			for i := 0; i < len(keyvals)-1; i += 2 {
-				if keyvals[i] != level.Key() {
-					continue
-				}
-
-				switch keyvals[i+1] {
-				case level.DebugValue():
-					return term.FgBgColor{Fg: term.DarkBlue}
-				case level.InfoValue():
-					return term.FgBgColor{Fg: term.Default}
-				case level.WarnValue():
-					return term.FgBgColor{Fg: term.Yellow}
-				case level.ErrorValue():
-					return term.FgBgColor{Fg: term.Red}
-				default:
-					return term.FgBgColor{}
-				}
-			}
-
-			return term.FgBgColor{}
-		}
-
-		if formatJSON {
-			Logger = term.NewLogger(os.Stdout, log.NewJSONLogger, colorFn)
-		} else {
-			Logger = term.NewLogger(os.Stdout, log.NewLogfmtLogger, colorFn)
-		}
-	} else {
-		if formatJSON {
-			Logger = log.NewJSONLogger(log.NewSyncWriter(os.Stdout))
-		} else {
-			Logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout))
-		}
-	}
+	// Map configLogLevel to slog level
+	var minLevel slog.Level
 
 	switch configLogLevel {
 	case definitions.LogLevelNone:
-		logLevel = level.AllowNone()
+		// Level value is irrelevant when output is discarded; keep a sane default
+		minLevel = slog.LevelInfo
 	case definitions.LogLevelError:
-		logLevel = level.AllowError()
+		minLevel = slog.LevelError
 	case definitions.LogLevelWarn:
-		logLevel = level.AllowWarn()
+		minLevel = slog.LevelWarn
 	case definitions.LogLevelInfo:
-		logLevel = level.AllowInfo()
+		minLevel = slog.LevelInfo
 	case definitions.LogLevelDebug:
-		logLevel = level.AllowDebug()
+		minLevel = slog.LevelDebug
+	default:
+		minLevel = slog.LevelInfo
 	}
 
-	Logger = level.NewFilter(Logger, logLevel)
+	handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource}
 
-	Logger = log.With(
-		Logger,
-		"ts", log.DefaultTimestamp, "caller", log.DefaultCaller, definitions.LogKeyInstance, instance,
-	)
+	// Choose output target: for LogLevelNone, discard everything using io.Discard
+	var out io.Writer = os.Stdout
+	if configLogLevel == definitions.LogLevelNone {
+		out = io.Discard
+	}
+
+	var handler slog.Handler
+
+	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
+
+	if formatJSON {
+		// JSON output should never be colored
+		handler = slog.NewJSONHandler(out, handlerOpts)
+	} else if useColor && configLogLevel != definitions.LogLevelNone {
+		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
+		colors := logcolor.ThemeColorMap(termTheme)
+		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
+	} else {
+		handler = slog.NewTextHandler(out, handlerOpts)
+	}
+
+	Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
 }
