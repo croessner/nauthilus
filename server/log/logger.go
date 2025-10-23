@@ -22,6 +22,9 @@ import (
 	"sync"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	logcolor "github.com/croessner/nauthilus/server/log/color"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -31,8 +34,15 @@ var (
 	Logger *slog.Logger
 )
 
+// isTerminal checks if the given file descriptor corresponds to a terminal by verifying termios configuration.
+func isTerminal(w *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(w.Fd()), unix.TIOCGETA)
+
+	return err == nil
+}
+
 // SetupLogging initializes the global "Logger" object.
-func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) { // useColor kept for signature compatibility; coloring not implemented in slog TextHandler
+func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -65,8 +75,15 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 
 	var handler slog.Handler
 
+	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
+
 	if formatJSON {
+		// JSON output should never be colored
 		handler = slog.NewJSONHandler(out, handlerOpts)
+	} else if useColor && isTerminal(os.Stdout) && configLogLevel != definitions.LogLevelNone {
+		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
+		colors := logcolor.ThemeColorMap(termTheme)
+		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
 	} else {
 		handler = slog.NewTextHandler(out, handlerOpts)
 	}
