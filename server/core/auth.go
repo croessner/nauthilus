@@ -2724,14 +2724,10 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 		WithPassword(a.Password).
 		WithAccountName(accountName)
 
-	// Redis burst gate: only the first within a short window should increase BF counters
-	// Build burst key from strict singleflight hash to match auth dedup semantics
-	ttl := definitions.SingleflightWaitCap
-	if ttl < time.Second {
-		ttl = time.Second
-	}
+	ttl := time.Second
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
+
 	if res, err := rediscli.ExecuteScript(ctx.Request.Context(), "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
 		if v, ok := res.(int64); ok && v == 1 {
 			bm.SaveFailedPasswordCounterInRedis()
