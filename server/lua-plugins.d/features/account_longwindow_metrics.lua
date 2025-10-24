@@ -80,10 +80,20 @@ function nauthilus_call_feature(request)
         end
     end
 
-    -- 3) Password spraying: privacy-preserving token counters (if provided)
-    -- Expect request.pw_token = HMAC(secret, PreparePassword(pw)) provided by caller.
-    -- We do not store plaintext or unhashed passwords here.
-    local pw_token = request.pw_token
+    -- 3) Password spraying: privacy-preserving token counters (direct generation)
+    -- Generate a short, stable password token locally from request.password, as in actions/clickhouse.lua
+    -- No plaintext is persisted or logged. If no password is present, nothing is counted.
+    local pw_token
+    if request.password and request.password ~= "" then
+        dynamic_loader("nauthilus_password")
+        local nauthilus_password = require("nauthilus_password")
+
+        local ok, token = pcall(nauthilus_password.generate_password_hash, request.password)
+        if ok and token and token ~= "" then
+            pw_token = token
+        end
+    end
+
     if pw_token and pw_token ~= "" then
         local windows = { 86400, 604800 } -- 24h, 7d
         -- Batch window updates for spray tokens
