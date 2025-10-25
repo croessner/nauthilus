@@ -2,6 +2,8 @@ package metrics
 
 import (
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -12,6 +14,18 @@ var (
 	histograms = make(map[string]*prometheus.HistogramVec)
 	gauges     = make(map[string]*prometheus.GaugeVec)
 )
+
+// warnOnceMissing tracks missing metric names to avoid log flooding
+var warnOnceMissing = struct{ m map[string]bool }{m: map[string]bool{}}
+
+func warnIfMissing(kind, name string) {
+	key := kind + ":" + name
+	if !warnOnceMissing.m[key] {
+		warnOnceMissing.m[key] = true
+
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Prometheus metric not found", "kind", kind, "metric", name)
+	}
+}
 
 // createSummaryVec registers a new Prometheus SummaryVec metric with the provided name, help description, and label names.
 func createSummaryVec(L *lua.LState) int {
@@ -145,7 +159,7 @@ func startSumaryTimer(L *lua.LState) int {
 
 	summary, exists := summaries[name]
 	if !exists {
-		L.ArgError(1, "SummaryVec not found")
+		warnIfMissing("summary", name)
 
 		return 0
 	}
@@ -171,7 +185,7 @@ func startHistogramTimer(L *lua.LState) int {
 
 	histogram, exists := histograms[name]
 	if !exists {
-		L.ArgError(1, "HistogramVec not found")
+		warnIfMissing("histogram", name)
 
 		return 0
 	}
@@ -208,7 +222,8 @@ func incrementCounter(L *lua.LState) int {
 
 	counter, exists := counters[name]
 	if !exists {
-		L.ArgError(1, "CounterVec not found")
+		warnIfMissing("counter", name)
+
 		return 0
 	}
 
@@ -230,7 +245,7 @@ func addGauge(L *lua.LState) int {
 
 	gauge, exists := gauges[name]
 	if !exists {
-		L.ArgError(1, "GaugeVec not found")
+		warnIfMissing("gauge", name)
 
 		return 0
 	}
@@ -253,7 +268,7 @@ func subGauge(L *lua.LState) int {
 
 	gauge, exists := gauges[name]
 	if !exists {
-		L.ArgError(1, "GaugeVec not found")
+		warnIfMissing("gauge", name)
 
 		return 0
 	}
@@ -276,7 +291,7 @@ func setGauge(L *lua.LState) int {
 
 	gauge, exists := gauges[name]
 	if !exists {
-		L.ArgError(1, "GaugeVec not found")
+		warnIfMissing("gauge", name)
 
 		return 0
 	}
@@ -298,7 +313,7 @@ func incrementGauge(L *lua.LState) int {
 
 	gauge, exists := gauges[name]
 	if !exists {
-		L.ArgError(1, "GaugeVec not found")
+		warnIfMissing("gauge", name)
 
 		return 0
 	}
@@ -320,7 +335,7 @@ func decrementGauge(L *lua.LState) int {
 
 	gauge, exists := gauges[name]
 	if !exists {
-		L.ArgError(1, "GaugeVec not found")
+		warnIfMissing("gauge", name)
 
 		return 0
 	}
@@ -343,7 +358,7 @@ func touchCounter(L *lua.LState) int {
 
 	counter, exists := counters[name]
 	if !exists {
-		L.ArgError(1, "CounterVec not found")
+		warnIfMissing("counter", name)
 
 		return 0
 	}

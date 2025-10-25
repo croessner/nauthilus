@@ -24,7 +24,59 @@ local nauthilus_psnet = require("nauthilus_psnet")
 dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
+dynamic_loader("nauthilus_gll_time")
+local time = require("time")
+
 local N = "init"
+
+-- Wait until Redis is reachable before any Redis-dependent init work starts.
+-- Uses ping loop with optional exponential backoff. Crashes the pod on timeout.
+local function wait_for_redis(client, logging)
+    local timeout_sec = tonumber(os.getenv("INIT_REDIS_WAIT_TIMEOUT_SEC") or "30") or 30
+    local interval_ms = tonumber(os.getenv("INIT_REDIS_PING_INTERVAL_MS") or "200") or 200
+    local backoff_enabled = (os.getenv("INIT_REDIS_BACKOFF_ENABLED") or "true"):lower()
+    backoff_enabled = (backoff_enabled == "1" or backoff_enabled == "true" or backoff_enabled == "yes")
+    local backoff_max_ms = tonumber(os.getenv("INIT_REDIS_BACKOFF_MAX_MS") or "2000") or 2000
+
+    local deadline = os.time() + timeout_sec
+    local attempts = 0
+    local next_sleep = interval_ms
+
+    while true do
+        attempts = attempts + 1
+        local ok, pong = pcall(nauthilus_redis.redis_ping, client)
+        if ok and (pong == true or pong == "PONG" or pong == 1) then
+            if logging and (logging.log_level == "debug" or logging.log_level == "info") then
+                nauthilus_util.print_result(logging, {
+                    caller = N .. ".lua",
+                    level = "info",
+                    message = "Redis ping successful",
+                    attempts = attempts,
+                })
+            end
+            return
+        end
+
+        if os.time() >= deadline then
+            nauthilus_util.if_error_raise("init.lua: Redis not reachable within timeout (" .. tostring(timeout_sec) .. "s)")
+            return -- unreachable
+        end
+
+        -- Sleep with optional exponential backoff
+        if backoff_enabled then
+            next_sleep = math.min(next_sleep * 2, backoff_max_ms)
+        end
+        -- Use time.sleep_ms when available; fallback to seconds sleep
+        local slept = false
+        if time and time.sleep_ms then
+            local s_ok = pcall(time.sleep_ms, next_sleep)
+            slept = s_ok == true or s_ok == nil -- pcall returns true plus returns; consider true as slept
+        end
+        if not slept and time and time.sleep then
+            pcall(time.sleep, next_sleep / 1000.0)
+        end
+    end
+end
 
 function nauthilus_run_hook(logging)
     local result = {}
@@ -50,6 +102,9 @@ function nauthilus_run_hook(logging)
         custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(custom_pool_name)
         nauthilus_util.if_error_raise(err_redis_client)
     end
+
+    -- Before any Redis script uploads or commands, ensure Redis is reachable.
+    wait_for_redis(custom_pool, logging)
 
     local script = [[
         local redis_key = KEYS[1]
