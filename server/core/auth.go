@@ -2326,6 +2326,52 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 	defer timer.Stop()
 
+	// Allow disabling in-process singleflight via config (default: enabled)
+	inProcEnabled := config.GetFile().GetServer().GetDedup().IsInProcessEnabled()
+	if !inProcEnabled {
+		// Skip in-process dedup; optionally use distributed coordination if enabled
+		if distEnabled && redisWrite != nil {
+			resKey, lockKey, chName := a.sfRedisKeys()
+			if token, got, _ := a.sfTryLock(reqCtx, redisWrite, lockKey); got {
+				defer a.sfUnlock(reqCtx, lockKey, token)
+
+				useCache, backendPos, passDBs := a.handleBackendTypes()
+				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+				env := a.buildEnvelopeFromState(r)
+				env.LeaderSessionID = reqID
+				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
+				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
+
+				a.applyEnvelope(env)
+				a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "leader")
+
+				return r
+			}
+
+			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
+				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
+				if err != nil || !ok {
+					return 0, false, err
+				}
+
+				a.applyEnvelope(env)
+
+				return env.AuthResult, true, nil
+			}); ok {
+				a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "follower")
+
+				return r
+			}
+			// Timeout/cancel: fall through to local compute
+		}
+
+		useCache, backendPos, passDBs := a.handleBackendTypes()
+		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_no_inproc")
+
+		return res
+	}
+
 	ch := backchanSF.DoChan(key, func() (any, error) {
 		// If distributed dedup is enabled and Redis is available, coordinate across instances
 		if distEnabled && redisWrite != nil {
@@ -3663,7 +3709,7 @@ func (a *AuthState) generateLocalCacheKey() string {
 }
 
 // generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
-// Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID]
+// Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID], pw_short
 func (a *AuthState) generateSingleflightKey() string {
 	// Try to enrich account if present in cache already
 	account := a.refreshUserAccount()
@@ -3681,12 +3727,18 @@ func (a *AuthState) generateSingleflightKey() string {
 		sslFlag = "1"
 	}
 
+	// Short password hash (same function as for positive password cache)
+	pwShort := util.GetHash(util.PreparePassword(a.Password))
+
 	sep := "\x00"
 	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + account + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
+
 	if a.OIDCCID != "" {
-		return base + sep + a.OIDCCID
+		base = base + sep + a.OIDCCID
 	}
-	return base
+
+	// Include password short hash last to avoid cross-password dedup
+	return base + sep + pwShort
 }
 
 // GetFromLocalCache retrieves the AuthState object from the local cache using the generateLocalCacheKey() as the key.

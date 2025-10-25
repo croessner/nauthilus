@@ -1795,7 +1795,8 @@ func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 // If DistributedEnabled is true, Redis-based coordination (result cache + lock + pub/sub)
 // is enabled to deduplicate across instances. Default is false.
 type Dedup struct {
-	DistributedEnabled bool `mapstructure:"distributed_enabled"`
+	DistributedEnabled bool  `mapstructure:"distributed_enabled"`
+	InProcessEnabled   *bool `mapstructure:"in_process_enabled"`
 }
 
 // GetDedup returns the Dedup configuration section. If ServerSection is nil,
@@ -1815,4 +1816,14 @@ func (d *Dedup) IsDistributedEnabled() bool {
 	}
 
 	return d.DistributedEnabled
+}
+
+// IsInProcessEnabled reports whether in-process singleflight deduplication is enabled.
+// Default is true unless explicitly configured.
+func (d *Dedup) IsInProcessEnabled() bool {
+	if d == nil || d.InProcessEnabled == nil {
+		return true
+	}
+
+	return *d.InProcessEnabled
 }
