@@ -28,16 +28,16 @@ local prom = require("nauthilus_prometheus")
 dynamic_loader("nauthilus_redis")
 local r = require("nauthilus_redis")
 
-dynamic_loader("nauthilus_gll_bit")
-local bit = require("bit")
+-- bit module no longer required; using pure Lua modulo for djb2 hashing
 
 -- Deterministic string hash (djb2) to support stable sampling by username
+-- Pure Lua implementation using modulo to keep values in unsigned 32-bit range
 local function djb2_hash(s)
     local hash = 5381
     for i = 1, #s do
         local c = string.byte(s, i)
-        -- djb2: hash = ((hash << 5) + hash + c) & 0xffffffff
-        hash = bit.band((bit.lshift(hash, 5) + hash + c), 0xFFFFFFFF)
+        -- djb2: hash = (hash * 33 + c) mod 2^32
+        hash = (hash * 33 + c) % 4294967296
     end
     if hash < 0 then
         -- normalize to unsigned 32-bit range for deterministic sampling
