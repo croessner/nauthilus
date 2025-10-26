@@ -1000,6 +1000,37 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	return keyvals
 }
 
+// LogLineProcessingTemplate generates and returns a list of key-value pairs for logging session-related details.
+func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
+	var keyvals []any
+
+	mode := "auth"
+	if a.NoAuth {
+		mode = "no-auth"
+	}
+
+	keyvals = []any{
+		definitions.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		definitions.LogKeyMode, mode,
+		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
+		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.OIDCCID),
+		definitions.LogKeyLocalIP, util.WithNotAvailable(a.XLocalIP),
+		definitions.LogKeyPort, util.WithNotAvailable(a.XPort),
+		definitions.LogKeyClientIP, util.WithNotAvailable(a.ClientIP),
+		definitions.LogKeyClientPort, util.WithNotAvailable(a.XClientPort),
+		definitions.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
+		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
+		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
+		definitions.LogKeyAuthMethod, util.WithNotAvailable(*a.Method),
+		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
+		definitions.LogKeyUserAgent, util.WithNotAvailable(*a.UserAgent),
+		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
+		definitions.LogKeyUriPath, endpoint,
+	}
+
+	return keyvals
+}
+
 // GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
 func (a *AuthState) GetAccount() string {
@@ -1270,13 +1301,31 @@ func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
 // The logged information includes the result of the a.LogLineTemplate() function, which returns either "ok" or an empty string depending on the value of a.NoAuth,
 // and the path of the request URL obtained from ctx.Request.URL.Path.
 func handleLogging(ctx *gin.Context, auth *AuthState) {
-	level.Info(log.Logger).Log(auth.LogLineTemplate(func() string {
+	keyvals := auth.LogLineTemplate(func() string {
 		if !auth.NoAuth {
 			return "ok"
 		}
 
 		return ""
-	}(), ctx.Request.URL.Path)...)
+	}(), ctx.Request.URL.Path)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request was successful")
+
+	level.Info(log.Logger).Log(keyvals...)
+}
+
+// logProcessingRequest writes a prominent log line similar to the final one, but for the beginning of request processing.
+// It logs all available request-related fields and explicitly sets msg="Processing request" while including the session GUID.
+func logProcessingRequest(ctx *gin.Context, auth *AuthState) {
+	if auth == nil || ctx == nil {
+		return
+	}
+
+	keyvals := auth.LogLineProcessingTemplate(ctx.Request.URL.Path)
+
+	// Add a human-readable message field as requested
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
+
+	level.Info(log.Logger).Log(keyvals...)
 }
 
 // increaseLoginAttempts increments the number of login attempts for the AuthState object.
@@ -1349,7 +1398,10 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 //	ctx := &gin.Context{}
 //	a.loginAttemptProcessing(ctx)
 func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
-	level.Info(log.Logger).Log(a.LogLineTemplate("fail", ctx.Request.URL.Path)...)
+	keyvals := a.LogLineTemplate("fail", ctx.Request.URL.Path)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request has failed")
+
+	level.Info(log.Logger).Log(keyvals...)
 
 	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
 	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()
@@ -1375,34 +1427,7 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 	}
 }
 
-// AuthTempFail sets the necessary headers and status message for temporary authentication failure.
-// If the service is "user", it also sets headers specific to user information.
-// After setting the headers, it returns the appropriate response based on the service.
-// If the service is not "user", it returns an internal server error response with the status message.
-// If the service is "user", it calls the sendAuthResponse method to set additional headers and returns.
-//
-// Parameters:
-// - ctx: The gin context object.
-// - reason: The reason for the authentication failure.
-//
-// Usage example:
-//
-//	  func (a *AuthState) handleAuthentication(ctx *gin.Context) {
-//	    ...
-//	    a.authTempFail(ctx, global.TempFailDefault)
-//	    ...
-//	  }
-//	  func (a *AuthState) handleSASLAuthdAuthentication(ctx *gin.Context) {
-//		   ...
-//	    a.authTempFail(ctx, global.TempFailDefault)
-//	    ...
-//	  }
-//
-// Declaration and usage of AuthTempFail:
-//
-//	A: func (a *AuthState) authTempFail(ctx *gin.Context, reason string) {
-//	  ...
-//	}
+// AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	ctx.Header("Auth-Status", reason)
 	ctx.Header("X-Nauthilus-Session", *a.GUID)
@@ -1418,7 +1443,10 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 
 	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
 
-	level.Info(log.Logger).Log(a.LogLineTemplate("tempfail", ctx.Request.URL.Path)...)
+	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
+
+	level.Info(log.Logger).Log(keyvals...)
 }
 
 // IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
@@ -3536,6 +3564,11 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 
 	auth.SetStatusCodes(svc)
 	setupAuth(ctx, auth)
+
+	// prominent early log: show all incoming data including session GUID
+	if a, ok := auth.(*AuthState); ok {
+		logProcessingRequest(ctx, a)
+	}
 
 	if ctx.Errors.Last() != nil {
 		return nil
