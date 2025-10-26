@@ -1165,6 +1165,10 @@ func initializeAuthLogin(ctx *gin.Context) (State, error) {
 	auth.SetStatusCodes(definitions.ServOryHydra)
 	auth.WithDefaults(ctx).WithClientInfo(ctx).WithLocalInfo(ctx).WithUserAgent(ctx).WithXSSL(ctx).InitMethodAndUserAgent()
 
+	if a, ok := auth.(*AuthState); ok {
+		logProcessingRequest(ctx, a)
+	}
+
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return nil, errors.ErrBruteForceAttack
 	}
