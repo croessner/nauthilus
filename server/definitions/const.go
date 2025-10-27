@@ -136,6 +136,13 @@ const (
 	// LogKeyStatus represents the general status (like authentication) for logging.
 	LogKeyStatus = "authenticated"
 
+	// LogKeyAuthorized represents whether the request was authorized by filters (authz).
+	LogKeyAuthorized = "authz"
+
+	// LogKeyAuthenticatedBool is a boolean that reflects the backend authentication decision (authn).
+	// This complements LogKeyStatus (string: ok/fail/tempfail) and is always present in final logs.
+	LogKeyAuthenticatedBool = "authn"
+
 	// LogKeyMode represents the mode of the operation.
 	LogKeyMode = "mode"
 

@@ -317,6 +317,13 @@ type AuthState struct {
 	// UserFound is a flag that is set if a password Database found the user.
 	UserFound bool
 
+	// Authenticated indicates whether the PassDB stage concluded with a decision (success or definitive fail).
+	// It is false only for tempfail conditions where no decision could be made.
+	Authenticated bool
+
+	// Authorized indicates whether filters allowed the request. It is set by FilterLua.
+	Authorized bool
+
 	// PasswordsAccountSeen is a counter increased whenever a new failed password was detected for the current account.
 	PasswordsAccountSeen uint
 
@@ -502,6 +509,8 @@ func (a *AuthState) reset() {
 	a.NoAuth = false
 	a.ListAccounts = false
 	a.UserFound = false
+	a.Authenticated = false
+	a.Authorized = false
 	a.PasswordsAccountSeen = 0
 	a.PasswordsTotalSeen = 0
 	a.LoginAttempts = 0
@@ -982,7 +991,9 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyStatusMessage, util.WithNotAvailable(a.StatusMessage),
 		definitions.LogKeyUriPath, endpoint,
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
-		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Now().Sub(a.StartTime)),
+		definitions.LogKeyAuthorized, a.Authorized,
+		definitions.LogKeyAuthenticatedBool, a.Authenticated,
+		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Since(a.StartTime)),
 	}
 
 	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
@@ -2872,14 +2883,23 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	)
 
 	if passDBResult, err = a.processVerifyPassword(ctx, passDBs); err != nil {
+		// tempfail: no backend decision could be made
+		a.Authenticated = false
+
 		return definitions.AuthResultTempFail
 	}
 
 	if accountName, err = a.processUserFound(passDBResult); err != nil {
+		// treat as tempfail
+		a.Authenticated = false
+
 		return definitions.AuthResultTempFail
 	}
 
 	if err = a.processCache(ctx, passDBResult.Authenticated, accountName, useCache, backendPos); err != nil {
+		// tempfail during cache processing
+		a.Authenticated = false
+
 		return definitions.AuthResultTempFail
 	}
 
@@ -2888,10 +2908,12 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
 		}
 
+		a.Authenticated = true
 		authResult = definitions.AuthResultOK
 	} else {
 		a.UpdateBruteForceBucketsCounter(ctx)
 
+		a.Authenticated = false
 		authResult = definitions.AuthResultFail
 	}
 
@@ -2907,6 +2929,9 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
 	if !config.GetFile().HaveLuaFilters() {
+		// No filters configured → treat as authorized
+		a.Authorized = true
+
 		if passDBResult.Authenticated {
 			return definitions.AuthResultOK
 		}
@@ -2993,8 +3018,14 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			// Return the CommonRequest to the pool even if there's an error
 			lualib.PutCommonRequest(commonRequest)
 
+			// error during filter execution → not authorized
+			a.Authorized = false
+
 			return definitions.AuthResultTempFail
 		}
+
+		// Explicitly authorized when no filters are defined
+		a.Authorized = true
 	} else {
 		if filterRequest.Logs != nil && len(*filterRequest.Logs) > 0 {
 			// Pre-allocate the AdditionalLogs slice to avoid continuous reallocation
@@ -3030,11 +3061,16 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		}
 
 		if filterResult {
+			a.Authorized = false
+
 			// Return the CommonRequest to the pool before returning
 			lualib.PutCommonRequest(commonRequest)
 
 			return definitions.AuthResultFail
 		}
+
+		// filters accepted → authorized
+		a.Authorized = true
 
 		a.UsedBackendIP = *filterRequest.UsedBackendAddress
 		a.UsedBackendPort = *filterRequest.UsedBackendPort
@@ -3615,6 +3651,10 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.GetString(definitions.CtxServiceKey)
 	a.Context = ctx.MustGet(definitions.CtxDataExchangeKey).(*lualib.Context)
+
+	// Default flags
+	a.Authenticated = false // not decided yet
+	a.Authorized = true     // default allow unless a filter rejects
 
 	if a.Service == definitions.ServBasic {
 		a.Protocol.Set(definitions.ProtoHTTP)
