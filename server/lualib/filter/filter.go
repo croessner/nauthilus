@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -585,6 +586,40 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 		// Merge per-filter status message and logs via common helper
 		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, fr.statusText, fr.logs)
+	}
+
+	// After aggregating results, log rejected filters and per-filter return codes
+	if r.Logs == nil {
+		r.Logs = new(lualib.CustomLogKeyValue)
+	}
+
+	rejectedFilters := make([]string, 0)
+	resultPairs := make([]string, 0, len(results))
+
+	for _, fr := range results {
+		if fr.action {
+			rejectedFilters = append(rejectedFilters, fr.name)
+		}
+
+		status := "unknown("
+		switch fr.ret {
+		case 0:
+			status = "ok"
+		case 1:
+			status = "fail"
+		default:
+			status = fmt.Sprintf("unknown(%d)", fr.ret)
+		}
+
+		resultPairs = append(resultPairs, fmt.Sprintf("%s:%s", fr.name, status))
+	}
+
+	if len(rejectedFilters) > 0 {
+		r.Logs.Set(definitions.LogKeyRejectedFilters, strings.Join(rejectedFilters, ","))
+	}
+
+	if len(resultPairs) > 0 {
+		r.Logs.Set(definitions.LogKeyFilterResults, strings.Join(resultPairs, ","))
 	}
 
 	backendResult = mergedBackendResult
