@@ -2557,6 +2557,11 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 
 	passDBResult := a.initializePassDBResult()
 
+	// Since this path is a confirmed positive hit from the in-memory cache,
+	// the PassDB stage has already decided previously. Reflect that in AuthState
+	// so final logs include authn=true for cache hits.
+	a.Authenticated = true
+
 	authResult := definitions.AuthResultOK
 
 	if !(a.Protocol.Get() == definitions.ProtoOryHydra) {
