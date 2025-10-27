@@ -34,13 +34,13 @@ end
 
 function nauthilus_call_filter(request)
     if request.no_auth then
-        return nauthilus_builtin.ACTION_RESULT_OK
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     local username = request.username or request.account
     local client_ip = request.client_ip
     if not username or username == "" then
-        return nauthilus_builtin.ACTION_RESULT_OK
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- Redis client

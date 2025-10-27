@@ -182,7 +182,8 @@ function nauthilus_call_filter(request)
 
     -- Never run the GeoIP policy service for unauthenticated users!
     if not request.authenticated then
-        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+        -- Do not treat as reject; simply accept (no decision)
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     local nauthilus_util = require("nauthilus_util")
@@ -196,11 +197,8 @@ function nauthilus_call_filter(request)
 
     -- Early termination for non-routable addresses while respecting the authentication result
     if not is_routable then
-        if request.authenticated then
-            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
-        else
-            return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
-        end
+        -- Never reject for non-routable addresses here; no decision
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     dynamic_loader("nauthilus_context")
