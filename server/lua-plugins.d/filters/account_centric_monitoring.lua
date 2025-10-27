@@ -22,7 +22,7 @@ local nauthilus_redis = require("nauthilus_redis")
 
 function nauthilus_call_filter(request)
     if request.no_auth then
-        return nauthilus_builtin.FILTER_TRIGGER_NO, nauthilus_builtin.FILTERS_ABORT_NO, nauthilus_builtin.FILTER_RESULT_YES
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- Get Redis connection
@@ -41,7 +41,7 @@ function nauthilus_call_filter(request)
     local username = request.username
 
     if not username or username == "" then
-        return nauthilus_builtin.FILTER_TRIGGER_NO, nauthilus_builtin.FILTERS_ABORT_NO, nauthilus_builtin.FILTER_RESULT_YES
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     -- Prepare holders for last window metrics (we use the largest window after the loop)
@@ -164,5 +164,5 @@ function nauthilus_call_filter(request)
 
     nauthilus_util.print_result({ log_format = "json" }, logs)
 
-    return nauthilus_builtin.FILTER_TRIGGER_NO, nauthilus_builtin.FILTERS_ABORT_NO, nauthilus_builtin.FILTER_RESULT_YES
+    return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end

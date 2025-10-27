@@ -43,7 +43,8 @@ end
 
 function nauthilus_call_filter(request)
     if not request.authenticated then
-        return nauthilus_builtin.FILTER_REJECT, nauthilus_builtin.FILTER_RESULT_OK
+        -- Do not reject in unauthenticated state; this filter should not run then per config
+        return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
     local service = get_service()

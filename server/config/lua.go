@@ -220,8 +220,11 @@ func (l *LuaFeature) GetScriptPath() string {
 }
 
 type LuaFilter struct {
-	Name       string `mapstructure:"name" validate:"required"`
-	ScriptPath string `mapstructure:"script_path" validate:"required,file"`
+	Name                string `mapstructure:"name" validate:"required"`
+	ScriptPath          string `mapstructure:"script_path" validate:"required,file"`
+	WhenAuthenticated   bool   `mapstructure:"when_authenticated"`
+	WhenUnauthenticated bool   `mapstructure:"when_unauthenticated"`
+	WhenNoAuth          bool   `mapstructure:"when_no_auth"`
 }
 
 func (l *LuaFilter) String() string {

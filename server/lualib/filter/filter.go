@@ -123,13 +123,31 @@ func PreCompileLuaFilters() (err error) {
 			LuaFilters.Reset()
 		}
 
-		for index := range config.GetFile().GetLua().Filters {
+		for index := range config.GetFile().GetLua().GetFilters() {
 			var luaFilter *LuaFilter
 
-			luaFilter, err = NewLuaFilter(config.GetFile().GetLua().Filters[index].Name, config.GetFile().GetLua().Filters[index].ScriptPath)
+			cfg := config.GetFile().GetLua().GetFilters()[index]
+
+			luaFilter, err = NewLuaFilter(cfg.Name, cfg.ScriptPath)
 			if err != nil {
 				return err
 			}
+
+			// Apply execution flags with sane defaults for backward compatibility
+			wa := cfg.WhenAuthenticated
+			wu := cfg.WhenUnauthenticated
+			wn := cfg.WhenNoAuth
+
+			if !wa && !wu && !wn {
+				// No flags specified in config → run in authenticated and unauthenticated by default
+				wa = true
+				wu = true
+				wn = false
+			}
+
+			luaFilter.WhenAuthenticated = wa
+			luaFilter.WhenUnauthenticated = wu
+			luaFilter.WhenNoAuth = wn
 
 			// Add compiled Lua Filters.
 			LuaFilters.Add(luaFilter)
@@ -178,6 +196,11 @@ type LuaFilter struct {
 	// CompiledScript is a pointer to a FunctionProto struct from the go-lua package.
 	// It represents a compiled Lua function that can be executed by a Lua VM.
 	CompiledScript *lua.FunctionProto
+
+	// Execution flags: control in which authentication states this filter should run
+	WhenAuthenticated   bool
+	WhenUnauthenticated bool
+	WhenNoAuth          bool
 }
 
 // NewLuaFilter creates a new LuaFilter with the provided name and scriptPath by compiling the Lua script.
@@ -407,6 +430,49 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	LuaFilters.Mu.RLock()
 	defer LuaFilters.Mu.RUnlock()
 
+	// Determine which filters should run based on request state
+	mode := "unauthenticated"
+	scripts := make([]*LuaFilter, 0)
+
+	if r.CommonRequest != nil && r.CommonRequest.NoAuth {
+		mode = "no_auth"
+
+		for _, s := range LuaFilters.LuaScripts {
+			if s.WhenNoAuth {
+				scripts = append(scripts, s)
+			}
+		}
+	} else if r.CommonRequest != nil && r.CommonRequest.Authenticated {
+		mode = "authenticated"
+
+		for _, s := range LuaFilters.LuaScripts {
+			if s.WhenAuthenticated {
+				scripts = append(scripts, s)
+			}
+		}
+	} else {
+		mode = "unauthenticated"
+
+		for _, s := range LuaFilters.LuaScripts {
+			if s.WhenUnauthenticated {
+				scripts = append(scripts, s)
+			}
+		}
+	}
+
+	if r.Logs == nil {
+		r.Logs = new(lualib.CustomLogKeyValue)
+	}
+
+	r.Logs.Set("filter_mode", mode)
+
+	// If no scripts should run in this mode, return early with empty aggregates
+	if len(scripts) == 0 {
+		mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
+
+		return false, mergedBackendResult, nil, nil
+	}
+
 	// Structure to collect per-filter results
 	type filtResult struct {
 		name            string
@@ -421,14 +487,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	var (
 		mu      sync.Mutex
-		results = make([]*filtResult, 0, len(LuaFilters.LuaScripts))
+		results = make([]*filtResult, 0, len(scripts))
 	)
 
 	g, egCtx := errgroup.WithContext(ctx)
 
 	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFilterVMPoolSize()})
 
-	for _, script := range LuaFilters.LuaScripts {
+	for _, script := range scripts {
 		sc := script
 		g.Go(func() error {
 			// Per-filter state from bounded vmpool
