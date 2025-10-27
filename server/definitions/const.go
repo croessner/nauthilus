@@ -179,6 +179,12 @@ const (
 	// LogKeyFilterLatency represents the latency of filter operations for performance logging.
 	LogKeyFilterLatency = "filter_latency"
 
+	// LogKeyRejectedFilters contains a comma-separated list of filters that rejected the request (action=true).
+	LogKeyRejectedFilters = "filter_rejected_filters"
+
+	// LogKeyFilterResults contains a compact mapping of filter name to result status: ok, fail, or unknown(n).
+	LogKeyFilterResults = "filter_results"
+
 	// LogKeyFeatureLatency represents the latency of feature operations for performance logging.
 	LogKeyFeatureLatency = "feature_latency"
 
