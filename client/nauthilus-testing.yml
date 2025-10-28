@@ -10,6 +10,9 @@ server:
     level: "warn"
     json: true
 
+  dedup:
+    in_process_enabled: true
+
   # Enable only Lua backend to focus on CSV-based backend during tests.
   backends: [ lua ]
   features: [ lua ]

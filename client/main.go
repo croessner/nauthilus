@@ -345,6 +345,10 @@ func main() {
 		csvDebug    = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
 		loops       = flag.Int("loops", 1, "Number of cycles to run over the CSV")
 		runFor      = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
+
+		// Parallelization flags (protocol-agnostic)
+		maxPar  = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
+		parProb = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
 	)
 
 	flag.Parse()
@@ -555,6 +559,31 @@ func main() {
 		}
 	}
 
+	// enqueueParallelGroup enqueues one or more parallel jobs for the same row index.
+	// The first job follows the regular pacing (handled by caller); extra ones are enqueued immediately
+	// with an optional tiny jitter to simulate parallel connection setup.
+	enqueueParallelGroup := func(i int) {
+		// Always enqueue at least one job
+		jobs <- i
+
+		// Feature off?
+		if *maxPar <= 1 || *parProb <= 0 {
+			return
+		}
+
+		// Decide whether to parallelize this item
+		if rand.Float64() >= *parProb {
+			return
+		}
+
+		// Number of extra parallel jobs: 0..(maxPar-1)
+		extra := rand.IntN(*maxPar)
+
+		for k := 0; k < extra; k++ {
+			jobs <- i
+		}
+	}
+
 	// Duration mode: loop over CSV until time elapses
 	if *runFor > 0 {
 		var tick <-chan time.Time
@@ -579,7 +608,8 @@ func main() {
 			if tick != nil {
 				<-tick
 			}
-			jobs <- i
+
+			enqueueParallelGroup(i)
 		}
 
 		close(jobs)
@@ -611,7 +641,7 @@ func main() {
 					<-tick
 				}
 
-				jobs <- i
+				enqueueParallelGroup(i)
 			}
 
 			close(jobs)
