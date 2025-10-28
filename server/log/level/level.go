@@ -23,6 +23,7 @@ package level
 import (
 	"context"
 	"log/slog"
+	"reflect"
 )
 
 // Logger is compatible with the minimal subset of the go-kit Logger interface
@@ -92,15 +93,29 @@ func (s *slogLevelLogger) Log(keyvals ...any) error {
 			continue
 		}
 
+		v := keyvals[i+1]
+
 		if k == "msg" {
-			if v, ok := keyvals[i+1].(string); ok {
-				msg = v
+			if vs, ok := v.(string); ok {
+				msg = vs
 
 				continue
 			}
 		}
 
-		attrs = append(attrs, slog.Any(k, keyvals[i+1]))
+		// Guard against typed-nil values that can make slog.Any panic.
+		if isTypedNil(v) {
+			attrs = append(attrs, slog.String(k, "<nil>"))
+
+			continue
+		}
+
+		switch vv := v.(type) {
+		case string:
+			attrs = append(attrs, slog.String(k, vv))
+		default:
+			attrs = append(attrs, slog.Any(k, vv))
+		}
 	}
 
 	if msg == "" {
@@ -110,6 +125,21 @@ func (s *slogLevelLogger) Log(keyvals ...any) error {
 	s.l.LogAttrs(s.ctx, s.lvl, msg, attrs...)
 
 	return nil
+}
+
+// isTypedNil reports whether v is nil or a typed-nil (e.g., (*T)(nil), []T(nil), map[K]V(nil)).
+func isTypedNil(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Interface, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 func levelToDefaultMessage(lvl slog.Level) string {
