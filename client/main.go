@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,7 +18,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigFastest
 
 type Row struct {
 	Fields     map[string]string // alle CSV-Felder pro Zeile
@@ -457,6 +460,9 @@ func main() {
 	worker := func() {
 		defer wg.Done()
 
+		// Per-worker reusable buffer to drain response bodies without per-request allocations
+		buf := make([]byte, 32<<10)
+
 		for idx := range jobs {
 			if *delayMs > 0 {
 				time.Sleep(time.Duration(*delayMs) * time.Millisecond)
@@ -483,8 +489,15 @@ func main() {
 
 			req, _ := http.NewRequestWithContext(ctx, *method, *endpoint, bytes.NewReader(bb))
 
-			// clone base headers to avoid data race across workers
-			req.Header = baseHeader.Clone()
+			// copy base headers into a fresh map to avoid data races without Clone() churn
+			req.Header = make(http.Header, len(baseHeader))
+
+			for k, vs := range baseHeader {
+				for _, v := range vs {
+					req.Header.Add(k, v)
+				}
+			}
+
 			req.ContentLength = int64(len(bb))
 
 			if clientIP != "" {
@@ -494,9 +507,10 @@ func main() {
 			ts := time.Now()
 			resp, err := client.Do(req)
 			lat := time.Since(ts)
-			atomic.AddInt64(&totalLatencyNs, int64(lat))
 
+			atomic.AddInt64(&totalLatencyNs, int64(lat))
 			atomic.AddInt64(&total, 1)
+
 			if err != nil {
 				atomic.AddInt64(&httpErrs, 1)
 				if *verbose {
@@ -510,26 +524,19 @@ func main() {
 				defer resp.Body.Close()
 				var gotOK bool
 				if *useJSONFlag {
+					// Decode into a concrete type (no interface boxing)
 					var jr struct {
-						OK any `json:"ok"`
+						OK bool `json:"ok"`
 					}
 
 					_ = json.NewDecoder(resp.Body).Decode(&jr)
-
-					switch v := jr.OK.(type) {
-					case bool:
-						gotOK = v
-					case string:
-						b, _ := parseBool(v)
-						gotOK = b
-					case float64:
-						gotOK = int(v) != 0
-					}
+					gotOK = jr.OK
 				} else {
 					gotOK = resp.StatusCode == *okStatus
 				}
 
-				io.Copy(io.Discard, resp.Body)
+				// Drain body with per-worker buffer to keep connections reusable without per-request allocs
+				io.CopyBuffer(io.Discard, resp.Body, buf)
 
 				if gotOK == expectedOKs[idx] {
 					atomic.AddInt64(&matched, 1)
@@ -584,8 +591,6 @@ func main() {
 	} else {
 		// Legacy loops mode (kept for backward compatibility)
 		for cycle := 1; cycle <= *loops; cycle++ {
-			cycleStart := time.Now()
-
 			// Per-cycle rate limiter
 			var tick <-chan time.Time
 			var t *time.Ticker
