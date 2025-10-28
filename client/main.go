@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/csv"
 	"errors"
 	"flag"
@@ -336,6 +337,7 @@ func main() {
 		maxRows     = flag.Int("max", 0, "Limit number of rows (0=all)")
 		shuffle     = flag.Bool("shuffle", true, "Shuffle rows before sending")
 		headersList = flag.String("headers", "Content-Type: application/json", "Extra headers, separated by '||'")
+		basicAuth   = flag.String("basic-auth", "", "HTTP Basic-Auth credentials in format username:password")
 		okStatus    = flag.Int("ok-status", 200, "HTTP status indicating success when not using JSON flag")
 		useJSONFlag = flag.Bool("json-ok", true, "Expect JSON {ok:true|false} in response")
 		verbose     = flag.Bool("v", false, "Verbose output")
@@ -447,6 +449,12 @@ func main() {
 
 	if baseHeader.Get("Content-Type") == "" {
 		baseHeader.Set("Content-Type", "application/json")
+	}
+
+	// Apply HTTP Basic Auth if provided and not already set via --headers
+	if *basicAuth != "" && baseHeader.Get("Authorization") == "" {
+		enc := base64.StdEncoding.EncodeToString([]byte(*basicAuth))
+		baseHeader.Set("Authorization", "Basic "+enc)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
