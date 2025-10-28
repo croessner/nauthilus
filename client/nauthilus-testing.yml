@@ -1,0 +1,57 @@
+# Nauthilus test configuration for CSV-backed Lua backend
+# This config is intended for local testing with the test client in client/.
+# Start example:
+#   TESTING_CSV=client/logins.csv ./nauthilus -config client/nauthilus.yml -config-format yaml
+
+server:
+  address: "0.0.0.0:8080"
+  instance_name: "nauthilus-testing"
+  log:
+    level: "warn"
+    json: true
+
+  # Enable only Lua backend to focus on CSV-based backend during tests.
+  backends: [ lua ]
+  features: [ lua ]
+
+  # Minimal local Redis settings (adjust to your environment if needed)
+  redis:
+    master:
+      address: "127.0.0.1:6379"
+    database_number: 0
+    prefix: "nt_"
+    pool_size: 10
+    positive_cache_ttl: 3600
+    negative_cache_ttl: 7200
+
+# Lua configuration: wires backend and init scripts for the CSV loader/backend
+lua:
+  search:
+    - protocol: [ imap, pop3, smtp, http ]
+      cache_name: default
+
+  config:
+    # Backend entry script (implements nauthilus_backend_verify_password)
+    backend_script_path: "server/lua-plugins.d/backend/testing_csv_backend.lua"
+
+    # Init script(s) that load the CSV into the Go-backed cache at startup
+    init_script_paths:
+      - "server/lua-plugins.d/init/testing_csv_loader.lua"
+
+    # Make sure Lua can resolve shared helper modules and plugins via require()
+    # This augments package.path at runtime.
+    package_path: "server/lua-plugins.d/share/?.lua;server/lua-plugins.d/backend/?.lua;server/lua-plugins.d/init/?.lua"
+
+    # Worker and VM pool sizes suitable for local high-throughput tests
+    backend_number_of_workers: 64
+    feature_vm_pool_size: 64
+    filter_vm_pool_size: 64
+    hook_vm_pool_size: 64
+
+    # Queue length for backend requests (0 = unlimited)
+    queue_length: 0
+
+# Notes:
+# - The CSV path can be provided via environment variable TESTING_CSV.
+#   If unset, the init script falls back to client/logins.csv.
+# - The test client defaults to POST http://localhost:8080/api/v1/auth/json with JSON body.

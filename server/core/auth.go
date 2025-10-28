@@ -1298,13 +1298,25 @@ func formatValues(values []any) []string {
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
+// It now includes an explicit {"ok": true} field for clients that validate via a boolean flag.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	ctx.JSON(auth.StatusCodeOK, &bktype.PositivePasswordCache{
+	ppc := bktype.PositivePasswordCache{
 		AccountField:    auth.AccountField,
 		TOTPSecretField: auth.TOTPSecretField,
 		Backend:         auth.SourcePassDBBackend,
 		Attributes:      auth.Attributes,
-	})
+	}
+
+	// Wrap the original positive cache struct and add an explicit ok flag.
+	resp := struct {
+		OK bool `json:"ok"`
+		bktype.PositivePasswordCache
+	}{
+		OK:                    true,
+		PositivePasswordCache: ppc,
+	}
+
+	ctx.JSON(auth.StatusCodeOK, resp)
 }
 
 // handleLogging logs information about the authentication request if the verbosity level is greater than LogLevelWarn.

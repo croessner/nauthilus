@@ -1,0 +1,3 @@
+username,password,client_ip,expected_ok,user_agent,protocol,method,ssl,ssl_protocol,ssl_cipher,ssl_client_verify,ssl_client_cn
+alice,secret,198.51.100.10,true,MyTestClient/1.0,imap,PLAIN,on,TLSv1.3,TLS_AES_128_GCM_SHA256,SUCCESS,alice-cn
+bob,badpass,198.51.100.11,false,MyTestClient/1.0,imap,PLAIN,on,TLSv1.3,TLS_AES_128_GCM_SHA256,FAIL,bob-cn
