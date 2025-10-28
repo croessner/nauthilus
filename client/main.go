@@ -634,8 +634,16 @@ func main() {
 
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
+	var toleratedBF int64
 	var totalLatencyNs int64
+
 	start := time.Now()
+
+	// Configure brute-force header name (can be overridden via env BRUTEFORCE_HEADER_NAME)
+	bfHeaderName := strings.TrimSpace(os.Getenv("BRUTEFORCE_HEADER_NAME"))
+	if bfHeaderName == "" {
+		bfHeaderName = "X-Nauthilus-Bruteforce"
+	}
 
 	// Worker function shared by both modes
 	jobs := make(chan int, len(rows))
@@ -729,10 +737,21 @@ func main() {
 						fmt.Printf("OK user=%s status=%d lat=%s\n", username, resp.StatusCode, lat)
 					}
 				} else {
-					atomic.AddInt64(&mismatched, 1)
+					// Respect brute-force header: tolerate mismatches if header is present
+					bfHdr := resp.Header.Get(bfHeaderName)
+					if bfHdr != "" {
+						atomic.AddInt64(&matched, 1)
+						atomic.AddInt64(&toleratedBF, 1)
 
-					if *verbose {
-						fmt.Printf("MISMATCH user=%s expected=%v got=%v status=%d lat=%s\n", username, expectedOKs[idx], gotOK, resp.StatusCode, lat)
+						if *verbose {
+							fmt.Printf("MISMATCH tolerated (bruteforce) user=%s expected=%v got=%v status=%d lat=%s header=%s\n", username, expectedOKs[idx], gotOK, resp.StatusCode, lat, bfHdr)
+						}
+					} else {
+						atomic.AddInt64(&mismatched, 1)
+
+						if *verbose {
+							fmt.Printf("MISMATCH user=%s expected=%v got=%v status=%d lat=%s\n", username, expectedOKs[idx], gotOK, resp.StatusCode, lat)
+						}
 					}
 				}
 			}()
@@ -841,7 +860,7 @@ func main() {
 	dur := time.Since(start)
 
 	fmt.Printf("\nDone in %s\n", dur)
-	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d skipped=%d\n", total, matched, mismatched, httpErrs, skipped)
+	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, skipped, toleratedBF)
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())
