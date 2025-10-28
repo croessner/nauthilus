@@ -122,7 +122,18 @@ func (s *slogLevelLogger) Log(keyvals ...any) error {
 		msg = levelToDefaultMessage(s.lvl)
 	}
 
-	s.l.LogAttrs(s.ctx, s.lvl, msg, attrs...)
+	// Ensure we have a logger and a non-nil context to avoid panics
+	l := s.l
+	if l == nil {
+		l = slog.Default()
+	}
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	l.LogAttrs(ctx, s.lvl, msg, attrs...)
 
 	return nil
 }

@@ -4,17 +4,20 @@
 #   TESTING_CSV=client/logins.csv ./nauthilus -config client/nauthilus.yml -config-format yaml
 
 server:
+
   address: "0.0.0.0:8080"
   instance_name: "nauthilus-testing"
   log:
-    level: "warn"
+    level: "info"
     json: true
 
   dedup:
     in_process_enabled: true
 
+  brute_force_protocols: [ imap, pop3, smtp, http ]
+
   # Enable only Lua backend to focus on CSV-based backend during tests.
-  backends: [ lua ]
+  backends: [ cache, lua ]
   features: [ lua ]
 
   # Minimal local Redis settings (adjust to your environment if needed)
@@ -27,8 +30,33 @@ server:
     positive_cache_ttl: 3600
     negative_cache_ttl: 7200
 
+brute_force:
+
+  pw_history_for_known_accounts: true
+  tolerate_percent: 3
+  tolerate_ttl: 30m
+  adaptive_toleration: true
+  min_tolerate_percent: 3
+  max_tolerate_percent: 50
+
+  buckets:
+    - { name: b_1m_ipv4_24_mail, period: 1m,   cidr: 24, ipv4: true, failed_requests: 15,
+        filter_by_protocol: [ imap, pop3, smtp ] }
+    - { name: b_1m_ipv4_32_default,  period: 1m,   cidr: 32, ipv4: true, failed_requests: 8,
+        filter_by_protocol: [ http ] }
+    - { name: b_1h_ipv4_24,      period: 1h,   cidr: 24, ipv4: true, failed_requests: 25 }
+    - { name: b_1d_ipv4_24,      period: 24h,  cidr: 24, ipv4: true, failed_requests: 35 }
+    - { name: b_1w_ipv4_24,      period: 168h, cidr: 24, ipv4: true, failed_requests: 40 }
+    - { name: b_1M_ipv4_24,      period: 672h, cidr: 24, ipv4: true, failed_requests: 50 }
+
 # Lua configuration: wires backend and init scripts for the CSV loader/backend
 lua:
+
+  actions:
+    - type: brute_force
+      name: brute_force_header
+      script_path: server/lua-plugins.d/actions/bruteforce_header.lua
+
   search:
     - protocol: [ imap, pop3, smtp, http ]
       cache_name: default
