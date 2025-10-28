@@ -25,6 +25,141 @@ import (
 
 var json = jsoniter.ConfigFastest
 
+// uint32ToIP converts uint32 to dotted IPv4 string.
+func uint32ToIP(u uint32) string {
+	b := []byte{byte(u >> 24), byte(u >> 16), byte(u >> 8), byte(u)}
+
+	return net.IP(b).String()
+}
+
+// forbiddenRanges holds non-globally-routable IPv4 ranges [start,end] inclusive.
+var forbiddenRanges = [][2]uint32{
+	// 0.0.0.0/8
+	{0x00000000, 0x00FFFFFF},
+	// 10.0.0.0/8 private
+	{0x0A000000, 0x0AFFFFFF},
+	// 100.64.0.0/10 CGNAT
+	{0x64400000, 0x647FFFFF},
+	// 127.0.0.0/8 loopback
+	{0x7F000000, 0x7FFFFFFF},
+	// 169.254.0.0/16 link-local
+	{0xA9FE0000, 0xA9FEFFFF},
+	// 172.16.0.0/12 private
+	{0xAC100000, 0xAC1FFFFF},
+	// 192.0.0.0/24 IETF Protocol Assignments
+	{0xC0000000, 0xC00000FF},
+	// 192.0.2.0/24 TEST-NET-1
+	{0xC0000200, 0xC00002FF},
+	// 192.88.99.0/24 6to4 Relay Anycast (deprecated)
+	{0xC0586300, 0xC05863FF},
+	// 192.168.0.0/16 private
+	{0xC0A80000, 0xC0A8FFFF},
+	// 198.18.0.0/15 benchmarking
+	{0xC6120000, 0xC613FFFF},
+	// 198.51.100.0/24 TEST-NET-2
+	{0xC6336400, 0xC63364FF},
+	// 203.0.113.0/24 TEST-NET-3
+	{0xCB007100, 0xCB0071FF},
+	// 224.0.0.0/4 multicast
+	{0xE0000000, 0xEFFFFFFF},
+	// 240.0.0.0/4 reserved
+	{0xF0000000, 0xFFFFFFFF},
+	// 255.255.255.255/32 broadcast (already included above, but keep explicit)
+	{0xFFFFFFFF, 0xFFFFFFFF},
+}
+
+// isRoutableIPv4 determines if the given IPv4 address (in uint32 format) is globally routable.
+// It checks the address against a set of predefined forbidden ranges and returns false if it falls within any range.
+func isRoutableIPv4(u uint32) bool {
+	for _, r := range forbiddenRanges {
+		if u >= r[0] && u <= r[1] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// randomRoutableIPv4 returns a random globally-routable IPv4 address.
+func randomRoutableIPv4() uint32 {
+	for {
+		u := rand.Uint32()
+		if isRoutableIPv4(u) {
+			return u
+		}
+	}
+}
+
+// maskFromPrefix returns a uint32 mask for a given prefix length (8..30).
+func maskFromPrefix(prefix int) uint32 {
+	if prefix <= 0 {
+		return 0
+	}
+
+	if prefix > 32 {
+		prefix = 32
+	}
+
+	return ^uint32(0) << (32 - prefix)
+}
+
+// overlaps reports whether [a1,a2] overlaps [b1,b2].
+func overlaps(a1, a2, b1, b2 uint32) bool {
+	return !(a2 < b1 || b2 < a1)
+}
+
+// pickRoutableCIDR tries to pick a globally routable IPv4 CIDR of given prefix such that the whole block avoids forbidden ranges.
+func pickRoutableCIDR(prefix int) (baseNet uint32, mask uint32, ok bool) {
+	mask = maskFromPrefix(prefix)
+
+	// Try multiple attempts to find a clean block
+	for attempts := 0; attempts < 2000; attempts++ {
+		ip := randomRoutableIPv4()
+		netStart := ip & mask
+		netEnd := netStart | ^mask
+		clean := true
+
+		for _, fr := range forbiddenRanges {
+			if overlaps(netStart, netEnd, fr[0], fr[1]) {
+				clean = false
+
+				break
+			}
+		}
+
+		if clean {
+			return netStart, mask, true
+		}
+	}
+
+	return 0, 0, false
+}
+
+// randomHostInCIDR picks a random host address within the CIDR, avoiding network/broadcast where possible.
+func randomHostInCIDR(baseNet uint32, mask uint32) uint32 {
+	netStart := baseNet & mask
+	netEnd := netStart | ^mask
+
+	// If block is larger than 2 addresses, avoid network and broadcast
+	if netEnd-netStart+1 > 2 {
+		lo := netStart + 1
+		hi := netEnd - 1
+		span := hi - lo + 1
+
+		return lo + uint32(rand.Int64N(int64(span)))
+	}
+
+	// Otherwise, pick any routable within block
+	for attempts := 0; attempts < 100; attempts++ {
+		u := netStart + uint32(rand.IntN(int(netEnd-netStart+1)))
+		if isRoutableIPv4(u) {
+			return u
+		}
+	}
+
+	return netStart
+}
+
 type Row struct {
 	Fields     map[string]string // alle CSV-Felder pro Zeile
 	ExpectedOK bool
@@ -252,31 +387,66 @@ func makePayload(fields map[string]string) map[string]any {
 
 // generateCSV creates a CSV file at the specified path with a given number of rows based on predefined test data patterns.
 // It returns an error if file creation or writing fails.
-func generateCSV(path string, total int) error {
+func generateCSV(path string, total int, cidrProb float64, cidrPrefix int) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-
 	defer f.Close()
 
 	w := bufio.NewWriterSize(f, 1<<20)
-
 	defer w.Flush()
 
 	// Full header as used in the example CSV and accepted by the client
 	fmt.Fprintln(w, "username,password,client_ip,expected_ok,user_agent,protocol,method,ssl,ssl_protocol,ssl_cipher,ssl_client_verify,ssl_client_cn")
+
+	// Validate inputs for CIDR grouping
+	if cidrProb < 0 {
+		cidrProb = 0
+	}
+
+	if cidrProb > 1 {
+		cidrProb = 1
+	}
+
+	if cidrPrefix < 8 {
+		cidrPrefix = 8
+	}
+
+	if cidrPrefix > 30 {
+		cidrPrefix = 30
+	}
 
 	protocols := []string{"imap", "smtp", "pop3", "http"}
 	methods := []string{"PLAIN", "LOGIN"}
 	sslProtocols := []string{"TLSv1.2", "TLSv1.3"}
 	sslCiphers := []string{"TLS_AES_128_GCM_SHA256", "TLS_CHACHA20_POLY1305_SHA256"}
 
+	// Prepare a shared routable CIDR if requested
+	var haveCIDR bool
+	var baseNet uint32
+	var mask uint32
+
+	if cidrProb > 0 {
+		if bn, m, ok := pickRoutableCIDR(cidrPrefix); ok {
+			haveCIDR = true
+			baseNet, mask = bn, m
+		}
+	}
+
 	for i := 1; i <= total; i++ {
 		username := fmt.Sprintf("user%05d", i)
 		password := fmt.Sprintf("pw%05d", i)
-		ipOctet := ((i - 1) % 254) + 1
-		clientIP := fmt.Sprintf("198.51.100.%d", ipOctet)
+
+		// Decide IP generation mode
+		var ipU32 uint32
+		if haveCIDR && rand.Float64() < cidrProb {
+			ipU32 = randomHostInCIDR(baseNet, mask)
+		} else {
+			ipU32 = randomRoutableIPv4()
+		}
+
+		clientIP := uint32ToIP(ipU32)
 
 		// Alternate expected_ok
 		expected := "false"
@@ -326,27 +496,29 @@ func generateCSV(path string, total int) error {
 
 func main() {
 	var (
-		csvPath     = flag.String("csv", "client/logins.csv", "CSV file path")
-		endpoint    = flag.String("url", "http://localhost:8080/api/v1/auth/json", "Auth endpoint URL")
-		method      = flag.String("method", "POST", "HTTP method")
-		concurrency = flag.Int("concurrency", 16, "Concurrent workers")
-		rps         = flag.Float64("rps", 0, "Global rate limit (0=unlimited)")
-		jitterMs    = flag.Int("jitter-ms", 0, "Random sleep 0..N ms before each request")
-		delayMs     = flag.Int("delay-ms", 0, "Fixed delay per item in worker")
-		timeoutMs   = flag.Int("timeout-ms", 5000, "HTTP timeout")
-		maxRows     = flag.Int("max", 0, "Limit number of rows (0=all)")
-		shuffle     = flag.Bool("shuffle", true, "Shuffle rows before sending")
-		headersList = flag.String("headers", "Content-Type: application/json", "Extra headers, separated by '||'")
-		basicAuth   = flag.String("basic-auth", "", "HTTP Basic-Auth credentials in format username:password")
-		okStatus    = flag.Int("ok-status", 200, "HTTP status indicating success when not using JSON flag")
-		useJSONFlag = flag.Bool("json-ok", true, "Expect JSON {ok:true|false} in response")
-		verbose     = flag.Bool("v", false, "Verbose output")
-		genCSV      = flag.Bool("generate-csv", false, "Generate a CSV at --csv path and exit")
-		genCount    = flag.Int("generate-count", 10000, "Number of rows to generate when --generate-csv is set")
-		csvDelim    = flag.String("csv-delim", "", "CSV delimiter override: ',', ';', 'tab'; empty=auto-detect")
-		csvDebug    = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
-		loops       = flag.Int("loops", 1, "Number of cycles to run over the CSV")
-		runFor      = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
+		csvPath       = flag.String("csv", "client/logins.csv", "CSV file path")
+		endpoint      = flag.String("url", "http://localhost:8080/api/v1/auth/json", "Auth endpoint URL")
+		method        = flag.String("method", "POST", "HTTP method")
+		concurrency   = flag.Int("concurrency", 16, "Concurrent workers")
+		rps           = flag.Float64("rps", 0, "Global rate limit (0=unlimited)")
+		jitterMs      = flag.Int("jitter-ms", 0, "Random sleep 0..N ms before each request")
+		delayMs       = flag.Int("delay-ms", 0, "Fixed delay per item in worker")
+		timeoutMs     = flag.Int("timeout-ms", 5000, "HTTP timeout")
+		maxRows       = flag.Int("max", 0, "Limit number of rows (0=all)")
+		shuffle       = flag.Bool("shuffle", true, "Shuffle rows before sending")
+		headersList   = flag.String("headers", "Content-Type: application/json", "Extra headers, separated by '||'")
+		basicAuth     = flag.String("basic-auth", "", "HTTP Basic-Auth credentials in format username:password")
+		okStatus      = flag.Int("ok-status", 200, "HTTP status indicating success when not using JSON flag")
+		useJSONFlag   = flag.Bool("json-ok", true, "Expect JSON {ok:true|false} in response")
+		verbose       = flag.Bool("v", false, "Verbose output")
+		genCSV        = flag.Bool("generate-csv", false, "Generate a CSV at --csv path and exit")
+		genCount      = flag.Int("generate-count", 10000, "Number of rows to generate when --generate-csv is set")
+		genCIDRProb   = flag.Float64("generate-cidr-prob", 0.0, "Probability (0..1) that generated IPs are taken from the same CIDR block")
+		genCIDRPrefix = flag.Int("generate-cidr-prefix", 24, "CIDR prefix length (8..30) of the shared block for IP grouping")
+		csvDelim      = flag.String("csv-delim", "", "CSV delimiter override: ',', ';', 'tab'; empty=auto-detect")
+		csvDebug      = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
+		loops         = flag.Int("loops", 1, "Number of cycles to run over the CSV")
+		runFor        = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
 
 		// Parallelization flags (protocol-agnostic)
 		maxPar  = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
@@ -357,7 +529,7 @@ func main() {
 
 	// Generation mode: create synthetic CSV and exit
 	if *genCSV {
-		if err := generateCSV(*csvPath, *genCount); err != nil {
+		if err := generateCSV(*csvPath, *genCount, *genCIDRProb, *genCIDRPrefix); err != nil {
 			panic(err)
 		}
 
