@@ -526,6 +526,11 @@ func main() {
 
 	flag.Parse()
 
+	// Sanitize concurrency
+	if *concurrency < 1 {
+		*concurrency = 1
+	}
+
 	// Generation mode: create synthetic CSV and exit
 	if *genCSV {
 		if err := generateCSV(*csvPath, *genCount, *genCIDRProb, *genCIDRPrefix); err != nil {
@@ -646,7 +651,7 @@ func main() {
 	}
 
 	// Worker function shared by both modes
-	jobs := make(chan int, len(rows))
+	jobs := make(chan int, *concurrency)
 	var wg sync.WaitGroup
 
 	worker := func() {
@@ -716,12 +721,14 @@ func main() {
 			resp, err := client.Do(req)
 			lat := time.Since(ts)
 
-			// Clean up cancel timer/context
+			// Clean up cancel timer (do not cancel request context here)
 			if abortTimer != nil {
 				abortTimer.Stop()
 			}
 
-			reqCancel()
+			// Important: do NOT call reqCancel() here in the success path.
+			// Cancelling before the body is fully read can abort the connection mid-flight.
+			// We'll cancel on error or after we've drained and closed the body below.
 
 			atomic.AddInt64(&totalLatencyNs, int64(lat))
 			atomic.AddInt64(&total, 1)
@@ -741,6 +748,9 @@ func main() {
 						fmt.Printf("ERR user=%s err=%v lat=%s\n", username, err, lat)
 					}
 				}
+
+				// Cancel per-request context on error to free resources
+				reqCancel()
 
 				continue
 			}
@@ -788,6 +798,9 @@ func main() {
 					}
 				}
 			}()
+
+			// Now safe to cancel the request context after the response body has been fully consumed and closed
+			reqCancel()
 		}
 	}
 
@@ -885,7 +898,7 @@ func main() {
 
 			// Recreate jobs channel for next cycle
 			if cycle != *loops {
-				jobs = make(chan int, len(rows))
+				jobs = make(chan int, *concurrency)
 			}
 		}
 	}

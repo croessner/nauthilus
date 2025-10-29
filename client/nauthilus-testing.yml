@@ -25,8 +25,8 @@ server:
     master:
       address: "127.0.0.1:6379"
     database_number: 0
-    prefix: "nt_"
-    pool_size: 10
+    prefix: "nt:"
+    pool_size: 100
     positive_cache_ttl: 3600
     negative_cache_ttl: 7200
 
@@ -74,7 +74,7 @@ lua:
     package_path: "server/lua-plugins.d/share/?.lua;server/lua-plugins.d/backend/?.lua;server/lua-plugins.d/init/?.lua"
 
     # Worker and VM pool sizes suitable for local high-throughput tests
-    backend_number_of_workers: 64
+    backend_number_of_workers: 256
     feature_vm_pool_size: 64
     filter_vm_pool_size: 64
     hook_vm_pool_size: 64
