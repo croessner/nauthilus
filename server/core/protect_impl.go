@@ -38,7 +38,8 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 
 		auth := &AuthState{
-			HTTPClientContext: ctx.Copy(),
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
 			NoAuth:            true,
 			GUID:              guid,
 			Protocol:          protocol,

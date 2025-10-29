@@ -639,7 +639,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		LuaAction:     luaAction,
 		Context:       a.Context,
 		FinishedChan:  finished,
-		HTTPRequest:   a.HTTPClientContext.Request,
+		HTTPRequest:   a.HTTPClientRequest,
 		CommonRequest: commonRequest,
 	}
 

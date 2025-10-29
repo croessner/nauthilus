@@ -108,7 +108,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		Protocol:          auth.Protocol,
 		Context:           auth.Context,
 		LuaReplyChan:      luaReplyChan,
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientRequest: auth.HTTPClientRequest,
 		CommonRequest:     commonRequest,
 	}
 
@@ -243,7 +243,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		Function:          definitions.LuaCommandListAccounts,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Protocol,
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientRequest: auth.HTTPClientRequest,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
 	}
@@ -322,7 +322,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		BackendName:       lm.backendName,
 		Protocol:          auth.Protocol,
 		TOTPSecret:        totp.GetValue(),
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientRequest: auth.HTTPClientRequest,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
 	}

@@ -477,6 +477,9 @@ type AuthState struct {
 	// HTTPClientContext tracks the context for an HTTP client connection.
 	HTTPClientContext *gin.Context
 
+	// HTTPClientRequest represents the underlying HTTP request to be sent by the client.
+	HTTPClientRequest *http.Request
+
 	// MonitoringFlags is a slice of definitions.Monitoring that is used to skip certain steps while processing an authentication request.
 	MonitoringFlags []definitions.Monitoring
 
@@ -569,6 +572,7 @@ func (a *AuthState) reset() {
 	// Reset pointer types
 	a.Protocol = nil
 	a.HTTPClientContext = nil
+	a.HTTPClientRequest = nil
 	a.PasswordHistory = nil
 	a.Context = nil
 
@@ -1626,10 +1630,8 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 	// Handle AdditionalFeatures if they exist in the PassDBResult
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
-		if auth.HTTPClientContext != nil {
-			// Set AdditionalFeatures in the gin.Context
-			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
-		}
+		// Set AdditionalFeatures in the gin.Context
+		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 	}
 }
 
@@ -1922,7 +1924,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	}
 
 	// Make sure we have all the required values and they're not nil
-	if a.Protocol == nil || a.HTTPClientContext == nil || a.Context == nil {
+	if a.Protocol == nil || a.HTTPClientRequest == nil || a.Context == nil {
 		return
 	}
 
@@ -1936,7 +1938,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	// Start a goroutine with copies of all necessary values
 	go executeLuaPostAction(
 		a.Context,
-		a.HTTPClientContext.Request,
+		a.HTTPClientRequest,
 		a.GUID,
 		a.NoAuth,
 		a.Service,
@@ -2730,7 +2732,7 @@ func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache 
 }
 
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
-func (a *AuthState) saveUserPositiveCache(ctx *gin.Context, ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
+func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
 	if accountName == "" {
 		return
 	}
@@ -2741,12 +2743,17 @@ func (a *AuthState) saveUserPositiveCache(ctx *gin.Context, ppc *bktype.Positive
 		return
 	}
 
-	go backend.SaveUserDataToRedis(ctx.Request.Context(), a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
+	go func() {
+		reqCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		backend.SaveUserDataToRedis(reqCtx, a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
+	}()
 }
 
 // processCacheUserLoginOk updates the user cache with a positive authentication result.
 // It retrieves the backend used during authentication and the respective cache name to save the user information.
-func (a *AuthState) processCacheUserLoginOk(ctx *gin.Context, accountName string) error {
+func (a *AuthState) processCacheUserLoginOk(accountName string) error {
 	usedBackend, err := a.getUsedBackend()
 	if err != nil {
 		return err
@@ -2758,7 +2765,6 @@ func (a *AuthState) processCacheUserLoginOk(ctx *gin.Context, accountName string
 	}
 
 	a.saveUserPositiveCache(
-		ctx,
 		a.createPositivePasswordCache(),
 		cacheName,
 		accountName,
@@ -2780,16 +2786,8 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters (burst-deduplicated)
-	var reqCtx context.Context
-	if ctx != nil && ctx.Request != nil {
-		reqCtx = ctx.Request.Context()
-	} else if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
-		reqCtx = a.HTTPClientContext.Request.Context()
-	} else {
-		reqCtx = context.Background()
-	}
 
-	bm = bruteforce.NewBucketManager(reqCtx, a.GUID, a.ClientIP).
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)
@@ -2798,7 +2796,7 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
 
-	if res, err := rediscli.ExecuteScript(reqCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
+	if res, err := rediscli.ExecuteScript(ctx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
 		if v, ok := res.(int64); ok && v == 1 {
 			bm.SaveFailedPasswordCounterInRedis()
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
@@ -2819,7 +2817,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
 		if authenticated {
-			err := a.processCacheUserLoginOk(ctx, accountName)
+			err := a.processCacheUserLoginOk(accountName)
 			if err != nil {
 				return err
 			}
@@ -3602,7 +3600,8 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 func NewAuthStateFromContext(ctx *gin.Context) State {
 	auth := authStatePool.Get().(*AuthState)
 	auth.StartTime = time.Now()
-	auth.HTTPClientContext = ctx.Copy()
+	auth.HTTPClientContext = ctx
+	auth.HTTPClientRequest = ctx.Request
 
 	return auth
 }
