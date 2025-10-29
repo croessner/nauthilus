@@ -2692,7 +2692,18 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			// Build context and GUID safely to avoid nil dereferences
+			var reqCtx context.Context
+			if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
+				reqCtx = a.HTTPClientContext.Request.Context()
+			} else {
+				reqCtx = context.Background()
+			}
+			guidStr := ""
+			if a.GUID != nil {
+				guidStr = *a.GUID
+			}
+			bm = bruteforce.NewBucketManager(reqCtx, guidStr, a.ClientIP).
 				WithUsername(a.Username).
 				WithPassword(a.Password).
 				WithAccountName(accountName)
@@ -2776,19 +2787,38 @@ func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache 
 }
 
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
-func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
-	if accountName != "" {
-		redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
-
-		if ppc.Password != "" {
-			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
-		}
+func (a *AuthState) saveUserPositiveCache(ctx *gin.Context, ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
+	if accountName == "" {
+		return
 	}
+
+	redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+
+	if ppc.Password == "" {
+		return
+	}
+
+	// Use request context if available; otherwise, use background
+	var reqCtx context.Context
+	if ctx != nil && ctx.Request != nil {
+		reqCtx = ctx.Request.Context()
+	} else if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
+		reqCtx = a.HTTPClientContext.Request.Context()
+	} else {
+		reqCtx = context.Background()
+	}
+
+	guid := ""
+	if a.GUID != nil {
+		guid = *a.GUID
+	}
+
+	go backend.SaveUserDataToRedis(reqCtx, guid, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
 }
 
 // processCacheUserLoginOk updates the user cache with a positive authentication result.
 // It retrieves the backend used during authentication and the respective cache name to save the user information.
-func (a *AuthState) processCacheUserLoginOk(accountName string) error {
+func (a *AuthState) processCacheUserLoginOk(ctx *gin.Context, accountName string) error {
 	usedBackend, err := a.getUsedBackend()
 	if err != nil {
 		return err
@@ -2800,6 +2830,7 @@ func (a *AuthState) processCacheUserLoginOk(accountName string) error {
 	}
 
 	a.saveUserPositiveCache(
+		ctx,
 		a.createPositivePasswordCache(),
 		cacheName,
 		accountName,
@@ -2821,7 +2852,21 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters (burst-deduplicated)
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP).
+	var reqCtx context.Context
+	if ctx != nil && ctx.Request != nil {
+		reqCtx = ctx.Request.Context()
+	} else if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
+		reqCtx = a.HTTPClientContext.Request.Context()
+	} else {
+		reqCtx = context.Background()
+	}
+
+	guidStr := ""
+	if a.GUID != nil {
+		guidStr = *a.GUID
+	}
+
+	bm = bruteforce.NewBucketManager(reqCtx, guidStr, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)
@@ -2830,7 +2875,7 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
 
-	if res, err := rediscli.ExecuteScript(ctx.Request.Context(), "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
+	if res, err := rediscli.ExecuteScript(reqCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
 		if v, ok := res.(int64); ok && v == 1 {
 			bm.SaveFailedPasswordCounterInRedis()
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
@@ -2840,7 +2885,8 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	} else {
 		// Fail-open: still count, but log error as follower for visibility
 		bm.SaveFailedPasswordCounterInRedis()
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
+		// mark as follower on error to match comment intention
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_follower")
 	}
 }
 
@@ -2850,7 +2896,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
 		if authenticated {
-			err := a.processCacheUserLoginOk(accountName)
+			err := a.processCacheUserLoginOk(ctx, accountName)
 			if err != nil {
 				return err
 			}
@@ -2858,7 +2904,22 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 			a.processCacheUserLoginFail(ctx, accountName)
 		}
 
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		// Build context and GUID safely to avoid nil dereferences
+		var reqCtx context.Context
+		if ctx != nil && ctx.Request != nil {
+			reqCtx = ctx.Request.Context()
+		} else if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
+			reqCtx = a.HTTPClientContext.Request.Context()
+		} else {
+			reqCtx = context.Background()
+		}
+
+		guidStr := ""
+		if a.GUID != nil {
+			guidStr = *a.GUID
+		}
+
+		bm = bruteforce.NewBucketManager(reqCtx, guidStr, a.ClientIP).
 			WithUsername(a.Username).
 			WithPassword(a.Password).
 			WithAccountName(accountName)
