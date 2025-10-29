@@ -93,7 +93,8 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 			atomic.AddInt32(&lc.CurrentConnections, -1)
 
 			// Detect client-canceled requests (context canceled) and mark/log as 499 if possible
-			if err := ctx.Request.Context().Err(); errors.Is(err, context.Canceled) {
+			canceled := errors.Is(ctx.Request.Context().Err(), context.Canceled)
+			if canceled {
 				// Log cancellation; use GUID if present
 				guid, exists := ctx.Get(definitions.CtxGUIDKey)
 				if !exists {
@@ -119,8 +120,8 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 					duration := time.Since(startTime)
 					ctx.Set(definitions.CtxRequestDurationKey, duration)
 
-					// Log long-running requests for further optimization
-					if duration > 500*time.Millisecond {
+					// Log long-running requests for further optimization (skip if client canceled)
+					if !canceled && duration > 1500*time.Millisecond {
 						// Get GUID from context if available, otherwise generate a new one
 						guid, exists := ctx.Get(definitions.CtxGUIDKey)
 						if !exists {
