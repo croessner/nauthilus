@@ -36,14 +36,14 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 
 		clientIP := ctx.GetHeader("Client-IP")
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
-		method := "plain"
 
 		auth := &AuthState{
-			HTTPClientContext: ctx.Copy(),
+			HTTPClientContext: ctx,
+			HTTPClientRequest: ctx.Request,
 			NoAuth:            true,
-			GUID:              &guid,
+			GUID:              guid,
 			Protocol:          protocol,
-			Method:            &method,
+			Method:            "plain",
 		}
 
 		auth.WithUserAgent(ctx)

@@ -36,10 +36,10 @@ type LDAPModifyAttributes map[string][]string
 // LDAPRequest represents an LDAP request.
 type LDAPRequest struct {
 	// GUID is the globally unique identifier for this LDAP request, optional.
-	GUID *string
+	GUID string
 
 	// RequestID represents the globally unique identifier for an LDAP request. It is a pointer to a string.
-	RequestID *string
+	RequestID string
 
 	// PoolName is the target LDAP pool name this request must be processed by (e.g., "default" or "mail").
 	PoolName string
@@ -88,8 +88,7 @@ var _ PoolRequest[LDAPRequest] = (*LDAPRequest)(nil)
 // LDAPAuthRequest represents a request to authenticate with an LDAP server.
 type LDAPAuthRequest struct {
 	// GUID is the unique identifier for the LDAP auth request.
-	// It can be nil.
-	GUID *string
+	GUID string
 
 	// PoolName is the target LDAP pool name this auth request must be processed by.
 	PoolName string

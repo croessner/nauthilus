@@ -129,13 +129,13 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 	commonRequest.NoAuth = a.NoAuth
 	commonRequest.BruteForceCounter = 0 // unavailable
 	commonRequest.Service = a.Service
-	commonRequest.Session = *a.GUID
+	commonRequest.Session = a.GUID
 	commonRequest.ClientIP = a.ClientIP
 	commonRequest.ClientPort = a.XClientPort
 	commonRequest.ClientNet = "" // unavailable
 	commonRequest.ClientHost = a.ClientHost
 	commonRequest.ClientID = a.XClientID
-	commonRequest.UserAgent = *a.UserAgent
+	commonRequest.UserAgent = a.UserAgent
 	commonRequest.LocalIP = a.XLocalIP
 	commonRequest.LocalPort = a.XPort
 	commonRequest.Username = a.Username
@@ -286,7 +286,7 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
 	isListed, rblName, rblErr := a.isListed(ctx, rbl)
 	if rblErr != nil {
-		handleRBLError(*a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLError(a.GUID, rblErr, rbl, dnsResolverErr)
 		handleRBLOutcome(rblChan, 0)
 
 		return
@@ -519,7 +519,7 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 		}
 
 		return relayDomains.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, relayDomains.SoftWhitelist)
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -543,7 +543,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 		}
 
 		return rbls.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, rbls.SoftWhitelist)
+			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -602,14 +602,14 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	commonRequest.UserFound = func() bool { return a.GetAccount() != "" }()
 	commonRequest.NoAuth = a.NoAuth
 	commonRequest.Service = a.Service
-	commonRequest.Session = *a.GUID
+	commonRequest.Session = a.GUID
 	commonRequest.ClientIP = a.ClientIP
 	commonRequest.ClientPort = a.XClientPort
 	commonRequest.ClientHost = a.ClientHost
 	commonRequest.ClientID = a.XClientID
 	commonRequest.LocalIP = a.XLocalIP
 	commonRequest.LocalPort = a.XPort
-	commonRequest.UserAgent = *a.UserAgent
+	commonRequest.UserAgent = a.UserAgent
 	commonRequest.Username = a.Username
 	commonRequest.Account = a.GetAccount()
 	commonRequest.AccountField = a.GetAccountField()
@@ -639,7 +639,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		LuaAction:     luaAction,
 		Context:       a.Context,
 		FinishedChan:  finished,
-		HTTPRequest:   a.HTTPClientContext.Request,
+		HTTPRequest:   a.HTTPClientRequest,
 		CommonRequest: commonRequest,
 	}
 

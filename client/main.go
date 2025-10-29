@@ -519,13 +519,17 @@ func main() {
 		csvDebug      = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
 		loops         = flag.Int("loops", 1, "Number of cycles to run over the CSV")
 		runFor        = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
-
-		// Parallelization flags (protocol-agnostic)
-		maxPar  = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
-		parProb = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
+		maxPar        = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
+		parProb       = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
+		abortProb     = flag.Float64("abort-prob", 0.0, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
 	)
 
 	flag.Parse()
+
+	// Sanitize concurrency
+	if *concurrency < 1 {
+		*concurrency = 1
+	}
 
 	// Generation mode: create synthetic CSV and exit
 	if *genCSV {
@@ -635,6 +639,7 @@ func main() {
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
 	var toleratedBF int64
+	var aborted int64
 	var totalLatencyNs int64
 
 	start := time.Now()
@@ -646,7 +651,7 @@ func main() {
 	}
 
 	// Worker function shared by both modes
-	jobs := make(chan int, len(rows))
+	jobs := make(chan int, *concurrency)
 	var wg sync.WaitGroup
 
 	worker := func() {
@@ -679,7 +684,23 @@ func main() {
 				continue
 			}
 
-			req, _ := http.NewRequestWithContext(ctx, *method, *endpoint, bytes.NewReader(bb))
+			// Per-request cancellable context to simulate connection aborts
+			reqCtx, reqCancel := context.WithCancel(ctx)
+			var abortTimer *time.Timer
+
+			willAbort := *abortProb > 0 && rand.Float64() < *abortProb
+			if willAbort {
+				// Choose a cancel delay in [0, timeout/2] ms to simulate mid-flight drop
+				maxMs := *timeoutMs / 2
+				if maxMs < 1 {
+					maxMs = 1
+				}
+
+				d := time.Duration(rand.IntN(maxMs+1)) * time.Millisecond
+				abortTimer = time.AfterFunc(d, reqCancel)
+			}
+
+			req, _ := http.NewRequestWithContext(reqCtx, *method, *endpoint, bytes.NewReader(bb))
 
 			// copy base headers into a fresh map to avoid data races without Clone() churn
 			req.Header = make(http.Header, len(baseHeader))
@@ -700,14 +721,36 @@ func main() {
 			resp, err := client.Do(req)
 			lat := time.Since(ts)
 
+			// Clean up cancel timer (do not cancel request context here)
+			if abortTimer != nil {
+				abortTimer.Stop()
+			}
+
+			// Important: do NOT call reqCancel() here in the success path.
+			// Cancelling before the body is fully read can abort the connection mid-flight.
+			// We'll cancel on error or after we've drained and closed the body below.
+
 			atomic.AddInt64(&totalLatencyNs, int64(lat))
 			atomic.AddInt64(&total, 1)
 
 			if err != nil {
-				atomic.AddInt64(&httpErrs, 1)
-				if *verbose {
-					fmt.Printf("ERR user=%s err=%v lat=%s\n", username, err, lat)
+				// Distinguish simulated aborts from other HTTP errors
+				if willAbort || errors.Is(err, context.Canceled) {
+					atomic.AddInt64(&aborted, 1)
+
+					if *verbose {
+						fmt.Printf("ABORT user=%s err=%v lat=%s\n", username, err, lat)
+					}
+				} else {
+					atomic.AddInt64(&httpErrs, 1)
+
+					if *verbose {
+						fmt.Printf("ERR user=%s err=%v lat=%s\n", username, err, lat)
+					}
 				}
+
+				// Cancel per-request context on error to free resources
+				reqCancel()
 
 				continue
 			}
@@ -755,6 +798,9 @@ func main() {
 					}
 				}
 			}()
+
+			// Now safe to cancel the request context after the response body has been fully consumed and closed
+			reqCancel()
 		}
 	}
 
@@ -852,7 +898,7 @@ func main() {
 
 			// Recreate jobs channel for next cycle
 			if cycle != *loops {
-				jobs = make(chan int, len(rows))
+				jobs = make(chan int, *concurrency)
 			}
 		}
 	}
@@ -860,7 +906,7 @@ func main() {
 	dur := time.Since(start)
 
 	fmt.Printf("\nDone in %s\n", dur)
-	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, skipped, toleratedBF)
+	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, aborted, skipped, toleratedBF)
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())

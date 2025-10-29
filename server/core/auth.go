@@ -344,14 +344,14 @@ type AuthState struct {
 
 	// GUID is a global unique identifier inherited in all functions and methods that deal with the
 	// authentication process. It is necessary to track log lines belonging to one request.
-	GUID *string
+	GUID string
 
 	// Method is set by the "Auth-Method" HTTP request header (Nginx protocol). It is typically something like "plain"
 	// or "login".
-	Method *string
+	Method string
 
 	// AccountField is the name of either an SQL field name or an LDAP attribute that was used to retrieve a user account.
-	AccountField *string
+	AccountField string
 
 	// Username is the value taken from the HTTP header "Auth-User" (Nginx protocol).
 	Username string
@@ -405,7 +405,7 @@ type AuthState struct {
 	XPort string
 
 	// UserAgent may have been seent by a mail user agent and is set by the HTTP request header "User-Agent".
-	UserAgent *string
+	UserAgent string
 
 	// StatusMessage is the HTTP response payload that is sent to the remote server that asked for authentication.
 	StatusMessage string
@@ -426,19 +426,19 @@ type AuthState struct {
 	OIDCCID string
 
 	// TOTPSecret is used to store a TOTP secret in an SQL Database.
-	TOTPSecret *string
+	TOTPSecret string
 
 	// TOTPSecretField is the SQL field or LDAP attribute that resolves the TOTP secret for two-factor authentication.
-	TOTPSecretField *string
+	TOTPSecretField string
 
 	// TOTPRecoveryField NYI
-	TOTPRecoveryField *string
+	TOTPRecoveryField string
 
 	// UniqueUserIDField is a string representing a unique user identifier.
-	UniqueUserIDField *string
+	UniqueUserIDField string
 
 	// DisplayNameField is the display name of a user
-	DisplayNameField *string
+	DisplayNameField string
 
 	// AdditionalLogging is a slice of strings that can be filled from Lua features and a Lua backend. Its result will be
 	// added to the regular log lines.
@@ -476,6 +476,9 @@ type AuthState struct {
 
 	// HTTPClientContext tracks the context for an HTTP client connection.
 	HTTPClientContext *gin.Context
+
+	// HTTPClientRequest represents the underlying HTTP request to be sent by the client.
+	HTTPClientRequest *http.Request
 
 	// MonitoringFlags is a slice of definitions.Monitoring that is used to skip certain steps while processing an authentication request.
 	MonitoringFlags []definitions.Monitoring
@@ -548,6 +551,15 @@ func (a *AuthState) reset() {
 	a.BackendName = ""
 	a.OIDCCID = ""
 	a.UsedBackendIP = ""
+	a.GUID = ""
+	a.Method = ""
+	a.AccountField = ""
+	a.TOTPSecret = ""
+	a.TOTPSecretField = ""
+	a.TOTPRecoveryField = ""
+	a.UniqueUserIDField = ""
+	a.DisplayNameField = ""
+	a.UserAgent = ""
 	a.UsedBackendPort = 0
 	a.SourcePassDBBackend = definitions.BackendUnknown
 	a.UsedPassDBBackend = definitions.BackendUnknown
@@ -558,17 +570,9 @@ func (a *AuthState) reset() {
 	a.BFRepeating = false
 
 	// Reset pointer types
-	a.GUID = nil
-	a.Method = nil
-	a.AccountField = nil
-	a.TOTPSecret = nil
-	a.TOTPSecretField = nil
-	a.TOTPRecoveryField = nil
-	a.UniqueUserIDField = nil
-	a.DisplayNameField = nil
-	a.UserAgent = nil
 	a.Protocol = nil
 	a.HTTPClientContext = nil
+	a.HTTPClientRequest = nil
 	a.PasswordHistory = nil
 	a.Context = nil
 
@@ -593,19 +597,19 @@ type PassDBResult struct {
 	BackendName string
 
 	// AccountField is the SQL field or LDAP attribute that was used for the user account.
-	AccountField *string
+	AccountField string
 
 	// TOTPSecretField is set by the Database which has found the user.
-	TOTPSecretField *string
+	TOTPSecretField string
 
 	// TOTPRecoveryField NYI
-	TOTPRecoveryField *string
+	TOTPRecoveryField string
 
 	// UniqueUserIDField is a string representing a unique user identifier.
-	UniqueUserIDField *string
+	UniqueUserIDField string
 
 	// DisplayNameField is the display name of a user
-	DisplayNameField *string
+	DisplayNameField string
 
 	// Backend is set by the Database backend, which has found the user.
 	Backend definitions.Backend
@@ -627,13 +631,11 @@ func (p *PassDBResult) Reset() {
 
 	// Reset string field
 	p.BackendName = ""
-
-	// Reset pointer fields to nil
-	p.AccountField = nil
-	p.TOTPSecretField = nil
-	p.TOTPRecoveryField = nil
-	p.UniqueUserIDField = nil
-	p.DisplayNameField = nil
+	p.AccountField = ""
+	p.TOTPSecretField = ""
+	p.TOTPRecoveryField = ""
+	p.UniqueUserIDField = ""
+	p.DisplayNameField = ""
 
 	// Reset Backend field
 	p.Backend = 0
@@ -835,12 +837,12 @@ func (a *AuthState) SetLoginAttempts(loginAttempts uint) {
 
 // SetMethod sets the authentication method for the AuthState instance by assigning it to the Method field.
 func (a *AuthState) SetMethod(method string) {
-	a.Method = &method
+	a.Method = method
 }
 
 // SetUserAgent sets the UserAgent field for the AuthState with the provided userAgent value.
 func (a *AuthState) SetUserAgent(userAgent string) {
-	a.UserAgent = &userAgent
+	a.UserAgent = userAgent
 }
 
 // SetLocalIP sets the local IP address for the AuthState instance.
@@ -865,11 +867,7 @@ func (a *AuthState) SetSSLProtocol(sslProtocol string) {
 
 // GetGUID retrieves the GUID from the AuthState. Returns an empty string if the GUID is nil.
 func (a *AuthState) GetGUID() string {
-	if a.GUID == nil {
-		return ""
-	}
-
-	return *a.GUID
+	return a.GUID
 }
 
 // GetUsername retrieves the username from the AuthState structure.
@@ -893,38 +891,22 @@ func (a *AuthState) GetProtocol() *config.Protocol {
 
 // GetTOTPSecretField retrieves the TOTP secret field from the AuthState. Returns an empty string if the field is nil.
 func (a *AuthState) GetTOTPSecretField() string {
-	if a.TOTPSecretField == nil {
-		return ""
-	}
-
-	return *a.TOTPSecretField
+	return a.TOTPSecretField
 }
 
 // GetTOTPRecoveryField retrieves the TOTP recovery field value from AuthState. Returns an empty string if not set.
 func (a *AuthState) GetTOTPRecoveryField() string {
-	if a.TOTPRecoveryField == nil {
-		return ""
-	}
-
-	return *a.TOTPRecoveryField
+	return a.TOTPRecoveryField
 }
 
 // GetUniqueUserIDField retrieves the value of the UniqueUserIDField if set; returns an empty string otherwise.
 func (a *AuthState) GetUniqueUserIDField() string {
-	if a.UniqueUserIDField == nil {
-		return ""
-	}
-
-	return *a.UniqueUserIDField
+	return a.UniqueUserIDField
 }
 
 // GetDisplayNameField retrieves the display name field from the AuthState. Returns an empty string if it's nil.
 func (a *AuthState) GetDisplayNameField() string {
-	if a.DisplayNameField == nil {
-		return ""
-	}
-
-	return *a.DisplayNameField
+	return a.DisplayNameField
 }
 
 // GetUsedPassDBBackend returns the currently used backend for password database operations.
@@ -966,7 +948,7 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 	}
 
 	keyvals = []any{
-		definitions.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyBackendName, backendName,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
@@ -978,13 +960,13 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
 		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
 		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		definitions.LogKeyAuthMethod, util.WithNotAvailable(*a.Method),
+		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
 		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
 		definitions.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
 		definitions.LogKeyLoginAttempts, a.LoginAttempts,
 		definitions.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
 		definitions.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
-		definitions.LogKeyUserAgent, util.WithNotAvailable(*a.UserAgent),
+		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
 		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
 		definitions.LogKeyBruteForceName, util.WithNotAvailable(a.BruteForceName),
 		definitions.LogKeyFeatureName, util.WithNotAvailable(a.FeatureName),
@@ -1021,7 +1003,7 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 	}
 
 	keyvals = []any{
-		definitions.LogKeyGUID, util.WithNotAvailable(*a.GUID),
+		definitions.LogKeyGUID, util.WithNotAvailable(a.GUID),
 		definitions.LogKeyMode, mode,
 		definitions.LogKeyProtocol, util.WithNotAvailable(a.Protocol.String()),
 		definitions.LogKeyOIDCCID, util.WithNotAvailable(a.OIDCCID),
@@ -1032,9 +1014,9 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 		definitions.LogKeyClientHost, util.WithNotAvailable(a.ClientHost),
 		definitions.LogKeyTLSSecure, util.WithNotAvailable(a.XSSLProtocol),
 		definitions.LogKeyTLSCipher, util.WithNotAvailable(a.XSSLCipher),
-		definitions.LogKeyAuthMethod, util.WithNotAvailable(*a.Method),
+		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
 		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
-		definitions.LogKeyUserAgent, util.WithNotAvailable(*a.UserAgent),
+		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),
 		definitions.LogKeyClientID, util.WithNotAvailable(a.XClientID),
 		definitions.LogKeyUriPath, endpoint,
 	}
@@ -1045,11 +1027,7 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 // GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
 func (a *AuthState) GetAccount() string {
-	if a.AccountField == nil {
-		return ""
-	}
-
-	if account, okay := a.Attributes[*a.AccountField]; okay {
+	if account, okay := a.Attributes[a.AccountField]; okay {
 		if value, assertOk := account[definitions.LDAPSingleValue].(string); assertOk {
 			return value
 		}
@@ -1068,10 +1046,6 @@ func (a *AuthState) GetAccountOk() (string, bool) {
 
 // GetTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
 func (a *AuthState) GetTOTPSecret() string {
-	if a.TOTPSecretField == nil {
-		return ""
-	}
-
 	if totpSecret, okay := a.Attributes[a.GetTOTPSecretField()]; okay {
 		if value, assertOk := totpSecret[definitions.LDAPSingleValue].(string); assertOk {
 			return value
@@ -1091,10 +1065,6 @@ func (a *AuthState) GetTOTPSecretOk() (string, bool) {
 
 // GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
 func (a *AuthState) GetUniqueUserID() string {
-	if a.UniqueUserIDField == nil {
-		return ""
-	}
-
 	if webAuthnUserID, okay := a.Attributes[a.GetUniqueUserIDField()]; okay {
 		if value, assertOk := webAuthnUserID[definitions.LDAPSingleValue].(string); assertOk {
 			return value
@@ -1114,10 +1084,6 @@ func (a *AuthState) GetUniqueUserIDOk() (string, bool) {
 
 // GetDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
 func (a *AuthState) GetDisplayName() string {
-	if a.DisplayNameField == nil {
-		return ""
-	}
-
 	if account, okay := a.Attributes[a.GetDisplayNameField()]; okay {
 		if value, assertOk := account[definitions.SliceWithOneElement].(string); assertOk {
 			return value
@@ -1167,7 +1133,7 @@ func (a *AuthState) AuthOK(ctx *gin.Context) {
 // it retrieves the account from the AuthState and sets the "Auth-User" header
 func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 	ctx.Header("Auth-Status", "OK")
-	ctx.Header("X-Nauthilus-Session", *auth.GUID)
+	ctx.Header("X-Nauthilus-Session", auth.GUID)
 
 	if auth.Service != definitions.ServBasic {
 		if account, found := auth.GetAccountOk(); found {
@@ -1392,7 +1358,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 	}
 
 	ctx.Header("Auth-Status", a.StatusMessage)
-	ctx.Header("X-Nauthilus-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", a.GUID)
 
 	switch a.Service {
 	case definitions.ServHeader, definitions.ServNginx, definitions.ServJSON:
@@ -1453,7 +1419,7 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 // AuthTempFail sends a temporary failure response with the provided reason and logs the error.
 func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 	ctx.Header("Auth-Status", reason)
-	ctx.Header("X-Nauthilus-Session", *a.GUID)
+	ctx.Header("X-Nauthilus-Session", a.GUID)
 	a.setSMPTHeaders(ctx)
 
 	a.StatusMessage = reason
@@ -1489,7 +1455,7 @@ func (a *AuthState) IsMasterUser() bool {
 
 // IsInNetwork checks an IP address against a network and returns true if it matches.
 func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
-	return util.IsInNetwork(networkList, *a.GUID, a.ClientIP)
+	return util.IsInNetwork(networkList, a.GUID, a.ClientIP)
 }
 
 // verifyPassword takes in an array of PassDBMap and performs the following steps:
@@ -1642,19 +1608,19 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.UsedPassDBBackend = passDB.backend
 	}
 
-	if passDBResult.AccountField != nil {
+	if passDBResult.AccountField != "" {
 		auth.AccountField = passDBResult.AccountField
 	}
 
-	if passDBResult.TOTPSecretField != nil {
+	if passDBResult.TOTPSecretField != "" {
 		auth.TOTPSecretField = passDBResult.TOTPSecretField
 	}
 
-	if passDBResult.UniqueUserIDField != nil {
+	if passDBResult.UniqueUserIDField != "" {
 		auth.UniqueUserIDField = passDBResult.UniqueUserIDField
 	}
 
-	if passDBResult.DisplayNameField != nil {
+	if passDBResult.DisplayNameField != "" {
 		auth.DisplayNameField = passDBResult.DisplayNameField
 	}
 
@@ -1664,10 +1630,8 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 
 	// Handle AdditionalFeatures if they exist in the PassDBResult
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
-		if auth.HTTPClientContext != nil {
-			// Set AdditionalFeatures in the gin.Context
-			ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
-		}
+		// Set AdditionalFeatures in the gin.Context
+		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
 	}
 }
 
@@ -1700,16 +1664,16 @@ func (a *AuthState) userExists() (bool, error) {
 // refreshUserAccount updates the user account information from the cache.
 // It sets the account field and attributes if they are nil and the account name is found.
 func (a *AuthState) refreshUserAccount() (accountName string) {
-	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, a.GUID)
 	if accountName == "" {
 		return
 	}
 
-	if a.AccountField == nil && a.Attributes == nil {
+	if a.AccountField == "" && a.Attributes == nil {
 		accountField := definitions.MetaUserAccount
 		attributes := make(bktype.AttributeMapping)
 
-		a.AccountField = &accountField
+		a.AccountField = accountField
 		attributes[definitions.MetaUserAccount] = []any{accountName}
 		a.Attributes = attributes
 	}
@@ -1720,11 +1684,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 // GetAccountField returns the value of the AccountField field in the AuthState struct.
 // If the AccountField field is nil, it returns an empty string.
 func (a *AuthState) GetAccountField() string {
-	if a.AccountField == nil {
-		return ""
-	}
-
-	return *a.AccountField
+	return a.AccountField
 }
 
 // executeLuaPostAction is a helper function that executes a Lua post action with the given parameters.
@@ -1964,7 +1924,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	}
 
 	// Make sure we have all the required values and they're not nil
-	if a.GUID == nil || a.UserAgent == nil || a.Protocol == nil || a.HTTPClientContext == nil || a.Context == nil {
+	if a.Protocol == nil || a.HTTPClientRequest == nil || a.Context == nil {
 		return
 	}
 
@@ -1978,8 +1938,8 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 	// Start a goroutine with copies of all necessary values
 	go executeLuaPostAction(
 		a.Context,
-		a.HTTPClientContext.Request,
-		*a.GUID,
+		a.HTTPClientRequest,
+		a.GUID,
 		a.NoAuth,
 		a.Service,
 		a.ClientIP,
@@ -1988,7 +1948,7 @@ func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
 		a.XClientID,
 		a.XLocalIP,
 		a.XPort,
-		*a.UserAgent,
+		a.UserAgent,
 		a.Username,
 		accountName,
 		a.GetAccountField(),
@@ -2132,23 +2092,19 @@ func (a *AuthState) applyEnvelope(env *sfAuthEnvelope) {
 	}
 
 	if env.AccountField != "" {
-		af := env.AccountField
-		a.AccountField = &af
+		a.AccountField = env.AccountField
 	}
 
 	if env.UniqueUserID != "" {
-		uid := env.UniqueUserID
-		a.UniqueUserIDField = &uid
+		a.UniqueUserIDField = env.UniqueUserID
 	}
 
 	if env.DisplayName != "" {
-		dn := env.DisplayName
-		a.DisplayNameField = &dn
+		a.DisplayNameField = env.DisplayName
 	}
 
 	if env.TOTPSecretField != "" {
-		totp := env.TOTPSecretField
-		a.TOTPSecretField = &totp
+		a.TOTPSecretField = env.TOTPSecretField
 	}
 
 	if env.Attributes != nil && len(env.Attributes) > 0 {
@@ -2179,20 +2135,20 @@ func (a *AuthState) buildEnvelopeFromState(r definitions.AuthResult) *sfAuthEnve
 	// Best effort for authenticated flag
 	env.Authenticated = r == definitions.AuthResultOK
 
-	if a.AccountField != nil {
-		env.AccountField = *a.AccountField
+	if a.AccountField != "" {
+		env.AccountField = a.AccountField
 	}
 
-	if a.UniqueUserIDField != nil {
-		env.UniqueUserID = *a.UniqueUserIDField
+	if a.UniqueUserIDField != "" {
+		env.UniqueUserID = a.UniqueUserIDField
 	}
 
-	if a.DisplayNameField != nil {
-		env.DisplayName = *a.DisplayNameField
+	if a.DisplayNameField != "" {
+		env.DisplayName = a.DisplayNameField
 	}
 
-	if a.TOTPSecretField != nil {
-		env.TOTPSecretField = *a.TOTPSecretField
+	if a.TOTPSecretField != "" {
+		env.TOTPSecretField = a.TOTPSecretField
 	}
 
 	if a.Attributes != nil && len(a.Attributes) > 0 {
@@ -2353,8 +2309,8 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 	// Prepare per-request ID for leadership detection (prefer GUID)
 	reqID := ""
-	if a.GUID != nil {
-		reqID = *a.GUID
+	if a.GUID != "" {
+		reqID = a.GUID
 	} else {
 		reqID = fmt.Sprintf("no-guid-%d", time.Now().UnixNano())
 	}
@@ -2692,7 +2648,7 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+			bm = bruteforce.NewBucketManager(a.HTTPClientContext, a.GUID, a.ClientIP).
 				WithUsername(a.Username).
 				WithPassword(a.Password).
 				WithAccountName(accountName)
@@ -2777,13 +2733,22 @@ func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache 
 
 // saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
 func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
-	if accountName != "" {
-		redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
-
-		if ppc.Password != "" {
-			go backend.SaveUserDataToRedis(a.HTTPClientContext, *a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
-		}
+	if accountName == "" {
+		return
 	}
+
+	redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+
+	if ppc.Password == "" {
+		return
+	}
+
+	go func() {
+		reqCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		backend.SaveUserDataToRedis(reqCtx, a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
+	}()
 }
 
 // processCacheUserLoginOk updates the user cache with a positive authentication result.
@@ -2821,7 +2786,8 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	)
 
 	// Increase counters (burst-deduplicated)
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP).
+
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP).
 		WithUsername(a.Username).
 		WithPassword(a.Password).
 		WithAccountName(accountName)
@@ -2830,7 +2796,7 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
 
-	if res, err := rediscli.ExecuteScript(ctx.Request.Context(), "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
+	if res, err := rediscli.ExecuteScript(ctx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
 		if v, ok := res.(int64); ok && v == 1 {
 			bm.SaveFailedPasswordCounterInRedis()
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
@@ -2840,7 +2806,8 @@ func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName stri
 	} else {
 		// Fail-open: still count, but log error as follower for visibility
 		bm.SaveFailedPasswordCounterInRedis()
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
+		// mark as follower on error to match comment intention
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_follower")
 	}
 }
 
@@ -2858,7 +2825,7 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 			a.processCacheUserLoginFail(ctx, accountName)
 		}
 
-		bm = bruteforce.NewBucketManager(a.HTTPClientContext, *a.GUID, a.ClientIP).
+		bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP).
 			WithUsername(a.Username).
 			WithPassword(a.Password).
 			WithAccountName(accountName)
@@ -2981,13 +2948,13 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 	commonRequest.NoAuth = a.NoAuth
 	commonRequest.BruteForceCounter = 0 // unavailable
 	commonRequest.Service = a.Service
-	commonRequest.Session = *a.GUID
+	commonRequest.Session = a.GUID
 	commonRequest.ClientIP = a.ClientIP
 	commonRequest.ClientPort = a.XClientPort
 	commonRequest.ClientNet = "" // unavailable
 	commonRequest.ClientHost = a.ClientHost
 	commonRequest.ClientID = a.XClientID
-	commonRequest.UserAgent = *a.UserAgent
+	commonRequest.UserAgent = a.UserAgent
 	commonRequest.LocalIP = a.XLocalIP
 	commonRequest.LocalPort = a.XPort
 	commonRequest.Username = a.Username
@@ -3181,13 +3148,13 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, *a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, a.GUID)
 	if accountName != "" {
 		return
 	}
 
-	if a.AccountField != nil {
-		if values, assertOk = a.Attributes[*a.AccountField]; !assertOk {
+	if a.AccountField != "" {
+		if values, assertOk = a.Attributes[a.AccountField]; !assertOk {
 			return "", errors.ErrNoAccount
 		}
 
@@ -3547,14 +3514,12 @@ func setupHTTPBasicAuth(ctx *gin.Context, auth State) {
 
 // InitMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
 func (a *AuthState) InitMethodAndUserAgent() State {
-	if a.Method == nil {
-		method := ""
-		a.Method = &method
+	if a.Method == "" {
+		a.Method = ""
 	}
 
-	if a.UserAgent == nil {
-		userAgent := ""
-		a.UserAgent = &userAgent
+	if a.UserAgent == "" {
+		a.UserAgent = ""
 	}
 
 	return a
@@ -3635,7 +3600,8 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 func NewAuthStateFromContext(ctx *gin.Context) State {
 	auth := authStatePool.Get().(*AuthState)
 	auth.StartTime = time.Now()
-	auth.HTTPClientContext = ctx.Copy()
+	auth.HTTPClientContext = ctx
+	auth.HTTPClientRequest = ctx.Request
 
 	return auth
 }
@@ -3661,9 +3627,7 @@ func (a *AuthState) WithDefaults(ctx *gin.Context) State {
 		return nil
 	}
 
-	guidStr := ctx.GetString(definitions.CtxGUIDKey)
-
-	a.GUID = &guidStr
+	a.GUID = ctx.GetString(definitions.CtxGUIDKey)
 	a.UsedPassDBBackend = definitions.BackendUnknown
 	a.PasswordsAccountSeen = 0
 	a.Service = ctx.GetString(definitions.CtxServiceKey)
@@ -3746,9 +3710,7 @@ func (a *AuthState) WithUserAgent(ctx *gin.Context) State {
 		return nil
 	}
 
-	userAgent := ctx.Request.UserAgent()
-
-	a.UserAgent = &userAgent
+	a.UserAgent = ctx.Request.UserAgent()
 
 	return a
 }

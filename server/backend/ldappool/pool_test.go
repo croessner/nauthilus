@@ -66,11 +66,11 @@ func (m *mockLDAPConnection) GetMutex() *sync.Mutex {
 	return &m.mutex
 }
 
-func (m *mockLDAPConnection) Connect(_ *string, _ *config.LDAPConf) error {
+func (m *mockLDAPConnection) Connect(_ string, _ *config.LDAPConf) error {
 	return m.connError
 }
 
-func (m *mockLDAPConnection) Bind(_ *string, _ *config.LDAPConf) error {
+func (m *mockLDAPConnection) Bind(_ string, _ *config.LDAPConf) error {
 	return m.bindError
 }
 
@@ -171,7 +171,7 @@ func TestHandleLookupRequest(t *testing.T) {
 
 			// Call the method
 			pool.HandleLookupRequest(&bktype.LDAPRequest{
-				GUID:              &tc.name,
+				GUID:              tc.name,
 				HTTPClientContext: ctx,
 			})
 
@@ -220,12 +220,10 @@ func TestSemaphoreTimeout(t *testing.T) {
 	pool.tokens <- struct{}{}
 
 	// First request consumes the single token and sleeps inside Search
-	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r1"), HTTPClientContext: ctx})
+	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r1", HTTPClientContext: ctx})
 	assert.NoError(t, err1)
 
 	// Second request should time out acquiring a token
-	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: utilPtr("r2"), HTTPClientContext: ctx})
+	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r2", HTTPClientContext: ctx})
 	assert.Error(t, err2)
 }
-
-func utilPtr(s string) *string { return &s }

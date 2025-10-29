@@ -80,7 +80,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest.NoAuth = a.NoAuth
 		commonRequest.BruteForceCounter = a.BruteForceCounter[rule.Name]
 		commonRequest.Service = a.Service
-		commonRequest.Session = *a.GUID
+		commonRequest.Session = a.GUID
 		commonRequest.ClientIP = a.ClientIP
 		commonRequest.ClientPort = a.XClientPort
 		commonRequest.ClientNet = clientNet
@@ -88,7 +88,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest.ClientID = a.XClientID
 		commonRequest.LocalIP = a.XLocalIP
 		commonRequest.LocalPort = a.XPort
-		commonRequest.UserAgent = *a.UserAgent
+		commonRequest.UserAgent = a.UserAgent
 		commonRequest.Username = a.Username
 		commonRequest.Account = accountName
 		commonRequest.AccountField = a.GetAccountField()
@@ -135,7 +135,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 func logBruteForceDebug(auth *AuthState) {
 	util.DebugModule(
 		definitions.DbgBf,
-		definitions.LogKeyGUID, *auth.GUID,
+		definitions.LogKeyGUID, auth.GUID,
 		definitions.LogKeyClientIP, auth.ClientIP,
 		definitions.LogKeyClientPort, auth.XClientPort,
 		definitions.LogKeyClientHost, auth.ClientHost,
@@ -191,7 +191,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, *a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
@@ -221,13 +221,13 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if !bruteForceProtocolEnabled {
 		level.Warn(log.Logger).Log(
-			definitions.LogKeyGUID, *a.GUID,
+			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
 		return false
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
 
 	// Set the protocol on the bucket manager
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -240,7 +240,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// IMPORTANT: set request attributes before running checks
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	network := &net.IPNet{}
@@ -319,7 +319,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	util.DebugModule(
 		definitions.DbgBf,
-		definitions.LogKeyGUID, *a.GUID,
+		definitions.LogKeyGUID, a.GUID,
 		definitions.LogKeyClientIP, a.ClientIP,
 		definitions.LogKeyClientPort, a.XClientPort,
 		definitions.LogKeyClientHost, a.ClientHost,
@@ -374,7 +374,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		break
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), *a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
 
 	// Set the protocol if available
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -387,7 +387,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	// IMPORTANT: set request attributes before saving counters
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, *a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {

@@ -219,22 +219,22 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	passDBResult.BackendName = lm.poolName
 
 	if _, okay := ldapReply.Result[accountField]; okay {
-		passDBResult.AccountField = &accountField
+		passDBResult.AccountField = accountField
 	}
 
 	if protocol.TOTPSecretField != "" {
-		passDBResult.TOTPSecretField = &protocol.TOTPSecretField
+		passDBResult.TOTPSecretField = protocol.TOTPSecretField
 	}
 
 	if protocol.UniqueUserIDField != "" {
-		passDBResult.UniqueUserIDField = &protocol.UniqueUserIDField
+		passDBResult.UniqueUserIDField = protocol.UniqueUserIDField
 	}
 
 	if protocol.DisplayNameField != "" {
-		passDBResult.DisplayNameField = &protocol.DisplayNameField
+		passDBResult.DisplayNameField = protocol.DisplayNameField
 	} else {
 		// Fallback
-		passDBResult.DisplayNameField = &accountField
+		passDBResult.DisplayNameField = accountField
 	}
 
 	if len(ldapReply.Result) > 0 {

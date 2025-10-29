@@ -16,11 +16,11 @@
 package bktype
 
 import (
+	"net/http"
+
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
-
-	"github.com/gin-gonic/gin"
 )
 
 // LuaRequest is a subset from the Authentication struct.
@@ -49,8 +49,8 @@ type LuaRequest struct {
 
 	*lualib.CommonRequest
 
-	// HTTPClientContext is the client request context from a remote party.
-	HTTPClientContext *gin.Context
+	// HTTPClientRequest represents the HTTP request object associated with the client's request.
+	HTTPClientRequest *http.Request
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *lualib.LuaBackendResult

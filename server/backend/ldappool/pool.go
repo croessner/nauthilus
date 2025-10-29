@@ -566,9 +566,9 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 	for index := 0; index < l.poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
-		l.logConnectionInfo(&guidStr, index)
+		l.logConnectionInfo(guidStr, index)
 
-		err = l.setupConnection(&guidStr, bind, index)
+		err = l.setupConnection(guidStr, bind, index)
 		if err == nil {
 			idlePoolSize--
 		}
@@ -584,7 +584,7 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 // setupConnection initializes and manages the state of an LDAP connection for a specified index in the pool.
 // It locks the connection, checks its state, tries to connect if closed, and optionally binds based on the provided flag.
 // Returns an error if connection or binding fails.
-func (l *ldapPoolImpl) setupConnection(guid *string, bind bool, index int) error {
+func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error {
 	var err error
 
 	l.conn[index].GetMutex().Lock()
@@ -613,20 +613,20 @@ func (l *ldapPoolImpl) setupConnection(guid *string, bind bool, index int) error
 }
 
 // logConnectionInfo logs information about an LDAP connection including pool name, GUID, and specific connection settings.
-func (l *ldapPoolImpl) logConnectionInfo(guid *string, index int) {
+func (l *ldapPoolImpl) logConnectionInfo(guid string, index int) {
 	util.DebugModule(
 		definitions.DbgLDAP,
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyGUID, guid,
 		"ldap", l.conf[index].String(),
 	)
 }
 
 // logConnectionError logs an error associated with an LDAP connection using the provided GUID and error message.
-func (l *ldapPoolImpl) logConnectionError(guid *string, err error) {
+func (l *ldapPoolImpl) logConnectionError(guid string, err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, err,
 	)
 }
@@ -680,7 +680,7 @@ func (l *ldapPoolImpl) releaseToken() {
 
 // getConnection retrieves an available LDAP connection number from the pool using a semaphore.
 // It honors the request context for waiting and scanning, bounded by connect_abort_timeout.
-func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid *string) (connNumber int, err error) {
+func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connNumber int, err error) {
 	// Acquire capacity token with timeout
 	if err := l.acquireTokenWithTimeout(reqCtx); err != nil {
 		return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
@@ -743,7 +743,7 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid *string) (conn
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.
 // It locks the connection mutex, checks its current state, and either marks it busy, attempts reconnection, or skips it.
 // Returns the connection index if usable, or LDAPPoolExhausted if no connection can be utilized.
-func (l *ldapPoolImpl) processConnection(index int, guid *string) (connNumber int) {
+func (l *ldapPoolImpl) processConnection(index int, guid string) (connNumber int) {
 	l.conn[index].GetMutex().Lock()
 
 	defer l.conn[index].GetMutex().Unlock()
@@ -785,27 +785,27 @@ func (l *ldapPoolImpl) processConnection(index int, guid *string) (connNumber in
 }
 
 // logConnectionBusy logs the event when the connection at the given index is busy and skips to check the next connection.
-func (l *ldapPoolImpl) logConnectionBusy(guid *string, index int) {
+func (l *ldapPoolImpl) logConnectionBusy(guid string, index int) {
 	util.DebugModule(
 		definitions.DbgLDAP,
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is busy, checking next", index+1),
 	)
 }
 
 // logConnectionUsage logs debug information when a free LDAP connection is utilized by a specific GUID at a given index.
-func (l *ldapPoolImpl) logConnectionUsage(guid *string, index int) {
+func (l *ldapPoolImpl) logConnectionUsage(guid string, index int) {
 	util.DebugModule(
 		definitions.DbgLDAP,
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is free, using it", index+1),
 	)
 }
 
 // connectAndBindIfNeeded establishes a connection if needed and performs a bind operation based on the pool type configuration.
-func (l *ldapPoolImpl) connectAndBindIfNeeded(guid *string, index int) error {
+func (l *ldapPoolImpl) connectAndBindIfNeeded(guid string, index int) error {
 	err := l.conn[index].Connect(guid, l.conf[index])
 	if err == nil && (l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown) {
 		err = l.conn[index].Bind(guid, l.conf[index])
@@ -815,17 +815,17 @@ func (l *ldapPoolImpl) connectAndBindIfNeeded(guid *string, index int) error {
 }
 
 // logConnectionFailed logs a failed LDAP connection attempt with the pool name, session GUID, and error message.
-func (l *ldapPoolImpl) logConnectionFailed(guid *string, err error) {
+func (l *ldapPoolImpl) logConnectionFailed(guid string, err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyLDAPPoolName, l.name,
-		definitions.LogKeyGUID, *guid,
+		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, err)
 }
 
 // checkConnection ensures that the LDAP connection at the given index is valid and operational.
 // If the connection is nil or closing, it attempts to reconnect and rebind based on the pool type.
 // Returns an error if the connection restoration or binding fails.
-func (l *ldapPoolImpl) checkConnection(guid *string, index int) (err error) {
+func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 	if l.conn[index].GetConn() == nil || l.conn[index].IsClosing() {
 		l.conn[index].GetMutex().Lock()
 
@@ -835,7 +835,7 @@ func (l *ldapPoolImpl) checkConnection(guid *string, index int) (err error) {
 
 		level.Warn(log.Logger).Log(
 			definitions.LogKeyLDAPPoolName, l.name,
-			definitions.LogKeyGUID, *guid,
+			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Connection #%d is closed", index+1),
 		)
 
@@ -987,7 +987,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		if doLog {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyLDAPPoolName, l.name,
-				definitions.LogKeyGUID, *ldapRequest.GUID,
+				definitions.LogKeyGUID, ldapRequest.GUID,
 				definitions.LogKeyMsg, err,
 			)
 		}
