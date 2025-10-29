@@ -64,13 +64,13 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.NoAuth = auth.NoAuth
 	commonRequest.BruteForceCounter = 0 // unavailable
 	commonRequest.Service = auth.Service
-	commonRequest.Session = *auth.GUID
+	commonRequest.Session = auth.GUID
 	commonRequest.ClientIP = auth.ClientIP
 	commonRequest.ClientPort = auth.XClientPort
 	commonRequest.ClientNet = "" // unavailable
 	commonRequest.ClientHost = auth.ClientHost
 	commonRequest.ClientID = auth.XClientID
-	commonRequest.UserAgent = *auth.UserAgent
+	commonRequest.UserAgent = auth.UserAgent
 	commonRequest.LocalIP = auth.XLocalIP
 	commonRequest.LocalPort = auth.XPort
 	commonRequest.Username = auth.Username
@@ -164,7 +164,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 	passDBResult.Authenticated = luaBackendResult.Authenticated
 	passDBResult.UserFound = luaBackendResult.UserFound
-	passDBResult.AccountField = &accountField
+	passDBResult.AccountField = accountField
 
 	// Update the authentication cache if the user is authenticated
 	if passDBResult.Authenticated {
@@ -176,15 +176,15 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	}
 
 	if totpSecretField != "" {
-		passDBResult.TOTPSecretField = &totpSecretField
+		passDBResult.TOTPSecretField = totpSecretField
 	}
 
 	if uniqueUserIDField != "" {
-		passDBResult.UniqueUserIDField = &uniqueUserIDField
+		passDBResult.UniqueUserIDField = uniqueUserIDField
 	}
 
 	if displayName != "" {
-		passDBResult.DisplayNameField = &displayName
+		passDBResult.DisplayNameField = displayName
 	}
 
 	if luaBackendResult.UserFound {
@@ -232,7 +232,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	// Set the fields
 	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Service
-	commonRequest.Session = *auth.GUID
+	commonRequest.Session = auth.GUID
 	commonRequest.ClientIP = auth.ClientIP
 	commonRequest.ClientPort = auth.XClientPort
 	commonRequest.LocalIP = auth.XLocalIP
@@ -309,7 +309,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	// Set the fields
 	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Service
-	commonRequest.Session = *auth.GUID
+	commonRequest.Session = auth.GUID
 	commonRequest.Username = auth.Username
 	commonRequest.ClientIP = auth.ClientIP
 	commonRequest.ClientPort = auth.XClientPort

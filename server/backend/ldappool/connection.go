@@ -56,10 +56,10 @@ type LDAPConnection interface {
 	GetMutex() *sync.Mutex
 
 	// Connect establishes an LDAP connection using the provided GUID and configuration, returning an error if it fails.
-	Connect(guid *string, ldapConf *config.LDAPConf) error
+	Connect(guid string, ldapConf *config.LDAPConf) error
 
 	// Bind attempts to authenticate and establish a bound state for the LDAP connection using the provided credentials.
-	Bind(guid *string, ldapConf *config.LDAPConf) error
+	Bind(guid string, ldapConf *config.LDAPConf) error
 
 	// Unbind gracefully disconnects the LDAP connection by sending an unbind request to the server and returns any error encountered.
 	Unbind() error
@@ -118,7 +118,7 @@ func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 // Connect establishes a connection to the LDAP server using the provided configuration and GUID.
 // It handles TLS setup, retries, connection timeouts, and supports failover across multiple server URIs.
 // Returns an error if the connection could not be established or times out.
-func (l *LDAPConnectionImpl) Connect(guid *string, ldapConf *config.LDAPConf) error {
+func (l *LDAPConnectionImpl) Connect(guid string, ldapConf *config.LDAPConf) error {
 	var (
 		connected  bool
 		timeout    bool
@@ -211,7 +211,7 @@ EndlessLoop:
 }
 
 // Bind establishes a connection to the LDAP server using either SASL External or simple bind based on the configuration provided.
-func (l *LDAPConnectionImpl) Bind(guid *string, ldapConf *config.LDAPConf) error {
+func (l *LDAPConnectionImpl) Bind(guid string, ldapConf *config.LDAPConf) error {
 	if ldapConf.SASLExternal {
 		return l.externalBind(guid)
 	}
@@ -791,7 +791,7 @@ func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf)
 }
 
 // dialAndStartTLS dials the LDAP server and starts a TLS connection if configured.
-func (l *LDAPConnectionImpl) dialAndStartTLS(guid *string, ldapConf *config.LDAPConf, ldapCounter int, tlsConfig *tls.Config) error {
+func (l *LDAPConnectionImpl) dialAndStartTLS(guid string, ldapConf *config.LDAPConf, ldapCounter int, tlsConfig *tls.Config) error {
 	var err error
 
 	l.conn, err = ldap.DialURL(ldapConf.ServerURIs[ldapCounter], ldap.DialWithTLSConfig(tlsConfig))
@@ -813,7 +813,7 @@ func (l *LDAPConnectionImpl) dialAndStartTLS(guid *string, ldapConf *config.LDAP
 }
 
 // logURIInfo logs the URI information and connection attempt details for debugging purposes.
-func (l *LDAPConnectionImpl) logURIInfo(guid *string, ldapConf *config.LDAPConf, ldapCounter int, retryLimit int) {
+func (l *LDAPConnectionImpl) logURIInfo(guid string, ldapConf *config.LDAPConf, ldapCounter int, retryLimit int) {
 	util.DebugModule(
 		definitions.DbgLDAP,
 		definitions.LogKeyGUID, guid,
@@ -836,7 +836,7 @@ func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan bktype.Do
 }
 
 // externalBind performs SASL/EXTERNAL authentication using the provided GUID and logs debug information when enabled.
-func (l *LDAPConnectionImpl) externalBind(guid *string) error {
+func (l *LDAPConnectionImpl) externalBind(guid string) error {
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "SASL/EXTERNAL")
 
 	err := l.conn.ExternalBind()
@@ -854,7 +854,7 @@ func (l *LDAPConnectionImpl) externalBind(guid *string) error {
 // simpleBind performs a simple LDAP bind operation using the provided GUID and LDAP configuration.
 // It initializes the binding process by passing the provided credentials to the LDAP connection.
 // Returns an error if the binding fails.
-func (l *LDAPConnectionImpl) simpleBind(guid *string, ldapConf *config.LDAPConf) error {
+func (l *LDAPConnectionImpl) simpleBind(guid string, ldapConf *config.LDAPConf) error {
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
@@ -879,7 +879,7 @@ func (l *LDAPConnectionImpl) simpleBind(guid *string, ldapConf *config.LDAPConf)
 }
 
 // displayWhoAmI logs the result of the LDAP "Who Am I?" operation for debugging purposes if there is no error.
-func (l *LDAPConnectionImpl) displayWhoAmI(guid *string) {
+func (l *LDAPConnectionImpl) displayWhoAmI(guid string) {
 	res, err := l.conn.WhoAmI(nil) //nolint:govet // Ignore
 	if err == nil {
 		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "whoami", fmt.Sprintf("%+v", res))

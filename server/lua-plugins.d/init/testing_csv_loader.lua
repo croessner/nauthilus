@@ -5,6 +5,8 @@
 dynamic_loader("nauthilus_cache")
 local cache = require("nauthilus_cache")
 
+local nauthilus_util = require("nauthilus_util")
+
 local M = {}
 
 local KEY_PREFIX = "testing_csv:"
@@ -210,6 +212,22 @@ function nauthilus_run_hook(logging, session)
   local idx = cache.cache_get(KEY_INDEX)
   local count = 0
   if type(idx) == "table" then count = #idx end
+
+  -- Log that everything is operational and CSV is loaded
+  local result = {
+    level = "SYSTEM",
+    caller = "init/testing_csv_loader.lua",
+    session = session,
+    status = "success",
+    message = string.format("CSV test data loaded (%d users) – system is ready.", count),
+    csv = csv_path,
+    users = count,
+    loaded = cache.cache_exists(KEY_LOADED),
+  }
+    
+  if logging and (logging.log_level == "debug" or logging.log_level == "info" or logging.log_level == "warn") then
+    nauthilus_util.print_result(logging, result)
+  end
 
   return { ok = true, loaded = cache.cache_exists(KEY_LOADED), users = count, csv = csv_path }
 end

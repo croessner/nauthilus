@@ -384,8 +384,8 @@ func createLDAPRequest(L *lua.LState, fieldValues map[string]lua.LValue, ctx con
 
 	ldapRequest := &bktype.LDAPRequest{
 		// Common fields
-		GUID:              &guid,
-		RequestID:         nil,
+		GUID:              guid,
+		RequestID:         "",
 		PoolName:          poolName,
 		LDAPReplyChan:     ldapReplyChan,
 		HTTPClientContext: ctx,

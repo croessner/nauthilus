@@ -24,9 +24,9 @@ import "github.com/croessner/nauthilus/server/definitions"
 type PositivePasswordCache struct {
 	Backend           definitions.Backend `json:"passdb_backend"`
 	Password          string              `json:"password,omitempty"`
-	AccountField      *string             `json:"account_field"`
-	TOTPSecretField   *string             `json:"totp_secret_field"`
-	UniqueUserIDField *string             `json:"webauth_userid_field"`
-	DisplayNameField  *string             `json:"display_name_field"`
+	AccountField      string              `json:"account_field"`
+	TOTPSecretField   string              `json:"totp_secret_field"`
+	UniqueUserIDField string              `json:"webauth_userid_field"`
+	DisplayNameField  string              `json:"display_name_field"`
 	Attributes        AttributeMapping    `json:"attributes"`
 }

@@ -95,19 +95,19 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	}
 
 	if accountField, ok := hashValues["account_field"]; ok {
-		ucp.AccountField = &accountField
+		ucp.AccountField = accountField
 	}
 
 	if totpSecretField, ok := hashValues["totp_secret_field"]; ok {
-		ucp.TOTPSecretField = &totpSecretField
+		ucp.TOTPSecretField = totpSecretField
 	}
 
 	if uniqueUserIDField, ok := hashValues["webauth_userid_field"]; ok {
-		ucp.UniqueUserIDField = &uniqueUserIDField
+		ucp.UniqueUserIDField = uniqueUserIDField
 	}
 
 	if displayNameField, ok := hashValues["display_name_field"]; ok {
-		ucp.DisplayNameField = &displayNameField
+		ucp.DisplayNameField = displayNameField
 	}
 
 	// Parse attributes JSON
@@ -151,20 +151,20 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 		hashFields["password"] = cache.Password
 	}
 
-	if cache.AccountField != nil {
-		hashFields["account_field"] = *cache.AccountField
+	if cache.AccountField != "" {
+		hashFields["account_field"] = cache.AccountField
 	}
 
-	if cache.TOTPSecretField != nil {
-		hashFields["totp_secret_field"] = *cache.TOTPSecretField
+	if cache.TOTPSecretField != "" {
+		hashFields["totp_secret_field"] = cache.TOTPSecretField
 	}
 
-	if cache.UniqueUserIDField != nil {
-		hashFields["webauth_userid_field"] = *cache.UniqueUserIDField
+	if cache.UniqueUserIDField != "" {
+		hashFields["webauth_userid_field"] = cache.UniqueUserIDField
 	}
 
-	if cache.DisplayNameField != nil {
-		hashFields["display_name_field"] = *cache.DisplayNameField
+	if cache.DisplayNameField != "" {
+		hashFields["display_name_field"] = cache.DisplayNameField
 	}
 
 	// Serialize the attributes map as JSON since it's complex

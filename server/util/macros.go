@@ -29,7 +29,7 @@ type MacroSource struct {
 	XPort       string
 	ClientIP    string
 	XClientPort string
-	TOTPSecret  *string
+	TOTPSecret  string
 	Protocol    config.Protocol
 }
 
@@ -262,7 +262,7 @@ func (m *MacroSource) ReplaceMacros(source string) (dest string) {
 
 			flag = true
 
-			return regObj.ReplaceAllString(val, *m.TOTPSecret)
+			return regObj.ReplaceAllString(val, m.TOTPSecret)
 		})
 	}
 
