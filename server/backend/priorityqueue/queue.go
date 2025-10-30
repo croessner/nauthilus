@@ -574,9 +574,9 @@ func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 	}
 
 	// Drop early if the request context is already canceled
-	if request.HTTPClientRequest != nil {
+	if request.HTTPClientContext != nil {
 		select {
-		case <-request.HTTPClientRequest.Context().Done():
+		case <-request.HTTPClientContext.Done():
 			stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
 
 			return
@@ -634,9 +634,9 @@ func (q *LuaRequestQueue) Pop(backendName string) *bktype.LuaRequest {
 		item := heap.Pop(&b.queue).(*LuaRequestItem)
 
 		// If the request context is already canceled, drop it and continue to next
-		if item.Request != nil && item.Request.HTTPClientRequest != nil {
+		if item.Request != nil && item.Request.HTTPClientContext != nil {
 			select {
-			case <-item.Request.HTTPClientRequest.Context().Done():
+			case <-item.Request.HTTPClientContext.Done():
 				stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
 				// Update depth after drop and continue loop to fetch next item
 				stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))

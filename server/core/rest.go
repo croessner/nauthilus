@@ -133,10 +133,10 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
-		tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, true)
+		tolerate.GetTolerate().SetIPAddress(a.Ctx(), a.ClientIP, a.Username, true)
 		a.AuthOK(ctx)
 	case definitions.AuthResultFail:
-		tolerate.GetTolerate().SetIPAddress(a.HTTPClientContext, a.ClientIP, a.Username, false)
+		tolerate.GetTolerate().SetIPAddress(a.Ctx(), a.ClientIP, a.Username, false)
 		a.AuthFail(ctx)
 		ctx.Abort()
 	case definitions.AuthResultTempFail:

@@ -21,9 +21,14 @@
 package level
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
+	"runtime/debug"
+	"time"
 )
 
 // Logger is compatible with the minimal subset of the go-kit Logger interface
@@ -83,7 +88,23 @@ func Error(l *slog.Logger) Logger {
 // Log implements Logger. It parses the keyvals, extracts an optional "msg"
 // string, and forwards the remaining pairs as attributes to slog on the
 // configured level. Unknown or invalid key/value pairs are skipped.
-func (s *slogLevelLogger) Log(keyvals ...any) error {
+func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "[logger-recover] %s panic: %v\n", time.Now().Format(time.RFC3339Nano), r)
+			fmt.Fprintf(&buf, "keyvals=%#v\n", keyvals)
+			buf.Write(debug.Stack())
+			_, _ = os.Stderr.Write(buf.Bytes())
+
+			// Safe best-effort:
+			_ = slog.Default().With("logger", "recover").
+				Handler().Handle(context.Background(), slog.Record{Time: time.Now(), Level: slog.LevelError, Message: "logger panic recovered"})
+
+			err = fmt.Errorf("logger panic: %v", r)
+		}
+	}()
+
 	var msg string
 
 	attrs := make([]slog.Attr, 0, len(keyvals))

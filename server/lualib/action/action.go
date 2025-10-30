@@ -209,7 +209,7 @@ func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modNa
 	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
 	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(httpRequest))
+		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest)))
 	case definitions.LuaModLDAP:
 		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))

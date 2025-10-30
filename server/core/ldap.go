@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"strings"
@@ -161,6 +162,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	username := handleMasterUserMode(auth)
 
+	// Derive a timeout context for LDAP search
+	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
+	defer cancelSearch()
+
 	ldapRequest := &bktype.LDAPRequest{
 		GUID:     auth.GUID,
 		Command:  definitions.LDAPSearch,
@@ -179,7 +185,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		SearchAttributes:  attributes,
 		Scope:             *scope,
 		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientContext: ctxSearch,
 	}
 
 	// Find user with account status enabled
@@ -246,13 +252,18 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	if !auth.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
+		// Derive a timeout context for LDAP bind/auth
+		dBind := config.GetFile().GetServer().GetTimeouts().GetLDAPBind()
+		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
+		defer cancelBind()
+
 		ldapUserBindRequest := &bktype.LDAPAuthRequest{
 			GUID:              auth.GUID,
 			PoolName:          lm.poolName,
 			BindDN:            dn,
 			BindPW:            auth.Password,
 			LDAPReplyChan:     ldapReplyChan,
-			HTTPClientContext: auth.HTTPClientContext,
+			HTTPClientContext: ctxBind,
 		}
 
 		// Determine priority based on NoAuth flag and whether the user is already authenticated
@@ -351,6 +362,11 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		return
 	}
 
+	// Derive a timeout context for LDAP search (account list)
+	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
+	defer cancelSearch()
+
 	ldapRequest := &bktype.LDAPRequest{
 		GUID:     auth.GUID,
 		Command:  definitions.LDAPSearch,
@@ -369,7 +385,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		SearchAttributes:  attributes,
 		Scope:             *scope,
 		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientContext: ctxSearch,
 	}
 
 	// Find user with account status enabled
@@ -454,6 +470,11 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		return
 	}
 
+	// Derive a timeout context for LDAP modify
+	dModify := config.GetFile().GetServer().GetTimeouts().GetLDAPModify()
+	ctxModify, cancelModify := context.WithTimeout(auth.Ctx(), dModify)
+	defer cancelModify()
+
 	ldapRequest := &bktype.LDAPRequest{
 		GUID:       auth.GUID,
 		Command:    definitions.LDAPModify,
@@ -472,7 +493,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		BaseDN:            baseDN,
 		Scope:             *scope,
 		LDAPReplyChan:     ldapReplyChan,
-		HTTPClientContext: auth.HTTPClientContext,
+		HTTPClientContext: ctxModify,
 	}
 
 	ldapRequest.ModifyAttributes = make(bktype.LDAPModifyAttributes, 2)

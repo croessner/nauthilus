@@ -273,8 +273,8 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 
 	auth := &AuthState{
 		HTTPClientContext: ctx,
-		HTTPRequest:       ctx.Request,
-		GUID:              &guid,
+		HTTPClientRequest: ctx.Request,
+		GUID:              guid,
 		Username:          ctx.PostForm("username"),
 		Password:          ctx.PostForm("password"),
 		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
@@ -302,12 +302,12 @@ func LoginPOST2FAHandler(ctx *gin.Context) {
 		// User does not have a TOTP secret
 		if _, found := auth.GetTOTPSecretOk(); !found {
 			if authResult == definitions.AuthResultOK {
-				tolerate.GetTolerate().SetIPAddress(ctx, auth.ClientIP, auth.Username, true)
+				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.ClientIP, auth.Username, true)
 				authCompleteWithOK = true
 			}
 
 			if authResult == definitions.AuthResultFail {
-				tolerate.GetTolerate().SetIPAddress(ctx, auth.ClientIP, auth.Username, false)
+				tolerate.GetTolerate().SetIPAddress(auth.Ctx(), auth.ClientIP, auth.Username, false)
 				authCompleteWithFail = true
 			}
 		}
@@ -730,8 +730,8 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 	auth := &AuthState{
 		HTTPClientContext: ctx,
-		HTTPRequest:       ctx.Request,
-		GUID:              &guid,
+		HTTPClientRequest: ctx.Request,
+		GUID:              guid,
 		Username:          username,
 		Protocol:          config.NewProtocol(definitions.ProtoOryHydra),
 	}
@@ -775,7 +775,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 		userKeys := config.NewStringSet()
 		protocols := config.GetFile().GetAllProtocols()
 
-		accountName, err = backend.LookupUserAccountFromRedis(ctx, username)
+		accountName, err = backend.LookupUserAccountFromRedis(auth.Ctx(), username)
 		if err != nil {
 			HandleErr(ctx, err)
 
@@ -792,7 +792,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = rediscli.GetClient().GetWriteHandle().Del(ctx, userKey).Result(); err != nil {
+			if _, err = rediscli.GetClient().GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)

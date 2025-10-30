@@ -53,6 +53,7 @@ type ServerSection struct {
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
+	Timeouts                  Timeouts                 `mapstructure:"timeouts" validate:"omitempty"`
 }
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
@@ -1826,4 +1827,88 @@ func (d *Dedup) IsInProcessEnabled() bool {
 	}
 
 	return *d.InProcessEnabled
+}
+
+// Timeouts groups operation-specific timeouts under server.timeouts in the config.
+type Timeouts struct {
+	RedisRead        time.Duration `mapstructure:"redis_read"`
+	RedisWrite       time.Duration `mapstructure:"redis_write"`
+	LDAPSearch       time.Duration `mapstructure:"ldap_search"`
+	LDAPBind         time.Duration `mapstructure:"ldap_bind"`
+	LDAPModify       time.Duration `mapstructure:"ldap_modify"`
+	SingleflightWork time.Duration `mapstructure:"singleflight_work"`
+	LuaBackend       time.Duration `mapstructure:"lua_backend"`
+}
+
+// GetRedisRead returns the timeout for Redis read operations. Defaults to 1s if unset/invalid.
+func (t *Timeouts) GetRedisRead() time.Duration {
+	if t == nil || t.RedisRead <= 0 {
+		return 1 * time.Second
+	}
+
+	return t.RedisRead
+}
+
+// GetRedisWrite returns the timeout for Redis write operations. Defaults to 2s if unset/invalid.
+func (t *Timeouts) GetRedisWrite() time.Duration {
+	if t == nil || t.RedisWrite <= 0 {
+		return 2 * time.Second
+	}
+
+	return t.RedisWrite
+}
+
+// GetLDAPSearch returns timeout for LDAP search operations. Defaults to 3s if unset/invalid.
+func (t *Timeouts) GetLDAPSearch() time.Duration {
+	if t == nil || t.LDAPSearch <= 0 {
+		return 3 * time.Second
+	}
+
+	return t.LDAPSearch
+}
+
+// GetLDAPBind returns timeout for LDAP bind/auth operations. Defaults to 3s if unset/invalid.
+func (t *Timeouts) GetLDAPBind() time.Duration {
+	if t == nil || t.LDAPBind <= 0 {
+		return 3 * time.Second
+	}
+
+	return t.LDAPBind
+}
+
+// GetLDAPModify returns timeout for LDAP modify operations. Defaults to 5s if unset/invalid.
+func (t *Timeouts) GetLDAPModify() time.Duration {
+	if t == nil || t.LDAPModify <= 0 {
+		return 5 * time.Second
+	}
+
+	return t.LDAPModify
+}
+
+// GetSingleflightWork returns timeout for the actual singleflight leader work.
+// Defaults to the larger of LDAP search/bind timeouts, or 3s if unset.
+func (t *Timeouts) GetSingleflightWork() time.Duration {
+	if t == nil || t.SingleflightWork <= 0 {
+		return 3 * time.Second
+	}
+
+	return t.SingleflightWork
+}
+
+// GetLuaBackend returns timeout for Lua backend operations. Defaults to 5s if unset/invalid.
+func (t *Timeouts) GetLuaBackend() time.Duration {
+	if t == nil || t.LuaBackend <= 0 {
+		return 5 * time.Second
+	}
+
+	return t.LuaBackend
+}
+
+// GetTimeouts retrieves the Timeouts configuration section from ServerSection.
+func (s *ServerSection) GetTimeouts() *Timeouts {
+	if s == nil {
+		return &Timeouts{}
+	}
+
+	return &s.Timeouts
 }

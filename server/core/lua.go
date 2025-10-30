@@ -16,6 +16,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
@@ -101,6 +103,11 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.SSLSerial = auth.SSLSerial
 	commonRequest.SSLFingerprint = auth.SSLFingerprint
 
+	// Derive a timeout context for Lua backend work
+	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
+	defer cancelLua()
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandPassDB,
 		BackendName:       lm.backendName,
@@ -109,6 +116,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		Context:           auth.Context,
 		LuaReplyChan:      luaReplyChan,
 		HTTPClientRequest: auth.HTTPClientRequest,
+		HTTPClientContext: ctxLua,
 		CommonRequest:     commonRequest,
 	}
 
@@ -239,11 +247,17 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest.LocalPort = auth.XPort
 	commonRequest.OIDCCID = auth.OIDCCID
 
+	// Derive a timeout context for Lua backend work (list accounts)
+	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
+	defer cancelLua()
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandListAccounts,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Protocol,
 		HTTPClientRequest: auth.HTTPClientRequest,
+		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
 	}
@@ -317,12 +331,18 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	commonRequest.LocalPort = auth.XPort
 	commonRequest.OIDCCID = auth.OIDCCID
 
+	// Derive a timeout context for Lua backend work (add TOTP)
+	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
+	defer cancelLua()
+
 	luaRequest := &bktype.LuaRequest{
 		Function:          definitions.LuaCommandAddMFAValue,
 		BackendName:       lm.backendName,
 		Protocol:          auth.Protocol,
 		TOTPSecret:        totp.GetValue(),
 		HTTPClientRequest: auth.HTTPClientRequest,
+		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
 		CommonRequest:     commonRequest,
 	}
