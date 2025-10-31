@@ -10,14 +10,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -522,6 +525,7 @@ func main() {
 		maxPar        = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
 		parProb       = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
 		abortProb     = flag.Float64("abort-prob", 0.0, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
+		progressEvery = flag.Duration("progress-interval", time.Minute, "Progress report interval (e.g. 30s, 1m)")
 	)
 
 	flag.Parse()
@@ -636,13 +640,87 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Handle Ctrl+C (SIGINT) and SIGTERM to print results on interrupt
+	var stopFlag int32
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+
+		fmt.Println("\nInterrupt received, stopping...")
+		atomic.StoreInt32(&stopFlag, 1)
+
+		cancel()
+	}()
+
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
 	var toleratedBF int64
 	var aborted int64
 	var totalLatencyNs int64
 
+	// Min/Max latency in ns
+	var minLatencyNs int64 = math.MaxInt64
+	var maxLatencyNs int64
+
+	// HTTP status code histogram (0..599)
+	var statusCounts [600]int64
+
 	start := time.Now()
+
+	// Periodic progress reporter (only if interval > 0)
+	if *progressEvery > 0 {
+		go func() {
+			ticker := time.NewTicker(*progressEvery)
+			defer ticker.Stop()
+
+			prevTotal := int64(0)
+			prevTime := start
+
+			for {
+				select {
+				case <-ticker.C:
+					now := time.Now()
+					dt := now.Sub(prevTime).Seconds()
+					if dt <= 0 {
+						dt = 1
+					}
+
+					t := atomic.LoadInt64(&total)
+					m := atomic.LoadInt64(&matched)
+					mm := atomic.LoadInt64(&mismatched)
+					he := atomic.LoadInt64(&httpErrs)
+					ab := atomic.LoadInt64(&aborted)
+					sk := atomic.LoadInt64(&skipped)
+					bf := atomic.LoadInt64(&toleratedBF)
+					tls := atomic.LoadInt64(&totalLatencyNs)
+					mn := time.Duration(atomic.LoadInt64(&minLatencyNs))
+					mx := time.Duration(atomic.LoadInt64(&maxLatencyNs))
+
+					// periodical RPS since last report
+					delta := t - prevTotal
+					rps := float64(delta) / dt
+
+					var avg time.Duration
+					if t > 0 {
+						avg = time.Duration(tls / t)
+					}
+
+					elapsed := now.Sub(start)
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s\n",
+						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx,
+					)
+
+					prevTotal = t
+					prevTime = now
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Configure brute-force header name (can be overridden via env BRUTEFORCE_HEADER_NAME)
 	bfHeaderName := strings.TrimSpace(os.Getenv("BRUTEFORCE_HEADER_NAME"))
@@ -733,6 +811,29 @@ func main() {
 			atomic.AddInt64(&totalLatencyNs, int64(lat))
 			atomic.AddInt64(&total, 1)
 
+			// Update min/max latency atomically
+			lns := int64(lat)
+			// min
+			for {
+				old := atomic.LoadInt64(&minLatencyNs)
+				if lns >= old {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&minLatencyNs, old, lns) {
+					break
+				}
+			}
+			// max
+			for {
+				old := atomic.LoadInt64(&maxLatencyNs)
+				if lns <= old {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&maxLatencyNs, old, lns) {
+					break
+				}
+			}
+
 			if err != nil {
 				// Distinguish simulated aborts from other HTTP errors
 				if willAbort || errors.Is(err, context.Canceled) {
@@ -772,6 +873,12 @@ func main() {
 
 				// Drain body with per-worker buffer to keep connections reusable without per-request allocs
 				io.CopyBuffer(io.Discard, resp.Body, buf)
+
+				// Count HTTP status code
+				code := resp.StatusCode
+				if code >= 0 && code < len(statusCounts) {
+					atomic.AddInt64(&statusCounts[code], 1)
+				}
 
 				if gotOK == expectedOKs[idx] {
 					atomic.AddInt64(&matched, 1)
@@ -846,12 +953,22 @@ func main() {
 		}
 
 		deadline := time.Now().Add(*runFor)
+	outerLoop:
 		for i := 0; ; i = (i + 1) % len(rows) {
+			if atomic.LoadInt32(&stopFlag) == 1 {
+				break
+			}
+
 			if time.Now().After(deadline) {
 				break
 			}
+
 			if tick != nil {
-				<-tick
+				select {
+				case <-tick:
+				case <-ctx.Done():
+					break outerLoop
+				}
 			}
 
 			enqueueParallelGroup(i)
@@ -865,6 +982,7 @@ func main() {
 		}
 	} else {
 		// Legacy loops mode (kept for backward compatibility)
+	outerCycles:
 		for cycle := 1; cycle <= *loops; cycle++ {
 			// Per-cycle rate limiter
 			var tick <-chan time.Time
@@ -882,8 +1000,30 @@ func main() {
 			}
 
 			for i := range rows {
+				if atomic.LoadInt32(&stopFlag) == 1 {
+					close(jobs)
+					wg.Wait()
+
+					if t != nil {
+						t.Stop()
+					}
+
+					break outerCycles
+				}
+
 				if tick != nil {
-					<-tick
+					select {
+					case <-tick:
+					case <-ctx.Done():
+						close(jobs)
+						wg.Wait()
+
+						if t != nil {
+							t.Stop()
+						}
+
+						break outerCycles
+					}
 				}
 
 				enqueueParallelGroup(i)
@@ -903,6 +1043,9 @@ func main() {
 		}
 	}
 
+	// Stop progress reporter
+	cancel()
+
 	dur := time.Since(start)
 
 	fmt.Printf("\nDone in %s\n", dur)
@@ -914,7 +1057,23 @@ func main() {
 
 	if total > 0 {
 		avg := time.Duration(totalLatencyNs / total)
-
 		fmt.Printf("avg_latency=%s\n", avg)
+
+		// Print min/max latencies
+		if minLatencyNs != math.MaxInt64 {
+			fmt.Printf("min_latency=%s\n", time.Duration(minLatencyNs))
+		} else {
+			fmt.Printf("min_latency=NA\n")
+		}
+
+		fmt.Printf("max_latency=%s\n", time.Duration(maxLatencyNs))
+	}
+
+	// Print HTTP status codes summary (code, count)
+	fmt.Println("http_status_counts:")
+	for code, cnt := range statusCounts {
+		if cnt != 0 {
+			fmt.Printf("  %d: %d\n", code, cnt)
+		}
 	}
 }

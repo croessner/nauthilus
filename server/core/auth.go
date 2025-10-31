@@ -50,6 +50,7 @@ import (
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -479,6 +480,11 @@ type AuthState struct {
 
 	// HTTPClientRequest represents the underlying HTTP request to be sent by the client.
 	HTTPClientRequest *http.Request
+
+	// WorkCtx, if set, overrides the context returned by Ctx(). It is used to
+	// enforce per-operation timeouts (e.g., singleflight work budget) without
+	// relying on HTTP request context.
+	WorkCtx context.Context
 
 	// MonitoringFlags is a slice of definitions.Monitoring that is used to skip certain steps while processing an authentication request.
 	MonitoringFlags []definitions.Monitoring
@@ -1653,7 +1659,7 @@ func (a *AuthState) SetStatusCodes(service string) {
 // It returns true if the account name is found, otherwise false.
 // An error is returned if there are issues during the Redis lookup.
 func (a *AuthState) userExists() (bool, error) {
-	accountName, err := backend.LookupUserAccountFromRedis(a.HTTPClientContext, a.Username)
+	accountName, err := backend.LookupUserAccountFromRedis(a.Ctx(), a.Username)
 	if err != nil {
 		return false, err
 	}
@@ -1664,7 +1670,7 @@ func (a *AuthState) userExists() (bool, error) {
 // refreshUserAccount updates the user account information from the cache.
 // It sets the account field and attributes if they are nil and the account name is found.
 func (a *AuthState) refreshUserAccount() (accountName string) {
-	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.Ctx(), a.Username, a.GUID)
 	if accountName == "" {
 		return
 	}
@@ -2343,7 +2349,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				defer a.sfUnlock(reqCtx, lockKey, token)
 
 				useCache, backendPos, passDBs := a.handleBackendTypes()
-				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+				dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+				r := a.withWorkCtx(dWork, func() definitions.AuthResult {
+					return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+				})
+
 				env := a.buildEnvelopeFromState(r)
 				env.LeaderSessionID = reqID
 				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
@@ -2373,7 +2384,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		}
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		})
+
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_no_inproc")
 
 		return res
@@ -2388,7 +2404,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				defer a.sfUnlock(reqCtx, lockKey, token)
 
 				useCache, backendPos, passDBs := a.handleBackendTypes()
-				r := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+				dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+				r := a.withWorkCtx(dWork, func() definitions.AuthResult {
+					return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+				})
+
 				env := a.buildEnvelopeFromState(r)
 
 				// Include leader session ID so followers can log it
@@ -2424,7 +2445,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		}
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		})
+
 		env := a.buildEnvelopeFromState(res)
 
 		// Leader returns its reqID for followers to compare
@@ -2461,7 +2487,11 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		backchanSF.Forget(key)
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		})
 
 		// Log fallback as follower information as requested
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_ctx_canceled")
@@ -2472,7 +2502,11 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		backchanSF.Forget(key)
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-		res := a.authenticateUser(ctx, useCache, backendPos, passDBs)
+
+		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		})
 
 		// Log fallback info
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_timeout")
@@ -2648,7 +2682,7 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 		}
 
 		if !passDBResult.Authenticated {
-			bm = bruteforce.NewBucketManager(a.HTTPClientContext, a.GUID, a.ClientIP).
+			bm = bruteforce.NewBucketManager(a.Ctx(), a.GUID, a.ClientIP).
 				WithUsername(a.Username).
 				WithPassword(a.Password).
 				WithAccountName(accountName)
@@ -3148,7 +3182,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	accountName = backend.GetUserAccountFromCache(a.HTTPClientContext, a.Username, a.GUID)
+	accountName = backend.GetUserAccountFromCache(a.Ctx(), a.Username, a.GUID)
 	if accountName != "" {
 		return
 	}
@@ -3170,10 +3204,52 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		err = rediscli.GetClient().GetWriteHandle().HSet(a.HTTPClientContext, key, a.Username, accountName).Err()
+		err = rediscli.GetClient().GetWriteHandle().HSet(a.Ctx(), key, a.Username, accountName).Err()
 	}
 
 	return
+}
+
+// Ctx returns a standard library context for this AuthState.
+// Preference order:
+// 1) HTTPClientRequest.Context() if present
+// 2) HTTPClientContext.Request.Context() if present
+// 3) svcctx.Get() as a safe, non-nil fallback
+func (a *AuthState) Ctx() context.Context {
+	if a != nil {
+		// Highest priority: explicit work context when set
+		if a.WorkCtx != nil {
+			return a.WorkCtx
+		}
+
+		if a.HTTPClientRequest != nil {
+			if rc := a.HTTPClientRequest.Context(); rc != nil {
+				return rc
+			}
+		}
+
+		if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
+			if rc := a.HTTPClientContext.Request.Context(); rc != nil {
+				return rc
+			}
+		}
+	}
+
+	return svcctx.Get()
+}
+
+// withWorkCtx runs fn within a temporary work context with timeout d.
+// It safely swaps a.WorkCtx for the duration of fn and ensures cancellation.
+func (a *AuthState) withWorkCtx(d time.Duration, fn func() definitions.AuthResult) definitions.AuthResult {
+	workCtx, workCancel := context.WithTimeout(a.Ctx(), d)
+	defer workCancel()
+
+	prev := a.WorkCtx
+	a.WorkCtx = workCtx
+
+	defer func() { a.WorkCtx = prev }()
+
+	return fn()
 }
 
 // HasJWTRole checks if the user has the specified role in their JWT token.

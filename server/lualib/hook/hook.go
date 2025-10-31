@@ -423,7 +423,7 @@ func registerModule(L *lua.LState, ctx context.Context, modName string, registry
 	switch modName {
 	case definitions.LuaModHTTPRequest:
 		if useGin {
-			L.PreloadModule(modName, lualib.LoaderModHTTPRequest(ctx.(*gin.Context).Request))
+			L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.(*gin.Context).Request)))
 		} else {
 			return
 		}

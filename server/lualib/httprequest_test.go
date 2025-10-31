@@ -47,7 +47,7 @@ func TestGetAllHTTPRequestHeaders(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			lFunc := GetAllHTTPRequestHeaders(httpRequest)
+			lFunc := GetAllHTTPRequestHeaders(NewHTTPMetaFromRequest(httpRequest))
 			lFunc(L)
 
 			lTable := L.CheckTable(-1)
@@ -131,7 +131,7 @@ func TestGetHTTPRequestHeader(t *testing.T) {
 				Header: tc.requestHeaders,
 			}
 
-			lFunc := GetHTTPRequestHeader(httpRequest)
+			lFunc := GetHTTPRequestHeader(NewHTTPMetaFromRequest(httpRequest))
 			lFunc(L)
 
 			lTable := L.CheckTable(-1)

@@ -16,6 +16,7 @@
 package bktype
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -51,6 +52,9 @@ type LuaRequest struct {
 
 	// HTTPClientRequest represents the HTTP request object associated with the client's request.
 	HTTPClientRequest *http.Request
+
+	// HTTPClientContext carries cancellation/deadline for this Lua backend request.
+	HTTPClientContext context.Context
 
 	// LuaReplyChan is a channel to receive the response from the Lua backend.
 	LuaReplyChan chan *lualib.LuaBackendResult

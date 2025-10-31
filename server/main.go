@@ -16,13 +16,14 @@
 package main
 
 import (
-	"context"
 	stdlog "log"
 	"os"
 	"time"
 
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/svcctx"
+
 	_ "go.uber.org/automaxprocs"
 )
 
@@ -35,7 +36,7 @@ var (
 func main() {
 	parseFlagsAndPrintVersion()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := svcctx.GetCtxWithCancel()
 
 	if err := setupConfiguration(); err != nil {
 		stdlog.Fatalln("Unable to setup the environment. Error:", err)

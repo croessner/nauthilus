@@ -21,9 +21,15 @@
 package level
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
+	"runtime"
+	"runtime/debug"
+	"time"
 )
 
 // Logger is compatible with the minimal subset of the go-kit Logger interface
@@ -83,7 +89,23 @@ func Error(l *slog.Logger) Logger {
 // Log implements Logger. It parses the keyvals, extracts an optional "msg"
 // string, and forwards the remaining pairs as attributes to slog on the
 // configured level. Unknown or invalid key/value pairs are skipped.
-func (s *slogLevelLogger) Log(keyvals ...any) error {
+func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "[logger-recover] %s panic: %v\n", time.Now().Format(time.RFC3339Nano), r)
+			fmt.Fprintf(&buf, "keyvals=%#v\n", keyvals)
+			buf.Write(debug.Stack())
+			_, _ = os.Stderr.Write(buf.Bytes())
+
+			// Safe best-effort:
+			_ = slog.Default().With("logger", "recover").
+				Handler().Handle(context.Background(), slog.Record{Time: time.Now(), Level: slog.LevelError, Message: "logger panic recovered"})
+
+			err = fmt.Errorf("logger panic: %v", r)
+		}
+	}()
+
 	var msg string
 
 	attrs := make([]slog.Attr, 0, len(keyvals))
@@ -100,6 +122,25 @@ func (s *slogLevelLogger) Log(keyvals ...any) error {
 				msg = vs
 
 				continue
+			}
+		}
+
+		// Point 2: lightweight detection of problematic values to pinpoint callsite
+		if rv, ok := v.(reflect.Value); ok {
+			if !rv.IsValid() {
+				logDetect(k, "invalid reflect.Value")
+			}
+		}
+
+		if _, ok := v.(fmt.Stringer); ok {
+			if isTypedNil(v) { // typed-nil that would panic if String() is called
+				logDetect(k, "typed-nil fmt.Stringer")
+			}
+		}
+
+		if _, ok := v.(fmt.GoStringer); ok {
+			if isTypedNil(v) { // typed-nil that would panic if GoString() is called
+				logDetect(k, "typed-nil fmt.GoStringer")
 			}
 		}
 
@@ -166,4 +207,22 @@ func levelToDefaultMessage(lvl slog.Level) string {
 	default:
 		return "log"
 	}
+}
+
+// logDetect writes a minimal, panic-safe diagnostic line to stderr identifying
+// the callsite and the problematic key when suspicious values are observed.
+// It intentionally avoids invoking any user code (e.g., String()/GoString()).
+func logDetect(key, what string) {
+	defer func() { _ = recover() }()
+	pc, file, line, _ := runtime.Caller(2)
+	fn := runtime.FuncForPC(pc)
+	fnName := "?"
+
+	if fn != nil {
+		fnName = fn.Name()
+	}
+
+	// Keep it one line and simple to make it grep-friendly.
+	fmt.Fprintf(os.Stderr, "[logger-detect] %s key=%q issue=%s at %s:%d (%s)\n",
+		time.Now().Format(time.RFC3339Nano), key, what, file, line, fnName)
 }

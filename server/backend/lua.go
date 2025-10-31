@@ -181,7 +181,7 @@ func registerModule(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRe
 	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(luaRequest.Context))
 	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTPRequest(luaRequest.HTTPClientRequest))
+		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest)))
 	case definitions.LuaModLDAP:
 		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(modName, LoaderModLDAP(ctx))
