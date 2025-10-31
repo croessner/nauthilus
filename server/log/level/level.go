@@ -174,7 +174,15 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 		ctx = context.Background()
 	}
 
-	l.LogAttrs(ctx, s.lvl, msg, attrs...)
+	// Emit via handler with explicit PC so AddSource resolves the real caller
+	pc := uintptr(0)
+	if p, _, _, ok := runtime.Caller(2); ok {
+		pc = p
+	}
+
+	r := slog.NewRecord(time.Now(), s.lvl, msg, pc)
+	r.AddAttrs(attrs...)
+	_ = l.Handler().Handle(ctx, r)
 
 	return nil
 }
