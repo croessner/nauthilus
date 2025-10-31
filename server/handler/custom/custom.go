@@ -94,7 +94,7 @@ func CustomRequestHandler(ctx *gin.Context) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Error executing hook: %s %s", hookMethod, hookName),
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 	} else if result != nil {

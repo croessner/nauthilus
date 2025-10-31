@@ -1168,7 +1168,9 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
 			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, auth.GUID,
 				definitions.LogKeyMsg, "No backend servers found for backend_server_monitoring feature",
+				definitions.LogKeyError, "No backend servers found for backend_server_monitoring feature",
 				definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
 			)
 		} else {
@@ -1549,7 +1551,11 @@ func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 			err = checkAllBackends(configErrors, auth)
 		}
 	} else {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, auth.GUID, "passdb", passDB.backend.String(), definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, auth.GUID,
+			"passdb", passDB.backend.String(),
+			definitions.LogKeyMsg, "Error occurred during backend processing",
+			definitions.LogKeyError, err)
 	}
 
 	return err
@@ -1570,7 +1576,12 @@ func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthStat
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
 		err = errors.ErrAllBackendConfigError
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, auth.GUID, "passdb", "all", definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, auth.GUID,
+			"passdb", "all",
+			definitions.LogKeyMsg, "All backends failed",
+			definitions.LogKeyError, err,
+		)
 	}
 
 	return err
@@ -2661,9 +2672,14 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 				logs = append(logs, a.AdditionalLogs...)
 			}
 
-			level.Error(log.Logger).Log(logs...)
+			level.Error(log.Logger).Log(
+				logs...,
+			)
 		} else {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyMsg, "Error verifying password",
+				definitions.LogKeyError, err)
 		}
 	}
 
@@ -2678,7 +2694,10 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 	if a.UserFound {
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyMsg, "Error updating user account in Redis",
+				definitions.LogKeyError, err)
 		}
 
 		if !passDBResult.Authenticated {
@@ -2722,7 +2741,11 @@ func (a *AuthState) getUsedBackend() (definitions.CacheNameBackend, error) {
 	case definitions.BackendCache:
 	case definitions.BackendLocalCache:
 	default:
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Unable to get the cache name backend.")
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, a.GUID,
+			definitions.LogKeyMsg, "Unable to get the cache name backend",
+			definitions.LogKeyError, fmt.Errorf("unknown backend type: %s", a.UsedPassDBBackend),
+		)
 
 		return usedBackend, errors.ErrIncorrectCache
 	}
@@ -2734,7 +2757,11 @@ func (a *AuthState) getUsedBackend() (definitions.CacheNameBackend, error) {
 func (a *AuthState) getCacheName(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
 	cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
 	if len(cacheNames) != 1 {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Cache names are not correct")
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, a.GUID,
+			definitions.LogKeyMsg, "Cache names are not correct",
+			definitions.LogKeyError, fmt.Errorf("cache names are not correct: %v", cacheNames),
+		)
 
 		return "", errors.ErrIncorrectCache
 	}
@@ -3031,7 +3058,11 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, a.GUID,
+				definitions.LogKeyMsg, "Error calling Lua filter",
+				definitions.LogKeyError, err,
+			)
 
 			// Return the CommonRequest to the pool even if there's an error
 			lualib.PutCommonRequest(commonRequest)
@@ -3147,9 +3178,14 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, detailedError.Error(),
+					definitions.LogKeyError, err,
 					definitions.LogKeyErrorDetails, detailedError.GetDetails())
 			} else {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyMsg, "Error calling account database",
+					definitions.LogKeyError, err,
+				)
 			}
 		}
 	}
@@ -3768,7 +3804,11 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		if config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
 			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, err.Error())
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyMsg, "Failed to split client IP and port",
+					definitions.LogKeyError, err,
+				)
 			}
 
 			util.ProcessXForwardedFor(ctx, &a.ClientIP, &a.XClientPort, &a.XSSL)

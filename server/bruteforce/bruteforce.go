@@ -193,7 +193,11 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to get network for brute force rule",
+			definitions.LogKeyError, err,
+		)
 
 		return
 	}
@@ -396,7 +400,11 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		}
 
 		if *network, err = bm.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to get network for brute force rule",
+				definitions.LogKeyError, err,
+			)
 
 			return true, false, ruleNumber
 		}
@@ -475,7 +483,11 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 
 		// Skip, where the current IP address does not match the current rule
 		if *network, err = bm.getNetwork(&rules[ruleNumber]); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to get network for brute force rule",
+				definitions.LogKeyError, err,
+			)
 
 			return true, false, ruleNumber
 		}
@@ -589,7 +601,11 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		if !alreadyTriggered && useCache {
 			if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Failed to check enforcement of brute force computation",
+					definitions.LogKeyError, err,
+				)
 
 				return false
 			} else if !needEnforce {
@@ -670,7 +686,11 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	alreadyLearned, err = rediscli.GetClient().GetReadHandle().SIsMember(dCtx, key, bm.clientIP).Result()
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to check if IP address is already in PW_HIST_IPS set",
+				definitions.LogKeyError, err,
+			)
 			cancel()
 
 			return
@@ -727,7 +747,11 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Failed to store IP address in PW_HIST_IPS set",
+			definitions.LogKeyError, err,
+		)
 	}
 
 	return
@@ -759,7 +783,11 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 		})
 
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to increment brute force bucket counter",
+				definitions.LogKeyError, err,
+			)
 		}
 	}
 }
@@ -827,7 +855,11 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		stats.GetMetrics().GetRedisWriteCounter().Add(4)
 
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to increment failed password counter",
+				definitions.LogKeyError, err,
+			)
 
 			return
 		}
@@ -896,7 +928,11 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 	if result == ruleName || ruleName == "*" {
 		if network, err := bm.getNetwork(rule); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to get network for brute force rule",
+				definitions.LogKeyError, err,
+			)
 		} else {
 			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
@@ -905,7 +941,11 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 
 			// For protocol-specific rules, we need to delete the entry with the network string as the key
 			if removed, err := rediscli.GetClient().GetWriteHandle().HDel(dCtx, key, network.String()).Result(); err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Failed to delete brute force entry",
+					definitions.LogKeyError, err,
+				)
 			} else {
 				if removed > 0 {
 					removedKey = key
@@ -931,7 +971,11 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 
 	for _, rule := range rules {
 		if ruleName, err := bm.getPreResultBruteForceRedis(&rule); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to get pre-result brute force rule",
+				definitions.LogKeyError, err,
+			)
 		} else {
 			if ruleName == rule.Name {
 				buckets = append(buckets, rule.Name)
@@ -963,7 +1007,11 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 		vals, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
 		if err != nil {
 			if !errors2.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Failed to get protocol/OIDC Client ID from Redis metadata",
+					definitions.LogKeyError, err,
+				)
 			}
 
 			return nil
@@ -1398,7 +1446,11 @@ func (bm *bucketManagerImpl) checkTooManyPasswordHashes(key string) bool {
 
 	if length, err := rediscli.GetClient().GetReadHandle().HLen(dCtx, key).Result(); err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Error checking HLen",
+				definitions.LogKeyError, err,
+			)
 		}
 
 		return true
@@ -1427,7 +1479,11 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 
 	if passwordHistory, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result(); err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Error loading password history from Redis",
+				definitions.LogKeyError, err,
+			)
 		}
 
 		return
@@ -1442,7 +1498,11 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 		for passwordHash, counter := range passwordHistory {
 			if counterInt, err = strconv.Atoi(counter); err != nil {
 				if !errors2.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+					level.Error(log.Logger).Log(
+						definitions.LogKeyGUID, bm.guid,
+						definitions.LogKeyMsg, "Error parsing password history counter",
+						definitions.LogKeyError, err,
+					)
 				}
 
 				return
@@ -1483,7 +1543,11 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error getting network for brute force rule",
+			definitions.LogKeyError, err,
+		)
 	} else {
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
@@ -1491,7 +1555,11 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 		defer cancel()
 
 		if err = rediscli.GetClient().GetWriteHandle().HSet(dCtx, key, network.String(), bm.bruteForceName).Err(); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Error setting brute force rule in Redis",
+				definitions.LogKeyError, err,
+			)
 		}
 	}
 }
@@ -1505,7 +1573,11 @@ func (bm *bucketManagerImpl) getPreResultBruteForceRedis(rule *config.BruteForce
 
 	network, err = bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error getting network for brute force rule",
+			definitions.LogKeyError, err,
+		)
 
 		return
 	} else {
@@ -1520,7 +1592,11 @@ func (bm *bucketManagerImpl) getPreResultBruteForceRedis(rule *config.BruteForce
 
 		if ruleName, err = rediscli.GetClient().GetReadHandle().HGet(dCtx, key, network.String()).Result(); err != nil {
 			if !errors2.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Error getting brute force rule from Redis",
+					definitions.LogKeyError, err,
+				)
 			}
 		}
 	}
@@ -1547,7 +1623,11 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	isMember, err := rediscli.GetClient().GetReadHandle().SIsMember(dCtx, key, bm.accountName).Result()
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Error checking if account is already a member of the affected accounts set",
+				definitions.LogKeyError, err,
+			)
 			cancel()
 
 			return
@@ -1568,7 +1648,11 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	defer cancel()
 
 	if err := rediscli.GetClient().GetWriteHandle().SAdd(dCtx, key, bm.accountName).Err(); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, bm.guid,
+			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
+			definitions.LogKeyError, err,
+		)
 	}
 }
 
@@ -1646,13 +1730,19 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 			return nil
 		}
 
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Error loading brute force bucket counter from Redis",
+			definitions.LogKeyError, err,
+		)
 
 		return err
 	}
 
 	if err = jsoniter.ConfigFastest.Unmarshal(redisValue, bucketCounter); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Error unmarshalling brute force bucket counter from Redis",
+			definitions.LogKeyError, err,
+		)
 
 		return
 	}

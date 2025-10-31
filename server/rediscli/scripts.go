@@ -154,7 +154,8 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 	sha1, err := GetClient().GetWriteHandle().ScriptLoad(ctx, scriptContent).Result()
 	if err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s': %v. This may affect Redis operations. Check Redis connectivity and permissions.", scriptName, err),
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may affect Redis operations. Check Redis connectivity and permissions.", scriptName),
+			definitions.LogKeyError, err,
 		)
 
 		return "", err
@@ -229,7 +230,8 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload: %v. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName, err),
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
+					definitions.LogKeyError, err,
 				)
 
 				return nil, err
@@ -250,7 +252,8 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys: %v", scriptName, err),
+					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys", scriptName),
+					definitions.LogKeyError, err,
 					"keys", fmt.Sprintf("%v", keys),
 				)
 
@@ -258,7 +261,8 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			}
 		} else {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s': %v", scriptName, err),
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s'", scriptName),
+				definitions.LogKeyError, err,
 			)
 
 			return nil, err
@@ -284,7 +288,8 @@ func UploadAllScripts(ctx context.Context) error {
 		_, err := UploadScript(ctxWithTimeout, scriptName, scriptContent)
 		if err != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s': %v. This may cause issues with Redis operations. If the problem persists, check Redis connectivity and permissions.", scriptName, err),
+				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may cause issues with Redis operations. If the problem persists, check Redis connectivity and permissions.", scriptName),
+				definitions.LogKeyError, err,
 			)
 
 			return err
@@ -293,7 +298,8 @@ func UploadAllScripts(ctx context.Context) error {
 		// Check if the context has been canceled or timed out
 		if ctxWithTimeout.Err() != nil {
 			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Timeout or cancellation while uploading Redis Lua scripts: %v", ctxWithTimeout.Err()),
+				definitions.LogKeyMsg, fmt.Sprintf("Timeout or cancellation while uploading Redis Lua scripts"),
+				definitions.LogKeyError, ctxWithTimeout.Err(),
 			)
 
 			return ctxWithTimeout.Err()

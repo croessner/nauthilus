@@ -557,7 +557,7 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 	} else {
 		util.DebugModule(
@@ -649,6 +649,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 func processError(err error, hook string) {
 	level.Error(log.Logger).Log(
 		"script", hook,
-		definitions.LogKeyMsg, err,
+		definitions.LogKeyMsg, "Error executing script",
+		definitions.LogKeyError, err,
 	)
 }

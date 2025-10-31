@@ -41,12 +41,18 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 		if tlsCfg.GetCAFile() != "" {
 			caCert, err := os.ReadFile(tlsCfg.GetCAFile())
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to read CA certificate",
+					definitions.LogKeyError, err,
+				)
 			}
 
 			caCertPool = x509.NewCertPool()
 			if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-				level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to append CA certificate")
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to append CA certificate",
+					definitions.LogKeyError, "Failed to append CA certificate",
+				)
 
 				return nil
 			}
@@ -55,7 +61,10 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 		if tlsCfg.GetCert() != "" && tlsCfg.GetKey() != "" {
 			cert, err := tls.LoadX509KeyPair(tlsCfg.GetCert(), tlsCfg.GetKey())
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to load X509 key pair",
+					definitions.LogKeyError, err,
+				)
 
 				return nil
 			}

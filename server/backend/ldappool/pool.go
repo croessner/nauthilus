@@ -627,7 +627,8 @@ func (l *ldapPoolImpl) logConnectionError(guid string, err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyLDAPPoolName, l.name,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, err,
+		definitions.LogKeyMsg, "LDAP connection error",
+		definitions.LogKeyError, err,
 	)
 }
 
@@ -819,7 +820,9 @@ func (l *ldapPoolImpl) logConnectionFailed(guid string, err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyLDAPPoolName, l.name,
 		definitions.LogKeyGUID, guid,
-		definitions.LogKeyMsg, err)
+		definitions.LogKeyMsg, "LDAP connection failed",
+		definitions.LogKeyError, err,
+	)
 }
 
 // checkConnection ensures that the LDAP connection at the given index is valid and operational.
@@ -988,7 +991,8 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			level.Error(log.Logger).Log(
 				definitions.LogKeyLDAPPoolName, l.name,
 				definitions.LogKeyGUID, ldapRequest.GUID,
-				definitions.LogKeyMsg, err,
+				definitions.LogKeyMsg, "LDAP search error",
+				definitions.LogKeyError, err,
 			)
 		}
 	}

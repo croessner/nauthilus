@@ -164,7 +164,11 @@ func listBlockedIPAddresses(ctx context.Context, filterCmd *bf.FilterCmd, guid s
 	ipAddresses, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error retrieving IP addresses from Redis",
+				definitions.LogKeyError, err,
+			)
 
 			errMsg := err.Error()
 			blockedIPAddresses.Error = &errMsg
@@ -210,7 +214,11 @@ func listBlockedAccounts(ctx context.Context, filterCmd *bf.FilterCmd, guid stri
 	accounts, err := rediscli.GetClient().GetReadHandle().SMembers(ctx, key).Result()
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error retrieving accounts from Redis",
+				definitions.LogKeyError, err,
+			)
 
 			errMsg := err.Error()
 			blockedAccounts.Error = &errMsg
@@ -251,7 +259,11 @@ func listBlockedAccounts(ctx context.Context, filterCmd *bf.FilterCmd, guid stri
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 				if !stderrors.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+					level.Error(log.Logger).Log(
+						definitions.LogKeyGUID, guid,
+						definitions.LogKeyMsg, "Error retrieving IP addresses for account from Redis",
+						definitions.LogKeyError, err,
+					)
 
 					errMsg := err.Error()
 					blockedAccounts.Error = &errMsg
@@ -473,7 +485,11 @@ func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) 
 		}, guid)
 
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Error while flushing brute force rules",
+				definitions.LogKeyError, err,
+			)
 		}
 	}
 
@@ -484,7 +500,11 @@ func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) 
 	// Remove PW_HIST_SET from Redis
 	key := bruteforce.GetPWHistIPsRedisKey(accountName)
 	if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error while flushing PW_HIST_SET",
+			definitions.LogKeyError, err,
+		)
 	} else {
 		if result > 0 {
 			removedKeys = append(removedKeys, key)
@@ -496,7 +516,11 @@ func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) 
 	// Remove an account from AFFECTED_ACCOUNTS
 	key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 	if result, err = rediscli.GetClient().GetWriteHandle().SRem(ctx, key, accountName).Result(); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error while flushing AFFECTED_ACCOUNTS",
+			definitions.LogKeyError, err,
+		)
 	} else {
 		if result > 0 {
 			removedKeys = append(removedKeys, key)
@@ -530,7 +554,11 @@ func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, err
 func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
 	ips, err := getIPsFromPWHistSet(ctx, accountName)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error while retrieving IPs from PW_HIST_SET",
+			definitions.LogKeyError, err,
+		)
 	}
 
 	userKeys := config.NewStringSet()
@@ -637,7 +665,12 @@ func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userK
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error while flushing user keys",
+			definitions.LogKeyError, err,
+		)
+
 		return removedKeys
 	}
 
@@ -652,7 +685,11 @@ func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userK
 					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 				}
 			} else {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Unexpected command type in pipeline result")
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Unexpected command type in pipeline result",
+					definitions.LogKeyError, err,
+				)
 			}
 		}
 	}
@@ -704,7 +741,11 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 
 	ruleFlushError, removedKeys, err = processBruteForceRules(ctx, ipCmd, guid)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Error while flushing brute force rules",
+			definitions.LogKeyError, err,
+		)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return

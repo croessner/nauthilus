@@ -521,14 +521,16 @@ func logError(ctx *gin.Context, err error) {
 	if stderrors.As(err, &detailedError) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, (*detailedError).Error(),
+			definitions.LogKeyMsg, "An error occurred",
+			definitions.LogKeyError, (*detailedError).Error(),
 			definitions.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, err,
+			definitions.LogKeyMsg, "An error occurred",
+			definitions.LogKeyError, err,
 			definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	}
@@ -612,7 +614,9 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			"message_id", messageID, definitions.LogKeyMsg, err.Error(),
+			"message_id", messageID,
+			definitions.LogKeyMsg, "Failed to get localized message",
+			definitions.LogKeyError, err,
 		)
 	}
 
@@ -1653,7 +1657,11 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 		userFound, err = auth.userExists()
 		if err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, auth.GetGUID(), definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, auth.GetGUID(),
+					definitions.LogKeyMsg, "Error checking if user exists",
+					definitions.LogKeyError, err,
+				)
 			}
 		}
 	}
@@ -2965,6 +2973,7 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
 	level.Error(log.Logger).Log(
 		"custom_claim_name", customClaimName,
-		definitions.LogKeyMsg, fmt.Sprintf("Unknown type '%s'", customClaimType),
+		definitions.LogKeyMsg, "Unknown claim type",
+		definitions.LogKeyError, fmt.Eprintf("Unknown type '%s'", customClaimType),
 	)
 }

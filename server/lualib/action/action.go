@@ -170,7 +170,11 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, aw.luaActionRequest.Session,
+			definitions.LogKeyMsg, "failed to compile Lua script",
+			definitions.LogKeyError, err,
+		)
 
 		return
 	}
@@ -422,7 +426,8 @@ func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogK
 		append([]any{
 			definitions.LogKeyGUID, aw.luaActionRequest.Session,
 			"script", aw.actionScripts[index].ScriptPath,
-			definitions.LogKeyMsg, err,
+			definitions.LogKeyMsg, "failed to execute Lua script",
+			definitions.LogKeyError, err,
 		}, toLoggable(logs)...)...,
 	)
 }

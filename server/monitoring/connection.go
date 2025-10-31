@@ -72,7 +72,7 @@ func checkBackendConnection(server *config.BackendServer) error {
 			"host", server.Host,
 			"port", server.Port,
 			"protocol", strings.ToLower(server.Protocol),
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return err
@@ -90,7 +90,7 @@ func checkBackendConnection(server *config.BackendServer) error {
 				"host", server.Host,
 				"port", server.Port,
 				"protocol", strings.ToLower(server.Protocol),
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 
 			return err
@@ -127,7 +127,7 @@ func checkBackendConnection(server *config.BackendServer) error {
 				"port", server.Port,
 				"protocol", strings.ToLower(server.Protocol),
 				"skip_verify", server.TLSSkipVerify,
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 
 			return fmt.Errorf("TLS handshake failed (host=%s port=%d protocol=%s skip_verify=%t): %w", server.Host, server.Port, strings.ToLower(server.Protocol), server.TLSSkipVerify, err)
@@ -395,7 +395,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 			definitions.LogKeyMsg, "Sieve greeting read failed",
 			"host", hostname,
 			"protocol", "sieve",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return err
@@ -406,6 +406,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 			"host", hostname,
 			"protocol", "sieve",
 			"response", response,
+			definitions.LogKeyError, "Sieve greeting not OK",
 		)
 
 		return fmt.Errorf("Sieve greeting failed: %s", response)
@@ -420,7 +421,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 			definitions.LogKeyMsg, "Sieve STARTTLS read failed",
 			"host", hostname,
 			"protocol", "sieve",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return err
@@ -430,6 +431,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 			"host", hostname,
 			"protocol", "sieve",
 			"response", response,
+			definitions.LogKeyError, "Sieve STARTTLS refused",
 		)
 
 		return fmt.Errorf("STARTTLS command failed: %s", response)
@@ -449,7 +451,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 			"host", hostname,
 			"protocol", "sieve",
 			"skip_verify", tlsSkipVerify,
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return fmt.Errorf("TLS handshake failed (sieve host=%s skip_verify=%t): %s", hostname, tlsSkipVerify, err)
@@ -583,6 +585,7 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 func handleHAproxyV2Error(err error) {
 	level.Error(log.Logger).Log(
 		definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
-		definitions.LogKeyMsg, "HAProxy v2 error", "error", err,
+		definitions.LogKeyMsg, "HAProxy v2 error",
+		definitions.LogKeyError, err,
 	)
 }

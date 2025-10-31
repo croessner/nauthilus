@@ -339,7 +339,7 @@ func WithNotAvailable(value string) string {
 // logNetworkError logs a network error message.
 // a.logNetworkError(ipOrNet, err)
 func logNetworkError(guid, ipOrNet string, err error) {
-	level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "%s is not a network", ipOrNet, definitions.LogKeyMsg, err)
+	level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "%s is not a network", ipOrNet, definitions.LogKeyError, err)
 }
 
 // logNetworkChecking logs the information about checking a network for the given authentication object.

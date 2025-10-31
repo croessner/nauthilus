@@ -1,0 +1,11 @@
+username,password,client_ip,expected_ok,user_agent,protocol,method,ssl,ssl_protocol,ssl_cipher,ssl_client_verify,ssl_client_cn
+user00001,pw00001,61.205.239.16,true,NauthilusTestClient/1.0,imap,PLAIN,on,TLSv1.2,TLS_AES_128_GCM_SHA256,SUCCESS,cn-user00001
+user00002,pw00002,163.181.227.249,false,NauthilusTestClient/1.0,smtp,LOGIN,on,TLSv1.3,TLS_CHACHA20_POLY1305_SHA256,SUCCESS,cn-user00002
+user00003,pw00003,160.135.92.118,true,NauthilusTestClient/1.0,pop3,PLAIN,off,TLSv1.2,TLS_AES_128_GCM_SHA256,SUCCESS,cn-user00003
+user00004,pw00004,17.194.117.49,false,NauthilusTestClient/1.0,http,LOGIN,on,TLSv1.3,TLS_CHACHA20_POLY1305_SHA256,SUCCESS,cn-user00004
+user00005,pw00005,18.182.168.13,true,NauthilusTestClient/1.0,imap,PLAIN,on,TLSv1.2,TLS_AES_128_GCM_SHA256,FAIL,cn-user00005
+user00006,pw00006,33.14.111.217,false,NauthilusTestClient/1.0,smtp,LOGIN,off,TLSv1.3,TLS_CHACHA20_POLY1305_SHA256,SUCCESS,cn-user00006
+user00007,pw00007,116.221.79.127,true,NauthilusTestClient/1.0,pop3,PLAIN,on,TLSv1.2,TLS_AES_128_GCM_SHA256,SUCCESS,cn-user00007
+user00008,pw00008,206.239.32.117,false,NauthilusTestClient/1.0,http,LOGIN,on,TLSv1.3,TLS_CHACHA20_POLY1305_SHA256,SUCCESS,cn-user00008
+user00009,pw00009,46.49.108.85,true,NauthilusTestClient/1.0,imap,PLAIN,off,TLSv1.2,TLS_AES_128_GCM_SHA256,SUCCESS,cn-user00009
+user00010,pw00010,92.168.178.235,false,NauthilusTestClient/1.0,smtp,LOGIN,on,TLSv1.3,TLS_CHACHA20_POLY1305_SHA256,FAIL,cn-user00010
