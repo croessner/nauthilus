@@ -266,7 +266,8 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 						level.Error(log.Logger).Log(
 							definitions.LogKeyGUID, a.GUID,
 							"custom_claim_name", customClaimName,
-							definitions.LogKeyMsg, fmt.Sprintf("Unknown type '%s'", customClaimType),
+							definitions.LogKeyMsg, "Unknown claim type.",
+							definitions.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 						)
 					}
 				}

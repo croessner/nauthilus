@@ -52,7 +52,10 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Failed to create WebAuthn from environment", definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",
+			definitions.LogKeyError, err,
+		)
 	}
 
 	return err

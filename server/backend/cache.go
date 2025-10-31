@@ -73,7 +73,10 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 			return true, nil
 		}
 
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to get cache from redis",
+			definitions.LogKeyError, err,
+		)
 
 		return true, err
 	}
@@ -87,7 +90,10 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	if backendStr, ok := hashValues["backend"]; ok {
 		backendInt, err := strconv.Atoi(backendStr)
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to parse backend value: %v", err))
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to parse backend value",
+				definitions.LogKeyError, err,
+			)
 
 			return false, err
 		}
@@ -120,7 +126,10 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
 		var attributes bktype.AttributeMapping
 		if err = jsoniter.ConfigFastest.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to unmarshal attributes: %v", err))
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to unmarshal attributes",
+				definitions.LogKeyError, err,
+			)
 
 			return false, err
 		}
@@ -179,7 +188,8 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 		if err != nil {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, err,
+				definitions.LogKeyMsg, "Failed to marshal attributes",
+				definitions.LogKeyError, err,
 			)
 
 			return
@@ -202,7 +212,8 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, err,
+			definitions.LogKeyMsg, "Failed to store password history to redis",
+			definitions.LogKeyError, err,
 		)
 
 		return
@@ -271,7 +282,10 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	// Get all fields from the hash
 	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to get WebAuthn user from redis",
+			definitions.LogKeyError, err,
+		)
 
 		return nil, err
 	}
@@ -279,7 +293,10 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	// If the hash is empty, treat it as a Redis nil error
 	if len(hashValues) == 0 {
 		err = redis.Nil
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "WebAuthn user not found in redis",
+			definitions.LogKeyError, err,
+		)
 
 		return nil, err
 	}
@@ -307,7 +324,10 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	if credentialsJSON, ok := hashValues["credentials"]; ok && credentialsJSON != "" {
 		var credentials []webauthn.Credential
 		if err = jsoniter.ConfigFastest.Unmarshal([]byte(credentialsJSON), &credentials); err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Failed to unmarshal credentials: %v", err))
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to unmarshal credentials",
+				definitions.LogKeyError, err,
+			)
 
 			return nil, err
 		}
@@ -338,7 +358,10 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 	if len(user.Credentials) > 0 {
 		credentialsJSON, err := jsoniter.ConfigFastest.Marshal(user.Credentials)
 		if err != nil {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Failed to marshal credentials",
+				definitions.LogKeyError, err,
+			)
 
 			return err
 		}
@@ -358,7 +381,10 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 
 	cmds, err := pipe.Exec(dCtx)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Failed to store WebAuthn user to redis",
+			definitions.LogKeyError, err,
+		)
 
 		return err
 	}
@@ -379,7 +405,11 @@ func GetUserAccountFromCache(ctx context.Context, username string, guid string) 
 
 	accountName, err = LookupUserAccountFromRedis(ctx, username)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Failed to get user account from cache",
+			definitions.LogKeyError, err,
+		)
 	}
 
 	if accountName == "" {
@@ -397,7 +427,10 @@ func ResolveAccountIdentifier(ctx context.Context, identifier string, guid strin
 	// Try to resolve username -> account name mapping
 	accountName, err = LookupUserAccountFromRedis(ctx, identifier)
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Failed to resolve account identifier",
+			definitions.LogKeyError, err)
 	}
 
 	// If no mapping exists, assume the provided identifier is already an account name

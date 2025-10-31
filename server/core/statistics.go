@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func getCounterValue(metric *prometheus.CounterVec, lvs ...string) float64 {
 	dtoMetric := &dto.Metric{}
 
 	if err := metric.WithLabelValues(lvs...).Write(dtoMetric); err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Unable to get counter value", definitions.LogKeyError, err)
 
 		return 0
 	}
@@ -77,7 +78,7 @@ func LoadStatsFromRedis(ctx context.Context) {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Unable to load status from Redis", definitions.LogKeyError, err)
 		return
 	}
 
@@ -88,7 +89,11 @@ func LoadStatsFromRedis(ctx context.Context) {
 	for i, cmd := range cmds {
 		hgetCmd, ok := cmd.(*redis.StringCmd)
 		if !ok {
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, "Unexpected command type in pipeline result")
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Unexpected command type in pipeline result",
+				definitions.LogKeyError, fmt.Errorf("unexpected command type: %T", cmd),
+			)
+
 			continue
 		}
 
@@ -99,7 +104,8 @@ func LoadStatsFromRedis(ctx context.Context) {
 				return
 			}
 
-			level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+			level.Error(log.Logger).Log(definitions.LogKeyMsg, "Unexpected HGET comannd result", definitions.LogKeyError, err)
+
 			return
 		}
 
@@ -128,7 +134,8 @@ func SaveStatsToRedis(ctx context.Context) {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Execute write pipeline failed", definitions.LogKeyError, err)
+
 		return
 	}
 

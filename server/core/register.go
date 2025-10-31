@@ -795,7 +795,11 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 			if _, err = rediscli.GetClient().GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-				level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Failed to purge user from cache",
+					definitions.LogKeyError, err,
+				)
 
 				break
 			} else {

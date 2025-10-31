@@ -884,30 +884,7 @@ var (
 	})
 )
 
-// MeasureCPU is a function that continuously measures and sets the CPU usage (utilization) percentages.
-//
-// This function runs indefinitely in a loop and keeps monitoring the CPU utilization and sets the calculated utilization in 'cpuGauge' variable,
-// until an event of cancellation comes from the passed context 'ctx'.
-//
-// The function uses 'cpu.PercentWithContext' function under the hood which returns the used CPU percentages.
-// It waits for one second 'time.Second', during each iteration and ignores (does not calculate) CPU percentages for idle or sleeping processes
-// (false value passed as last argument to 'cpu.PercentWithContext' function says to not calculate the idle time).
-//
-// 'ctx.Done()' is used as a form of cancellation signal, it unblocks when the 'ctx' is cancelled. Once such cancellation event happens, the function
-// ends (returns), effectively stopping the CPU measurement.
-//
-// If there is any error while measuring the CPU usage, it gets logged with level error using 'level.Error' method,
-// and the function stops thereafter.
-//
-// If 'cpu.PercentWithContext' reports CPU usage, only the first measure (percent[0]) is considered (if available).
-// If no measure is available, nothing is set in this iteration.
-//
-// The gauge 'cpuGauge', is used to store the computed CPU usage.
-//
-// Parameters:
-// - ctx (context.Context) : Context to handle cancellation.
-//
-// Note: This function doesn't return anything.
+// MeasureCPU monitors and calculates CPU usage statistics at periodic intervals until the provided context is canceled.
 func MeasureCPU(ctx context.Context) {
 	for {
 		select {
@@ -918,7 +895,10 @@ func MeasureCPU(ctx context.Context) {
 
 			newCpu, err := cpu.Get()
 			if err != nil {
-				level.Error(log.Logger).Log(definitions.LogKeyMsg, err)
+				level.Error(log.Logger).Log(
+					definitions.LogKeyMsg, "Failed to get CPU usage statistics",
+					definitions.LogKeyError, err,
+				)
 
 				return
 			}

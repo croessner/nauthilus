@@ -427,6 +427,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyUsername, request.Username,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token generation failed: authentication failed",
+				definitions.LogKeyError, "username or password is incorrect",
 			)
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
@@ -442,7 +443,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyUsername, request.Username,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token generation failed",
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 
@@ -463,7 +464,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 					definitions.LogKeyUsername, request.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
 					definitions.LogKeyMsg, "JWT refresh token generation failed",
-					"error", err,
+					definitions.LogKeyError, err,
 				)
 			} else {
 				response.RefreshToken = refreshToken
@@ -478,7 +479,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 					definitions.LogKeyUsername, request.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
 					definitions.LogKeyMsg, "Failed to store JWT token in Redis",
-					"error", err,
+					definitions.LogKeyError, err,
 				)
 			}
 
@@ -489,7 +490,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 						definitions.LogKeyUsername, request.Username,
 						definitions.LogKeyClientIP, ctx.ClientIP(),
 						definitions.LogKeyMsg, "Failed to store JWT refresh token in Redis",
-						"error", err,
+						definitions.LogKeyError, err,
 					)
 				}
 			}
@@ -529,6 +530,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			definitions.LogKeyUsername, auth.GetUsername(),
 			definitions.LogKeyClientIP, auth.GetClientIP(),
 			definitions.LogKeyMsg, "JWT token generation failed: authentication failed",
+			definitions.LogKeyError, "username or password is incorrect",
 		)
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication failed"})
 
@@ -557,7 +559,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			definitions.LogKeyUsername, auth.GetUsername(),
 			definitions.LogKeyClientIP, auth.GetClientIP(),
 			definitions.LogKeyMsg, "JWT token generation failed",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 
@@ -578,7 +580,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyUsername, auth.GetUsername(),
 				definitions.LogKeyClientIP, auth.GetClientIP(),
 				definitions.LogKeyMsg, "JWT refresh token generation failed",
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 		} else {
 			response.RefreshToken = refreshToken
@@ -593,7 +595,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 				definitions.LogKeyUsername, auth.GetUsername(),
 				definitions.LogKeyClientIP, auth.GetClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT token in Redis",
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 		}
 
@@ -604,7 +606,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 					definitions.LogKeyUsername, auth.GetUsername(),
 					definitions.LogKeyClientIP, auth.GetClientIP(),
 					definitions.LogKeyMsg, "Failed to store JWT refresh token in Redis",
-					"error", err,
+					definitions.LogKeyError, err,
 				)
 			}
 		}
@@ -721,6 +723,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "JWT token refresh failed: user not found in configuration",
+				definitions.LogKeyError, "user not found in configuration",
 			)
 			mdauth.ApplyAuthBackoffOnFailure(ctx)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
@@ -737,7 +740,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 			definitions.LogKeyUsername, claims.Subject,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT token refresh failed",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate new token"})
 
@@ -752,7 +755,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 			definitions.LogKeyUsername, claims.Subject,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMsg, "JWT refresh token generation failed",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate new refresh token"})
 
@@ -767,7 +770,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT token in Redis",
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 		}
 
@@ -777,7 +780,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
 				definitions.LogKeyMsg, "Failed to store JWT refresh token in Redis",
-				"error", err,
+				definitions.LogKeyError, err,
 			)
 		}
 	}

@@ -188,7 +188,7 @@ func collectMetricsFromClient(ctx context.Context, client redis.UniversalClient,
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Failed to get Redis INFO",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return
@@ -321,7 +321,7 @@ func collectLatencyMetrics(ctx context.Context, client redis.UniversalClient, in
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Failed to parse Redis LATENCY response",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 
 		return

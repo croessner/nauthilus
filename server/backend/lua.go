@@ -426,7 +426,8 @@ func processError(err error, luaRequest *bktype.LuaRequest, logs *lualib.CustomL
 	level.Error(log.Logger).Log(
 		definitions.LogKeyGUID, luaRequest.Session,
 		"script", config.GetFile().GetLuaScriptPath(),
-		definitions.LogKeyMsg, err,
+		definitions.LogKeyMsg, "lua_backend_error",
+		definitions.LogKeyError, err,
 	)
 
 	luaRequest.LuaReplyChan <- &lualib.LuaBackendResult{

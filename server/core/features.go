@@ -331,7 +331,11 @@ func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *ato
 			dnsResolverErr.Store(true)
 		}
 
-		level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "RBL check failed",
+			definitions.LogKeyError, err,
+		)
 	}
 }
 

@@ -184,7 +184,7 @@ func (DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 	if err := http2.ConfigureServer(srv, h2Server); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Failed to configure HTTP/2 server",
-			"error", err,
+			definitions.LogKeyError, err,
 		)
 	} else {
 		level.Info(log.Logger).Log(
@@ -503,11 +503,14 @@ type customWriter struct {
 func (w *customWriter) Write(data []byte) (int, error) {
 	switch w.lvl {
 	case slog.LevelDebug:
-		_ = level.Debug(w.logger).Log("msg", string(data))
+		_ = level.Debug(w.logger).Log(definitions.LogKeyMsg, string(data))
 	case slog.LevelError:
-		_ = level.Error(w.logger).Log("msg", string(data))
+		_ = level.Error(w.logger).Log(
+			definitions.LogKeyMsg, "Gin error",
+			definitions.LogKeyError, string(data),
+		)
 	default:
-		_ = level.Info(w.logger).Log("msg", string(data))
+		_ = level.Info(w.logger).Log(definitions.LogKeyMsg, string(data))
 	}
 
 	return len(data), nil
@@ -515,7 +518,11 @@ func (w *customWriter) Write(data []byte) (int, error) {
 
 // Helper: log and exit with code 1 (preserves legacy behavior)
 func logAndExit(message string, err error) {
-	level.Error(log.Logger).Log(definitions.LogKeyMsg, message, definitions.LogKeyMsg, err)
+	level.Error(log.Logger).Log(
+		definitions.LogKeyMsg, message,
+		definitions.LogKeyMsg, "Exiting",
+		definitions.LogKeyError, err,
+	)
 	os.Exit(1)
 }
 

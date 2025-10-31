@@ -240,6 +240,7 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "missing routing context keys",
+				definitions.LogKeyError, "missing routing context keys",
 				"category", cat,
 				"service", svc,
 			)

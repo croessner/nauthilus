@@ -81,7 +81,10 @@ func init() {
 // logError logs an error message along with the provided error if err is not nil.
 func logError(message string, err error) {
 	if err != nil {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("%s: %v\n", message, err))
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, message,
+			definitions.LogKeyError, err,
+		)
 	}
 }
 

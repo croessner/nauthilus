@@ -183,7 +183,8 @@ func setTimeZone() {
 		if time.Local, err = time.LoadLocation(tz); err != nil {
 			if log.Logger != nil {
 				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Error loading location '%s': %v", tz, err),
+					definitions.LogKeyMsg, fmt.Sprintf("Error loading timezone location '%s'", tz),
+					definitions.LogKeyError, err,
 				)
 			} else {
 				stdlog.Printf("Error loading location '%s': %v", tz, err)
@@ -536,7 +537,8 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 
 	if err := config.ReloadConfigFile(); err != nil {
 		level.Error(log.Logger).Log(
-			definitions.LogKeyMsg, err,
+			definitions.LogKeyMsg, "Unable to reload configuration",
+			definitions.LogKeyError, err,
 		)
 	} else {
 		log.SetupLogging(
@@ -553,7 +555,7 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 	if err := setupLuaScripts(); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Unable to setup Lua scripts",
-			definitions.LogKeyMsg, err,
+			definitions.LogKeyError, err,
 		)
 	}
 
@@ -795,8 +797,9 @@ func startStatsLoop(ctx context.Context, ticker *time.Ticker) error {
 // logBackendServerError logs an error when a backend server is down, with the server details and error message as context.
 func logBackendServerError(server *config.BackendServer, err error) {
 	level.Error(log.Logger).Log(
-		definitions.LogKeyMsg, fmt.Sprintf("Backend server failed: %s:%d (%s) - Error: %v",
-			server.Host, server.Port, server.Protocol, err),
+		definitions.LogKeyMsg, fmt.Sprintf("Backend server failed: %s:%d (%s)",
+			server.Host, server.Port, server.Protocol),
+		definitions.LogKeyError, err,
 		definitions.LogKeyBackendServer, server,
 	)
 }
@@ -935,7 +938,10 @@ func handleMonitoringError(err error) {
 			level.Info(log.Logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
 		}
 	} else if stderrors.Is(err, errors.ErrMonitoringBackendServersEmpty) {
-		level.Error(log.Logger).Log(definitions.LogKeyMsg, "Monitoring backend servers are not configured")
+		level.Error(log.Logger).Log(
+			definitions.LogKeyMsg, "Monitoring backend servers are not configured",
+			definitions.LogKeyError, err,
+		)
 	}
 }
 
