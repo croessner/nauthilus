@@ -21,6 +21,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -36,7 +38,10 @@ func RedisMGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.MGet(ctx, keys...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.MGet(dCtx, keys...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -86,7 +91,10 @@ func RedisMSet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.MSet(ctx, kvpairs...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.MSet(dCtx, kvpairs...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -108,7 +116,10 @@ func RedisKeys(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.Keys(ctx, pattern)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.Keys(dCtx, pattern)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -137,8 +148,11 @@ func RedisScan(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
 		// Use the Scan command to get a batch of keys
-		keys, cursor, err := client.Scan(ctx, cursor, match, count).Result()
+		keys, cursor, err := client.Scan(dCtx, cursor, match, count).Result()
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

@@ -26,58 +26,63 @@ import (
 )
 
 var (
-	mu sync.Mutex
+	mu   sync.Mutex
+	once sync.Once
 
 	// Logger is used for all messages that are printed to stdout
 	Logger *slog.Logger
 )
 
 // SetupLogging initializes the global "Logger" object.
+// It is idempotent and configures the logger only on the first call.
 func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
-	mu.Lock()
-	defer mu.Unlock()
+	// Ensure only a single initialization across the whole process.
+	once.Do(func() {
+		mu.Lock()
+		defer mu.Unlock()
 
-	// Map configLogLevel to slog level
-	var minLevel slog.Level
+		// Map configLogLevel to slog level
+		var minLevel slog.Level
 
-	switch configLogLevel {
-	case definitions.LogLevelNone:
-		// Level value is irrelevant when output is discarded; keep a sane default
-		minLevel = slog.LevelInfo
-	case definitions.LogLevelError:
-		minLevel = slog.LevelError
-	case definitions.LogLevelWarn:
-		minLevel = slog.LevelWarn
-	case definitions.LogLevelInfo:
-		minLevel = slog.LevelInfo
-	case definitions.LogLevelDebug:
-		minLevel = slog.LevelDebug
-	default:
-		minLevel = slog.LevelInfo
-	}
+		switch configLogLevel {
+		case definitions.LogLevelNone:
+			// Level value is irrelevant when output is discarded; keep a sane default
+			minLevel = slog.LevelInfo
+		case definitions.LogLevelError:
+			minLevel = slog.LevelError
+		case definitions.LogLevelWarn:
+			minLevel = slog.LevelWarn
+		case definitions.LogLevelInfo:
+			minLevel = slog.LevelInfo
+		case definitions.LogLevelDebug:
+			minLevel = slog.LevelDebug
+		default:
+			minLevel = slog.LevelInfo
+		}
 
-	handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource}
+		handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource}
 
-	// Choose output target: for LogLevelNone, discard everything using io.Discard
-	var out io.Writer = os.Stdout
-	if configLogLevel == definitions.LogLevelNone {
-		out = io.Discard
-	}
+		// Choose output target: for LogLevelNone, discard everything using io.Discard
+		var out io.Writer = os.Stdout
+		if configLogLevel == definitions.LogLevelNone {
+			out = io.Discard
+		}
 
-	var handler slog.Handler
+		var handler slog.Handler
 
-	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
+		termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
 
-	if formatJSON {
-		// JSON output should never be colored
-		handler = slog.NewJSONHandler(out, handlerOpts)
-	} else if useColor && configLogLevel != definitions.LogLevelNone {
-		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
-		colors := logcolor.ThemeColorMap(termTheme)
-		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
-	} else {
-		handler = slog.NewTextHandler(out, handlerOpts)
-	}
+		if formatJSON {
+			// JSON output should never be colored
+			handler = slog.NewJSONHandler(out, handlerOpts)
+		} else if useColor && configLogLevel != definitions.LogLevelNone {
+			// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
+			colors := logcolor.ThemeColorMap(termTheme)
+			handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
+		} else {
+			handler = slog.NewTextHandler(out, handlerOpts)
+		}
 
-	Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
+		Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
+	})
 }

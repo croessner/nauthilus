@@ -24,7 +24,9 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/redis/go-redis/v9"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -70,10 +72,19 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 		// Choose fallback client based on mode
 		var fallback redis.UniversalClient
+		var dCtx context.Context
+		var cancel context.CancelFunc
+
 		if mode == "read" {
 			fallback = rediscli.GetClient().GetReadHandle()
+			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx)
+
+			defer cancel()
 		} else {
 			fallback = rediscli.GetClient().GetWriteHandle()
+			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx)
+
+			defer cancel()
 		}
 
 		client := getRedisConnectionWithFallback(L, fallback)
@@ -114,56 +125,56 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					exp = time.Duration(lua.LVAsNumber(v)) * time.Second
 				}
 
-				pipe.Set(ctx, key, val, exp)
+				pipe.Set(dCtx, key, val, exp)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "ping":
-				pipe.Ping(ctx)
+				pipe.Ping(dCtx)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "incr":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.Incr(ctx, key)
+				pipe.Incr(dCtx, key)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "get":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.Get(ctx, key)
+				pipe.Get(dCtx, key)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "del":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.Del(ctx, key)
+				pipe.Del(dCtx, key)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "expire":
 				key := rowTbl.RawGetInt(2).String()
 				sec := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 
-				pipe.Expire(ctx, key, time.Duration(sec)*time.Second)
+				pipe.Expire(dCtx, key, time.Duration(sec)*time.Second)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "hget":
 				hash := rowTbl.RawGetInt(2).String()
 				field := rowTbl.RawGetInt(3).String()
 
-				pipe.HGet(ctx, hash, field)
+				pipe.HGet(dCtx, hash, field)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "hgetall":
 				hash := rowTbl.RawGetInt(2).String()
 
-				pipe.HGetAll(ctx, hash)
+				pipe.HGetAll(dCtx, hash)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "hexists":
 				hash := rowTbl.RawGetInt(2).String()
 				field := rowTbl.RawGetInt(3).String()
 
-				pipe.HExists(ctx, hash, field)
+				pipe.HExists(dCtx, hash, field)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "hset":
@@ -171,7 +182,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				field := rowTbl.RawGetInt(3).String()
 				val, _ := convert.LuaValue(rowTbl.RawGetInt(4))
 
-				pipe.HSet(ctx, hash, field, val)
+				pipe.HSet(dCtx, hash, field, val)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "hincrby":
@@ -179,27 +190,27 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				field := rowTbl.RawGetInt(3).String()
 				inc := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.HIncrBy(ctx, hash, field, inc)
+				pipe.HIncrBy(dCtx, hash, field, inc)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "sadd":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.SAdd(ctx, key, member)
+				pipe.SAdd(dCtx, key, member)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "sismember":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.SIsMember(ctx, key, member)
+				pipe.SIsMember(dCtx, key, member)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "smembers":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.SMembers(ctx, key)
+				pipe.SMembers(dCtx, key)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zadd":
@@ -207,14 +218,14 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				score := float64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				member := rowTbl.RawGetInt(4).String()
 
-				pipe.ZAdd(ctx, key, redis.Z{Score: score, Member: member})
+				pipe.ZAdd(dCtx, key, redis.Z{Score: score, Member: member})
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zrem":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.ZRem(ctx, key, member)
+				pipe.ZRem(dCtx, key, member)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zremrangebyscore":
@@ -222,7 +233,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				minStr := rowTbl.RawGetInt(3).String()
 				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZRemRangeByScore(ctx, key, minStr, maxStr)
+				pipe.ZRemRangeByScore(dCtx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zremrangebyrank":
@@ -230,7 +241,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.ZRemRangeByRank(ctx, key, start, stop)
+				pipe.ZRemRangeByRank(dCtx, key, start, stop)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "zcount":
@@ -238,14 +249,14 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				minStr := rowTbl.RawGetInt(3).String()
 				maxStr := rowTbl.RawGetInt(4).String()
 
-				pipe.ZCount(ctx, key, minStr, maxStr)
+				pipe.ZCount(dCtx, key, minStr, maxStr)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zscore":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.ZScore(ctx, key, member)
+				pipe.ZScore(dCtx, key, member)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zincrby":
@@ -253,14 +264,14 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				score := float64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				member := rowTbl.RawGetInt(4).String()
 
-				pipe.ZIncrBy(ctx, key, score, member)
+				pipe.ZIncrBy(dCtx, key, score, member)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			// Additional supported commands
 			case "exists":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.Exists(ctx, key)
+				pipe.Exists(dCtx, key)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "hdel":
@@ -288,13 +299,13 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					fields = []string{""}
 				}
 
-				pipe.HDel(ctx, hash, fields...)
+				pipe.HDel(dCtx, hash, fields...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "hlen":
 				hash := rowTbl.RawGetInt(2).String()
 
-				pipe.HLen(ctx, hash)
+				pipe.HLen(dCtx, hash)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "hincrbyfloat":
@@ -302,14 +313,14 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				field := rowTbl.RawGetInt(3).String()
 				inc := float64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.HIncrByFloat(ctx, hash, field, inc)
+				pipe.HIncrByFloat(dCtx, hash, field, inc)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "rename":
 				oldKey := rowTbl.RawGetInt(2).String()
 				newKey := rowTbl.RawGetInt(3).String()
 
-				pipe.Rename(ctx, oldKey, newKey)
+				pipe.Rename(dCtx, oldKey, newKey)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "srem":
@@ -332,27 +343,27 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				pipe.SRem(ctx, key, members...)
+				pipe.SRem(dCtx, key, members...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "scard":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.SCard(ctx, key)
+				pipe.SCard(dCtx, key)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zrank":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.ZRank(ctx, key, member)
+				pipe.ZRank(dCtx, key, member)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zrevrank":
 				key := rowTbl.RawGetInt(2).String()
 				member := rowTbl.RawGetInt(3).String()
 
-				pipe.ZRevRank(ctx, key, member)
+				pipe.ZRevRank(dCtx, key, member)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zrange":
@@ -360,7 +371,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.ZRange(ctx, key, start, stop)
+				pipe.ZRange(dCtx, key, start, stop)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zrevrange":
@@ -368,7 +379,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.ZRevRange(ctx, key, start, stop)
+				pipe.ZRevRange(dCtx, key, start, stop)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "zrangebyscore":
@@ -388,7 +399,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				pipe.ZRangeByScore(ctx, key, opts)
+				pipe.ZRangeByScore(dCtx, key, opts)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "lpush":
@@ -415,7 +426,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					values = []any{""}
 				}
 
-				pipe.LPush(ctx, key, values...)
+				pipe.LPush(dCtx, key, values...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "rpush":
@@ -442,19 +453,19 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					values = []any{""}
 				}
 
-				pipe.RPush(ctx, key, values...)
+				pipe.RPush(dCtx, key, values...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "lpop":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.LPop(ctx, key)
+				pipe.LPop(dCtx, key)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "rpop":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.RPop(ctx, key)
+				pipe.RPop(dCtx, key)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "lrange":
@@ -462,13 +473,13 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				start := int64(lua.LVAsNumber(rowTbl.RawGetInt(3)))
 				stop := int64(lua.LVAsNumber(rowTbl.RawGetInt(4)))
 
-				pipe.LRange(ctx, key, start, stop)
+				pipe.LRange(dCtx, key, start, stop)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "llen":
 				key := rowTbl.RawGetInt(2).String()
 
-				pipe.LLen(ctx, key)
+				pipe.LLen(dCtx, key)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "mget":
@@ -492,7 +503,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					j++
 				}
 
-				pipe.MGet(ctx, keys...)
+				pipe.MGet(dCtx, keys...)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "mset":
@@ -516,13 +527,13 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					j++
 				}
 
-				pipe.MSet(ctx, kv...)
+				pipe.MSet(dCtx, kv...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "keys":
 				pattern := rowTbl.RawGetInt(2).String()
 
-				pipe.Keys(ctx, pattern)
+				pipe.Keys(dCtx, pattern)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "scan":
@@ -561,7 +572,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				pipe.PFAdd(ctx, key, values...)
+				pipe.PFAdd(dCtx, key, values...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "pfcount":
@@ -582,7 +593,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				pipe.PFCount(ctx, keys2...)
+				pipe.PFCount(dCtx, keys2...)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 			case "pfmerge":
@@ -605,7 +616,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					}
 				}
 
-				pipe.PFMerge(ctx, dest, sources...)
+				pipe.PFMerge(dCtx, dest, sources...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			case "evalsha", "run_script":
@@ -632,7 +643,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 					break
 				}
 
-				pipe.EvalSha(ctx, sha1, keys, args...)
+				pipe.EvalSha(dCtx, sha1, keys, args...)
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 			default:
@@ -651,7 +662,7 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		captured, execErr := pipe.Exec(ctx)
+		captured, execErr := pipe.Exec(dCtx)
 		if execErr != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(execErr.Error()))

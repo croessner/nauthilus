@@ -24,6 +24,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -88,13 +90,16 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	defer cancel()
+
 	if uploadScriptName != "" {
 		script = uploads.Get(uploadScriptName)
 		if script == "" {
 			return fmt.Errorf("could not find script with name %s", uploadScriptName), nil
 		}
 
-		result, err = client.EvalSha(ctx, script, keys, evalArgs...).Result()
+		result, err = client.EvalSha(dCtx, script, keys, evalArgs...).Result()
 
 		// Handle CROSSSLOT errors
 		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
@@ -104,10 +109,10 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 			// Try executing again with modified keys
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.EvalSha(ctx, script, keys, evalArgs...).Result()
+			result, err = client.EvalSha(dCtx, script, keys, evalArgs...).Result()
 		}
 	} else {
-		result, err = client.Eval(ctx, script, keys, evalArgs...).Result()
+		result, err = client.Eval(dCtx, script, keys, evalArgs...).Result()
 
 		// Handle CROSSSLOT errors
 		if err != nil && strings.Contains(err.Error(), "CROSSSLOT Keys in request don't hash to the same slot") {
@@ -117,7 +122,7 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 			// Try executing again with modified keys
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.Eval(ctx, script, keys, evalArgs...).Result()
+			result, err = client.Eval(dCtx, script, keys, evalArgs...).Result()
 		}
 	}
 
@@ -132,7 +137,10 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 func uploadRedisScript(ctx context.Context, client redis.UniversalClient, script string) (any, error) {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	sha1, err := client.ScriptLoad(ctx, script).Result()
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	defer cancel()
+
+	sha1, err := client.ScriptLoad(dCtx, script).Result()
 	if err != nil {
 		return nil, err
 	}

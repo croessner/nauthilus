@@ -6,6 +6,8 @@ import (
 
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -24,7 +26,10 @@ func RedisZAdd(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.ZAdd(ctx, key, redisZSet...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.ZAdd(dCtx, key, redisZSet...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -89,7 +94,10 @@ func RedisZRange(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZRange(ctx, key, start, stop)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZRange(dCtx, key, start, stop)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -119,7 +127,10 @@ func RedisZRevRange(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZRevRange(ctx, key, start, stop)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZRevRange(dCtx, key, start, stop)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -169,7 +180,10 @@ func RedisZRangeByScore(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZRangeByScore(ctx, key, &zrangeOpts)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZRangeByScore(dCtx, key, &zrangeOpts)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -210,7 +224,10 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.ZRem(ctx, key, members...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.ZRem(dCtx, key, members...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -235,7 +252,10 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.ZRemRangeByScore(ctx, key, minScore, maxScore)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.ZRemRangeByScore(dCtx, key, minScore, maxScore)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -261,7 +281,10 @@ func RedisZRemRangeByRank(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.ZRemRangeByRank(ctx, key, int64(start), int64(stop))
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.ZRemRangeByRank(dCtx, key, int64(start), int64(stop))
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -285,7 +308,10 @@ func RedisZRank(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZRank(ctx, key, member)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZRank(dCtx, key, member)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -311,7 +337,10 @@ func RedisZCount(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZCount(ctx, key, minScore, maxScore)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZCount(dCtx, key, minScore, maxScore)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -336,7 +365,10 @@ func RedisZScore(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZScore(ctx, key, member)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZScore(dCtx, key, member)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -361,7 +393,10 @@ func RedisZRevRank(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.ZRevRank(ctx, key, member)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.ZRevRank(dCtx, key, member)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -387,7 +422,10 @@ func RedisZIncrBy(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.ZIncrBy(ctx, key, increment, member)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.ZIncrBy(dCtx, key, increment, member)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

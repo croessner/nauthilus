@@ -269,8 +269,11 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	}
 
 	// Use Lua script to add to sorted set, count elements, and set expirations atomically
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
 	result, err := rediscli.ExecuteScript(
-		ctx,
+		dCtx,
 		"ZAddCountAndExpire",
 		rediscli.LuaScripts["ZAddCountAndExpire"],
 		[]string{redisKey + flag, t.getRedisKey(ipAddress)},
@@ -279,6 +282,7 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		label,
 		int(tolerateTTL.Seconds()),
 	)
+	cancel()
 
 	if err != nil {
 		t.logRedisError(ipAddress, err)
@@ -354,8 +358,10 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 
 		// Execute the adaptive toleration calculation script
 		stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
 		result, err := rediscli.ExecuteScript(
-			ctx,
+			dCtx,
 			"CalculateAdaptiveToleration",
 			rediscli.LuaScripts["CalculateAdaptiveToleration"],
 			[]string{redisKey},
@@ -365,6 +371,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 			pctTolerated,
 			adaptiveEnabled,
 		)
+		cancel()
 
 		if err != nil {
 			t.logRedisError(ipAddress, err)
@@ -473,20 +480,31 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 			}
 
 			for _, flag := range []string{":P", ":N"} {
-				keysExists := rediscli.GetClient().GetReadHandle().Exists(t.houseKeeperContext, redisKey+flag).Val()
+				// Check if key exists with a read-deadline context
+				stats.GetMetrics().GetRedisReadCounter().Inc()
+
+				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext)
+				keysExists := rediscli.GetClient().GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
+				cancelRead()
+
 				if keysExists == 0 {
 					t.getHouseKeeper().removeIPAddress(ipAddress)
 
 					continue
 				}
 
+				// Remove old entries with a write-deadline context
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+				dCtxWrite, cancelWrite := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext)
 				removed, err = rediscli.GetClient().GetWriteHandle().ZRemRangeByScore(
-					t.houseKeeperContext,
+					dCtxWrite,
 					redisKey+flag,
 					"-inf",
 					strconv.FormatInt(now-int64(tolerateTTL), 10),
 				).Result()
+				cancelWrite()
+
 				if err != nil {
 					t.logRedisError(ipAddress, err)
 
@@ -513,7 +531,10 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 
 	ipMap := make(map[string]int64)
 
-	result, err = rediscli.GetClient().GetReadHandle().HGetAll(ctx, t.getRedisKey(ipAddress)).Result()
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	result, err = rediscli.GetClient().GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
+	cancel()
+
 	if err != nil {
 		return ipMap
 	}

@@ -21,6 +21,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -45,7 +47,10 @@ func RedisLPush(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.LPush(ctx, key, values...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.LPush(dCtx, key, values...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -80,7 +85,10 @@ func RedisRPush(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.RPush(ctx, key, values...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.RPush(dCtx, key, values...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -102,7 +110,10 @@ func RedisLPop(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.LPop(ctx, key)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.LPop(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -124,7 +135,10 @@ func RedisRPop(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.RPop(ctx, key)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.RPop(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -148,7 +162,10 @@ func RedisLRange(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.LRange(ctx, key, start, stop)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.LRange(dCtx, key, start, stop)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -175,7 +192,10 @@ func RedisLLen(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.LLen(ctx, key)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.LLen(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

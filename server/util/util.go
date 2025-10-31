@@ -39,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/svcctx"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -613,4 +614,30 @@ func NewHTTPClient() *http.Client {
 	}
 
 	return httpClient
+}
+
+// GetCtxWithDeadlineRedisRead creates a context with a timeout derived from the Redis read timeout configuration.
+// If the provided context is nil, it initializes a new context using svcctx.Get().
+// Returns the derived context and its corresponding cancel function.
+func GetCtxWithDeadlineRedisRead(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = svcctx.Get()
+	}
+
+	dRedisRead := config.GetFile().GetServer().GetTimeouts().GetRedisRead()
+
+	return context.WithTimeout(ctx, dRedisRead)
+}
+
+// GetCtxWithDeadlineRedisWrite creates a context with a timeout derived from the Redis write timeout configuration.
+// If the provided context is nil, it initializes a new context using svcctx.Get().
+// Returns the derived context and its corresponding cancel function.
+func GetCtxWithDeadlineRedisWrite(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = svcctx.Get()
+	}
+
+	dRedisRead := config.GetFile().GetServer().GetTimeouts().GetRedisWrite()
+
+	return context.WithTimeout(ctx, dRedisRead)
 }

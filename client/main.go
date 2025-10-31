@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -522,6 +523,7 @@ func main() {
 		maxPar        = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
 		parProb       = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
 		abortProb     = flag.Float64("abort-prob", 0.0, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
+		progressEvery = flag.Duration("progress-interval", time.Minute, "Progress report interval (e.g. 30s, 1m)")
 	)
 
 	flag.Parse()
@@ -641,8 +643,63 @@ func main() {
 	var toleratedBF int64
 	var aborted int64
 	var totalLatencyNs int64
+	// Min/Max latency in ns
+	var minLatencyNs int64 = math.MaxInt64
+	var maxLatencyNs int64
 
 	start := time.Now()
+
+	// Periodic progress reporter (only if interval > 0)
+	if *progressEvery > 0 {
+		go func() {
+			ticker := time.NewTicker(*progressEvery)
+			defer ticker.Stop()
+
+			prevTotal := int64(0)
+			prevTime := start
+
+			for {
+				select {
+				case <-ticker.C:
+					now := time.Now()
+					dt := now.Sub(prevTime).Seconds()
+					if dt <= 0 {
+						dt = 1
+					}
+
+					t := atomic.LoadInt64(&total)
+					m := atomic.LoadInt64(&matched)
+					mm := atomic.LoadInt64(&mismatched)
+					he := atomic.LoadInt64(&httpErrs)
+					ab := atomic.LoadInt64(&aborted)
+					sk := atomic.LoadInt64(&skipped)
+					bf := atomic.LoadInt64(&toleratedBF)
+					tls := atomic.LoadInt64(&totalLatencyNs)
+					mn := time.Duration(atomic.LoadInt64(&minLatencyNs))
+					mx := time.Duration(atomic.LoadInt64(&maxLatencyNs))
+
+					// periodical RPS since last report
+					delta := t - prevTotal
+					rps := float64(delta) / dt
+
+					var avg time.Duration
+					if t > 0 {
+						avg = time.Duration(tls / t)
+					}
+
+					elapsed := now.Sub(start)
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s\n",
+						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx,
+					)
+
+					prevTotal = t
+					prevTime = now
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Configure brute-force header name (can be overridden via env BRUTEFORCE_HEADER_NAME)
 	bfHeaderName := strings.TrimSpace(os.Getenv("BRUTEFORCE_HEADER_NAME"))
@@ -732,6 +789,29 @@ func main() {
 
 			atomic.AddInt64(&totalLatencyNs, int64(lat))
 			atomic.AddInt64(&total, 1)
+
+			// Update min/max latency atomically
+			lns := int64(lat)
+			// min
+			for {
+				old := atomic.LoadInt64(&minLatencyNs)
+				if lns >= old {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&minLatencyNs, old, lns) {
+					break
+				}
+			}
+			// max
+			for {
+				old := atomic.LoadInt64(&maxLatencyNs)
+				if lns <= old {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&maxLatencyNs, old, lns) {
+					break
+				}
+			}
 
 			if err != nil {
 				// Distinguish simulated aborts from other HTTP errors
@@ -903,6 +983,9 @@ func main() {
 		}
 	}
 
+	// Stop progress reporter
+	cancel()
+
 	dur := time.Since(start)
 
 	fmt.Printf("\nDone in %s\n", dur)
@@ -914,7 +997,15 @@ func main() {
 
 	if total > 0 {
 		avg := time.Duration(totalLatencyNs / total)
-
 		fmt.Printf("avg_latency=%s\n", avg)
+
+		// Print min/max latencies
+		if minLatencyNs != math.MaxInt64 {
+			fmt.Printf("min_latency=%s\n", time.Duration(minLatencyNs))
+		} else {
+			fmt.Printf("min_latency=NA\n")
+		}
+
+		fmt.Printf("max_latency=%s\n", time.Duration(maxLatencyNs))
 	}
 }

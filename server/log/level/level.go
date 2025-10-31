@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"runtime"
 	"runtime/debug"
 	"time"
 )
@@ -124,6 +125,25 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 			}
 		}
 
+		// Point 2: lightweight detection of problematic values to pinpoint callsite
+		if rv, ok := v.(reflect.Value); ok {
+			if !rv.IsValid() {
+				logDetect(k, "invalid reflect.Value")
+			}
+		}
+
+		if _, ok := v.(fmt.Stringer); ok {
+			if isTypedNil(v) { // typed-nil that would panic if String() is called
+				logDetect(k, "typed-nil fmt.Stringer")
+			}
+		}
+
+		if _, ok := v.(fmt.GoStringer); ok {
+			if isTypedNil(v) { // typed-nil that would panic if GoString() is called
+				logDetect(k, "typed-nil fmt.GoStringer")
+			}
+		}
+
 		// Guard against typed-nil values that can make slog.Any panic.
 		if isTypedNil(v) {
 			attrs = append(attrs, slog.String(k, "<nil>"))
@@ -187,4 +207,22 @@ func levelToDefaultMessage(lvl slog.Level) string {
 	default:
 		return "log"
 	}
+}
+
+// logDetect writes a minimal, panic-safe diagnostic line to stderr identifying
+// the callsite and the problematic key when suspicious values are observed.
+// It intentionally avoids invoking any user code (e.g., String()/GoString()).
+func logDetect(key, what string) {
+	defer func() { _ = recover() }()
+	pc, file, line, _ := runtime.Caller(2)
+	fn := runtime.FuncForPC(pc)
+	fnName := "?"
+
+	if fn != nil {
+		fnName = fn.Name()
+	}
+
+	// Keep it one line and simple to make it grep-friendly.
+	fmt.Fprintf(os.Stderr, "[logger-detect] %s key=%q issue=%s at %s:%d (%s)\n",
+		time.Now().Format(time.RFC3339Nano), key, what, file, line, fnName)
 }

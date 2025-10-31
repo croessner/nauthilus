@@ -22,6 +22,8 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -39,7 +41,10 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		err := convert.StringCmd(client.HGet(ctx, key, field), valueType, L)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		err := convert.StringCmd(client.HGet(dCtx, key, field), valueType, L)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -82,7 +87,10 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.HSet(ctx, key, kvpairs...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.HSet(dCtx, key, kvpairs...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -117,7 +125,10 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.HDel(ctx, key, fields...)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.HDel(dCtx, key, fields...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -139,7 +150,10 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.HLen(ctx, key)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.HLen(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -161,7 +175,10 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.HGetAll(ctx, key)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.HGetAll(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -191,7 +208,10 @@ func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.HIncrBy(ctx, key, field, increment)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.HIncrBy(dCtx, key, field, increment)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -215,7 +235,10 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		cmd := client.HIncrByFloat(ctx, key, field, increment)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		defer cancel()
+
+		cmd := client.HIncrByFloat(dCtx, key, field, increment)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -238,7 +261,10 @@ func RedisHExists(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		cmd := client.HExists(ctx, key, field)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		cmd := client.HExists(dCtx, key, field)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
