@@ -35,6 +35,12 @@ var (
 )
 
 func GetClient() Client {
+	// If a client (e.g., a test client) has already been set, return it directly
+	// to avoid initializing a real client that depends on global configuration.
+	if client != nil {
+		return client
+	}
+
 	initClient.Do(func() {
 		if client == nil {
 			client = NewClient()

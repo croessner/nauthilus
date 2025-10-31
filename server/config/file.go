@@ -57,6 +57,11 @@ func GetFile() File {
 	return file
 }
 
+// IsFileLoaded reports whether a FileSettings configuration has been loaded.
+func IsFileLoaded() bool {
+	return file != nil
+}
+
 // SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
 func SetTestFile(testFile File) {
 	file = testFile

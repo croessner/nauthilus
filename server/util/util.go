@@ -618,26 +618,40 @@ func NewHTTPClient() *http.Client {
 
 // GetCtxWithDeadlineRedisRead creates a context with a timeout derived from the Redis read timeout configuration.
 // If the provided context is nil, it initializes a new context using svcctx.Get().
+// When configuration is not loaded (e.g., in unit tests), it falls back to a sane default timeout.
 // Returns the derived context and its corresponding cancel function.
 func GetCtxWithDeadlineRedisRead(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = svcctx.Get()
 	}
 
-	dRedisRead := config.GetFile().GetServer().GetTimeouts().GetRedisRead()
+	var timeout time.Duration
+	if config.IsFileLoaded() {
+		timeout = config.GetFile().GetServer().GetTimeouts().GetRedisRead()
+	} else {
+		// Default for tests or when config is not initialized
+		timeout = 5 * time.Second
+	}
 
-	return context.WithTimeout(ctx, dRedisRead)
+	return context.WithTimeout(ctx, timeout)
 }
 
 // GetCtxWithDeadlineRedisWrite creates a context with a timeout derived from the Redis write timeout configuration.
 // If the provided context is nil, it initializes a new context using svcctx.Get().
+// When configuration is not loaded (e.g., in unit tests), it falls back to a sane default timeout.
 // Returns the derived context and its corresponding cancel function.
 func GetCtxWithDeadlineRedisWrite(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = svcctx.Get()
 	}
 
-	dRedisRead := config.GetFile().GetServer().GetTimeouts().GetRedisWrite()
+	var timeout time.Duration
+	if config.IsFileLoaded() {
+		timeout = config.GetFile().GetServer().GetTimeouts().GetRedisWrite()
+	} else {
+		// Default for tests or when config is not initialized
+		timeout = 5 * time.Second
+	}
 
-	return context.WithTimeout(ctx, dRedisRead)
+	return context.WithTimeout(ctx, timeout)
 }
