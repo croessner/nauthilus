@@ -15,10 +15,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -638,14 +640,33 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Handle Ctrl+C (SIGINT) and SIGTERM to print results on interrupt
+	var stopFlag int32
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+
+		fmt.Println("\nInterrupt received, stopping...")
+		atomic.StoreInt32(&stopFlag, 1)
+
+		cancel()
+	}()
+
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
 	var toleratedBF int64
 	var aborted int64
 	var totalLatencyNs int64
+
 	// Min/Max latency in ns
 	var minLatencyNs int64 = math.MaxInt64
 	var maxLatencyNs int64
+
+	// HTTP status code histogram (0..599)
+	var statusCounts [600]int64
 
 	start := time.Now()
 
@@ -853,6 +874,12 @@ func main() {
 				// Drain body with per-worker buffer to keep connections reusable without per-request allocs
 				io.CopyBuffer(io.Discard, resp.Body, buf)
 
+				// Count HTTP status code
+				code := resp.StatusCode
+				if code >= 0 && code < len(statusCounts) {
+					atomic.AddInt64(&statusCounts[code], 1)
+				}
+
 				if gotOK == expectedOKs[idx] {
 					atomic.AddInt64(&matched, 1)
 
@@ -926,12 +953,22 @@ func main() {
 		}
 
 		deadline := time.Now().Add(*runFor)
+	outerLoop:
 		for i := 0; ; i = (i + 1) % len(rows) {
+			if atomic.LoadInt32(&stopFlag) == 1 {
+				break
+			}
+
 			if time.Now().After(deadline) {
 				break
 			}
+
 			if tick != nil {
-				<-tick
+				select {
+				case <-tick:
+				case <-ctx.Done():
+					break outerLoop
+				}
 			}
 
 			enqueueParallelGroup(i)
@@ -945,6 +982,7 @@ func main() {
 		}
 	} else {
 		// Legacy loops mode (kept for backward compatibility)
+	outerCycles:
 		for cycle := 1; cycle <= *loops; cycle++ {
 			// Per-cycle rate limiter
 			var tick <-chan time.Time
@@ -962,8 +1000,30 @@ func main() {
 			}
 
 			for i := range rows {
+				if atomic.LoadInt32(&stopFlag) == 1 {
+					close(jobs)
+					wg.Wait()
+
+					if t != nil {
+						t.Stop()
+					}
+
+					break outerCycles
+				}
+
 				if tick != nil {
-					<-tick
+					select {
+					case <-tick:
+					case <-ctx.Done():
+						close(jobs)
+						wg.Wait()
+
+						if t != nil {
+							t.Stop()
+						}
+
+						break outerCycles
+					}
 				}
 
 				enqueueParallelGroup(i)
@@ -1007,5 +1067,13 @@ func main() {
 		}
 
 		fmt.Printf("max_latency=%s\n", time.Duration(maxLatencyNs))
+	}
+
+	// Print HTTP status codes summary (code, count)
+	fmt.Println("http_status_counts:")
+	for code, cnt := range statusCounts {
+		if cnt != 0 {
+			fmt.Printf("  %d: %d\n", code, cnt)
+		}
 	}
 }
