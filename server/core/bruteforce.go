@@ -313,6 +313,10 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
+	if isLocalOrEmptyIP(a.ClientIP) {
+		return
+	}
+
 	if config.GetFile().GetBruteForce() == nil {
 		return
 	}
