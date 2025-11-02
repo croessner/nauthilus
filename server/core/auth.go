@@ -3252,7 +3252,11 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	accountName = backend.GetUserAccountFromCache(a.Ctx(), a.Username, a.GUID)
+	// Service-scoped read to avoid inheriting a canceled request context
+	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(nil)
+	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Username, a.GUID)
+	cancelRead()
+
 	if accountName != "" {
 		return
 	}
@@ -3274,7 +3278,10 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		err = rediscli.GetClient().GetWriteHandle().HSet(a.Ctx(), key, a.Username, accountName).Err()
+		// Service-scoped write for robust cache update
+		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil)
+		err = rediscli.GetClient().GetWriteHandle().HSet(dWriteCtx, key, a.Username, accountName).Err()
+		cancelWrite()
 	}
 
 	return
