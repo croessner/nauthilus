@@ -655,3 +655,34 @@ func GetCtxWithDeadlineRedisWrite(ctx context.Context) (context.Context, context
 
 	return context.WithTimeout(ctx, timeout)
 }
+
+// GetCtxWithDeadlineLDAPSearch creates a context with a timeout for LDAP account searches.
+// Parent context is the service context to avoid coupling to HTTP request lifetimes.
+func GetCtxWithDeadlineLDAPSearch() (context.Context, context.CancelFunc) {
+	var timeout time.Duration
+	if config.IsFileLoaded() {
+		timeout = config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+	} else {
+		// Sensible default for tests or during init
+		timeout = 5 * time.Second
+	}
+
+	return context.WithTimeout(svcctx.Get(), timeout)
+}
+
+// GetCtxWithDeadlineLDAPModify creates a context with a timeout for LDAP modify operations.
+// Falls back to LDAPSearch timeout when LDAPModify is not configured.
+func GetCtxWithDeadlineLDAPModify() (context.Context, context.CancelFunc) {
+	var timeout time.Duration
+	if config.IsFileLoaded() {
+		// Some configurations may not have a dedicated LDAPModify timeout; fall back to search
+		timeout = config.GetFile().GetServer().GetTimeouts().GetLDAPModify()
+		if timeout == 0 {
+			timeout = config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+		}
+	} else {
+		timeout = 5 * time.Second
+	}
+
+	return context.WithTimeout(svcctx.Get(), timeout)
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 )
 
 // luaManagerImpl provides an implementation for managing Lua connections and operations using a specific connection backend.
@@ -247,9 +248,9 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest.LocalPort = auth.XPort
 	commonRequest.OIDCCID = auth.OIDCCID
 
-	// Derive a timeout context for Lua backend work (list accounts)
+	// Derive a timeout context for Lua backend work (list accounts) using service-scoped context
 	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
-	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
+	ctxLua, cancelLua := context.WithTimeout(svcctx.Get(), dLua)
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{

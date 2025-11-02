@@ -362,9 +362,8 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		return
 	}
 
-	// Derive a timeout context for LDAP search (account list)
-	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
-	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
+	// Derive a timeout context for LDAP search (account list) using service-scoped context
+	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch()
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
@@ -470,9 +469,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		return
 	}
 
-	// Derive a timeout context for LDAP modify
-	dModify := config.GetFile().GetServer().GetTimeouts().GetLDAPModify()
-	ctxModify, cancelModify := context.WithTimeout(auth.Ctx(), dModify)
+	// Derive a timeout context for LDAP modify using service-scoped context
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify()
 	defer cancelModify()
 
 	ldapRequest := &bktype.LDAPRequest{
