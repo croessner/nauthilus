@@ -1681,7 +1681,11 @@ func (a *AuthState) userExists() (bool, error) {
 // refreshUserAccount updates the user account information from the cache.
 // It sets the account field and attributes if they are nil and the account name is found.
 func (a *AuthState) refreshUserAccount() (accountName string) {
-	accountName = backend.GetUserAccountFromCache(a.Ctx(), a.Username, a.GUID)
+	// Use a service-scoped Redis read context to avoid inheriting a canceled request context
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(nil)
+	accountName = backend.GetUserAccountFromCache(dCtx, a.Username, a.GUID)
+	cancel()
+
 	if accountName == "" {
 		return
 	}
