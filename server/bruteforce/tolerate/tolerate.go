@@ -271,7 +271,7 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	// Use Lua script to add to sorted set, count elements, and set expirations atomically
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
 	result, err := rediscli.ExecuteScript(
 		dCtx,
 		"ZAddCountAndExpire",

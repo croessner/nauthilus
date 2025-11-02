@@ -2356,8 +2356,18 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		// Skip in-process dedup; optionally use distributed coordination if enabled
 		if distEnabled && redisWrite != nil {
 			resKey, lockKey, chName := a.sfRedisKeys()
-			if token, got, _ := a.sfTryLock(reqCtx, redisWrite, lockKey); got {
-				defer a.sfUnlock(reqCtx, lockKey, token)
+			if token, got, _ := func() (string, bool, error) {
+				dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+				defer cancel()
+
+				return a.sfTryLock(dCtxWrite, redisWrite, lockKey)
+			}(); got {
+				defer func() {
+					dCtxUnlock, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+					defer cancel()
+
+					a.sfUnlock(dCtxUnlock, lockKey, token)
+				}()
 
 				useCache, backendPos, passDBs := a.handleBackendTypes()
 
@@ -2368,8 +2378,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 				env := a.buildEnvelopeFromState(r)
 				env.LeaderSessionID = reqID
-				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
-				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
+				func() {
+					dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+					defer cancel()
+
+					_ = a.sfWriteEnvelope(dCtxWrite, redisWrite, resKey, env)
+					_ = redisWrite.Publish(dCtxWrite, chName, "1").Err()
+				}()
 
 				a.applyEnvelope(env)
 				a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "leader")
@@ -2411,8 +2426,18 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		if distEnabled && redisWrite != nil {
 			resKey, lockKey, chName := a.sfRedisKeys()
 
-			if token, got, _ := a.sfTryLock(reqCtx, redisWrite, lockKey); got {
-				defer a.sfUnlock(reqCtx, lockKey, token)
+			if token, got, _ := func() (string, bool, error) {
+				dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+				defer cancel()
+
+				return a.sfTryLock(dCtxWrite, redisWrite, lockKey)
+			}(); got {
+				defer func() {
+					dCtxUnlock, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+					defer cancel()
+
+					a.sfUnlock(dCtxUnlock, lockKey, token)
+				}()
 
 				useCache, backendPos, passDBs := a.handleBackendTypes()
 
@@ -2426,8 +2451,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 				// Include leader session ID so followers can log it
 				env.LeaderSessionID = reqID
 
-				_ = a.sfWriteEnvelope(reqCtx, redisWrite, resKey, env)
-				_ = redisWrite.Publish(reqCtx, chName, "1").Err()
+				func() {
+					dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+					defer cancel()
+
+					_ = a.sfWriteEnvelope(dCtxWrite, redisWrite, resKey, env)
+					_ = redisWrite.Publish(dCtxWrite, chName, "1").Err()
+				}()
 
 				return sfAuthResult{AuthResult: r, LeaderID: reqID, Envelope: env}, nil
 			}
@@ -3260,13 +3290,19 @@ func (a *AuthState) Ctx() context.Context {
 
 		if a.HTTPClientRequest != nil {
 			if rc := a.HTTPClientRequest.Context(); rc != nil {
-				return rc
+				// Avoid returning a canceled request context
+				if rc.Err() == nil {
+					return rc
+				}
 			}
 		}
 
 		if a.HTTPClientContext != nil && a.HTTPClientContext.Request != nil {
 			if rc := a.HTTPClientContext.Request.Context(); rc != nil {
-				return rc
+				// Avoid returning a canceled request context
+				if rc.Err() == nil {
+					return rc
+				}
 			}
 		}
 	}
@@ -3277,12 +3313,12 @@ func (a *AuthState) Ctx() context.Context {
 // withWorkCtx runs fn within a temporary work context with timeout d.
 // It safely swaps a.WorkCtx for the duration of fn and ensures cancellation.
 func (a *AuthState) withWorkCtx(d time.Duration, fn func() definitions.AuthResult) definitions.AuthResult {
-	workCtx, workCancel := context.WithTimeout(a.Ctx(), d)
+	// Derive work context from service scope, not from request, to avoid premature cancelation
+	workCtx, workCancel := context.WithTimeout(svcctx.Get(), d)
 	defer workCancel()
 
 	prev := a.WorkCtx
 	a.WorkCtx = workCtx
-
 	defer func() { a.WorkCtx = prev }()
 
 	return fn()
