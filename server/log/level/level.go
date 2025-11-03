@@ -174,6 +174,11 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 		ctx = context.Background()
 	}
 
+	// Respect level filtering: if the configured level is disabled, do nothing
+	if !l.Enabled(ctx, s.lvl) {
+		return nil
+	}
+
 	// Emit via handler with explicit PC so AddSource resolves the real caller
 	pc := uintptr(0)
 	if p, _, _, ok := runtime.Caller(2); ok {
@@ -182,9 +187,8 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 
 	r := slog.NewRecord(time.Now(), s.lvl, msg, pc)
 	r.AddAttrs(attrs...)
-	_ = l.Handler().Handle(ctx, r)
 
-	return nil
+	return l.Handler().Handle(ctx, r)
 }
 
 // isTypedNil reports whether v is nil or a typed-nil (e.g., (*T)(nil), []T(nil), map[K]V(nil)).
