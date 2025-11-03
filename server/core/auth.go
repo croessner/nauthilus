@@ -2698,8 +2698,8 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 		if stderrors.As(err, &detailedError) {
 			logs := []any{
 				definitions.LogKeyGUID, a.GUID,
-				definitions.LogKeyMsg, detailedError.Error(),
-				definitions.LogKeyErrorDetails, detailedError.GetDetails(),
+				definitions.LogKeyMsg, detailedError.GetDetails(),
+				definitions.LogKeyError, detailedError.Error(),
 			}
 
 			if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
@@ -3205,15 +3205,22 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
+			if len(result) == 0 {
+				level.Warn(log.Logger).Log(
+					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyMsg, "No accounts found",
+				)
+			}
+
 			accountList = append(accountList, result...)
 		} else {
 			var detailedError *errors.DetailedError
 			if stderrors.As(err, &detailedError) {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
-					definitions.LogKeyMsg, detailedError.Error(),
+					definitions.LogKeyMsg, detailedError.GetDetails(),
 					definitions.LogKeyError, err,
-					definitions.LogKeyErrorDetails, detailedError.GetDetails())
+				)
 			} else {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
