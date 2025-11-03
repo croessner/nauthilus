@@ -21,14 +21,12 @@
 package level
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"reflect"
 	"runtime"
-	"runtime/debug"
 	"time"
 )
 
@@ -92,78 +90,23 @@ func Error(l *slog.Logger) Logger {
 func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			var buf bytes.Buffer
-			fmt.Fprintf(&buf, "[logger-recover] %s panic: %v\n", time.Now().Format(time.RFC3339Nano), r)
-			fmt.Fprintf(&buf, "keyvals=%#v\n", keyvals)
-			buf.Write(debug.Stack())
-			_, _ = os.Stderr.Write(buf.Bytes())
+			// Minimal like go-kit: emit only the callsite, drop the problematic entry
+			pc, file, line, _ := runtime.Caller(2)
+			fn := runtime.FuncForPC(pc)
+			fnName := "?"
 
-			// Safe best-effort:
-			_ = slog.Default().With("logger", "recover").
-				Handler().Handle(context.Background(), slog.Record{Time: time.Now(), Level: slog.LevelError, Message: "logger panic recovered"})
+			if fn != nil {
+				fnName = fn.Name()
+			}
 
-			err = fmt.Errorf("logger panic: %v", r)
+			fmt.Fprintf(os.Stderr, "[logger-recover] %s at %s:%d (%s)\n",
+				time.Now().Format(time.RFC3339Nano), file, line, fnName)
+
+			err = fmt.Errorf("logger panic recovered")
 		}
 	}()
 
-	var msg string
-
-	attrs := make([]slog.Attr, 0, len(keyvals))
-	for i := 0; i+1 < len(keyvals); i += 2 {
-		k, ok := keyvals[i].(string)
-		if !ok {
-			continue
-		}
-
-		v := keyvals[i+1]
-
-		if k == "msg" {
-			if vs, ok := v.(string); ok {
-				msg = vs
-
-				continue
-			}
-		}
-
-		// Point 2: lightweight detection of problematic values to pinpoint callsite
-		if rv, ok := v.(reflect.Value); ok {
-			if !rv.IsValid() {
-				logDetect(k, "invalid reflect.Value")
-			}
-		}
-
-		if _, ok := v.(fmt.Stringer); ok {
-			if isTypedNil(v) { // typed-nil that would panic if String() is called
-				logDetect(k, "typed-nil fmt.Stringer")
-			}
-		}
-
-		if _, ok := v.(fmt.GoStringer); ok {
-			if isTypedNil(v) { // typed-nil that would panic if GoString() is called
-				logDetect(k, "typed-nil fmt.GoStringer")
-			}
-		}
-
-		// Guard against typed-nil values that can make slog.Any panic.
-		if isTypedNil(v) {
-			attrs = append(attrs, slog.String(k, "<nil>"))
-
-			continue
-		}
-
-		switch vv := v.(type) {
-		case string:
-			attrs = append(attrs, slog.String(k, vv))
-		default:
-			attrs = append(attrs, slog.Any(k, vv))
-		}
-	}
-
-	if msg == "" {
-		msg = levelToDefaultMessage(s.lvl)
-	}
-
-	// Ensure we have a logger and a non-nil context to avoid panics
+	// Ensure we have a logger and context first
 	l := s.l
 	if l == nil {
 		l = slog.Default()
@@ -174,6 +117,104 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 		ctx = context.Background()
 	}
 
+	// Early-out if level is disabled: do no work
+	if !l.Enabled(ctx, s.lvl) {
+		return nil
+	}
+
+	// Ensure even number of elements; drop a trailing key w/o value
+	if len(keyvals)%2 == 1 {
+		keyvals = keyvals[:len(keyvals)-1]
+	}
+
+	var msg string
+	attrs := make([]slog.Attr, 0, len(keyvals))
+
+	for i := 0; i < len(keyvals); i += 2 {
+		k, ok := keyvals[i].(string)
+		if !ok {
+			continue
+		}
+
+		v := keyvals[i+1]
+
+		if k == "msg" {
+			if vs, ok := v.(string); ok {
+				msg = vs
+				continue
+			}
+		}
+
+		switch vv := v.(type) {
+		case nil:
+			attrs = append(attrs, slog.String(k, "<nil>"))
+		case string:
+			attrs = append(attrs, slog.String(k, vv))
+		case bool:
+			attrs = append(attrs, slog.Bool(k, vv))
+		case int:
+			attrs = append(attrs, slog.Int(k, vv))
+		case int8:
+			attrs = append(attrs, slog.Int(k, int(vv)))
+		case int16:
+			attrs = append(attrs, slog.Int(k, int(vv)))
+		case int32:
+			attrs = append(attrs, slog.Int(k, int(vv)))
+		case int64:
+			attrs = append(attrs, slog.Int64(k, vv))
+		case uint:
+			attrs = append(attrs, slog.Uint64(k, uint64(vv)))
+		case uint8:
+			attrs = append(attrs, slog.Uint64(k, uint64(vv)))
+		case uint16:
+			attrs = append(attrs, slog.Uint64(k, uint64(vv)))
+		case uint32:
+			attrs = append(attrs, slog.Uint64(k, uint64(vv)))
+		case uint64:
+			attrs = append(attrs, slog.Uint64(k, vv))
+		case float32:
+			attrs = append(attrs, slog.Float64(k, float64(vv)))
+		case float64:
+			attrs = append(attrs, slog.Float64(k, vv))
+		case time.Duration:
+			attrs = append(attrs, slog.String(k, vv.String()))
+		case time.Time:
+			attrs = append(attrs, slog.Time(k, vv))
+		case error:
+			if vv == nil {
+				attrs = append(attrs, slog.String(k, "<nil error>"))
+			} else {
+				attrs = append(attrs, slog.String(k, vv.Error()))
+			}
+		case fmt.Stringer:
+			if vv == nil {
+				attrs = append(attrs, slog.String(k, "<nil Stringer>"))
+			} else {
+				attrs = append(attrs, slog.String(k, vv.String()))
+			}
+		case []byte:
+			// Allow binary payloads; handlers (e.g., JSON) will encode suitably
+			attrs = append(attrs, slog.Any(k, vv))
+		default:
+			// Handle slices and maps minimally without formatting contents
+			rt := reflect.TypeOf(vv)
+			rv := reflect.ValueOf(vv)
+
+			if rt.Kind() == reflect.Slice {
+				attrs = append(attrs, slog.String(k, fmt.Sprintf("<slice %s len=%d>", rt.String(), rv.Len())))
+			} else if rt.Kind() == reflect.Map {
+				attrs = append(attrs, slog.String(k, fmt.Sprintf("<map %s len=%d>", rt.String(), rv.Len())))
+			} else {
+				// Like go-kit minimalism: don't try to be clever; just mark unsupported
+				attrs = append(attrs, slog.String(k, fmt.Sprintf("<unsupported %T>", vv)))
+			}
+		}
+	}
+
+	if msg == "" {
+		msg = levelToDefaultMessage(s.lvl)
+	}
+
 	// Emit via handler with explicit PC so AddSource resolves the real caller
 	pc := uintptr(0)
 	if p, _, _, ok := runtime.Caller(2); ok {
@@ -182,24 +223,8 @@ func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 
 	r := slog.NewRecord(time.Now(), s.lvl, msg, pc)
 	r.AddAttrs(attrs...)
-	_ = l.Handler().Handle(ctx, r)
 
-	return nil
-}
-
-// isTypedNil reports whether v is nil or a typed-nil (e.g., (*T)(nil), []T(nil), map[K]V(nil)).
-func isTypedNil(v any) bool {
-	if v == nil {
-		return true
-	}
-
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Interface, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return l.Handler().Handle(ctx, r)
 }
 
 func levelToDefaultMessage(lvl slog.Level) string {
@@ -215,22 +240,4 @@ func levelToDefaultMessage(lvl slog.Level) string {
 	default:
 		return "log"
 	}
-}
-
-// logDetect writes a minimal, panic-safe diagnostic line to stderr identifying
-// the callsite and the problematic key when suspicious values are observed.
-// It intentionally avoids invoking any user code (e.g., String()/GoString()).
-func logDetect(key, what string) {
-	defer func() { _ = recover() }()
-	pc, file, line, _ := runtime.Caller(2)
-	fn := runtime.FuncForPC(pc)
-	fnName := "?"
-
-	if fn != nil {
-		fnName = fn.Name()
-	}
-
-	// Keep it one line and simple to make it grep-friendly.
-	fmt.Fprintf(os.Stderr, "[logger-detect] %s key=%q issue=%s at %s:%d (%s)\n",
-		time.Now().Format(time.RFC3339Nano), key, what, file, line, fnName)
 }

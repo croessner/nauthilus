@@ -64,9 +64,6 @@ const (
 	// LogKeyError represents the log key for logging error messages or errors in the application.
 	LogKeyError = "error"
 
-	// LogKeyErrorDetails represents additional error details in log entries.
-	LogKeyErrorDetails = "error_details"
-
 	// LogKeyInstance represents instance identification in log entries.
 	LogKeyInstance = "instance"
 

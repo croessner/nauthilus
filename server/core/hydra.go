@@ -521,9 +521,8 @@ func logError(ctx *gin.Context, err error) {
 	if stderrors.As(err, &detailedError) {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "An error occurred",
+			definitions.LogKeyMsg, (*detailedError).GetDetails(),
 			definitions.LogKeyError, (*detailedError).Error(),
-			definitions.LogKeyErrorDetails, (*detailedError).GetDetails(),
 			definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
