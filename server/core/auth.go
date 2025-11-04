@@ -3205,13 +3205,6 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
-			if len(result) == 0 {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyGUID, a.GUID,
-					definitions.LogKeyMsg, "No accounts found",
-				)
-			}
-
 			accountList = append(accountList, result...)
 		} else {
 			var detailedError *errors.DetailedError

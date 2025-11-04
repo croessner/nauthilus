@@ -23,6 +23,8 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/localcache"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/stats"
@@ -263,17 +265,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		CommonRequest:     commonRequest,
 	}
 
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
-		priority = priorityqueue.PriorityMedium
-	}
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
-
-	// Use priority queue instead of channel
-	priorityqueue.LuaQueue.Push(luaRequest, priority)
+	priorityqueue.LuaQueue.Push(luaRequest, priorityqueue.PriorityMedium)
 
 	luaBackendResult = <-luaReplyChan
 
@@ -296,7 +288,16 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	// Return the CommonRequest to the pool
 	lualib.PutCommonRequest(commonRequest)
 
-	return accountSet.GetStringSlice(), nil
+	accounts = accountSet.GetStringSlice()
+
+	if len(accounts) == 0 {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyMsg, "No accounts found in Lua backend",
+		)
+	}
+
+	return accounts, nil
 }
 
 // AddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
