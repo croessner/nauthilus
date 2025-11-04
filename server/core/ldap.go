@@ -27,6 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -387,18 +389,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		HTTPClientContext: ctxSearch,
 	}
 
-	// Find user with account status enabled
-	// Determine priority based on NoAuth flag and whether the user is already authenticated
-	priority := priorityqueue.PriorityLow
-	if !auth.NoAuth {
-		priority = priorityqueue.PriorityMedium
-	}
-	if localcache.AuthCache.IsAuthenticated(auth.Username) {
-		priority = priorityqueue.PriorityHigh
-	}
-
-	// Use priority queue instead of channel
-	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
+	priorityqueue.LDAPQueue.Push(ldapRequest, priorityqueue.PriorityMedium)
 
 	ldapReply = <-ldapReplyChan
 
@@ -422,7 +413,14 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		}
 	}
 
-	return
+	if len(accounts) == 0 {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyGUID, auth.GUID,
+			definitions.LogKeyMsg, "No accounts found in LDAP backend",
+		)
+	}
+
+	return accounts, nil
 }
 
 // AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
