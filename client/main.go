@@ -28,6 +28,497 @@ import (
 
 var json = jsoniter.ConfigFastest
 
+// Latency histogram in milliseconds: 0..60000 ms; >60s counted into overflow and clamped to last bucket
+const maxLatencyMs = 60000
+
+var latBuckets [maxLatencyMs + 1]int64 // index = ms
+var latOverflow int64                  // count of latencies > maxLatencyMs
+
+// percentileFromBuckets calculates a percentile duration from latBuckets within the range of 0 to maxLatencyMs in milliseconds.
+func percentileFromBuckets(p float64) time.Duration {
+	if p <= 0 {
+		return 0
+	}
+
+	if p >= 1 {
+		return time.Duration(maxLatencyMs) * time.Millisecond
+	}
+
+	// Sum of all observations
+	var total int64
+	for i := 0; i <= maxLatencyMs; i++ {
+		total += atomic.LoadInt64(&latBuckets[i])
+	}
+
+	if total == 0 {
+		return 0
+	}
+
+	// Target rank (1-based)
+	target := int64(math.Ceil(float64(total) * p))
+
+	var cum int64
+
+	for i := 0; i <= maxLatencyMs; i++ {
+		cum += atomic.LoadInt64(&latBuckets[i])
+		if cum >= target {
+			return time.Duration(i) * time.Millisecond
+		}
+	}
+
+	// Fallback
+	return time.Duration(maxLatencyMs) * time.Millisecond
+}
+
+// humanMs formats milliseconds for axis/labels (e.g., 123ms, 1.2s, 12s, 60s)
+func humanMs(ms int) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+
+	s := float64(ms) / 1000.0
+	if s < 10 {
+		return fmt.Sprintf("%.1fs", s)
+	}
+
+	return fmt.Sprintf("%ds", int(s+0.5))
+}
+
+// humanCount formats large counts for Y-axis (e.g., 1.2k, 3.4M)
+func humanCount(n int64) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+
+	units := []string{"k", "M", "G", "T"}
+	v := float64(n)
+
+	for i, u := range units {
+		threshold := math.Pow(1000, float64(i+1))
+		if v < threshold*1000 || i == len(units)-1 {
+			x := v / threshold
+			if x < 10 {
+				return fmt.Sprintf("%.1f%s", x, u)
+			}
+
+			return fmt.Sprintf("%.0f%s", x, u)
+		}
+	}
+
+	return fmt.Sprintf("%d", n)
+}
+
+// findNonZeroRange finds the smallest and largest index with >0 occurrences in the histogram.
+// Returns (startIdx, endIdx, ok). If ok==false, no data is present.
+func findNonZeroRange() (int, int, bool) {
+	start := -1
+	end := -1
+	for i := 0; i <= maxLatencyMs; i++ {
+		if atomic.LoadInt64(&latBuckets[i]) != 0 {
+			start = i
+
+			break
+		}
+	}
+
+	if start == -1 {
+		return 0, 0, false
+	}
+
+	for i := maxLatencyMs; i >= 0; i-- {
+		if atomic.LoadInt64(&latBuckets[i]) != 0 {
+			end = i
+
+			break
+		}
+	}
+
+	return start, end, true
+}
+
+// printLatencyHistogramASCII renders a compact bar chart from the millisecond histogram.
+// maxCols: maximum number of bars (pass 0 or negative to auto-fit using $COLUMNS), height: rows (e.g., 10)
+// showMarkers: whether to show p50/p90/p99 as X-axis markers.
+func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
+	if height < 1 {
+		height = 10
+	}
+
+	dataStart, dataEnd, ok := findNonZeroRange()
+	if !ok {
+		fmt.Println("[hist] no data")
+
+		return
+	}
+
+	// Small padding so the data range isn't glued to the border (used only for drawing bins)
+	start := dataStart
+	end := dataEnd
+	pad := 0
+
+	if end-start < 20 {
+		pad = 2
+	}
+
+	start -= pad
+	if start < 0 {
+		start = 0
+	}
+
+	end += pad
+	if end > maxLatencyMs {
+		end = maxLatencyMs
+	}
+
+	span := end - start + 1
+	dataSpan := dataEnd - dataStart + 1
+
+	if dataSpan < 1 {
+		dataSpan = 1
+	}
+
+	// Determine label width for Y axis and available columns using terminal width (COLUMNS)
+	// Y-axis label shows counts, so width is based on max column height (maxC) once known; use a temporary width first
+	labelWidth := 0 // will set after computing counts
+
+	// Provisional columns to compute counts: use requested maxCols or env COLUMNS fallback
+	colsEnv := 0
+	if env := strings.TrimSpace(os.Getenv("COLUMNS")); env != "" {
+		if n, err := strconv.Atoi(env); err == nil && n > 0 {
+			colsEnv = n
+		}
+	}
+
+	// we'll assume a minimal label width in the first pass (4) and a 2-char gutter: " "+"│"
+	gutter := 2
+	provisionalLabel := 4
+	usable := 0
+
+	if maxCols > 0 {
+		usable = maxCols
+	} else if colsEnv > 0 {
+		// leave space for labels + gutter; keep at least 20 bars
+		usable = colsEnv - provisionalLabel - gutter
+		if usable < 20 {
+			usable = 20
+		}
+	} else {
+		usable = 60
+	}
+
+	if span < usable {
+		usable = span
+	}
+
+	bucketSpan := (span + usable - 1) / usable // ceil(span/usable) ms per column
+	cols := (span + bucketSpan - 1) / bucketSpan
+
+	counts := make([]int64, cols)
+	var total int64
+	for i := 0; i < cols; i++ {
+		lo := start + i*bucketSpan
+		hi := lo + bucketSpan - 1
+		if hi > end {
+			hi = end
+		}
+
+		var c int64
+
+		for b := lo; b <= hi; b++ {
+			c += atomic.LoadInt64(&latBuckets[b])
+		}
+
+		counts[i] = c
+		total += c
+	}
+
+	// Max for scaling
+	var maxC int64
+	for _, c := range counts {
+		if c > maxC {
+			maxC = c
+		}
+	}
+
+	if maxC == 0 {
+		fmt.Println("[hist] all-zero buckets")
+
+		return
+	}
+
+	// Now that we know maxC, set label width properly
+	labelWidth = len(humanCount(maxC))
+	if labelWidth < 4 {
+		labelWidth = 4
+	}
+
+	// If auto width, recompute columns to fit terminal width exactly with real label width
+	if maxCols <= 0 && colsEnv > 0 {
+		usable = colsEnv - labelWidth - gutter
+		if usable < 20 {
+			usable = 20
+		}
+
+		if span < usable {
+			usable = span
+		}
+
+		bucketSpan = (span + usable - 1) / usable
+		cols = (span + bucketSpan - 1) / bucketSpan
+		counts = make([]int64, cols)
+		total = 0
+
+		for i := 0; i < cols; i++ {
+			lo := start + i*bucketSpan
+
+			hi := lo + bucketSpan - 1
+			if hi > end {
+				hi = end
+			}
+
+			var c int64
+			for b := lo; b <= hi; b++ {
+				c += atomic.LoadInt64(&latBuckets[b])
+			}
+
+			counts[i] = c
+			total += c
+		}
+
+		// recompute maxC
+		maxC = 0
+		for _, c := range counts {
+			if c > maxC {
+				maxC = c
+			}
+		}
+
+		if maxC == 0 {
+			fmt.Println("[hist] all-zero buckets")
+
+			return
+		}
+
+		labelWidth = len(humanCount(maxC))
+		if labelWidth < 4 {
+			labelWidth = 4
+		}
+	}
+
+	// Optional: marker bin positions
+	markerBin := map[string]int{}
+	if showMarkers {
+		p50 := int(percentileFromBuckets(0.50) / time.Millisecond)
+		p90 := int(percentileFromBuckets(0.90) / time.Millisecond)
+		p99 := int(percentileFromBuckets(0.99) / time.Millisecond)
+
+		for label, ms := range map[string]int{"50": p50, "90": p90, "99": p99} {
+			if ms < start {
+				markerBin[label] = 0
+			} else if ms > end {
+				markerBin[label] = cols - 1
+			} else {
+				idx := (ms - start) / bucketSpan
+				if idx < 0 {
+					idx = 0
+				}
+
+				if idx >= cols {
+					idx = cols - 1
+				}
+
+				markerBin[label] = idx
+			}
+		}
+	}
+
+	// Title line (concise; axes are labeled)
+	fmt.Printf("Latency histogram  bins=%d height=%d\n", cols, height)
+
+	// Determine drawing width (may be wider than number of data columns)
+	drawCols := cols
+	if maxCols <= 0 && colsEnv > 0 {
+		drawCols = colsEnv - labelWidth - gutter
+		if drawCols < cols {
+			drawCols = cols
+		}
+	}
+
+	// Compute per-bin character width to fill drawing area
+	colWidth := drawCols / cols
+	if colWidth < 1 {
+		colWidth = 1
+	}
+
+	rem := drawCols - colWidth*cols // distribute remainder to the first 'rem' bins
+
+	// Precompute bin widths and starts in drawing space
+	binWidths := make([]int, cols)
+	binStarts := make([]int, cols)
+	acc := 0
+
+	for i := 0; i < cols; i++ {
+		w := colWidth
+		if i < rem {
+			w++
+		}
+
+		binWidths[i] = w
+		binStarts[i] = acc
+		acc += w
+	}
+
+	// Print Y-axis header (right-aligned to labelWidth)
+	fmt.Printf("%*s %c\n", labelWidth, "count", '↑')
+
+	// Bars from top to bottom with Y-axis labels
+	for row := height; row >= 1; row-- {
+		// threshold for this row
+		thr := int64(math.Round(float64(maxC) * float64(row) / float64(height)))
+		fmt.Printf("%*s ", labelWidth, humanCount(thr))
+		fmt.Print("│")
+
+		for i := 0; i < cols; i++ {
+			// height for this column in rows
+			h := int(math.Round(float64(counts[i]) / float64(maxC) * float64(height)))
+			w := binWidths[i]
+
+			if h >= row {
+				for k := 0; k < w; k++ {
+					fmt.Print("█")
+				}
+			} else {
+				for k := 0; k < w; k++ {
+					fmt.Print(" ")
+				}
+			}
+		}
+
+		fmt.Println()
+	}
+
+	// X axis with ticks over drawing width
+	fmt.Printf("%*s └", labelWidth, "")
+
+	// precompute tick positions at 0%,25%,50%,75%,100% in drawing space
+	tickPos := []int{0, int(math.Round(float64(drawCols-1) * 0.25)), int(math.Round(float64(drawCols-1) * 0.5)), int(math.Round(float64(drawCols-1) * 0.75)), drawCols - 1}
+
+	for x := 0; x < drawCols; x++ {
+		isTick := false
+		for _, t := range tickPos {
+			if x == t {
+				isTick = true
+
+				break
+			}
+		}
+
+		if isTick {
+			fmt.Print("┬")
+		} else {
+			fmt.Print("─")
+		}
+	}
+
+	fmt.Println()
+
+	// Marker line (optional) aligned with X-axis, render labels "p50", "p90", "p99"
+	if showMarkers {
+		fmt.Printf("%*s  ", labelWidth, "")
+
+		line := make([]rune, drawCols)
+		for i := range line {
+			line[i] = ' '
+		}
+
+		// helper to place a label centered in a bin span
+		place := func(bin int, text string) {
+			if bin < 0 || bin >= cols {
+				return
+			}
+
+			start := binStarts[bin]
+			width := binWidths[bin]
+
+			if width <= 0 {
+				return
+			}
+
+			t := []rune(text)
+
+			pos := start + (width-len(t))/2
+			if pos < 0 {
+				pos = 0
+			}
+
+			for i, r := range t {
+				p := pos + i
+				if p >= 0 && p < len(line) {
+					line[p] = r
+				}
+			}
+		}
+
+		// Place in order of increasing priority so later ones can overwrite if overlapping
+		place(markerBin["50"], "p50")
+		place(markerBin["90"], "p90")
+		place(markerBin["99"], "p99")
+
+		fmt.Println(string(line))
+	}
+
+	// X-axis labels line (start, 25%, 50%, 75%, end with humanMs) aligned to drawing width
+	// Important: labels must reflect actual observed data range [dataStart,dataEnd], not padded drawing range
+	fmt.Printf("%*s  ", labelWidth, "ms")
+
+	last := 0
+	for i, x := range tickPos {
+		msVal := dataStart + int(math.Round(float64(x)/float64(drawCols-1)*float64(dataSpan-1)))
+		if x == drawCols-1 {
+			msVal = dataEnd
+		}
+
+		label := humanMs(msVal)
+		spaces := x - last
+
+		for k := 0; k < spaces; k++ {
+			fmt.Print(" ")
+		}
+
+		fmt.Print(label)
+		last = x + len(label)
+		// avoid labels overlapping too much: if i < len-1 and last > next tick, it will just overflow slightly which is acceptable for ASCII
+		_ = i
+	}
+
+	fmt.Println()
+
+	// Extra info: max bin and overflow
+	var maxIdx int
+	for i := 0; i < cols; i++ {
+		if counts[i] == maxC {
+			maxIdx = i
+
+			break
+		}
+	}
+
+	binLoMs := start + maxIdx*bucketSpan
+
+	binHiMs := binLoMs + bucketSpan - 1
+	if binHiMs > end {
+		binHiMs = end
+	}
+
+	of := atomic.LoadInt64(&latOverflow)
+
+	if of > 0 {
+		fmt.Printf("max_bin_count=%d in [%s,%s]  overflow(>%dms)=%d\n", maxC, humanMs(binLoMs), humanMs(binHiMs), maxLatencyMs, of)
+	} else {
+		fmt.Printf("max_bin_count=%d in [%s,%s]\n", maxC, humanMs(binLoMs), humanMs(binHiMs))
+	}
+}
+
 // uint32ToIP converts uint32 to dotted IPv4 string.
 func uint32ToIP(u uint32) string {
 	b := []byte{byte(u >> 24), byte(u >> 16), byte(u >> 8), byte(u)}
@@ -395,6 +886,7 @@ func generateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 	if err != nil {
 		return err
 	}
+
 	defer f.Close()
 
 	w := bufio.NewWriterSize(f, 1<<20)
@@ -709,9 +1201,22 @@ func main() {
 					}
 
 					elapsed := now.Sub(start)
-					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s\n",
-						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx,
+
+					// Percentiles from histogram (cheap to compute over 60k buckets)
+					p50 := percentileFromBuckets(0.50)
+					p90 := percentileFromBuckets(0.90)
+					p99 := percentileFromBuckets(0.99)
+
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s",
+						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx, p50, p90, p99,
 					)
+
+					of := atomic.LoadInt64(&latOverflow)
+					if of > 0 {
+						fmt.Printf(" overflow(>%dms)=%d", maxLatencyMs, of)
+					}
+
+					fmt.Printf("\n")
 
 					prevTotal = t
 					prevTime = now
@@ -798,6 +1303,20 @@ func main() {
 			ts := time.Now()
 			resp, err := client.Do(req)
 			lat := time.Since(ts)
+
+			// Update latency histogram (O(1))
+			ms := int(lat / time.Millisecond)
+			if ms < 0 {
+				ms = 0
+			}
+
+			if ms > maxLatencyMs {
+				atomic.AddInt64(&latOverflow, 1)
+
+				ms = maxLatencyMs
+			}
+
+			atomic.AddInt64(&latBuckets[ms], 1)
 
 			// Clean up cancel timer (do not cancel request context here)
 			if abortTimer != nil {
@@ -1067,6 +1586,24 @@ func main() {
 		}
 
 		fmt.Printf("max_latency=%s\n", time.Duration(maxLatencyNs))
+
+		// Print percentiles from histogram
+		p50 := percentileFromBuckets(0.50)
+		p90 := percentileFromBuckets(0.90)
+		p99 := percentileFromBuckets(0.99)
+
+		fmt.Printf("p50=%s p90=%s p99=%s\n", p50, p90, p99)
+
+		of := atomic.LoadInt64(&latOverflow)
+		if of > 0 {
+			fmt.Printf("latency_overflow(>%dms)=%d\n", maxLatencyMs, of)
+		}
+
+		// ASCII histogram (60 columns, 10 rows, with markers)
+		fmt.Println()
+		printLatencyHistogramASCII(0, 10, true)
+		fmt.Println()
+
 	}
 
 	// Print HTTP status codes summary (code, count)

@@ -20,6 +20,15 @@ local nauthilus_util = require("nauthilus_util")
 dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
+-- Env thresholds (defaults conservative):
+--  - GPM_THRESH_UNIQ_1H default 12
+--  - GPM_THRESH_UNIQ_24H default 25
+--  - GPM_THRESH_UNIQ_7D default 60
+--  - GPM_MIN_FAILS_24H default 8
+--  - GPM_THRESH_IP_TO_FAIL_RATIO default 1.2
+--  - GPM_ATTACK_TTL_SEC default 43200 (12h)
+--  - CUSTOM_REDIS_POOL_NAME optional pool
+
 function nauthilus_call_filter(request)
     if request.no_auth then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
@@ -44,10 +53,23 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    -- Prepare holders for last window metrics (we use the largest window after the loop)
-    local last_unique_ips = 0
-    local last_failed_attempts = 0
-    local last_ip_to_fail_ratio = 0
+    -- Read tuning thresholds from environment (with safe defaults)
+    local function getenv_num(name, def)
+        local v = tonumber(os.getenv(name) or "")
+        if v == nil then return def end
+        return v
+    end
+    local TH_UNIQ_1H = getenv_num("GPM_THRESH_UNIQ_1H", 12)
+    local TH_UNIQ_24H = getenv_num("GPM_THRESH_UNIQ_24H", 25)
+    local TH_UNIQ_7D = getenv_num("GPM_THRESH_UNIQ_7D", 60)
+    local TH_FAIL_MIN_24H = getenv_num("GPM_MIN_FAILS_24H", 8)
+    local TH_RATIO = getenv_num("GPM_THRESH_IP_TO_FAIL_RATIO", 1.2)
+    local ATTACK_TTL_SEC = getenv_num("GPM_ATTACK_TTL_SEC", 12 * 3600)
+
+    -- Hold per-window metrics explicitly
+    local uniq_1h, uniq_24h, uniq_7d = 0, 0, 0
+    local fails_1h, fails_24h, fails_7d = 0, 0, 0
+    local ratio_1h, ratio_24h = 0, 0
 
     -- Track IPs that attempted to access this account using atomic Redis Lua script
     for _, window in ipairs(windows) do
@@ -88,14 +110,23 @@ function nauthilus_call_filter(request)
             ip_to_fail_ratio = (tonumber(unique_ips) or 0) / (tonumber(failed_attempts) or 1)
         end
 
-        -- Update holders for use after loop (take latest window, which is the largest)
-        last_unique_ips = tonumber(unique_ips) or 0
-        last_failed_attempts = tonumber(failed_attempts) or 0
-        last_ip_to_fail_ratio = tonumber(ip_to_fail_ratio) or 0
+        -- Map to per-window holders
+        if window == 3600 then
+            uniq_1h = tonumber(unique_ips) or 0
+            fails_1h = tonumber(failed_attempts) or 0
+            ratio_1h = tonumber(ip_to_fail_ratio) or 0
+        elseif window == 86400 then
+            uniq_24h = tonumber(unique_ips) or 0
+            fails_24h = tonumber(failed_attempts) or 0
+            ratio_24h = tonumber(ip_to_fail_ratio) or 0
+        elseif window == 604800 then
+            uniq_7d = tonumber(unique_ips) or 0
+            fails_7d = tonumber(failed_attempts) or 0
+        end
 
         -- Store account metrics using atomic Redis Lua script (window-specific)
         local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
+        local _, err_script2 = nauthilus_redis.redis_run_script(
                 custom_pool,
             "", 
             "HSetMultiExpire", 
@@ -108,28 +139,35 @@ function nauthilus_call_filter(request)
                 "last_updated", timestamp
             }
         )
-        nauthilus_util.if_error_raise(err_script)
+        nauthilus_util.if_error_raise(err_script2)
     end
 
-    -- If many unique IPs are trying to access a single account with few attempts per IP,
-    -- this could indicate a distributed brute force attack
-    local is_suspicious = false
-    local threshold_unique_ips = 10
-    local threshold_ip_to_fail_ratio = 0.8
+    -- Suspicion logic (aims to reduce false positives due to carrier NAT/TOR)
+    -- Require short-term AND long-term signals, minimum fails, and a healthy ratio
+    local ratio_ok = false
+    if (fails_24h > 0 and ratio_24h >= TH_RATIO) or (fails_1h > 0 and ratio_1h >= TH_RATIO) then
+        ratio_ok = true
+    end
 
-    if last_unique_ips > threshold_unique_ips and last_ip_to_fail_ratio > threshold_ip_to_fail_ratio then
+    local is_suspicious = false
+    if (
+        (uniq_1h >= TH_UNIQ_1H or uniq_24h >= TH_UNIQ_24H) and
+        uniq_7d >= TH_UNIQ_7D and
+        fails_24h >= TH_FAIL_MIN_24H and
+        ratio_ok
+    ) then
         is_suspicious = true
 
         -- Add this account to the list of accounts under distributed attack using atomic Redis Lua script
         local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-        local _, err_script = nauthilus_redis.redis_run_script(
+        local _, err_script3 = nauthilus_redis.redis_run_script(
                 custom_pool,
             "", 
             "ZAddRemExpire", 
             {attacked_accounts_key}, 
-            {timestamp, username, 0, timestamp - (24 * 3600), 24 * 3600 * 2} -- Keep for 24 hours
+            {timestamp, username, 0, timestamp - ATTACK_TTL_SEC, ATTACK_TTL_SEC * 2}
         )
-        nauthilus_util.if_error_raise(err_script)
+        nauthilus_util.if_error_raise(err_script3)
 
         -- Log the suspicious activity
         local attack_logs = {}
@@ -137,29 +175,49 @@ function nauthilus_call_filter(request)
         attack_logs.level = "warning"
         attack_logs.message = "Potential distributed brute force attack detected"
         attack_logs.username = username
-        attack_logs.unique_ips = last_unique_ips
-        attack_logs.failed_attempts = last_failed_attempts
-        attack_logs.ip_to_fail_ratio = last_ip_to_fail_ratio
+        attack_logs.uniq_ips_1h = uniq_1h
+        attack_logs.uniq_ips_24h = uniq_24h
+        attack_logs.uniq_ips_7d = uniq_7d
+        attack_logs.failed_1h = fails_1h
+        attack_logs.failed_24h = fails_24h
+        attack_logs.failed_7d = fails_7d
+        attack_logs.ratio_1h = ratio_1h
+        attack_logs.ratio_24h = ratio_24h
+        attack_logs.thresholds = {
+            TH_UNIQ_1H = TH_UNIQ_1H,
+            TH_UNIQ_24H = TH_UNIQ_24H,
+            TH_UNIQ_7D = TH_UNIQ_7D,
+            TH_FAIL_MIN_24H = TH_FAIL_MIN_24H,
+            TH_RATIO = TH_RATIO,
+            ATTACK_TTL_SEC = ATTACK_TTL_SEC,
+        }
 
         nauthilus_util.print_result({ log_format = "json" }, attack_logs)
 
         -- Add to custom log for monitoring
         nauthilus_builtin.custom_log_add(N .. "_attack_detected", "true")
         nauthilus_builtin.custom_log_add(N .. "_username", username)
-        nauthilus_builtin.custom_log_add(N .. "_unique_ips", last_unique_ips)
-        nauthilus_builtin.custom_log_add(N .. "_failed_attempts", last_failed_attempts)
-        nauthilus_builtin.custom_log_add(N .. "_ip_to_fail_ratio", last_ip_to_fail_ratio)
+        nauthilus_builtin.custom_log_add(N .. "_uniq_ips_1h", uniq_1h)
+        nauthilus_builtin.custom_log_add(N .. "_uniq_ips_24h", uniq_24h)
+        nauthilus_builtin.custom_log_add(N .. "_uniq_ips_7d", uniq_7d)
+        nauthilus_builtin.custom_log_add(N .. "_failed_24h", fails_24h)
+        nauthilus_builtin.custom_log_add(N .. "_ratio_24h", ratio_24h)
     end
 
-    -- Add log
+    -- Add log with per-window metrics
     local logs = {}
     logs.caller = N .. ".lua"
     logs.level = "info"
     logs.message = "Account metrics tracked"
     logs.username = username
-    logs.unique_ips = last_unique_ips
-    logs.failed_attempts = last_failed_attempts
-    logs.ip_to_fail_ratio = last_ip_to_fail_ratio
+    logs.uniq_ips_1h = uniq_1h
+    logs.uniq_ips_24h = uniq_24h
+    logs.uniq_ips_7d = uniq_7d
+    logs.failed_1h = fails_1h
+    logs.failed_24h = fails_24h
+    logs.failed_7d = fails_7d
+    logs.ratio_1h = ratio_1h
+    logs.ratio_24h = ratio_24h
     logs.is_suspicious = is_suspicious
 
     nauthilus_util.print_result({ log_format = "json" }, logs)

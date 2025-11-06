@@ -1,7 +1,18 @@
--- Copyright (C) 2025 Christian Rößner
+-- Copyright (C) 2024 Christian Rößner
 --
--- GPLv3-or-later
+-- This program is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
 --
+-- This program is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 -- Phase 2 (soft measures) per docs/attacker_detection_ideas.md:
 --  - Introduce small, risk-based delays (50–200 ms) without blocking
 --  - Rely on long-window account metrics and flags
@@ -13,6 +24,15 @@ local nauthilus_util = require("nauthilus_util")
 
 dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
+
+-- Env thresholds (defaults conservative):
+--  - SOFT_DELAY_MIN_MS default 50
+--  - SOFT_DELAY_MAX_MS default 200
+--  - SOFT_DELAY_THRESH_UNIQ24 default 8
+--  - SOFT_DELAY_THRESH_UNIQ7D default 20
+--  - SOFT_DELAY_THRESH_FAIL24 default 5
+--  - SOFT_DELAY_THRESH_FAIL7D default 10
+--  - CUSTOM_REDIS_POOL_NAME optional pool
 
 dynamic_loader("nauthilus_gll_time")
 local time = require("time")
