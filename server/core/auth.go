@@ -1498,7 +1498,8 @@ func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*Pas
 			}
 		} else {
 			err = processPassDBResult(ctx, passDBResult, a, passDB)
-			if err != nil || a.UserFound {
+			// Break only on the local backend decision, not on global state carried over from previous passes
+			if err != nil || (passDBResult != nil && passDBResult.UserFound) {
 				break
 			}
 		}
@@ -2531,6 +2532,19 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
+		// Before computing locally, try one last time to fetch a distributed result
+		if distEnabled && redisRead != nil {
+			if resKey, _, _ := a.sfRedisKeys(); true {
+				if env, ok, _ := a.sfReadEnvelope(reqCtx, redisRead, resKey); ok {
+					// Rehydrate and return immediately
+					a.applyEnvelope(env)
+					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "follower_fallback_got_env")
+
+					return env.AuthResult
+				}
+			}
+		}
+
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
@@ -2545,6 +2559,19 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 	case <-timer.C:
 		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
+
+		// Before computing locally due to timeout, try to fetch a distributed result once
+		if distEnabled && redisRead != nil {
+			if resKey, _, _ := a.sfRedisKeys(); true {
+				if env, ok, _ := a.sfReadEnvelope(reqCtx, redisRead, resKey); ok {
+					// Rehydrate and return immediately
+					a.applyEnvelope(env)
+					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "follower_fallback_got_env")
+
+					return env.AuthResult
+				}
+			}
+		}
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 
@@ -2954,6 +2981,11 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
 // Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
+	// Protect against re-entrancy: if a prior pass in this request already authenticated, do not degrade
+	if a.Authenticated {
+		return definitions.AuthResultOK
+	}
+
 	var (
 		accountName  string
 		authResult   definitions.AuthResult
