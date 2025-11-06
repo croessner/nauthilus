@@ -1,7 +1,18 @@
--- Copyright (C) 2025 Christian Rößner
+-- Copyright (C) 2024 Christian Rößner
 --
--- GPLv3-or-later
+-- This program is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
 --
+-- This program is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 -- Derives a feature signal from ntc:top_failed_logins (count/rank by username)
 -- This feature is read-only against Redis and can be enabled safely. It enriches
 -- the runtime table (rt) for downstream actions like analytics and telegram.
