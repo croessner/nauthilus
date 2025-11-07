@@ -1792,12 +1792,15 @@ func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 	return k.MaxIdleConnsPerHost
 }
 
-// Dedup controls in-process vs distributed request deduplication behavior.
-// If DistributedEnabled is true, Redis-based coordination (result cache + lock + pub/sub)
-// is enabled to deduplicate across instances. Default is false.
+// Dedup controls in-process request deduplication behavior.
+// NOTE: distributed (Redis-based) deduplication has been removed and the option
+// 'server.dedup.distributed_enabled' is deprecated and ignored.
+// Only in-process (singleflight) dedup remains supported.
 type Dedup struct {
-	DistributedEnabled bool  `mapstructure:"distributed_enabled"`
-	InProcessEnabled   *bool `mapstructure:"in_process_enabled"`
+	// Deprecated: no longer used. Kept for backward compatibility with existing configs.
+	DistributedEnabled bool `mapstructure:"distributed_enabled"`
+	// Controls in-process singleflight dedup (within one instance). Default: true.
+	InProcessEnabled *bool `mapstructure:"in_process_enabled"`
 }
 
 // GetDedup returns the Dedup configuration section. If ServerSection is nil,
@@ -1811,12 +1814,9 @@ func (s *ServerSection) GetDedup() *Dedup {
 }
 
 // IsDistributedEnabled reports whether distributed (Redis) deduplication is enabled.
+// Deprecated: Distributed deduplication has been removed; this always returns false.
 func (d *Dedup) IsDistributedEnabled() bool {
-	if d == nil {
-		return false
-	}
-
-	return d.DistributedEnabled
+	return false
 }
 
 // IsInProcessEnabled reports whether in-process singleflight deduplication is enabled.
