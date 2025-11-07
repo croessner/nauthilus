@@ -56,7 +56,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/singleflight"
 )
@@ -1498,7 +1497,8 @@ func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*Pas
 			}
 		} else {
 			err = processPassDBResult(ctx, passDBResult, a, passDB)
-			if err != nil || a.UserFound {
+			// Break only on the local backend decision, not on global state carried over from previous passes
+			if err != nil || (passDBResult != nil && passDBResult.UserFound) {
 				break
 			}
 		}
@@ -2016,179 +2016,6 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	return false
 }
 
-// sfAuthResult encapsulates the auth result along with the LeaderID so that
-// followers can determine if they were leader or follower for logging.
-// It can also carry an optional Envelope to hydrate follower state.
-type sfAuthResult struct {
-	AuthResult definitions.AuthResult
-	LeaderID   string
-	Envelope   *sfAuthEnvelope
-}
-
-// sfAuthEnvelope is a rich result used for distributed singleflight to carry
-// not only the AuthResult but also all relevant user attributes and backend info.
-type sfAuthEnvelope struct {
-	Version    int                    `json:"v"`
-	AuthResult definitions.AuthResult `json:"ar"`
-
-	UserFound     bool `json:"uf"`
-	Authenticated bool `json:"au"`
-
-	BackendName         string              `json:"bn,omitempty"`
-	SourcePassDBBackend definitions.Backend `json:"sb,omitempty"`
-	UsedPassDBBackend   definitions.Backend `json:"ub,omitempty"`
-
-	AccountField    string `json:"af,omitempty"`
-	UniqueUserID    string `json:"uid,omitempty"`
-	DisplayName     string `json:"dn,omitempty"`
-	TOTPSecretField string `json:"totp,omitempty"`
-
-	Attributes      bktype.AttributeMapping `json:"attr,omitempty"`
-	AdditionalFeat  map[string]any          `json:"feat,omitempty"`
-	LeaderSessionID string                  `json:"ls,omitempty"`
-
-	StatusMessage string `json:"sm,omitempty"`
-}
-
-// sfWriteEnvelope writes the rich envelope to Redis with a short TTL.
-func (a *AuthState) sfWriteEnvelope(ctx context.Context, rdb redis.UniversalClient, resKey string, env *sfAuthEnvelope) error {
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	b, err := json.Marshal(env)
-	if err != nil {
-		return err
-	}
-
-	return rdb.Set(ctx, resKey, b, definitions.RedisSFResultTTL).Err()
-}
-
-// sfReadEnvelope reads a rich envelope from Redis. It supports backward compatibility
-// with legacy integer-only values by converting them into a minimal envelope.
-func (a *AuthState) sfReadEnvelope(ctx context.Context, rdb redis.UniversalClient, resKey string) (*sfAuthEnvelope, bool, error) {
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	data, err := rdb.Get(ctx, resKey).Bytes()
-	if stderrors.Is(err, redis.Nil) {
-		return nil, false, nil
-	}
-
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Try legacy integer format first
-	if len(data) > 0 {
-		if v, convErr := strconv.Atoi(string(data)); convErr == nil {
-			return &sfAuthEnvelope{Version: 0, AuthResult: definitions.AuthResult(v)}, true, nil
-		}
-	}
-
-	var env sfAuthEnvelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		return nil, false, err
-	}
-
-	if env.Version == 0 {
-		env.Version = 1
-	}
-
-	return &env, true, nil
-}
-
-// applyEnvelope hydrates the AuthState with data from the envelope.
-func (a *AuthState) applyEnvelope(env *sfAuthEnvelope) {
-	if env == nil {
-		return
-	}
-
-	if env.StatusMessage != "" {
-		a.StatusMessage = env.StatusMessage
-	}
-
-	if env.UserFound {
-		a.UserFound = true
-		a.SourcePassDBBackend = env.SourcePassDBBackend
-		a.UsedPassDBBackend = env.UsedPassDBBackend
-		a.BackendName = env.BackendName
-	}
-
-	if env.AccountField != "" {
-		a.AccountField = env.AccountField
-	}
-
-	if env.UniqueUserID != "" {
-		a.UniqueUserIDField = env.UniqueUserID
-	}
-
-	if env.DisplayName != "" {
-		a.DisplayNameField = env.DisplayName
-	}
-
-	if env.TOTPSecretField != "" {
-		a.TOTPSecretField = env.TOTPSecretField
-	}
-
-	if env.Attributes != nil && len(env.Attributes) > 0 {
-		a.Attributes = env.Attributes
-	}
-
-	if env.AdditionalFeat != nil && a.HTTPClientContext != nil {
-		a.HTTPClientContext.Set(definitions.CtxAdditionalFeaturesKey, env.AdditionalFeat)
-	}
-
-	if env.Authenticated {
-		localcache.AuthCache.Set(a.Username, true)
-	}
-}
-
-// buildEnvelopeFromState builds an envelope from the current AuthState and result.
-func (a *AuthState) buildEnvelopeFromState(r definitions.AuthResult) *sfAuthEnvelope {
-	env := &sfAuthEnvelope{
-		Version:             1,
-		AuthResult:          r,
-		UserFound:           a.UserFound,
-		BackendName:         a.BackendName,
-		SourcePassDBBackend: a.SourcePassDBBackend,
-		UsedPassDBBackend:   a.UsedPassDBBackend,
-		StatusMessage:       a.StatusMessage,
-	}
-
-	// Best effort for authenticated flag
-	env.Authenticated = r == definitions.AuthResultOK
-
-	if a.AccountField != "" {
-		env.AccountField = a.AccountField
-	}
-
-	if a.UniqueUserIDField != "" {
-		env.UniqueUserID = a.UniqueUserIDField
-	}
-
-	if a.DisplayNameField != "" {
-		env.DisplayName = a.DisplayNameField
-	}
-
-	if a.TOTPSecretField != "" {
-		env.TOTPSecretField = a.TOTPSecretField
-	}
-
-	if a.Attributes != nil && len(a.Attributes) > 0 {
-		env.Attributes = a.Attributes
-	}
-
-	if a.HTTPClientContext != nil {
-		if v, ok := a.HTTPClientContext.Get(definitions.CtxAdditionalFeaturesKey); ok {
-			if m, ok2 := v.(map[string]any); ok2 {
-				env.AdditionalFeat = m
-			}
-		}
-	}
-
-	return env
-}
-
-// --- Distributed singleflight (Redis) helpers ---
-
 // sfKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
 func (a *AuthState) sfKeyHash() string {
 	sum := sha1.Sum([]byte(a.generateSingleflightKey()))
@@ -2196,94 +2023,8 @@ func (a *AuthState) sfKeyHash() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sfRedisKeys builds the Redis keys (result, lock) and channel name for a given auth request.
-func (a *AuthState) sfRedisKeys() (resKey, lockKey, ch string) {
-	suf := a.sfKeyHash()
-
-	return definitions.RedisSFPrefixResult + suf, definitions.RedisSFPrefixLock + suf, definitions.RedisSFPrefixChannel + suf
-}
-
-// sfReadResult reads a short-lived AuthResult from Redis. Returns (result, found, error).
-func (a *AuthState) sfReadResult(ctx context.Context, rdb redis.UniversalClient, resKey string) (definitions.AuthResult, bool, error) {
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	s, err := rdb.Get(ctx, resKey).Result()
-	if stderrors.Is(err, redis.Nil) {
-		return 0, false, nil
-	}
-
-	if err != nil {
-		return 0, false, err
-	}
-
-	v, convErr := strconv.Atoi(s)
-	if convErr != nil {
-		return 0, false, convErr
-	}
-
-	return definitions.AuthResult(v), true, nil
-}
-
-// sfWriteResult writes the AuthResult to Redis with a short TTL.
-func (a *AuthState) sfWriteResult(ctx context.Context, rdb redis.UniversalClient, resKey string, r definitions.AuthResult) error {
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	return rdb.Set(ctx, resKey, strconv.Itoa(int(r)), definitions.RedisSFResultTTL).Err()
-}
-
-// sfTryLock tries to acquire a short lock in Redis with a random token.
-func (a *AuthState) sfTryLock(ctx context.Context, rdb redis.UniversalClient, lockKey string) (token string, ok bool, err error) {
-	// lightweight token; uniqueness is sufficient here
-	token = fmt.Sprintf("%s-%d", a.Username, time.Now().UnixNano())
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	ok, err = rdb.SetNX(ctx, lockKey, token, definitions.RedisSFLockTTL).Result()
-
-	return
-}
-
-// sfUnlock releases the lock if the token still matches (best effort).
-func (a *AuthState) sfUnlock(ctx context.Context, lockKey, token string) {
-	// Use central Redis Lua script executor which uploads scripts and tracks stats
-	_, _ = rediscli.ExecuteScript(ctx, "UnlockIfTokenMatches", rediscli.LuaScripts["UnlockIfTokenMatches"], []string{lockKey}, token)
-}
-
-// sfPubSubWait subscribes to a channel and waits for a wakeup, checking the result key after subscribe and upon messages.
-func (a *AuthState) sfPubSubWait(ctx context.Context, rdb redis.UniversalClient, channel string, check func() (definitions.AuthResult, bool, error)) (definitions.AuthResult, bool) {
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	pubsub := rdb.Subscribe(ctx, channel)
-	defer pubsub.Close()
-
-	// After subscribing, immediately check for an already present result
-	if r, ok, err := check(); err == nil && ok {
-		return r, true
-	}
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, false
-		case msg := <-ch:
-			if msg == nil {
-				return 0, false
-			}
-
-			if r, ok, err := check(); err == nil && ok {
-				return r, true
-			}
-		}
-	}
-}
-
 // HandlePassword handles the authentication process for the password flow.
-// It performs common validation checks and then proceeds based on the value of ctx.Value(definitions.CtxLocalCacheAuthKey).
-// If it is true, it calls the handleLocalCache function.
-// Otherwise, it calls the handleBackendTypes function to determine the cache usage, backend position, and password databases.
-// In the next step, it calls the authenticateUser function to perform further control flow based on cache usage and authentication status.
-// Finally, it returns the authResult which indicates the authentication result of the process.
+// The logic is simplified to only perform in-process (singleflight) deduplication.
 func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
 	// Common validation checks
 	if authResult = a.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
@@ -2294,51 +2035,12 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		return a.handleLocalCache(ctx)
 	}
 
-	// In-process singleflight deduplication (backchannel only)
+	// In-process singleflight deduplication only
 	key := a.generateSingleflightKey()
 	reqCtx := ctx.Request.Context()
 
-	// Distributed result shortcut (cluster-wide): if another instance already finished
-	// this key very recently, use its result immediately to avoid extra work.
-	var redisWrite redis.UniversalClient
-	var redisRead redis.UniversalClient
-
-	// Option A: allow disabling distributed dedup via configuration (default: disabled)
-	distEnabled := config.GetFile().GetServer().GetDedup().IsDistributedEnabled()
-	if distEnabled {
-		if rc := rediscli.GetClient(); rc != nil {
-			redisWrite = rc.GetWriteHandle()
-			redisRead = rc.GetReadHandle()
-
-			if redisRead != nil {
-				resKey, _, _ := a.sfRedisKeys()
-				if env, ok, _ := a.sfReadEnvelope(reqCtx, redisRead, resKey); ok {
-					// Take distributed result with full attributes
-					a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "dist_follower")
-
-					if env.LeaderSessionID != "" {
-						a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeaderSession, env.LeaderSessionID)
-					}
-
-					a.applyEnvelope(env)
-
-					return env.AuthResult
-				}
-			}
-		}
-	}
-
-	// Prepare per-request ID for leadership detection (prefer GUID)
-	reqID := ""
-	if a.GUID != "" {
-		reqID = a.GUID
-	} else {
-		reqID = fmt.Sprintf("no-guid-%d", time.Now().UnixNano())
-	}
-
-	// Derive wait deadline from request context, with a small safety cap if none
+	// Derive wait deadline from request context, with a safety cap if none
 	var timer *time.Timer
-
 	if dl, ok := reqCtx.Deadline(); ok {
 		d := time.Until(dl)
 		if d <= 0 {
@@ -2355,151 +2057,24 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 	defer timer.Stop()
 
 	// Allow disabling in-process singleflight via config (default: enabled)
-	inProcEnabled := config.GetFile().GetServer().GetDedup().IsInProcessEnabled()
-	if !inProcEnabled {
-		// Skip in-process dedup; optionally use distributed coordination if enabled
-		if distEnabled && redisWrite != nil {
-			resKey, lockKey, chName := a.sfRedisKeys()
-			if token, got, _ := func() (string, bool, error) {
-				dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-				defer cancel()
-
-				return a.sfTryLock(dCtxWrite, redisWrite, lockKey)
-			}(); got {
-				defer func() {
-					dCtxUnlock, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-					defer cancel()
-
-					a.sfUnlock(dCtxUnlock, lockKey, token)
-				}()
-
-				useCache, backendPos, passDBs := a.handleBackendTypes()
-
-				dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-				r := a.withWorkCtx(dWork, func() definitions.AuthResult {
-					return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-				})
-
-				env := a.buildEnvelopeFromState(r)
-				env.LeaderSessionID = reqID
-				func() {
-					dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-					defer cancel()
-
-					_ = a.sfWriteEnvelope(dCtxWrite, redisWrite, resKey, env)
-					_ = redisWrite.Publish(dCtxWrite, chName, "1").Err()
-				}()
-
-				a.applyEnvelope(env)
-				a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "leader")
-
-				return r
-			}
-
-			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
-				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
-				if err != nil || !ok {
-					return 0, false, err
-				}
-
-				a.applyEnvelope(env)
-
-				return env.AuthResult, true, nil
-			}); ok {
-				a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "follower")
-
-				return r
-			}
-			// Timeout/cancel: fall through to local compute
-		}
-
+	if !config.GetFile().GetServer().GetDedup().IsInProcessEnabled() {
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+
+		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
-
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_no_inproc")
-
-		return res
 	}
 
 	ch := backchanSF.DoChan(key, func() (any, error) {
-		// If distributed dedup is enabled and Redis is available, coordinate across instances
-		if distEnabled && redisWrite != nil {
-			resKey, lockKey, chName := a.sfRedisKeys()
-
-			if token, got, _ := func() (string, bool, error) {
-				dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-				defer cancel()
-
-				return a.sfTryLock(dCtxWrite, redisWrite, lockKey)
-			}(); got {
-				defer func() {
-					dCtxUnlock, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-					defer cancel()
-
-					a.sfUnlock(dCtxUnlock, lockKey, token)
-				}()
-
-				useCache, backendPos, passDBs := a.handleBackendTypes()
-
-				dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-				r := a.withWorkCtx(dWork, func() definitions.AuthResult {
-					return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-				})
-
-				env := a.buildEnvelopeFromState(r)
-
-				// Include leader session ID so followers can log it
-				env.LeaderSessionID = reqID
-
-				func() {
-					dCtxWrite, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
-					defer cancel()
-
-					_ = a.sfWriteEnvelope(dCtxWrite, redisWrite, resKey, env)
-					_ = redisWrite.Publish(dCtxWrite, chName, "1").Err()
-				}()
-
-				return sfAuthResult{AuthResult: r, LeaderID: reqID, Envelope: env}, nil
-			}
-
-			// Didn't get the lock: wait via Pub/Sub for result, then read once
-			var leaderID string
-			var envCaptured *sfAuthEnvelope
-
-			if r, ok := a.sfPubSubWait(reqCtx, redisWrite, chName, func() (definitions.AuthResult, bool, error) {
-				env, ok, err := a.sfReadEnvelope(reqCtx, redisRead, resKey)
-				if err != nil || !ok {
-					return 0, false, err
-				}
-
-				// Rehydrate state from leader envelope
-				a.applyEnvelope(env)
-
-				leaderID = env.LeaderSessionID
-				envCaptured = env
-
-				return env.AuthResult, true, nil
-			}); ok {
-				return sfAuthResult{AuthResult: r, LeaderID: leaderID, Envelope: envCaptured}, nil
-			}
-			// Timeout/cancel: fallthrough to compute locally
-		}
-
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+
 		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 
-		env := a.buildEnvelopeFromState(res)
-
-		// Leader returns its reqID for followers to compare
-		return sfAuthResult{AuthResult: res, LeaderID: reqID, Envelope: env}, nil
+		return res, nil
 	})
 
 	select {
@@ -2508,55 +2083,27 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 			return definitions.AuthResultTempFail
 		}
 
-		sfa := r.Val.(sfAuthResult)
-		if sfa.Envelope != nil {
-			a.applyEnvelope(sfa.Envelope)
-		}
-
-		role := "follower"
-		if sfa.LeaderID == reqID {
-			role = "leader"
-		}
-
-		// Log leadership role for large log output
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, role)
-
-		// If we are a follower and the leader ID is known, log it
-		if sfa.LeaderID != "" && sfa.LeaderID != reqID {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeaderSession, sfa.LeaderID)
-		}
-
-		return sfa.AuthResult
+		return r.Val.(definitions.AuthResult)
 	case <-reqCtx.Done():
 		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+
+		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
-
-		// Log fallback as follower information as requested
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_ctx_canceled")
-
-		return res
 	case <-timer.C:
 		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
-
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
+
+		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
-
-		// Log fallback info
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "fallback_timeout")
-
-		return res
 	}
 }
 
@@ -2954,6 +2501,11 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
 // Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
+	// Protect against re-entrancy: if a prior pass in this request already authenticated, do not degrade
+	if a.Authenticated {
+		return definitions.AuthResultOK
+	}
+
 	var (
 		accountName  string
 		authResult   definitions.AuthResult
