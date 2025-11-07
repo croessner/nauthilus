@@ -33,9 +33,6 @@ const MsgClientClosedRequest = "Client Closed Request"
 // LogKeyLeadership is the log attribute name for recording singleflight role (leader/follower) in large logs.
 const LogKeyLeadership = "leadership"
 
-// LogKeyLeaderSession is the log attribute name for the leader's session ID in deduplicated requests.
-const LogKeyLeaderSession = "leader_session"
-
 // Role constants for JWT authentication
 const (
 	// RoleAdmin represents the admin role with full access to all features
@@ -1777,23 +1774,7 @@ const (
 	CtxCategoryKey = "category"
 )
 
-// RedisSFResultTTL Redis Singleflight (distributed) tunables
-// TTL for distributed singleflight result key in Redis
-const RedisSFResultTTL = 2 * time.Second
-
-// RedisSFLockTTL TTL for the distributed lock
-const RedisSFLockTTL = 5 * time.Second
-
 const (
-	// RedisSFPrefixResult defines the prefix used for storing results related to specific Redis operations.
-	RedisSFPrefixResult = "sf:res:"
-
-	// RedisSFPrefixLock defines the prefix used for Redis keys associated with locking mechanisms.
-	RedisSFPrefixLock = "sf:lock:"
-
-	// RedisSFPrefixChannel defines the prefix used for Redis channel names specific to certain operations or communication.
-	RedisSFPrefixChannel = "sf:ch:"
-
 	// RedisBFBurstPrefix is the Redis key prefix for brute-force burst gating keys
 	RedisBFBurstPrefix = "bf:burst:"
 )

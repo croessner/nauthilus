@@ -2069,6 +2069,8 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		warnDeprecatedRedisReplica("server.redis.replica", &srv.Redis.Replica)
 		// Redis TLS
 		warnDeprecatedTLS("server.redis.tls", &srv.Redis.TLS)
+		// Dedup: distributed_enabled has been removed; warn if set
+		warnDeprecatedDedup(&srv.Dedup)
 	}
 
 	// RBL deprecations
@@ -2199,7 +2201,22 @@ func warnDeprecatedRedisReplica(where string, r *Replica) {
 	}
 }
 
-// warnDeprecatedRBL logs a deprecation warning if the RBL's "return_code" field is used instead of "return_codes".
+// warnDeprecatedDedup warns if deprecated dedup configuration is present.
+// Specifically, 'server.dedup.distributed_enabled' has been removed and is ignored.
+func warnDeprecatedDedup(d *Dedup) {
+	if d == nil {
+		return
+	}
+	if d.DistributedEnabled {
+		safeWarn(
+			"component", "config",
+			"location", "server.dedup",
+			"deprecated", "dedup.distributed_enabled",
+			"msg", "'server.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed; only in-process dedup remains",
+		)
+	}
+}
+
 func warnDeprecatedRBL(index int, r *RBL) {
 	if r == nil {
 		return
