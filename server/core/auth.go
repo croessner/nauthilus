@@ -55,12 +55,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/singleflight"
 )
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 var backchanSF singleflight.Group
 
@@ -1028,13 +1025,6 @@ func (a *AuthState) increaseLoginAttempts() {
 	}
 }
 
-// calculateWaitDelay calculates the wait delay based on maxWaitDelay and loginAttempt using the hyperbolic tangent function.
-func calculateWaitDelay(maxWaitDelay, loginAttempt uint) int {
-	scale := 0.03
-
-	return int(float64(maxWaitDelay) * math.Tanh(scale*float64(loginAttempt)))
-}
-
 // setFailureHeaders sets the failure headers for the given authentication context.
 // It sets the "Auth-Status" header to the value of definitions.PasswordFail constant.
 // It sets the "X-Nauthilus-Session" header to the value of the authentication's GUID field.
@@ -1059,8 +1049,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 		maxWaitDelay := viper.GetUint("nginx_wait_delay")
 
 		if maxWaitDelay > 0 {
-			waitDelay := calculateWaitDelay(maxWaitDelay, a.LoginAttempts)
-
+			waitDelay := defaultBruteForceService.WaitDelay(maxWaitDelay, a.LoginAttempts)
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
 
@@ -2030,120 +2019,19 @@ func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache 
 	}
 }
 
-// saveUserPositiveCache stores a positive authentication result in the Redis cache if the account name is not empty.
-func (a *AuthState) saveUserPositiveCache(ppc *bktype.PositivePasswordCache, cacheName, accountName string) {
-	if accountName == "" {
-		return
-	}
-
-	redisUserKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
-
-	if ppc.Password == "" {
-		return
-	}
-
-	go func() {
-		reqCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		backend.SaveUserDataToRedis(reqCtx, a.GUID, redisUserKey, config.GetFile().GetServer().Redis.PosCacheTTL, ppc)
-	}()
-}
-
-// processCacheUserLoginOk updates the user cache with a positive authentication result.
-// It retrieves the backend used during authentication and the respective cache name to save the user information.
-func (a *AuthState) processCacheUserLoginOk(accountName string) error {
-	usedBackend, err := a.getUsedBackend()
-	if err != nil {
-		return err
-	}
-
-	cacheName, err := a.getCacheName(usedBackend)
-	if err != nil {
-		return err
-	}
-
-	a.saveUserPositiveCache(
-		a.createPositivePasswordCache(),
-		cacheName,
-		accountName,
-	)
-
-	return nil
-}
-
-// processCacheUserLoginFail processes the cache update when a user login fails. It logs the event and updates the failure counter.
-func (a *AuthState) processCacheUserLoginFail(ctx *gin.Context, accountName string) {
-	var bm bruteforce.BucketManager
-
-	util.DebugModule(
-		definitions.DbgAuth,
-		definitions.LogKeyGUID, a.GUID,
-		"account", accountName,
-		"authenticated", false,
-		definitions.LogKeyMsg, "Calling saveFailedPasswordCounterInRedis()",
-	)
-
-	// Increase counters (burst-deduplicated)
-
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP).
-		WithUsername(a.Username).
-		WithPassword(a.Password).
-		WithAccountName(accountName)
-
-	ttl := time.Second
-	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
-	burstKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + a.sfKeyHash()
-
-	if res, err := rediscli.ExecuteScript(ctx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{burstKey}, argTTL); err == nil {
-		if v, ok := res.(int64); ok && v == 1 {
-			bm.SaveFailedPasswordCounterInRedis()
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_leader")
-		} else {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_follower")
-		}
-	} else {
-		// Fail-open: still count, but log error as follower for visibility
-		bm.SaveFailedPasswordCounterInRedis()
-		// mark as follower on error to match comment intention
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyLeadership, "bf_burst_follower")
-	}
-}
-
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
-	var bm bruteforce.BucketManager
-
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
 		if authenticated {
-			err := a.processCacheUserLoginOk(accountName)
-			if err != nil {
+			if err := defaultCacheService.OnSuccess(ctx, a, accountName); err != nil {
 				return err
 			}
 		} else {
-			a.processCacheUserLoginFail(ctx, accountName)
+			defaultCacheService.OnFailure(ctx, a, accountName)
 		}
 
-		bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP).
-			WithUsername(a.Username).
-			WithPassword(a.Password).
-			WithAccountName(accountName)
-
-		// Set the protocol if available
-		if a.Protocol != nil && a.Protocol.Get() != "" {
-			bm = bm.WithProtocol(a.Protocol.Get())
-		}
-
-		// Set the OIDC Client ID if available
-		if a.OIDCCID != "" {
-			bm = bm.WithOIDCCID(a.OIDCCID)
-		}
-
-		bm.LoadAllPasswordHistories()
-
-		a.LoginAttempts = bm.GetLoginAttempts()
-		a.PasswordsAccountSeen = bm.GetPasswordsAccountSeen()
-		a.PasswordsTotalSeen = bm.GetPasswordsTotalSeen()
+		// Load histories and update counters via service (no behavior change)
+		defaultBruteForceService.LoadHistories(ctx, a, accountName)
 	}
 
 	return nil
