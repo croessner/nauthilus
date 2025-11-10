@@ -1126,36 +1126,8 @@ func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
 func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
-	var (
-		passDBResult *PassDBResult
-		err          error
-	)
-
-	configErrors := make(map[definitions.Backend]error, len(passDBs))
-	for passDBIndex, passDB := range passDBs {
-		passDBResult, err = passDB.fn(a)
-		logDebugModule(a, passDB, passDBResult)
-
-		if err != nil {
-			err = handleBackendErrors(passDBIndex, passDBs, passDB, err, a, configErrors)
-			if err != nil {
-				break
-			}
-		} else {
-			err = processPassDBResult(ctx, passDBResult, a, passDB)
-			// Break only on the local backend decision, not on global state carried over from previous passes
-			if err != nil || (passDBResult != nil && passDBResult.UserFound) {
-				break
-			}
-		}
-	}
-
-	// Enforce authentication
-	if a.NoAuth && passDBResult != nil && passDBResult.UserFound {
-		passDBResult.Authenticated = true
-	}
-
-	return passDBResult, err
+	// Delegate to the extracted PasswordVerifier
+	return defaultPasswordVerifier.Verify(ctx, a, passDBs)
 }
 
 // logDebugModule logs debug information about the authentication process.
