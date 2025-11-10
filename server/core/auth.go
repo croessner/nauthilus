@@ -1580,87 +1580,9 @@ func (a *AuthState) sfKeyHash() string {
 }
 
 // HandlePassword handles the authentication process for the password flow.
-// The logic is simplified to only perform in-process (singleflight) deduplication.
+// Delegate orchestration to the Authenticator to keep responsibilities separated.
 func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
-	// Common validation checks
-	if authResult = a.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
-		return
-	}
-
-	if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		return a.handleLocalCache(ctx)
-	}
-
-	// In-process singleflight deduplication only
-	key := a.generateSingleflightKey()
-	reqCtx := ctx.Request.Context()
-
-	// Derive wait deadline from request context, with a safety cap if none
-	var timer *time.Timer
-	if dl, ok := reqCtx.Deadline(); ok {
-		d := time.Until(dl)
-		if d <= 0 {
-			backchanSF.Forget(key)
-
-			return definitions.AuthResultTempFail
-		}
-
-		timer = time.NewTimer(d)
-	} else {
-		timer = time.NewTimer(definitions.SingleflightWaitCap)
-	}
-
-	defer timer.Stop()
-
-	// Allow disabling in-process singleflight via config (default: enabled)
-	if !config.GetFile().GetServer().GetDedup().IsInProcessEnabled() {
-		useCache, backendPos, passDBs := a.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-	}
-
-	ch := backchanSF.DoChan(key, func() (any, error) {
-		useCache, backendPos, passDBs := a.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-
-		return res, nil
-	})
-
-	select {
-	case r := <-ch:
-		if r.Err != nil {
-			return definitions.AuthResultTempFail
-		}
-
-		return r.Val.(definitions.AuthResult)
-	case <-reqCtx.Done():
-		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
-		backchanSF.Forget(key)
-
-		useCache, backendPos, passDBs := a.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-	case <-timer.C:
-		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
-		backchanSF.Forget(key)
-
-		useCache, backendPos, passDBs := a.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-	}
+	return defaultAuthenticator.Authenticate(ctx, a)
 }
 
 // usernamePasswordChecks performs checks on the Username and Password fields of the AuthState object.
