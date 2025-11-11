@@ -74,7 +74,7 @@ func (r *RBLSection) GetSoftWhitelist() SoftWhitelist {
 
 type RBL struct {
 	Name         string `mapstructure:"name" validate:"required"`
-	RBL          string `mapstructure:"rbl" validate:"required,hostname"`
+	RBL          string `mapstructure:"rbl" validate:"required,hostname_rfc1123"`
 	IPv4         bool
 	IPv6         bool
 	AllowFailure bool     `mapstructure:"allow_failure"`
