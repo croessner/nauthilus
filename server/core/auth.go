@@ -1957,28 +1957,38 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	auth.SetUsername(ctx.GetHeader(config.GetFile().GetUsername()))
-	auth.SetPassword(ctx.GetHeader(config.GetFile().GetPassword()))
+	username := ctx.GetHeader(config.GetFile().GetUsername())
+	password := ctx.GetHeader(config.GetFile().GetPassword())
 
 	encoded := ctx.GetHeader(config.GetFile().GetPasswordEncoded())
 	if encoded == "1" {
-		password := auth.GetPassword()
-
+		// Decode password locally before applying
 		padding := len(password) % 4
 		if padding > 0 {
 			password += string(bytes.Repeat([]byte("="), 4-padding))
 		}
 
 		if decodedPassword, err := base64.URLEncoding.DecodeString(password); err != nil {
-			auth.SetPassword("")
-
+			password = ""
 			ctx.Error(errors.ErrPasswordEncoding)
 		} else {
-			auth.SetPassword(string(decodedPassword))
+			password = string(decodedPassword)
 		}
 	}
 
-	auth.GetProtocol().Set(ctx.GetHeader(config.GetFile().GetProtocol()))
+	if a, ok := auth.(*AuthState); ok {
+		// Apply credentials and header-derived context in a consolidated manner
+		a.ApplyCredentials(NewCredentials(
+			WithUsername(username),
+			WithPassword(password),
+		))
+
+		a.ApplyContextData(NewAuthContext(
+			WithProtocol(ctx.GetHeader(config.GetFile().GetProtocol())),
+			WithMethod(ctx.GetHeader(config.GetFile().GetAuthMethod())),
+		))
+	}
+
 	auth.SetLoginAttempts(func() uint {
 		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.GetFile().GetLoginAttempt()))
 		if err != nil {
@@ -1992,7 +2002,6 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		return uint(loginAttempts)
 	}())
 
-	auth.SetMethod(ctx.GetHeader(config.GetFile().GetAuthMethod()))
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
 	auth.WithUserAgent(ctx)
@@ -2004,23 +2013,36 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 // If the realm field is not empty, it appends "@" + realm to the username field in the AuthState object.
 // It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
 func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
+	// Build username incorporating optional realm suffix
+	username := ctx.PostForm("username")
 	realm := ctx.PostForm("realm")
-	if len(realm) > 0 {
-		username := auth.GetUsername()
-		username += "@" + realm
 
-		auth.SetUsername(username)
+	if len(realm) > 0 {
+		username = username + "@" + realm
 	}
 
-	auth.SetMethod(ctx.PostForm("method"))
-	auth.SetUserAgent(ctx.PostForm("user_agent"))
-	auth.SetUsername(ctx.PostForm("username"))
-	auth.SetPassword(ctx.PostForm("password"))
-	auth.SetProtocol(config.NewProtocol(ctx.PostForm("protocol")))
-	auth.SetLocalIP(definitions.Localhost4)
-	auth.SetLocalPort(ctx.PostForm("port"))
-	auth.SetSSL(ctx.PostForm("tls"))
-	auth.SetSSLProtocol(ctx.PostForm("security"))
+	// Apply credentials via builder
+	if a, ok := auth.(*AuthState); ok {
+		a.ApplyCredentials(NewCredentials(
+			WithUsername(username),
+			WithPassword(ctx.PostForm("password")),
+		))
+	}
+
+	// Build and apply context metadata
+	x := NewAuthContext(
+		WithMethod(ctx.PostForm("method")),
+		WithUserAgent(ctx.PostForm("user_agent")),
+		WithProtocol(ctx.PostForm("protocol")),
+		WithLocalIP(definitions.Localhost4),
+		WithLocalPort(ctx.PostForm("port")),
+		WithXSSL(ctx.PostForm("tls")),
+		WithXSSLProtocol(ctx.PostForm("security")),
+	)
+
+	if a, ok := auth.(*AuthState); ok {
+		a.ApplyContextData(x)
+	}
 }
 
 // processApplicationJSON takes a gin Context and an AuthState object.
@@ -2052,117 +2074,77 @@ func processApplicationJSON(ctx *gin.Context, auth State) {
 
 // setAuthenticationFields updates the provided authentication state with data from the request, if available.
 func setAuthenticationFields(auth State, request *authdto.Request) {
-	if request.Method != "" {
-		auth.SetMethod(request.Method)
+	authState, ok := auth.(*AuthState)
+	if !ok {
+		return
 	}
 
-	if request.UserAgent != "" {
-		auth.SetUserAgent(request.UserAgent)
-	}
+	creds := NewCredentials(buildCredentialOptions(request)...)
+	authState.ApplyCredentials(creds)
 
-	if request.ClientID != "" {
-		auth.SetClientID(request.ClientID)
-	}
+	ctxData := NewAuthContext(buildAuthContextOptions(request)...)
+	authState.ApplyContextData(ctxData)
+}
+
+// buildCredentialOptions creates credential options from the request.
+func buildCredentialOptions(request *authdto.Request) []CredentialOption {
+	var opts []CredentialOption
 
 	if request.Username != "" {
-		auth.SetUsername(request.Username)
+		opts = append(opts, WithUsername(request.Username))
 	}
 
 	if request.Password != "" {
-		auth.SetPassword(request.Password)
+		opts = append(opts, WithPassword(request.Password))
 	}
 
-	if request.ClientIP != "" {
-		auth.SetClientIP(request.ClientIP)
+	return opts
+}
+
+// buildAuthContextOptions creates authentication context options from the request.
+func buildAuthContextOptions(request *authdto.Request) []AuthContextOption {
+	// Map of request field values to their corresponding option constructors
+	fieldMappings := []struct {
+		value  string
+		option func(string) AuthContextOption
+	}{
+		{request.Method, WithMethod},
+		{request.UserAgent, WithUserAgent},
+		{request.ClientID, WithClientID},
+		{request.ClientIP, WithClientIP},
+		{request.ClientPort, WithClientPort},
+		{request.ClientHostname, WithClientHostname},
+		{request.LocalIP, WithLocalIP},
+		{request.LocalPort, WithLocalPort},
+		{request.Protocol, WithProtocol},
+		{request.XSSL, WithXSSL},
+		{request.XSSLSessionID, WithXSSLSessionID},
+		{request.XSSLClientVerify, WithXSSLClientVerify},
+		{request.XSSLClientDN, WithXSSLClientDN},
+		{request.XSSLClientCN, WithXSSLClientCN},
+		{request.XSSLIssuer, WithXSSLIssuer},
+		{request.XSSLClientNotBefore, WithXSSLClientNotBefore},
+		{request.XSSLClientNotAfter, WithXSSLClientNotAfter},
+		{request.XSSLSubjectDN, WithXSSLSubjectDN},
+		{request.XSSLIssuerDN, WithXSSLIssuerDN},
+		{request.XSSLClientSubjectDN, WithXSSLClientSubjectDN},
+		{request.XSSLClientIssuerDN, WithXSSLClientIssuerDN},
+		{request.XSSLProtocol, WithXSSLProtocol},
+		{request.XSSLCipher, WithXSSLCipher},
+		{request.SSLSerial, WithSSLSerial},
+		{request.SSLFingerprint, WithSSLFingerprint},
+		{request.OIDCCID, WithOIDCCID},
 	}
 
-	if request.ClientPort != "" {
-		auth.SetClientPort(request.ClientPort)
+	var opts []AuthContextOption
+
+	for _, mapping := range fieldMappings {
+		if mapping.value != "" {
+			opts = append(opts, mapping.option(mapping.value))
+		}
 	}
 
-	if request.ClientHostname != "" {
-		auth.SetClientHost(request.ClientHostname)
-	}
-
-	if request.LocalIP != "" {
-		auth.SetLocalIP(request.LocalIP)
-	}
-
-	if request.LocalPort != "" {
-		auth.SetLocalPort(request.LocalPort)
-	}
-
-	if request.Protocol != "" {
-		auth.SetProtocol(config.NewProtocol(request.Protocol))
-	}
-
-	if request.XSSL != "" {
-		auth.SetSSL(request.XSSL)
-	}
-
-	if request.XSSLSessionID != "" {
-		auth.SetSSLSessionID(request.XSSLSessionID)
-	}
-
-	if request.XSSLClientVerify != "" {
-		auth.SetSSLClientVerify(request.XSSLClientVerify)
-	}
-
-	if request.XSSLClientDN != "" {
-		auth.SetSSLClientDN(request.XSSLClientDN)
-	}
-
-	if request.XSSLClientCN != "" {
-		auth.SetSSLClientCN(request.XSSLClientCN)
-	}
-
-	if request.XSSLIssuer != "" {
-		auth.SetSSLIssuer(request.XSSLIssuer)
-	}
-
-	if request.XSSLClientNotBefore != "" {
-		auth.SetSSLClientNotBefore(request.XSSLClientNotBefore)
-	}
-
-	if request.XSSLClientNotAfter != "" {
-		auth.SetSSLClientNotAfter(request.XSSLClientNotAfter)
-	}
-
-	if request.XSSLSubjectDN != "" {
-		auth.SetSSLSubjectDN(request.XSSLSubjectDN)
-	}
-
-	if request.XSSLIssuerDN != "" {
-		auth.SetSSLIssuerDN(request.XSSLIssuerDN)
-	}
-
-	if request.XSSLClientSubjectDN != "" {
-		auth.SetSSLClientSubjectDN(request.XSSLClientSubjectDN)
-	}
-
-	if request.XSSLClientIssuerDN != "" {
-		auth.SetSSLClientIssuerDN(request.XSSLClientIssuerDN)
-	}
-
-	if request.XSSLProtocol != "" {
-		auth.SetSSLProtocol(request.XSSLProtocol)
-	}
-
-	if request.XSSLCipher != "" {
-		auth.SetSSLCipher(request.XSSLCipher)
-	}
-
-	if request.SSLSerial != "" {
-		auth.SetSSLSerial(request.SSLSerial)
-	}
-
-	if request.SSLFingerprint != "" {
-		auth.SetSSLFingerprint(request.SSLFingerprint)
-	}
-
-	if request.OIDCCID != "" {
-		auth.SetOIDCCID(request.OIDCCID)
-	}
+	return opts
 }
 
 // setupBodyBasedAuth takes a Context and an AuthState object as input.
@@ -2538,4 +2520,82 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 	}
 
 	return false
+}
+
+// ApplyCredentials applies non-empty credential fields to the AuthState.
+// This function is part of Phase 8 (setter reduction) to consolidate multiple
+// Set* calls into a single application step without changing behavior.
+func (a *AuthState) ApplyCredentials(c Credentials) {
+	if a == nil {
+		return
+	}
+
+	if c.Username != "" {
+		a.Username = c.Username
+	}
+
+	if c.Password != "" {
+		a.Password = c.Password
+	}
+
+	// Note: TOTP/TOTPRecovery are intentionally not mapped here to avoid
+	// behavior changes. They will be integrated in later phases when MFA
+	// input wiring is introduced.
+}
+
+// ApplyContextData applies non-empty request/connection metadata to AuthState.
+// Only fields provided (non-empty) are applied to preserve existing precedence.
+func (a *AuthState) ApplyContextData(x AuthContext) {
+	if a == nil {
+		return
+	}
+
+	// Field mappings for simple string assignments
+	fieldMappings := []struct {
+		src  string
+		dest *string
+	}{
+		{x.Method, &a.Method},
+		{x.UserAgent, &a.UserAgent},
+		{x.ClientIP, &a.ClientIP},
+		{x.ClientPort, &a.XClientPort},
+		{x.ClientHostname, &a.ClientHost},
+		{x.ClientID, &a.XClientID},
+		{x.LocalIP, &a.XLocalIP},
+		{x.LocalPort, &a.XPort},
+		{x.XSSL, &a.XSSL},
+		{x.XSSLSessionID, &a.XSSLSessionID},
+		{x.XSSLClientVerify, &a.XSSLClientVerify},
+		{x.XSSLClientDN, &a.XSSLClientDN},
+		{x.XSSLClientCN, &a.XSSLClientCN},
+		{x.XSSLIssuer, &a.XSSLIssuer},
+		{x.XSSLClientNotBefore, &a.XSSLClientNotBefore},
+		{x.XSSLClientNotAfter, &a.XSSLClientNotAfter},
+		{x.XSSLSubjectDN, &a.XSSLSubjectDN},
+		{x.XSSLIssuerDN, &a.XSSLIssuerDN},
+		{x.XSSLClientSubjectDN, &a.XSSLClientSubjectDN},
+		{x.XSSLClientIssuerDN, &a.XSSLClientIssuerDN},
+		{x.XSSLProtocol, &a.XSSLProtocol},
+		{x.XSSLCipher, &a.XSSLCipher},
+		{x.SSLSerial, &a.SSLSerial},
+		{x.SSLFingerprint, &a.SSLFingerprint},
+		{x.OIDCCID, &a.OIDCCID},
+	}
+
+	// Apply all string field mappings
+	for _, mapping := range fieldMappings {
+		a.applyStringField(mapping.src, mapping.dest)
+	}
+
+	// Handle Protocol specially as it requires type conversion
+	if x.Protocol != "" {
+		a.SetProtocol(config.NewProtocol(x.Protocol))
+	}
+}
+
+// applyStringField assigns source to destination only if source is non-empty.
+func (a *AuthState) applyStringField(src string, dest *string) {
+	if src != "" {
+		*dest = src
+	}
 }
