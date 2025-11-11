@@ -13,30 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package core
+package auth
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/core"
 	"github.com/gin-gonic/gin"
 )
 
-// LuaFilter encapsulates the Lua filter pipeline and returns an AuthResult.
+// DefaultPasswordVerifier implements core.PasswordVerifier by mirroring the
+// legacy verification loop using core helpers. It iterates configured backends
+// and returns the first decisive result or an aggregated configuration error.
 //
 //goland:nointerface
-type LuaFilter interface {
-	Filter(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
-}
+type DefaultPasswordVerifier struct{}
 
-// PostActionInput aggregates the minimal inputs required for the Lua post action.
-// It deliberately reduces dozens of parameters to a compact value object.
-type PostActionInput struct {
-	View   *StateView
-	Result *PassDBResult
-}
-
-// PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.
-//
-//goland:nointerface
-type PostAction interface {
-	Run(input PostActionInput)
+func (DefaultPasswordVerifier) Verify(ctx *gin.Context, auth *core.AuthState, passDBs []*core.PassDBMap) (*core.PassDBResult, error) {
+	return core.VerifyPasswordPipeline(ctx, auth, passDBs)
 }

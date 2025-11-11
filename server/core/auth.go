@@ -44,7 +44,6 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/action"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -1048,7 +1047,7 @@ func (a *AuthState) setFailureHeaders(ctx *gin.Context) {
 		maxWaitDelay := viper.GetUint("nginx_wait_delay")
 
 		if maxWaitDelay > 0 {
-			waitDelay := defaultBruteForceService.WaitDelay(maxWaitDelay, a.LoginAttempts)
+			waitDelay := bfWaitDelay(maxWaitDelay, a.LoginAttempts)
 			ctx.Header("Auth-Wait", fmt.Sprintf("%v", waitDelay))
 		}
 
@@ -1125,41 +1124,20 @@ func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
 // - passDBResult: a pointer to a PassDBResult struct which contains the authentication result
 // - err: an error that occurred during the verification process
 func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
-	// Delegate to the extracted PasswordVerifier
-	return defaultPasswordVerifier.Verify(ctx, a, passDBs)
+	if v := getPasswordVerifier(); v != nil {
+		return v.Verify(ctx, a, passDBs)
+	}
+
+	// Fallback: use internal pipeline to preserve behavior when no verifier is registered
+	return VerifyPasswordPipeline(ctx, a, passDBs)
 }
 
-// logDebugModule logs debug information about the authentication process.
-//
-// Parameters:
-//   - a: The AuthState object associated with the authentication process.
-//   - passDB: The PassDBMap object representing the password database.
-//   - passDBResult: The PassDBResult object containing the result of the authentication process.
-//
-// The logDebugModule function calls the util.DebugModule function to log the debug information.
-// It passes the module declaration (definitions.DbgAuth) as the first parameter, followed by key-value pairs of additional information.
-// The key-value pairs include "session" as the key and a.GUID as the value, "passdb" as the key and passDB.backend.String() as the value,
-// and "result" as the key and fmt.Sprintf("%v", passDBResult) as the value.
-//
-// Example Usage:
-//
-//	logDebugModule(a, passDB, passDBResult)
-//
-// This function uses the util.DebugModule function from the package to log the debug information.
-func logDebugModule(auth *AuthState, passDB *PassDBMap, passDBResult *PassDBResult) {
-	util.DebugModule(
-		definitions.DbgAuth,
-		definitions.LogKeyGUID, auth.GUID,
-		"passdb", passDB.backend.String(),
-		"result", fmt.Sprintf("%v", passDBResult))
-}
-
-// handleBackendErrors handles the errors that occur during backend processing.
+// HandleBackendErrors handles the errors that occur during backend processing.
 // It checks if the error is a configuration error for SQL, LDAP, or Lua backends and adds them to the configErrors map.
 // If all password databases have been processed and there are configuration errors, it calls the checkAllBackends function.
 // If the error is not a configuration error, it logs the error using the Logger.
 // It returns the error unchanged.
-func handleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState, configErrors map[definitions.Backend]error) error {
+func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState, configErrors map[definitions.Backend]error) error {
 	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) {
 		configErrors[passDB.backend] = err
 
@@ -1204,14 +1182,14 @@ func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthStat
 	return err
 }
 
-// processPassDBResult updates the passDBResult based on the provided passDB
+// ProcessPassDBResult updates the passDBResult based on the provided passDB
 // and the AuthState object a.
 // If passDBResult is nil, it returns an error of type errors.ErrNoPassDBResult.
 // It then calls the util.DebugModule function to log debug information.
 // Next, it calls the updateAuthentication function to update the fields of a based on the values in passDBResult.
 // If the UserFound field of passDBResult is true, it sets the UserFound field of a to true.
 // Finally, it returns the updated passDBResult and nil error.
-func processPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
+func ProcessPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *AuthState, passDB *PassDBMap) error {
 	if passDBResult == nil {
 		return errors.ErrNoPassDBResult
 	}
@@ -1325,239 +1303,11 @@ func (a *AuthState) GetAccountField() string {
 	return a.AccountField
 }
 
-// executeLuaPostAction is a helper function that executes a Lua post action with the given parameters.
-// It is designed to be run in a goroutine and takes copies of all necessary values to avoid nil pointer dereferences.
-func executeLuaPostAction(
-	context *lualib.Context,
-	httpRequest *http.Request,
-	guid string,
-	noAuth bool,
-	service string,
-	clientIP string,
-	clientPort string,
-	clientHost string,
-	clientID string,
-	localIP string,
-	localPort string,
-	userAgent string,
-	username string,
-	accountName string,
-	accountField string,
-	uniqueUserID string,
-	displayName string,
-	password string,
-	protocol string,
-	oidccid string,
-	bruteForceName string,
-	featureName string,
-	statusMessage string,
-	xSSL string,
-	xSSLSessionID string,
-	xSSLClientVerify string,
-	xSSLClientDN string,
-	xSSLClientCN string,
-	xSSLIssuer string,
-	xSSLClientNotBefore string,
-	xSSLClientNotAfter string,
-	xSSLSubjectDN string,
-	xSSLIssuerDN string,
-	xSSLClientSubjectDN string,
-	xSSLClientIssuerDN string,
-	xSSLProtocol string,
-	xSSLCipher string,
-	sSLSerial string,
-	sSLFingerprint string,
-	userFound bool,
-	authenticated bool,
-	bfClientNetHint string,
-	bfRepeatingHint bool,
-) {
-	stopTimer := stats.PrometheusTimer(definitions.PromPostAction, "lua_post_action_request_total")
-
-	if stopTimer != nil {
-		defer stopTimer()
-	}
-
-	finished := make(chan action.Done)
-
-	// Get a CommonRequest from the pool
-	commonRequest := lualib.GetCommonRequest()
-
-	// Derive client_net and repeating for the Post-Action so that ClickHouse also receives these fields even when the dedicated brute-force action is not used.
-	// Prefer hints computed during the brute-force path if available.
-	clientNet := bfClientNetHint
-	isRepeating := bfRepeatingHint
-
-	if config.GetFile().HasFeature(definitions.FeatureBruteForce) && clientIP != "" {
-		// Check whether the protocol is enabled for brute-force processing
-		bfProtoEnabled := false
-		for _, p := range config.GetFile().GetServer().GetBruteForceProtocols() {
-			if p.Get() == protocol {
-				bfProtoEnabled = true
-
-				break
-			}
-		}
-
-		if bfProtoEnabled {
-			ip := net.ParseIP(clientIP)
-			if ip != nil {
-				var (
-					foundRepeatingNet string
-					foundRepeating    bool
-					bestCIDRRepeating uint = 0 // larger prefix = more specific
-					bestCIDRFallback  uint = 0 // for clientNet fallback if no hash-hit is found
-				)
-
-				for i := range config.GetFile().GetBruteForceRules() {
-					r := &config.GetFile().GetBruteForceRules()[i]
-
-					// FilterByProtocol
-					if len(r.FilterByProtocol) > 0 && protocol != "" {
-						matched := false
-						for _, fp := range r.FilterByProtocol {
-							if fp == protocol {
-								matched = true
-
-								break
-							}
-						}
-
-						if !matched {
-							continue
-						}
-					}
-
-					// FilterByOIDCCID
-					if len(r.FilterByOIDCCID) > 0 && oidccid != "" {
-						matched := false
-						for _, cid := range r.FilterByOIDCCID {
-							if cid == oidccid {
-								matched = true
-
-								break
-							}
-						}
-
-						if !matched {
-							continue
-						}
-					}
-
-					// IP version
-					if ip.To4() != nil {
-						if !r.IPv4 {
-							continue
-						}
-					} else if ip.To16() != nil {
-						if !r.IPv6 {
-							continue
-						}
-					} else {
-						continue
-					}
-
-					if r.CIDR > 0 {
-						if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
-							candidate := n.String()
-
-							// 1) Historical hit in the pre-result hash map?
-							if !isRepeating {
-								key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
-
-								stats.GetMetrics().GetRedisReadCounter().Inc()
-
-								if exists, err := rediscli.GetClient().GetReadHandle().HExists(httpRequest.Context(), key, candidate).Result(); err == nil && exists {
-									if r.CIDR > bestCIDRRepeating {
-										bestCIDRRepeating = r.CIDR
-										foundRepeatingNet = candidate
-									}
-
-									foundRepeating = true
-								}
-							}
-
-							// 2) Fallback: choose the most specific network as clientNet if no hash hit is found (only if no hint was provided)
-							if bfClientNetHint == "" && (clientNet == "" || r.CIDR > bestCIDRFallback) {
-								bestCIDRFallback = r.CIDR
-								clientNet = candidate
-							}
-						}
-					}
-				}
-
-				if foundRepeating {
-					isRepeating = true
-					if foundRepeatingNet != "" {
-						clientNet = foundRepeatingNet
-					}
-				}
-			}
-		}
-	}
-
-	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = isRepeating
-	commonRequest.UserFound = userFound
-	commonRequest.Authenticated = authenticated
-	commonRequest.NoAuth = noAuth
-	commonRequest.BruteForceCounter = 0
-	commonRequest.Service = service
-	commonRequest.Session = guid
-	commonRequest.ClientIP = clientIP
-	commonRequest.ClientPort = clientPort
-	commonRequest.ClientNet = clientNet
-	commonRequest.ClientHost = clientHost
-	commonRequest.ClientID = clientID
-	commonRequest.LocalIP = localIP
-	commonRequest.LocalPort = localPort
-	commonRequest.UserAgent = userAgent
-	commonRequest.Username = username
-	commonRequest.Account = accountName
-	commonRequest.AccountField = accountField
-	commonRequest.UniqueUserID = uniqueUserID
-	commonRequest.DisplayName = displayName
-	commonRequest.Password = password
-	commonRequest.Protocol = protocol
-	commonRequest.OIDCCID = oidccid
-	commonRequest.BruteForceName = bruteForceName
-	commonRequest.FeatureName = featureName
-	commonRequest.StatusMessage = &statusMessage
-	commonRequest.XSSL = xSSL
-	commonRequest.XSSLSessionID = xSSLSessionID
-	commonRequest.XSSLClientVerify = xSSLClientVerify
-	commonRequest.XSSLClientDN = xSSLClientDN
-	commonRequest.XSSLClientCN = xSSLClientCN
-	commonRequest.XSSLIssuer = xSSLIssuer
-	commonRequest.XSSLClientNotBefore = xSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = xSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = xSSLSubjectDN
-	commonRequest.XSSLIssuerDN = xSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = xSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = xSSLClientIssuerDN
-	commonRequest.XSSLProtocol = xSSLProtocol
-	commonRequest.XSSLCipher = xSSLCipher
-	commonRequest.SSLSerial = sSLSerial
-	commonRequest.SSLFingerprint = sSLFingerprint
-
-	action.RequestChan <- &action.Action{
-		LuaAction:     definitions.LuaActionPost,
-		Context:       context,
-		FinishedChan:  finished,
-		HTTPRequest:   httpRequest,
-		CommonRequest: commonRequest,
-	}
-
-	<-finished
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
-}
-
 // PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
-	defaultPostAction.Run(PostActionInput{View: a.View(), Result: passDBResult})
+	if act := getPostAction(); act != nil {
+		act.Run(PostActionInput{View: a.View(), Result: passDBResult})
+	}
 }
 
 // HaveMonitoringFlag checks if the provided flag exists in the MonitoringFlags slice of the AuthState object.
@@ -1572,8 +1322,8 @@ func (a *AuthState) HaveMonitoringFlag(flag definitions.Monitoring) bool {
 	return false
 }
 
-// sfKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
-func (a *AuthState) sfKeyHash() string {
+// SFKeyHash returns a short hash for the strict singleflight key to use in Redis keys.
+func (a *AuthState) SFKeyHash() string {
 	sum := sha1.Sum([]byte(a.generateSingleflightKey()))
 
 	return hex.EncodeToString(sum[:])
@@ -1787,8 +1537,8 @@ func (a *AuthState) isCacheInCorrectPosition(backendPos map[definitions.Backend]
 	return backendPos[definitions.BackendCache] < backendPos[a.UsedPassDBBackend]
 }
 
-// getUsedBackend returns the cache name backend based on the used password database backend.
-func (a *AuthState) getUsedBackend() (definitions.CacheNameBackend, error) {
+// GetUsedCacheBackend returns the cache name backend based on the used password database backend.
+func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) {
 	var usedBackend definitions.CacheNameBackend
 
 	switch a.UsedPassDBBackend {
@@ -1812,8 +1562,8 @@ func (a *AuthState) getUsedBackend() (definitions.CacheNameBackend, error) {
 	return usedBackend, nil
 }
 
-// getCacheName retrieves the cache name associated with the given backend, based on the protocol configured for the AuthState.
-func (a *AuthState) getCacheName(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
+// GetCacheNameFor retrieves the cache name associated with the given backend, based on the protocol configured for the AuthState.
+func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
 	cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
 	if len(cacheNames) != 1 {
 		level.Error(log.Logger).Log(
@@ -1830,8 +1580,8 @@ func (a *AuthState) getCacheName(usedBackend definitions.CacheNameBackend) (cach
 	return
 }
 
-// createPositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
-func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache {
+// CreatePositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
+func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache {
 	return &bktype.PositivePasswordCache{
 		AccountField:      a.AccountField,
 		TOTPSecretField:   a.TOTPSecretField,
@@ -1854,16 +1604,18 @@ func (a *AuthState) createPositivePasswordCache() *bktype.PositivePasswordCache 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
 	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
-		if authenticated {
-			if err := defaultCacheService.OnSuccess(ctx, a, accountName); err != nil {
-				return err
+		if cs := getCacheService(); cs != nil {
+			if authenticated {
+				if err := cs.OnSuccess(a, accountName); err != nil {
+					return err
+				}
+			} else {
+				cs.OnFailure(a, accountName)
 			}
-		} else {
-			defaultCacheService.OnFailure(ctx, a, accountName)
 		}
 
 		// Load histories and update counters via service (no behavior change)
-		defaultBruteForceService.LoadHistories(ctx, a, accountName)
+		bfLoadHistories(ctx, a, accountName)
 	}
 
 	return nil
@@ -1936,7 +1688,13 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
-	return defaultLuaFilter.Filter(ctx, a.View(), passDBResult)
+	if lf := getLuaFilter(); lf != nil {
+		return lf.Filter(ctx, a.View(), passDBResult)
+	}
+
+	level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
+
+	return definitions.AuthResultTempFail
 }
 
 // ListUserAccounts returns the list of all known users from the account databases.

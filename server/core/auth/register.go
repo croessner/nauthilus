@@ -13,30 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package core
+package auth
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/gin-gonic/gin"
+	"github.com/croessner/nauthilus/server/core"
 )
 
-// LuaFilter encapsulates the Lua filter pipeline and returns an AuthResult.
-//
-//goland:nointerface
-type LuaFilter interface {
-	Filter(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
-}
+// Package auth wires the default implementations for pluggable auth services
+// via init() to avoid import cycles. It lives in subpackage server/core/auth
+// and only registers implementations defined in core.
 
-// PostActionInput aggregates the minimal inputs required for the Lua post action.
-// It deliberately reduces dozens of parameters to a compact value object.
-type PostActionInput struct {
-	View   *StateView
-	Result *PassDBResult
-}
-
-// PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.
-//
-//goland:nointerface
-type PostAction interface {
-	Run(input PostActionInput)
+func init() {
+	// Register default implementations provided by subpackage.
+	core.RegisterLuaFilter(DefaultLuaFilter{})
+	core.RegisterPostAction(DefaultPostAction{})
+	core.RegisterBruteForceService(DefaultBruteForceService{})
+	core.RegisterCacheService(DefaultCacheService{})
+	core.RegisterPasswordVerifier(DefaultPasswordVerifier{})
 }

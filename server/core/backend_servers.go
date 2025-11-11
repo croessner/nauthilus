@@ -16,27 +16,14 @@
 package core
 
 import (
-	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/gin-gonic/gin"
+	"github.com/croessner/nauthilus/server/config"
 )
 
-// LuaFilter encapsulates the Lua filter pipeline and returns an AuthResult.
-//
-//goland:nointerface
-type LuaFilter interface {
-	Filter(ctx *gin.Context, view *StateView, result *PassDBResult) definitions.AuthResult
-}
+// ListBackendServers returns the current slice of configured backend servers.
+// This accessor allows subpackages to read the list without exposing internal fields.
+func ListBackendServers() []*config.BackendServer {
+	BackendServers.mu.RLock()
+	defer BackendServers.mu.RUnlock()
 
-// PostActionInput aggregates the minimal inputs required for the Lua post action.
-// It deliberately reduces dozens of parameters to a compact value object.
-type PostActionInput struct {
-	View   *StateView
-	Result *PassDBResult
-}
-
-// PostAction encapsulates the asynchronous post-action dispatch to the Lua worker.
-//
-//goland:nointerface
-type PostAction interface {
-	Run(input PostActionInput)
+	return BackendServers.backendServer
 }

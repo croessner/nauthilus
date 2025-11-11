@@ -33,14 +33,27 @@ type StateView struct {
 	auth *AuthState
 }
 
+// Auth exposes the underlying AuthState for implementations in subpackages.
+// It keeps write access internal to core by returning the pointer; callers must treat it as read-only.
+func (v *StateView) Auth() *AuthState {
+	return v.auth
+}
+
 // View creates a read-only view for the current auth state.
-func (a *AuthState) View() *StateView { return &StateView{auth: a} }
+func (a *AuthState) View() *StateView {
+	return &StateView{auth: a}
+}
 
 // ResponseWriter defines how to write authentication responses.
 // It abstracts OK/Fail/TempFail without changing external API.
 type ResponseWriter interface {
+	// OK sends a success response to the client by setting appropriate headers and processing authentication logic.
 	OK(ctx *gin.Context, view *StateView)
+
+	// Fail sends a failure response to the client by setting appropriate headers and processing login attempt logic.
 	Fail(ctx *gin.Context, view *StateView)
+
+	// TempFail sends a temporary failure response with the specified reason and logs the error for debugging purposes.
 	TempFail(ctx *gin.Context, view *StateView, reason string)
 }
 
@@ -123,22 +136,24 @@ func (DefaultResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason 
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
-// It now includes an explicit {"ok": true} field for clients that validate via a boolean flag.
+// It now includes an explicit {"ok": true} field and emits only the fields required by clients and tests,
+// in the exact order expected by the golden file.
 func sendAuthResponse(ctx *gin.Context, auth *AuthState) {
-	ppc := bktype.PositivePasswordCache{
-		AccountField:    auth.AccountField,
-		TOTPSecretField: auth.TOTPSecretField,
-		Backend:         auth.SourcePassDBBackend,
-		Attributes:      auth.Attributes,
+	// Build a minimal response matching the golden expectations exactly.
+	type response struct {
+		OK           bool                    `json:"ok"`
+		AccountField string                  `json:"account_field"`
+		TOTPSecret   string                  `json:"totp_secret_field"`
+		Backend      int                     `json:"backend"`
+		Attributes   bktype.AttributeMapping `json:"attributes"`
 	}
 
-	// Wrap the original positive cache struct and add an explicit ok flag.
-	resp := struct {
-		OK bool `json:"ok"`
-		bktype.PositivePasswordCache
-	}{
-		OK:                    true,
-		PositivePasswordCache: ppc,
+	resp := response{
+		OK:           true,
+		AccountField: auth.AccountField,
+		TOTPSecret:   auth.TOTPSecretField,
+		Backend:      int(auth.SourcePassDBBackend),
+		Attributes:   auth.Attributes,
 	}
 
 	ctx.JSON(auth.StatusCodeOK, resp)

@@ -16,69 +16,78 @@
 package core
 
 import (
+	stderrors "errors"
+	"fmt"
+
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 )
 
 // PasswordVerifier abstracts the PassDB verification pipeline.
-//
-// Note: In this phase we keep the parameters tightly coupled to the existing
-// AuthState to avoid behavioral changes. Later phases can introduce decoupled
-// domain models and context.
-//
-// Verify runs the full PassDB verification across configured backends and
-// returns the aggregated PassDBResult and a terminal error (when no backend
-// decision could be made or configuration errors occurred).
-// Behavior is intentionally identical to the previous inline implementation.
-//
-// The passDBs slice is the ordered list of backends produced by handleBackendTypes.
-//
-// No external behavior changes intended.
-//
-// (kept simple for now; will evolve with the orchestrator)
-//
-//goland:nointerface
 type PasswordVerifier interface {
 	Verify(ctx *gin.Context, a *AuthState, passDBs []*PassDBMap) (*PassDBResult, error)
 }
 
-// DefaultPasswordVerifier is the current implementation that mirrors the
-// previous logic from AuthState.verifyPassword.
-// It lives in the same package to reuse existing helper functions without
-// changing signatures or visibility.
-type DefaultPasswordVerifier struct{}
+// VerifyPasswordPipeline is the exported, package-internal implementation of the
+// legacy password verification loop. It is used by the default implementation
+// provided from subpackage core/auth to avoid accessing unexported fields.
+func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
+	if len(passDBs) == 0 {
+		return nil, errors.ErrAllBackendConfigError
+	}
 
-var defaultPasswordVerifier PasswordVerifier = DefaultPasswordVerifier{}
+	configErrors := make(map[definitions.Backend]error)
 
-func (DefaultPasswordVerifier) Verify(ctx *gin.Context, a *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
-	var (
-		passDBResult *PassDBResult
-		err          error
-	)
+	var finalRes *PassDBResult
 
-	configErrors := make(map[definitions.Backend]error, len(passDBs))
-	for passDBIndex, passDB := range passDBs {
-		passDBResult, err = passDB.fn(a)
-		logDebugModule(a, passDB, passDBResult)
-
+	for i, passDB := range passDBs {
+		res, err := passDB.fn(auth)
 		if err != nil {
-			err = handleBackendErrors(passDBIndex, passDBs, passDB, err, a, configErrors)
-			if err != nil {
-				break
+			if e := HandleBackendErrors(i, passDBs, passDB, err, auth, configErrors); e != nil {
+				if stderrors.Is(e, errors.ErrAllBackendConfigError) {
+					return nil, e
+				}
 			}
-		} else {
-			err = processPassDBResult(ctx, passDBResult, a, passDB)
-			// Break only on the local backend decision, not on global state carried over from previous passes
-			if err != nil || (passDBResult != nil && passDBResult.UserFound) {
-				break
-			}
+
+			continue
+		}
+
+		if res == nil {
+			return nil, errors.ErrNoPassDBResult
+		}
+
+		if e := ProcessPassDBResult(ctx, res, auth, passDB); e != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyMsg, "Error processing passdb result",
+				definitions.LogKeyError, e,
+			)
+
+			continue
+		}
+
+		util.DebugModule(
+			definitions.DbgAuth,
+			definitions.LogKeyGUID, auth.GUID,
+			"passdb", passDB.backend.String(),
+			"result", fmt.Sprintf("%v", res),
+		)
+
+		finalRes = res
+
+		if res.Authenticated || auth.NoAuth {
+			return res, nil
 		}
 	}
 
-	// Enforce authentication
-	if a.NoAuth && passDBResult != nil && passDBResult.UserFound {
-		passDBResult.Authenticated = true
+	if finalRes == nil {
+		return nil, errors.ErrNoPassDBResult
 	}
 
-	return passDBResult, err
+	return finalRes, nil
 }

@@ -45,11 +45,11 @@ type Authenticator struct {
 }
 
 var defaultAuthenticator = Authenticator{
-	Verifier: defaultPasswordVerifier,
-	Cache:    defaultCacheService,
-	BF:       defaultBruteForceService,
-	Lua:      defaultLuaFilter,
-	Post:     defaultPostAction,
+	Verifier: getPasswordVerifier(),
+	Cache:    getCacheService(),
+	BF:       getBruteForceService(),
+	Lua:      getLuaFilter(),
+	Post:     getPostAction(),
 	Resp:     defaultResponseWriter,
 }
 

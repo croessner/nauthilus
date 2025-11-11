@@ -1,21 +1,30 @@
-package core
+package core_test
 
-import "testing"
+import (
+	corepkg "github.com/croessner/nauthilus/server/core"
+	_ "github.com/croessner/nauthilus/server/core/auth"
+
+	"testing"
+)
 
 func TestWaitDelayMonotonicAndBounded(t *testing.T) {
-	var s DefaultBruteForceService
-	max := uint(100)
+	svc := corepkg.GetBruteForceService()
+	if svc == nil {
+		t.Fatal("brute force service not registered")
+	}
+
+	maxDelay := uint(100)
 
 	prev := -1
 	for i := uint(0); i < 200; i++ {
-		val := s.WaitDelay(max, i)
+		val := svc.WaitDelay(maxDelay, i)
 
 		if val < 0 {
 			t.Fatalf("wait delay must be non-negative, got %d for attempt %d", val, i)
 		}
 
-		if val > int(max) {
-			t.Fatalf("wait delay must be <= max (%d), got %d for attempt %d", max, val, i)
+		if val > int(maxDelay) {
+			t.Fatalf("wait delay must be <= max (%d), got %d for attempt %d", maxDelay, val, i)
 		}
 
 		if int(i) == 0 && val != 0 {
@@ -30,8 +39,8 @@ func TestWaitDelayMonotonicAndBounded(t *testing.T) {
 	}
 
 	// Saturation check: large attempts approach max
-	v := s.WaitDelay(max, 5000)
-	if v < int(max)-1 { // allow off-by-one due to tanh rounding
-		t.Fatalf("wait delay should approach max (%d) for large attempts, got %d", max, v)
+	v := svc.WaitDelay(maxDelay, 5000)
+	if v < int(maxDelay)-1 { // allow off-by-one due to tanh rounding
+		t.Fatalf("wait delay should approach max (%d) for large attempts, got %d", maxDelay, v)
 	}
 }
