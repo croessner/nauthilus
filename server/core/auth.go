@@ -492,99 +492,6 @@ type AuthState struct {
 
 var _ State = (*AuthState)(nil)
 
-// authStatePool is a sync.Pool for AuthState objects
-var authStatePool = sync.Pool{
-	New: func() any {
-		util.DebugModule(
-			definitions.DbgAuth,
-			definitions.LogKeyMsg, "Creating new AuthState object",
-		)
-
-		return &AuthState{}
-	},
-}
-
-// reset resets all fields of the AuthState to their zero values
-// This is used when returning an AuthState to the pool
-func (a *AuthState) reset() {
-	// Reset primitive types
-	a.StartTime = time.Time{}
-	a.NoAuth = false
-	a.ListAccounts = false
-	a.UserFound = false
-	a.Authenticated = false
-	a.Authorized = false
-	a.PasswordsAccountSeen = 0
-	a.PasswordsTotalSeen = 0
-	a.LoginAttempts = 0
-	a.StatusCodeOK = 0
-	a.StatusCodeInternalError = 0
-	a.StatusCodeFail = 0
-	a.Username = ""
-	a.Password = ""
-	a.ClientIP = ""
-	a.XClientPort = ""
-	a.ClientHost = ""
-	a.XSSL = ""
-	a.XSSLSessionID = ""
-	a.XSSLClientVerify = ""
-	a.XSSLClientDN = ""
-	a.XSSLClientCN = ""
-	a.XSSLIssuer = ""
-	a.XSSLClientNotBefore = ""
-	a.XSSLClientNotAfter = ""
-	a.XSSLSubjectDN = ""
-	a.XSSLIssuerDN = ""
-	a.XSSLClientSubjectDN = ""
-	a.XSSLClientIssuerDN = ""
-	a.XSSLProtocol = ""
-	a.XSSLCipher = ""
-	a.SSLSerial = ""
-	a.SSLFingerprint = ""
-	a.XClientID = ""
-	a.XLocalIP = ""
-	a.XPort = ""
-	a.StatusMessage = ""
-	a.Service = ""
-	a.BruteForceName = ""
-	a.FeatureName = ""
-	a.BackendName = ""
-	a.OIDCCID = ""
-	a.UsedBackendIP = ""
-	a.GUID = ""
-	a.Method = ""
-	a.AccountField = ""
-	a.TOTPSecret = ""
-	a.TOTPSecretField = ""
-	a.TOTPRecoveryField = ""
-	a.UniqueUserIDField = ""
-	a.DisplayNameField = ""
-	a.UserAgent = ""
-	a.UsedBackendPort = 0
-	a.SourcePassDBBackend = definitions.BackendUnknown
-	a.UsedPassDBBackend = definitions.BackendUnknown
-	a.MasterUserMode = false
-
-	// Reset brute-force hints
-	a.BFClientNet = ""
-	a.BFRepeating = false
-
-	// Reset pointer types
-	a.Protocol = nil
-	a.HTTPClientContext = nil
-	a.HTTPClientRequest = nil
-	a.PasswordHistory = nil
-	a.Context = nil
-
-	// Reset slice types
-	a.AdditionalLogs = nil
-	a.MonitoringFlags = nil
-
-	// Reset map types
-	a.BruteForceCounter = nil
-	a.Attributes = nil
-}
-
 // PassDBResult is used in all password databases to store final results of an authentication process.
 type PassDBResult struct {
 	// Authenticated is a flag that is set if a user was not only found, but also succeeded authentication.
@@ -1128,8 +1035,8 @@ func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*Pas
 		return v.Verify(ctx, a, passDBs)
 	}
 
-	// Fallback: use internal pipeline to preserve behavior when no verifier is registered
-	return VerifyPasswordPipeline(ctx, a, passDBs)
+	// No password verifier registered - abort with error
+	return nil, errors.ErrUnregisteredComponent
 }
 
 // HandleBackendErrors handles the errors that occur during backend processing.
@@ -2267,27 +2174,13 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 // NewAuthStateFromContext initializes and returns an AuthState using the provided gin.Context.
 // It gets an AuthState from the pool, sets the context to a copied HTTPClientContext and assigns the current time to the StartTime field.
 func NewAuthStateFromContext(ctx *gin.Context) State {
-	auth := authStatePool.Get().(*AuthState)
-	auth.StartTime = time.Now()
-	auth.HTTPClientContext = ctx
-	auth.HTTPClientRequest = ctx.Request
+	auth := &AuthState{
+		StartTime:         time.Now(),
+		HTTPClientContext: ctx,
+		HTTPClientRequest: ctx.Request,
+	}
 
 	return auth
-}
-
-// PutAuthState returns an AuthState to the pool after resetting it
-func PutAuthState(auth State) {
-	if auth == nil {
-		return
-	}
-
-	a, ok := auth.(*AuthState)
-	if !ok {
-		return
-	}
-
-	a.reset()
-	authStatePool.Put(a)
 }
 
 // WithDefaults sets default values for the AuthState structure including the GUID session value.
@@ -2584,18 +2477,11 @@ func (a *AuthState) ApplyContextData(x AuthContext) {
 
 	// Apply all string field mappings
 	for _, mapping := range fieldMappings {
-		a.applyStringField(mapping.src, mapping.dest)
+		util.ApplyStringField(mapping.src, mapping.dest)
 	}
 
 	// Handle Protocol specially as it requires type conversion
 	if x.Protocol != "" {
 		a.SetProtocol(config.NewProtocol(x.Protocol))
-	}
-}
-
-// applyStringField assigns source to destination only if source is non-empty.
-func (a *AuthState) applyStringField(src string, dest *string) {
-	if src != "" {
-		*dest = src
 	}
 }

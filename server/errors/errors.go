@@ -86,6 +86,7 @@ var (
 	ErrInvalidUsername                         = errors.New("invalid username")
 	ErrPasswordEncoding                        = errors.New("password encoding error")
 	ErrIncorrectCache                          = errors.New("incorrect cache")
+	ErrUnregisteredComponent                   = errors.New("unregistered component")
 )
 
 // env.

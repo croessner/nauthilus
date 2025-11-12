@@ -55,18 +55,18 @@ var defaultAuthenticator = Authenticator{
 
 // Authenticate runs the full password authentication flow.
 // Behavior mirrors the legacy HandlePassword implementation exactly.
-func (aor Authenticator) Authenticate(ctx *gin.Context, a *AuthState) (authResult definitions.AuthResult) {
+func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authResult definitions.AuthResult) {
 	// Common validation checks
-	if authResult = a.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
+	if authResult = auth.usernamePasswordChecks(); authResult != definitions.AuthResultUnset {
 		return
 	}
 
-	if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
-		return a.handleLocalCache(ctx)
+	if !(auth.HaveMonitoringFlag(definitions.MonInMemory) || auth.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		return auth.handleLocalCache(ctx)
 	}
 
 	// In-process singleflight deduplication only
-	key := a.generateSingleflightKey()
+	key := auth.generateSingleflightKey()
 	reqCtx := ctx.Request.Context()
 
 	// Derive wait deadline from request context, with a safety cap if none
@@ -88,20 +88,20 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, a *AuthState) (authResul
 
 	// Allow disabling in-process singleflight via config (default: enabled)
 	if !config.GetFile().GetServer().GetDedup().IsInProcessEnabled() {
-		useCache, backendPos, passDBs := a.handleBackendTypes()
+		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
+			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 	}
 
 	ch := backchanSF.DoChan(key, func() (any, error) {
-		useCache, backendPos, passDBs := a.handleBackendTypes()
+		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
-		res := a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		res := auth.withWorkCtx(dWork, func() definitions.AuthResult {
+			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 
 		return res, nil
@@ -118,21 +118,21 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, a *AuthState) (authResul
 		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
-		useCache, backendPos, passDBs := a.handleBackendTypes()
+		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
+			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 	case <-timer.C:
 		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
-		useCache, backendPos, passDBs := a.handleBackendTypes()
+		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
-		return a.withWorkCtx(dWork, func() definitions.AuthResult {
-			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
+		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
+			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 	}
 }
