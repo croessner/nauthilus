@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/csv"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -499,33 +501,35 @@ func generateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 
 func main() {
 	var (
-		csvPath       = flag.String("csv", "client/logins.csv", "CSV file path")
-		endpoint      = flag.String("url", "http://localhost:8080/api/v1/auth/json", "Auth endpoint URL")
-		method        = flag.String("method", "POST", "HTTP method")
-		concurrency   = flag.Int("concurrency", 16, "Concurrent workers")
-		rps           = flag.Float64("rps", 0, "Global rate limit (0=unlimited)")
-		jitterMs      = flag.Int("jitter-ms", 0, "Random sleep 0..N ms before each request")
-		delayMs       = flag.Int("delay-ms", 0, "Fixed delay per item in worker")
-		timeoutMs     = flag.Int("timeout-ms", 5000, "HTTP timeout")
-		maxRows       = flag.Int("max", 0, "Limit number of rows (0=all)")
-		shuffle       = flag.Bool("shuffle", true, "Shuffle rows before sending")
-		headersList   = flag.String("headers", "Content-Type: application/json", "Extra headers, separated by '||'")
-		basicAuth     = flag.String("basic-auth", "", "HTTP Basic-Auth credentials in format username:password")
-		okStatus      = flag.Int("ok-status", 200, "HTTP status indicating success when not using JSON flag")
-		useJSONFlag   = flag.Bool("json-ok", true, "Expect JSON {ok:true|false} in response")
-		verbose       = flag.Bool("v", false, "Verbose output")
-		genCSV        = flag.Bool("generate-csv", false, "Generate a CSV at --csv path and exit")
-		genCount      = flag.Int("generate-count", 10000, "Number of rows to generate when --generate-csv is set")
-		genCIDRProb   = flag.Float64("generate-cidr-prob", 0.0, "Probability (0..1) that generated IPs are taken from the same CIDR block")
-		genCIDRPrefix = flag.Int("generate-cidr-prefix", 24, "CIDR prefix length (8..30) of the shared block for IP grouping")
-		csvDelim      = flag.String("csv-delim", "", "CSV delimiter override: ',', ';', 'tab'; empty=auto-detect")
-		csvDebug      = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
-		loops         = flag.Int("loops", 1, "Number of cycles to run over the CSV")
-		runFor        = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
-		maxPar        = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
-		parProb       = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
-		abortProb     = flag.Float64("abort-prob", 0.0, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
-		progressEvery = flag.Duration("progress-interval", time.Minute, "Progress report interval (e.g. 30s, 1m)")
+		csvPath         = flag.String("csv", "client/logins.csv", "CSV file path")
+		endpoint        = flag.String("url", "http://localhost:8080/api/v1/auth/json", "Auth endpoint URL")
+		method          = flag.String("method", "POST", "HTTP method")
+		concurrency     = flag.Int("concurrency", 16, "Concurrent workers")
+		rps             = flag.Float64("rps", 0, "Global rate limit (0=unlimited)")
+		jitterMs        = flag.Int("jitter-ms", 0, "Random sleep 0..N ms before each request")
+		delayMs         = flag.Int("delay-ms", 0, "Fixed delay per item in worker")
+		timeoutMs       = flag.Int("timeout-ms", 5000, "HTTP timeout")
+		maxRows         = flag.Int("max", 0, "Limit number of rows (0=all)")
+		shuffle         = flag.Bool("shuffle", true, "Shuffle rows before sending")
+		headersList     = flag.String("headers", "Content-Type: application/json", "Extra headers, separated by '||'")
+		basicAuth       = flag.String("basic-auth", "", "HTTP Basic-Auth credentials in format username:password")
+		okStatus        = flag.Int("ok-status", 200, "HTTP status indicating success when not using JSON flag")
+		useJSONFlag     = flag.Bool("json-ok", true, "Expect JSON {ok:true|false} in response")
+		verbose         = flag.Bool("v", false, "Verbose output")
+		genCSV          = flag.Bool("generate-csv", false, "Generate a CSV at --csv path and exit")
+		genCount        = flag.Int("generate-count", 10000, "Number of rows to generate when --generate-csv is set")
+		genCIDRProb     = flag.Float64("generate-cidr-prob", 0.0, "Probability (0..1) that generated IPs are taken from the same CIDR block")
+		genCIDRPrefix   = flag.Int("generate-cidr-prefix", 24, "CIDR prefix length (8..30) of the shared block for IP grouping")
+		csvDelim        = flag.String("csv-delim", "", "CSV delimiter override: ',', ';', 'tab'; empty=auto-detect")
+		csvDebug        = flag.Bool("csv-debug", false, "Print detected CSV headers and first row")
+		loops           = flag.Int("loops", 1, "Number of cycles to run over the CSV")
+		runFor          = flag.Duration("duration", 0, "Total duration to run the test (e.g. 5m). CSV rows will loop until time elapses")
+		maxPar          = flag.Int("max-parallel", 1, "Max parallel requests per item (1=off)")
+		parProb         = flag.Float64("parallel-prob", 0.0, "Probability (0..1) that an item is parallelized")
+		abortProb       = flag.Float64("abort-prob", 0.0, "Probability (0..1) to abort/cancel a request (simulates connection drop)")
+		progressEvery   = flag.Duration("progress-interval", time.Minute, "Progress report interval (e.g. 30s, 1m)")
+		compareParallel = flag.Bool("compare-parallel", false, "Compare responses within a parallel group (strict byte equality)")
+		useIdemKey      = flag.Bool("idempotency-key", false, "Add Idempotency-Key header computed from request body (SHA-256)")
 	)
 
 	flag.Parse()
@@ -578,12 +582,23 @@ func main() {
 	usernames := make([]string, len(rows))
 	clientIPs := make([]string, len(rows))
 
+	// Optional: per-row Idempotency-Key
+	idemKeys := make([]string, len(rows))
+
 	for i := range rows {
 		usernames[i] = strings.TrimSpace(resolveUsername(rows[i].Fields))
 		clientIPs[i] = strings.TrimSpace(rows[i].Fields["client_ip"])
 		payload := makePayload(rows[i].Fields)
 		bb, _ := json.Marshal(payload)
 		bodies[i] = bb
+
+		// Precompute Idempotency-Key if requested
+		// We'll still guard usage at request time so this computation can be deferred if preferred.
+		// But doing it here once per row is cheap and keeps worker hot path lean.
+		if *useIdemKey {
+			sum := sha256.Sum256(bb)
+			idemKeys[i] = hex.EncodeToString(sum[:])
+		}
 	}
 
 	// Expected results array for zero allocation in workers
@@ -729,8 +744,65 @@ func main() {
 	}
 
 	// Worker function shared by both modes
-	jobs := make(chan int, *concurrency)
+	// Job carries grouping metadata for parallel comparison
+	type job struct {
+		rowIndex int
+		groupID  uint64
+		groupN   int
+	}
+
+	jobs := make(chan job, *concurrency)
 	var wg sync.WaitGroup
+
+	// Parallel comparison state (only used when --compare-parallel)
+	var (
+		groupMu       sync.Mutex
+		groupBodies   = make(map[uint64][][]byte)
+		groupCodes    = make(map[uint64][]int)
+		groupCTypes   = make(map[uint64][]string)
+		groupExpected = make(map[uint64]int)
+		groupSeq      uint64
+	)
+
+	var parallelMatched int64
+	var parallelMismatched int64
+
+	recordParallelResult := func(gid uint64, expected int, body []byte, code int, ctype string) {
+		groupMu.Lock()
+		defer groupMu.Unlock()
+
+		groupBodies[gid] = append(groupBodies[gid], body)
+		groupCodes[gid] = append(groupCodes[gid], code)
+		groupCTypes[gid] = append(groupCTypes[gid], ctype)
+		if _, ok := groupExpected[gid]; !ok {
+			groupExpected[gid] = expected
+		}
+
+		if len(groupBodies[gid]) == groupExpected[gid] {
+			baseB := groupBodies[gid][0]
+			baseC := groupCodes[gid][0]
+			baseT := groupCTypes[gid][0]
+			same := true
+			for i := 1; i < len(groupBodies[gid]); i++ {
+				if !bytes.Equal(baseB, groupBodies[gid][i]) || baseC != groupCodes[gid][i] || baseT != groupCTypes[gid][i] {
+					same = false
+					break
+				}
+			}
+			if same {
+				atomic.AddInt64(&parallelMatched, 1)
+			} else {
+				atomic.AddInt64(&parallelMismatched, 1)
+				if *verbose {
+					fmt.Printf("PARALLEL MISMATCH group=%d samples=%d\n", gid, len(groupBodies[gid]))
+				}
+			}
+			delete(groupBodies, gid)
+			delete(groupCodes, gid)
+			delete(groupCTypes, gid)
+			delete(groupExpected, gid)
+		}
+	}
 
 	worker := func() {
 		defer wg.Done()
@@ -738,7 +810,8 @@ func main() {
 		// Per-worker reusable buffer to drain response bodies without per-request allocations
 		buf := make([]byte, 32<<10)
 
-		for idx := range jobs {
+		for jb := range jobs {
+			idx := jb.rowIndex
 			if *delayMs > 0 {
 				time.Sleep(time.Duration(*delayMs) * time.Millisecond)
 			}
@@ -793,6 +866,23 @@ func main() {
 
 			if clientIP != "" {
 				req.Header.Set("X-Forwarded-For", clientIP)
+			}
+
+			// Optionally set Idempotency-Key header derived from request body
+			if *useIdemKey {
+				idemHeaderName := "Idempotency-Key"
+
+				// Do not overwrite if already provided via --headers
+				if req.Header.Get(idemHeaderName) == "" {
+					key := idemKeys[idx]
+					if key == "" {
+						sum := sha256.Sum256(bb)
+						key = hex.EncodeToString(sum[:])
+						idemKeys[idx] = key
+					}
+
+					req.Header.Set(idemHeaderName, key)
+				}
 			}
 
 			ts := time.Now()
@@ -859,23 +949,39 @@ func main() {
 			func() {
 				defer resp.Body.Close()
 				var gotOK bool
-				if *useJSONFlag {
-					// Decode into a concrete type (no interface boxing)
-					var jr struct {
-						OK bool `json:"ok"`
+				code := resp.StatusCode
+				ctype := resp.Header.Get("Content-Type")
+				if *compareParallel {
+					// We need raw bytes for comparison
+					bodyBytes, _ := io.ReadAll(resp.Body)
+					if *useJSONFlag {
+						var jr struct {
+							OK bool `json:"ok"`
+						}
+						_ = json.Unmarshal(bodyBytes, &jr)
+						gotOK = jr.OK
+					} else {
+						gotOK = code == *okStatus
 					}
-
-					_ = json.NewDecoder(resp.Body).Decode(&jr)
-					gotOK = jr.OK
+					// Record for comparison if grouped
+					if jb.groupID != 0 && jb.groupN > 1 {
+						recordParallelResult(jb.groupID, jb.groupN, bodyBytes, code, ctype)
+					}
 				} else {
-					gotOK = resp.StatusCode == *okStatus
+					if *useJSONFlag {
+						var jr struct {
+							OK bool `json:"ok"`
+						}
+						_ = json.NewDecoder(resp.Body).Decode(&jr)
+						gotOK = jr.OK
+					} else {
+						gotOK = code == *okStatus
+					}
+					// Drain body with per-worker buffer to keep connections reusable without per-request allocs
+					io.CopyBuffer(io.Discard, resp.Body, buf)
 				}
 
-				// Drain body with per-worker buffer to keep connections reusable without per-request allocs
-				io.CopyBuffer(io.Discard, resp.Body, buf)
-
 				// Count HTTP status code
-				code := resp.StatusCode
 				if code >= 0 && code < len(statusCounts) {
 					atomic.AddInt64(&statusCounts[code], 1)
 				}
@@ -915,24 +1021,21 @@ func main() {
 	// The first job follows the regular pacing (handled by caller); extra ones are enqueued immediately
 	// with an optional tiny jitter to simulate parallel connection setup.
 	enqueueParallelGroup := func(i int) {
-		// Always enqueue at least one job
-		jobs <- i
-
-		// Feature off?
-		if *maxPar <= 1 || *parProb <= 0 {
-			return
+		// Determine total jobs for this item
+		total := 1
+		if *maxPar > 1 && *parProb > 0 && rand.Float64() < *parProb {
+			extra := rand.IntN(*maxPar) // 0..(maxPar-1)
+			total += extra
 		}
 
-		// Decide whether to parallelize this item
-		if rand.Float64() >= *parProb {
-			return
+		var gid uint64
+		if *compareParallel && total > 1 {
+			gid = atomic.AddUint64(&groupSeq, 1)
 		}
 
-		// Number of extra parallel jobs: 0..(maxPar-1)
-		extra := rand.IntN(*maxPar)
-
-		for k := 0; k < extra; k++ {
-			jobs <- i
+		// Enqueue jobs
+		for k := 0; k < total; k++ {
+			jobs <- job{rowIndex: i, groupID: gid, groupN: total}
 		}
 	}
 
@@ -1038,7 +1141,7 @@ func main() {
 
 			// Recreate jobs channel for next cycle
 			if cycle != *loops {
-				jobs = make(chan int, *concurrency)
+				jobs = make(chan job, *concurrency)
 			}
 		}
 	}
@@ -1050,6 +1153,9 @@ func main() {
 
 	fmt.Printf("\nDone in %s\n", dur)
 	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, aborted, skipped, toleratedBF)
+	if *compareParallel {
+		fmt.Printf("parallel_matched=%d parallel_mismatched=%d\n", parallelMatched, parallelMismatched)
+	}
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())
