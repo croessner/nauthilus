@@ -251,7 +251,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 		ret        int
 		err        error
 		logs       lualib.CustomLogKeyValue
-		statusText *string
+		statusText **string
 	}
 
 	var (
@@ -331,7 +331,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 			Llocal.SetContext(luaCtx)
 
-			fr := &featResult{name: feature.Name, statusText: localStatus}
+			fr := &featResult{name: feature.Name, statusText: &localStatus}
 
 			// Load package path and execute compiled script
 			if e := lualib.PackagePath(Llocal); e != nil {
@@ -424,7 +424,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 		}
 
 		// Merge per-feature status message and logs via common helper
-		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, fr.statusText, fr.logs)
+		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
 	}
 
 	return triggered, abortFeatures, nil

@@ -327,7 +327,7 @@ func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *ato
 	if strings.Contains(err.Error(), "no such host") {
 		util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
-		if !rbl.AllowFailure {
+		if !rbl.IsAllowFailure() {
 			dnsResolverErr.Store(true)
 		}
 
@@ -601,6 +601,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+
 	// Set the fields
 	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.UserFound = func() bool { return a.GetAccount() != "" }()
@@ -644,6 +645,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 		Context:       a.Context,
 		FinishedChan:  finished,
 		HTTPRequest:   a.HTTPClientRequest,
+		HTTPContext:   a.HTTPClientContext,
 		CommonRequest: commonRequest,
 	}
 

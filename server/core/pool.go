@@ -16,6 +16,7 @@
 package core
 
 import (
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/objpool"
 	"github.com/croessner/nauthilus/server/util"
@@ -25,10 +26,13 @@ import (
 // This function should be called during application initialization
 func InitPassDBResultPool() {
 	objpool.SetPassDBResultPoolNewFunc(func() any {
-		util.DebugModule(
-			definitions.DbgAuth,
-			definitions.LogKeyMsg, "Creating new PassDBResult object",
-		)
+		// Avoid touching global config in unit tests where it may not be loaded
+		if config.IsFileLoaded() {
+			util.DebugModule(
+				definitions.DbgAuth,
+				definitions.LogKeyMsg, "Creating new PassDBResult object",
+			)
+		}
 
 		return &PassDBResult{}
 	})

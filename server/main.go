@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/core"
+	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/svcctx"
 

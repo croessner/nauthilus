@@ -480,7 +480,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		ret             int
 		err             error
 		logs            lualib.CustomLogKeyValue
-		statusText      *string
+		statusText      **string
 		backendResult   *lualib.LuaBackendResult
 		removeAttrsList []string
 	}
@@ -554,7 +554,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			Llocal.SetContext(luaCtx)
 
-			fr := &filtResult{name: sc.Name, statusText: localStatus, backendResult: localBackendResult}
+			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}
 
 			// Execute script
 			if e := lualib.PackagePath(Llocal); e != nil {
@@ -651,7 +651,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		}
 
 		// Merge per-filter status message and logs via common helper
-		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, fr.statusText, fr.logs)
+		lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
 	}
 
 	// After aggregating results, log rejected filters and per-filter return codes

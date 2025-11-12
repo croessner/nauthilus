@@ -686,3 +686,10 @@ func GetCtxWithDeadlineLDAPModify() (context.Context, context.CancelFunc) {
 
 	return context.WithTimeout(svcctx.Get(), timeout)
 }
+
+// ApplyStringField updates the string pointer `dest` with the value of `src` if `src` is non-empty.
+func ApplyStringField(src string, dest *string) {
+	if src != "" && dest != nil {
+		*dest = src
+	}
+}

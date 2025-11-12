@@ -1,0 +1,1 @@
+{"ok":true,"account_field":"account","totp_secret_field":"totp","backend":2,"attributes":{"dn":["cn=user,dc=example,dc=org"]}}

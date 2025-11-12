@@ -109,8 +109,6 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 		return
 	}
 
-	defer core.PutAuthState(auth)
-
 	if reject := auth.PreproccessAuthRequest(ctx); reject { //nolint:gosimple // match existing signature
 		return
 	}
@@ -126,8 +124,6 @@ func (h *Handler) process(ctx *gin.Context) {
 
 		return
 	}
-
-	defer core.PutAuthState(auth)
 
 	if reject := auth.PreproccessAuthRequest(ctx); reject {
 		return

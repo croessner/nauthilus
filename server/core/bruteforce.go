@@ -120,7 +120,8 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 			LuaAction:     definitions.LuaActionBruteForce,
 			Context:       a.Context,
 			FinishedChan:  finished,
-			HTTPRequest:   nil, // We don't have access to the gin.Context here, so we can't use its Request
+			HTTPRequest:   ctx.Request,
+			HTTPContext:   ctx,
 			CommonRequest: commonRequest,
 		}
 
