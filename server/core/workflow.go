@@ -25,6 +25,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Fixed header name for idempotency. Not configurable by design.
+const idempotencyHeaderName = "Idempotency-Key"
+
+// setIdempotencyHeaders echoes the idempotency key and, if replayed is provided,
+// sets Idempotency-Replayed to "true"/"false" accordingly.
+func setIdempotencyHeaders(ctx *gin.Context, idem string, replayed *bool) {
+	if idem == "" {
+		return
+	}
+
+	ctx.Header(idempotencyHeaderName, idem)
+
+	if replayed != nil {
+		if *replayed {
+			ctx.Header("Idempotency-Replayed", "true")
+		} else {
+			ctx.Header("Idempotency-Replayed", "false")
+		}
+	}
+}
+
 // Authenticator orchestrates the authentication flow.
 // It wires the previously extracted services and keeps behavior identical
 // to the legacy inline implementation in AuthState.HandlePassword.
@@ -99,12 +120,30 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 		return
 	}
 
+	// Read idempotency key as early as possible so we can echo it on early return paths (e.g., memory cache).
+	idem := ctx.GetHeader(idempotencyHeaderName)
+
 	if !(auth.HaveMonitoringFlag(definitions.MonInMemory) || auth.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		// Memory-cache hit is semantically a replay; if a key is present, echo it and mark replayed.
+		if idem != "" {
+			replayed := true
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
+
 		return auth.handleLocalCache(ctx)
 	}
 
 	// In-process singleflight deduplication only
 	key := auth.generateSingleflightKey()
+
+	if idem != "" {
+		key = "idk:" + idem + "|" + key
+
+		// Echo the idempotency key for observability (no replay decision yet)
+		setIdempotencyHeaders(ctx, idem, nil)
+	}
+
 	reqCtx := ctx.Request.Context()
 
 	// Derive wait deadline from request context, with a safety cap if none
@@ -128,6 +167,13 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	if !config.GetFile().GetServer().GetDedup().IsInProcessEnabled() {
 		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+
+		// No singleflight: if an idempotency key was provided, mark as not replayed.
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
 
 		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
 			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
@@ -166,11 +212,25 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 	select {
 	case r := <-ch:
 		if r.Err != nil {
+			// On error path, if an idempotency key was present, indicate not replayed
+			if idem != "" {
+				replayed := false
+
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
+
 			return definitions.AuthResultTempFail
 		}
 
 		if out, ok := r.Val.(SFOutcome); ok {
 			applyOutcome(auth, out)
+
+			// Indicate whether this response was replayed from singleflight (shared)
+			if idem != "" {
+				replayed := r.Shared
+
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
 
 			return out.Result
 		}
@@ -183,6 +243,13 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
+		// Not replayed in this fallback
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
+
 		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
 			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
@@ -192,6 +259,13 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 
 		useCache, backendPos, passDBs := auth.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+
+		// Not replayed in this fallback
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
 
 		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
 			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
