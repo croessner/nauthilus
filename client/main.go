@@ -26,6 +26,9 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+	"github.com/mattn/go-isatty"
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/sys/unix"
 )
 
 var json = jsoniter.ConfigFastest
@@ -34,7 +37,68 @@ var json = jsoniter.ConfigFastest
 const maxLatencyMs = 60000
 
 var latBuckets [maxLatencyMs + 1]int64 // index = ms
-var latOverflow int64                  // count of latencies > maxLatencyMs
+
+// TTY/Terminal Utilities
+func isTTY() bool {
+	fd := os.Stdout.Fd()
+
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
+
+func termSize() (w, h int) {
+	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+	if err != nil || ws == nil || ws.Col == 0 || ws.Row == 0 {
+		return 80, 24
+	}
+
+	return int(ws.Col), int(ws.Row)
+}
+
+// effectiveTermWidth returns the usable terminal width in columns.
+// It prefers the provided termW (from termSize) when running on a TTY and termW>0,
+// otherwise falls back to a safe default of 80 columns.
+func effectiveTermWidth(termW int) int {
+	if isTTY() && termW > 0 {
+		return termW
+	}
+
+	return 80
+}
+
+// Display width helpers using runewidth so Unicode block characters render correctly.
+func displayWidth(s string) int { return runewidth.StringWidth(s) }
+
+// truncateToCells cuts a string to at most "max" display cells, preserving rune boundaries.
+func truncateToCells(s string, max int) string { return runewidth.Truncate(s, max, "") }
+
+// padToCellsRight pads the string with spaces on the right to reach exactly "w" display cells.
+func padToCellsRight(s string, w int) string { return runewidth.FillRight(s, w) }
+
+var latOverflow int64 // count of latencies > maxLatencyMs
+
+// computeHistogramCounts aggregates the global latency buckets into "cols" columns.
+// The range [start..end] (inclusive, in ms) is partitioned into columns of size bucketSpan.
+// It returns the per-column counts and the total across all considered buckets.
+func computeHistogramCounts(start, end, bucketSpan, cols int) ([]int64, int64) {
+	counts := make([]int64, cols)
+	var total int64
+	for i := 0; i < cols; i++ {
+		lo := start + i*bucketSpan
+		hi := lo + bucketSpan - 1
+		if hi > end {
+			hi = end
+		}
+
+		var c int64
+		for b := lo; b <= hi; b++ {
+			c += atomic.LoadInt64(&latBuckets[b])
+		}
+
+		counts[i] = c
+		total += c
+	}
+	return counts, total
+}
 
 // percentileFromBuckets calculates a percentile duration from latBuckets within the range of 0 to maxLatencyMs in milliseconds.
 func percentileFromBuckets(p float64) time.Duration {
@@ -183,13 +247,7 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 	// Y-axis label shows counts, so width is based on max column height (maxC) once known; use a temporary width first
 	labelWidth := 0 // will set after computing counts
 
-	// Provisional columns to compute counts: use requested maxCols or env COLUMNS fallback
-	colsEnv := 0
-	if env := strings.TrimSpace(os.Getenv("COLUMNS")); env != "" {
-		if n, err := strconv.Atoi(env); err == nil && n > 0 {
-			colsEnv = n
-		}
-	}
+	termW, _ := termSize()
 
 	// we'll assume a minimal label width in the first pass (4) and a 2-char gutter: " "+"│"
 	gutter := 2
@@ -198,14 +256,14 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 
 	if maxCols > 0 {
 		usable = maxCols
-	} else if colsEnv > 0 {
+	} else {
+		widthAvail := effectiveTermWidth(termW)
+
 		// leave space for labels + gutter; keep at least 20 bars
-		usable = colsEnv - provisionalLabel - gutter
+		usable = widthAvail - provisionalLabel - gutter
 		if usable < 20 {
 			usable = 20
 		}
-	} else {
-		usable = 60
 	}
 
 	if span < usable {
@@ -215,24 +273,7 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 	bucketSpan := (span + usable - 1) / usable // ceil(span/usable) ms per column
 	cols := (span + bucketSpan - 1) / bucketSpan
 
-	counts := make([]int64, cols)
-	var total int64
-	for i := 0; i < cols; i++ {
-		lo := start + i*bucketSpan
-		hi := lo + bucketSpan - 1
-		if hi > end {
-			hi = end
-		}
-
-		var c int64
-
-		for b := lo; b <= hi; b++ {
-			c += atomic.LoadInt64(&latBuckets[b])
-		}
-
-		counts[i] = c
-		total += c
-	}
+	counts, _ := computeHistogramCounts(start, end, bucketSpan, cols)
 
 	// Max for scaling
 	var maxC int64
@@ -255,8 +296,10 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 	}
 
 	// If auto width, recompute columns to fit terminal width exactly with real label width
-	if maxCols <= 0 && colsEnv > 0 {
-		usable = colsEnv - labelWidth - gutter
+	if maxCols <= 0 {
+		widthAvail := effectiveTermWidth(termW)
+
+		usable = widthAvail - labelWidth - gutter
 		if usable < 20 {
 			usable = 20
 		}
@@ -267,25 +310,7 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 
 		bucketSpan = (span + usable - 1) / usable
 		cols = (span + bucketSpan - 1) / bucketSpan
-		counts = make([]int64, cols)
-		total = 0
-
-		for i := 0; i < cols; i++ {
-			lo := start + i*bucketSpan
-
-			hi := lo + bucketSpan - 1
-			if hi > end {
-				hi = end
-			}
-
-			var c int64
-			for b := lo; b <= hi; b++ {
-				c += atomic.LoadInt64(&latBuckets[b])
-			}
-
-			counts[i] = c
-			total += c
-		}
+		counts, _ = computeHistogramCounts(start, end, bucketSpan, cols)
 
 		// recompute maxC
 		maxC = 0
@@ -339,8 +364,10 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 
 	// Determine drawing width (may be wider than number of data columns)
 	drawCols := cols
-	if maxCols <= 0 && colsEnv > 0 {
-		drawCols = colsEnv - labelWidth - gutter
+	if maxCols <= 0 {
+		widthAvail := effectiveTermWidth(termW)
+
+		drawCols = widthAvail - labelWidth - gutter
 		if drawCols < cols {
 			drawCols = cols
 		}
@@ -1022,6 +1049,7 @@ func main() {
 		progressEvery   = flag.Duration("progress-interval", time.Minute, "Progress report interval (e.g. 30s, 1m)")
 		compareParallel = flag.Bool("compare-parallel", false, "Compare responses within a parallel group (strict byte equality)")
 		useIdemKey      = flag.Bool("idempotency-key", false, "Add Idempotency-Key header computed from request body (SHA-256)")
+		progressBar     = flag.Bool("progress-bar", false, "Render a single-line progress bar (TTY only)")
 	)
 
 	flag.Parse()
@@ -1177,8 +1205,168 @@ func main() {
 
 	start := time.Now()
 
-	// Periodic progress reporter (only if interval > 0)
-	if *progressEvery > 0 {
+	// Progress output: either interactive bar (TTY) or periodic text reporter
+	const progressBarHz = 8 // fixed refresh rate for bar
+
+	if *progressBar && isTTY() {
+		// Interactive single-line progress bar pinned to the bottom (TTY only)
+		go func() {
+			defer func() {
+				// Unhide cursor, clear line, print newline to separate final summary
+				fmt.Printf("\x1b[?25h\r\x1b[2K\n")
+			}()
+
+			tick := time.NewTicker(time.Second / time.Duration(max(1, progressBarHz)))
+			defer tick.Stop()
+
+			prevTotal := int64(0)
+			prevTime := start
+
+			// Determine planned total work
+			var plannedTotal int64 = -1 // unknown
+			if *runFor > 0 {
+				plannedTotal = -2 // time-based
+			} else {
+				plannedTotal = int64(*loops * len(rows))
+				if plannedTotal == 0 {
+					plannedTotal = -1
+				}
+			}
+
+			// Hide cursor to reduce flicker
+			fmt.Printf("\x1b[?25l")
+
+			for {
+				select {
+				case <-tick.C:
+					now := time.Now()
+					dt := now.Sub(prevTime).Seconds()
+					if dt <= 0 {
+						dt = 1
+					}
+
+					t := atomic.LoadInt64(&total)
+					m := atomic.LoadInt64(&matched)
+					he := atomic.LoadInt64(&httpErrs)
+					ab := atomic.LoadInt64(&aborted)
+					sk := atomic.LoadInt64(&skipped)
+					tls := atomic.LoadInt64(&totalLatencyNs)
+
+					var avg time.Duration
+					if t > 0 {
+						avg = time.Duration(tls / t)
+					}
+
+					// RPS since last tick
+					delta := t - prevTotal
+					rps := float64(delta) / dt
+
+					// Percentiles
+					p50 := percentileFromBuckets(0.50)
+					p90 := percentileFromBuckets(0.90)
+
+					// Progress ratio and left label
+					var ratio float64
+					var leftLabel string
+					if plannedTotal == -2 { // duration-based
+						if *runFor > 0 {
+							ratio = float64(now.Sub(start)) / float64(*runFor)
+							if ratio < 0 {
+								ratio = 0
+							}
+
+							if ratio > 1 {
+								ratio = 1
+							}
+
+							leftLabel = fmt.Sprintf("%3.0f%%", ratio*100)
+						}
+					} else if plannedTotal > 0 {
+						ratio = float64(t) / float64(plannedTotal)
+						if ratio > 1 {
+							ratio = 1
+						}
+
+						leftLabel = fmt.Sprintf("%3.0f%% %d/%d", ratio*100, t, plannedTotal)
+					} else {
+						ratio = 0
+						leftLabel = fmt.Sprintf("%d req", t)
+					}
+
+					termW, termH := termSize()
+					// Build left and right parts
+					left := leftLabel
+					right := fmt.Sprintf(" rps=%.1f ok=%d err=%d abort=%d skip=%d avg=%s p50=%s p90=%s", rps, m, he, ab, sk, avg, p50, p90)
+
+					// Render layout: " " + left + " " + BAR + right
+					const minBar = 10
+					leftW := displayWidth(left)
+					rightW := displayWidth(right)
+
+					fixedSpaces := 2 // leading space and space before bar
+					available := termW - fixedSpaces - leftW - rightW
+
+					if available < minBar {
+						// Prefer shrinking right part
+						need := minBar - available
+						newRightW := rightW - need
+						if newRightW < 0 {
+							newRightW = 0
+						}
+						right = truncateToCells(right, newRightW)
+						rightW = displayWidth(right)
+						available = termW - fixedSpaces - leftW - rightW
+					}
+
+					if available < minBar {
+						// Then shrink left label if still necessary
+						need := minBar - available
+						newLeftW := leftW - need
+						if newLeftW < 0 {
+							newLeftW = 0
+						}
+						left = truncateToCells(left, newLeftW)
+						leftW = displayWidth(left)
+						available = termW - fixedSpaces - leftW - rightW
+					}
+
+					barWidth := available
+					if barWidth < minBar {
+						barWidth = minBar
+					}
+
+					// Compute fill length rounded to nearest cell
+					fill := int(math.Round(ratio * float64(barWidth)))
+					if fill < 0 {
+						fill = 0
+					}
+					if fill > barWidth {
+						fill = barWidth
+					}
+
+					bar := strings.Repeat("█", fill) + strings.Repeat("·", barWidth-fill)
+					line := " " + left + " " + bar + right
+
+					// Ensure final line matches terminal width in display cells
+					dw := displayWidth(line)
+					if dw < termW {
+						line = padToCellsRight(line, termW)
+					} else if dw > termW {
+						line = truncateToCells(line, termW)
+					}
+
+					// Draw at bottom row: save pos → move → clear → print → restore
+					fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", termH, line)
+
+					prevTotal = t
+					prevTime = now
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	} else if *progressEvery > 0 {
+		// Fallback: periodic text reporter (disabled when progress bar is active)
 		go func() {
 			ticker := time.NewTicker(*progressEvery)
 			defer ticker.Stop()
@@ -1206,32 +1394,20 @@ func main() {
 					mn := time.Duration(atomic.LoadInt64(&minLatencyNs))
 					mx := time.Duration(atomic.LoadInt64(&maxLatencyNs))
 
-					// periodical RPS since last report
 					delta := t - prevTotal
 					rps := float64(delta) / dt
-
 					var avg time.Duration
 					if t > 0 {
 						avg = time.Duration(tls / t)
 					}
-
 					elapsed := now.Sub(start)
-
-					// Percentiles from histogram (cheap to compute over 60k buckets)
 					p50 := percentileFromBuckets(0.50)
 					p90 := percentileFromBuckets(0.90)
 					p99 := percentileFromBuckets(0.99)
 
-					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s",
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
 						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx, p50, p90, p99,
 					)
-
-					of := atomic.LoadInt64(&latOverflow)
-					if of > 0 {
-						fmt.Printf(" overflow(>%dms)=%d", maxLatencyMs, of)
-					}
-
-					fmt.Printf("\n")
 
 					prevTotal = t
 					prevTime = now
@@ -1705,10 +1881,12 @@ func main() {
 			fmt.Printf("latency_overflow(>%dms)=%d\n", maxLatencyMs, of)
 		}
 
-		// ASCII histogram (60 columns, 10 rows, with markers)
-		fmt.Println()
-		printLatencyHistogramASCII(0, 10, true)
-		fmt.Println()
+		// ASCII histogram (60 columns, 10 rows) nur in TTY-Kontexten ausgeben
+		if isTTY() {
+			fmt.Println()
+			printLatencyHistogramASCII(0, 10, true)
+			fmt.Println()
+		}
 
 	}
 
