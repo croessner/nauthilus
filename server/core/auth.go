@@ -1927,6 +1927,64 @@ func (a *AuthState) sfKeyHash() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Fixed header name for idempotency. Not configurable by design.
+const idempotencyHeaderName = "Idempotency-Key"
+
+// setIdempotencyHeaders echoes the idempotency key and, if replayed is provided,
+// sets Idempotency-Replayed to "true"/"false" accordingly.
+func setIdempotencyHeaders(ctx *gin.Context, idem string, replayed *bool) {
+	if idem == "" {
+		return
+	}
+
+	ctx.Header(idempotencyHeaderName, idem)
+
+	if replayed != nil {
+		if *replayed {
+			ctx.Header("Idempotency-Replayed", "true")
+		} else {
+			ctx.Header("Idempotency-Replayed", "false")
+		}
+	}
+}
+
+// SFOutcome is the snapshot a singleflight leader publishes to waiting followers.
+// It contains the final auth view AFTER filters have run and PostActions have been dispatched.
+// Followers must not execute filters/post-actions again; they only apply this snapshot to
+// their own AuthState and return the final result.
+type SFOutcome struct {
+	Result              definitions.AuthResult
+	AccountField        string
+	Attributes          bktype.AttributeMapping
+	TOTPSecretField     string
+	UniqueUserIDField   string
+	DisplayNameField    string
+	SourcePassDBBackend definitions.Backend
+	UsedPassDBBackend   definitions.Backend
+	BackendName         string
+	UsedBackendIP       string
+	UsedBackendPort     int
+	Authenticated       bool
+	Authorized          bool
+	StatusMessage       string
+}
+
+func applyOutcome(dst *AuthState, o SFOutcome) {
+	dst.AccountField = o.AccountField
+	dst.Attributes = o.Attributes
+	dst.TOTPSecretField = o.TOTPSecretField
+	dst.UniqueUserIDField = o.UniqueUserIDField
+	dst.DisplayNameField = o.DisplayNameField
+	dst.SourcePassDBBackend = o.SourcePassDBBackend
+	dst.UsedPassDBBackend = o.UsedPassDBBackend
+	dst.BackendName = o.BackendName
+	dst.UsedBackendIP = o.UsedBackendIP
+	dst.UsedBackendPort = o.UsedBackendPort
+	dst.Authenticated = o.Authenticated
+	dst.Authorized = o.Authorized
+	dst.StatusMessage = o.StatusMessage
+}
+
 // HandlePassword handles the authentication process for the password flow.
 // The logic is simplified to only perform in-process (singleflight) deduplication.
 func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.AuthResult) {
@@ -1935,12 +1993,31 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		return
 	}
 
+	// Read idempotency key as early as possible so we can echo it on early return paths (e.g., memory cache).
+	idem := ctx.GetHeader(idempotencyHeaderName)
+
 	if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) && ctx.GetBool(definitions.CtxLocalCacheAuthKey) {
+		// Memory-cache hit is semantically a replay; if a key is present, echo it and mark replayed.
+
+		if idem != "" {
+			replayed := true
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
+
 		return a.handleLocalCache(ctx)
 	}
 
 	// In-process singleflight deduplication only
 	key := a.generateSingleflightKey()
+
+	if idem != "" {
+		key = "idk:" + idem + "|" + key
+
+		// Echo the idempotency key for observability (no replay decision yet)
+		setIdempotencyHeaders(ctx, idem, nil)
+	}
+
 	reqCtx := ctx.Request.Context()
 
 	// Derive wait deadline from request context, with a safety cap if none
@@ -1965,6 +2042,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
+		// No singleflight: if an idempotency key was provided, mark as not replayed.
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
+
 		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
@@ -1978,22 +2062,67 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 
-		return res, nil
+		// Build snapshot outcome AFTER filters/post-actions have run inside authenticateUser
+		out := SFOutcome{
+			Result:              res,
+			AccountField:        a.AccountField,
+			Attributes:          a.Attributes,
+			TOTPSecretField:     a.TOTPSecretField,
+			UniqueUserIDField:   a.UniqueUserIDField,
+			DisplayNameField:    a.DisplayNameField,
+			SourcePassDBBackend: a.SourcePassDBBackend,
+			UsedPassDBBackend:   a.UsedPassDBBackend,
+			BackendName:         a.BackendName,
+			UsedBackendIP:       a.UsedBackendIP,
+			UsedBackendPort:     a.UsedBackendPort,
+			Authenticated:       a.Authenticated,
+			Authorized:          a.Authorized,
+			StatusMessage:       a.StatusMessage,
+		}
+
+		return out, nil
 	})
 
 	select {
 	case r := <-ch:
 		if r.Err != nil {
+			// On error path, if an idempotency key was present, indicate not replayed
+			if idem != "" {
+				replayed := false
+
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
+
 			return definitions.AuthResultTempFail
 		}
 
-		return r.Val.(definitions.AuthResult)
+		if out, ok := r.Val.(SFOutcome); ok {
+			applyOutcome(a, out)
+
+			// Indicate whether this response was replayed from singleflight (shared)
+			if idem != "" {
+				replayed := r.Shared
+
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
+
+			return out.Result
+		}
+
+		return definitions.AuthResultTempFail
 	case <-reqCtx.Done():
 		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+
+		// Not replayed in this fallback
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
 
 		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
@@ -2004,6 +2133,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 
 		useCache, backendPos, passDBs := a.handleBackendTypes()
 		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+
+		// Not replayed in this fallback
+		if idem != "" {
+			replayed := false
+
+			setIdempotencyHeaders(ctx, idem, &replayed)
+		}
 
 		return a.withWorkCtx(dWork, func() definitions.AuthResult {
 			return a.authenticateUser(ctx, useCache, backendPos, passDBs)
