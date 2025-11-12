@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+	"github.com/gin-gonic/gin"
 
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
@@ -81,6 +82,9 @@ type Action struct {
 
 	// HTTPRequest is a pointer to an http.Request object. It represents an incoming HTTP request received by the server.
 	HTTPRequest *http.Request
+
+	// HTTPContext is a pointer to a gin.Context, representing the HTTP request context and managing request-specific data.
+	HTTPContext *gin.Context
 
 	*lualib.CommonRequest
 }
@@ -186,7 +190,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 }
 
 // registerDynamicLoader registers a dynamic module loader for Lua state and configures it with HTTP request context.
-func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request) {
+func (aw *Worker) registerDynamicLoader(ctx *gin.Context, L *lua.LState, httpRequest *http.Request) {
 	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
 		modName := L.CheckString(1)
 
@@ -196,7 +200,7 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 		}
 
 		lualib.RegisterCommonLuaLibraries(L, aw.ctx, modName, registry, httpClient)
-		aw.registerModule(L, httpRequest, modName, registry)
+		aw.registerModule(ctx, L, httpRequest, modName, registry)
 
 		return 0
 	})
@@ -208,12 +212,18 @@ func (aw *Worker) registerDynamicLoader(L *lua.LState, httpRequest *http.Request
 // It verifies if the module is valid and satisfies specific conditions (e.g., LDAP backend availability for LuaModLDAP).
 // The method updates the registry map to track that the module has been successfully registered.
 // An error is raised in the Lua state if an invalid or unsupported module is requested.
-func (aw *Worker) registerModule(L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
+func (aw *Worker) registerModule(ctx *gin.Context, L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
 	switch modName {
 	case definitions.LuaModContext:
 		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
 	case definitions.LuaModHTTPRequest:
 		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest)))
+	case definitions.LuaModHTTPResponse:
+		if ctx != nil {
+			L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx))
+		} else {
+			L.RaiseError("HTTP context not available")
+		}
 	case definitions.LuaModLDAP:
 		if config.GetFile().HaveLDAPBackend() {
 			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
@@ -280,7 +290,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}()
 
-	aw.registerDynamicLoader(L, httpRequest)
+	aw.registerDynamicLoader(aw.luaActionRequest.HTTPContext, L, httpRequest)
 
 	logs := new(lualib.CustomLogKeyValue)
 

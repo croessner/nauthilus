@@ -91,6 +91,7 @@ func RunLuaPostAction(args PostActionArgs) {
 		Context:       args.Context,
 		FinishedChan:  finished,
 		HTTPRequest:   args.HTTPRequest,
+		HTTPContext:   nil,
 		CommonRequest: cr,
 	}
 
