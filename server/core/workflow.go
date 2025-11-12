@@ -18,6 +18,7 @@ package core
 import (
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 
@@ -42,6 +43,43 @@ type Authenticator struct {
 	Lua      LuaFilter
 	Post     PostAction
 	Resp     ResponseWriter
+}
+
+// SFOutcome is the snapshot a singleflight leader publishes to waiting followers.
+// It contains the final auth view AFTER filters have run and PostActions have been dispatched.
+// Followers must not execute filters/post-actions again; they only apply this snapshot to
+// their own AuthState and return the final result.
+type SFOutcome struct {
+	Result              definitions.AuthResult
+	AccountField        string
+	Attributes          bktype.AttributeMapping
+	TOTPSecretField     string
+	UniqueUserIDField   string
+	DisplayNameField    string
+	SourcePassDBBackend definitions.Backend
+	UsedPassDBBackend   definitions.Backend
+	BackendName         string
+	UsedBackendIP       string
+	UsedBackendPort     int
+	Authenticated       bool
+	Authorized          bool
+	StatusMessage       string
+}
+
+func applyOutcome(dst *AuthState, o SFOutcome) {
+	dst.AccountField = o.AccountField
+	dst.Attributes = o.Attributes
+	dst.TOTPSecretField = o.TOTPSecretField
+	dst.UniqueUserIDField = o.UniqueUserIDField
+	dst.DisplayNameField = o.DisplayNameField
+	dst.SourcePassDBBackend = o.SourcePassDBBackend
+	dst.UsedPassDBBackend = o.UsedPassDBBackend
+	dst.BackendName = o.BackendName
+	dst.UsedBackendIP = o.UsedBackendIP
+	dst.UsedBackendPort = o.UsedBackendPort
+	dst.Authenticated = o.Authenticated
+	dst.Authorized = o.Authorized
+	dst.StatusMessage = o.StatusMessage
 }
 
 var defaultAuthenticator = Authenticator{
@@ -104,7 +142,25 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 
-		return res, nil
+		// Build snapshot outcome AFTER filters/post-actions have run inside authenticateUser
+		out := SFOutcome{
+			Result:              res,
+			AccountField:        auth.AccountField,
+			Attributes:          auth.Attributes,
+			TOTPSecretField:     auth.TOTPSecretField,
+			UniqueUserIDField:   auth.UniqueUserIDField,
+			DisplayNameField:    auth.DisplayNameField,
+			SourcePassDBBackend: auth.SourcePassDBBackend,
+			UsedPassDBBackend:   auth.UsedPassDBBackend,
+			BackendName:         auth.BackendName,
+			UsedBackendIP:       auth.UsedBackendIP,
+			UsedBackendPort:     auth.UsedBackendPort,
+			Authenticated:       auth.Authenticated,
+			Authorized:          auth.Authorized,
+			StatusMessage:       auth.StatusMessage,
+		}
+
+		return out, nil
 	})
 
 	select {
@@ -113,7 +169,13 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 			return definitions.AuthResultTempFail
 		}
 
-		return r.Val.(definitions.AuthResult)
+		if out, ok := r.Val.(SFOutcome); ok {
+			applyOutcome(auth, out)
+
+			return out.Result
+		}
+
+		return definitions.AuthResultTempFail
 	case <-reqCtx.Done():
 		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
 		backchanSF.Forget(key)

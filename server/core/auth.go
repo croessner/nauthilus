@@ -1294,7 +1294,9 @@ func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
 	authResult := definitions.AuthResultOK
 
 	if !(a.Protocol.Get() == definitions.ProtoOryHydra) {
-		authResult = a.FilterLua(passDBResult, ctx)
+		if lf := getLuaFilter(); lf != nil {
+			authResult = lf.Filter(ctx, a.View(), passDBResult)
+		}
 
 		a.PostLuaAction(passDBResult)
 	}
@@ -1556,7 +1558,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 		return definitions.AuthResultTempFail
 	}
 
-	if accountName, err = a.processUserFound(passDBResult); err != nil {
+	if accountName, err = a.processUserFound(passDBResult); err != nil || passDBResult == nil {
 		// treat as tempfail
 		a.Authenticated = false
 
@@ -2329,10 +2331,14 @@ func (a *AuthState) generateLocalCacheKey() string {
 // generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
 // Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID], pw_short
 func (a *AuthState) generateSingleflightKey() string {
-	// Try to enrich account if present in cache already
-	account := a.refreshUserAccount()
+	var account string
+
+	// First check if account is already available via GetAccount()
+	account = a.GetAccount()
+
+	// Only if still empty, try refreshing from cache
 	if account == "" {
-		account = a.GetAccount()
+		account = a.refreshUserAccount()
 	}
 
 	clientIP := a.ClientIP
