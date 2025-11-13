@@ -1296,7 +1296,22 @@ func main() {
 					termW, termH := termSize()
 					// Build left and right parts
 					left := leftLabel
-					right := fmt.Sprintf(" rps=%.1f ok=%d err=%d abort=%d skip=%d avg=%s p50=%s p90=%s", rps, m, he, ab, sk, avg, p50, p90)
+
+					avgMs := int(avg / time.Millisecond)
+					p50Ms := int(p50 / time.Millisecond)
+					p90Ms := int(p90 / time.Millisecond)
+
+					right := fmt.Sprintf(
+						" [rps: %7.1f] [ok: %7s] [err: %7s] [abort: %7s] [skip: %7s] [avg: %6s] [p50: %6s] [p90: %6s]",
+						rps,
+						humanCount(m),
+						humanCount(he),
+						humanCount(ab),
+						humanCount(sk),
+						humanMs(avgMs),
+						humanMs(p50Ms),
+						humanMs(p90Ms),
+					)
 
 					// Render layout: " " + left + " " + BAR + right
 					const minBar = 10
