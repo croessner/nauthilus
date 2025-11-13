@@ -501,6 +501,7 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 	fmt.Printf("%*s  ", labelWidth, "ms")
 
 	last := 0
+	nTicks := len(tickPos)
 	for i, x := range tickPos {
 		msVal := dataStart + int(math.Round(float64(x)/float64(drawCols-1)*float64(dataSpan-1)))
 		if x == drawCols-1 {
@@ -508,16 +509,30 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 		}
 
 		label := humanMs(msVal)
-		spaces := x - last
 
+		// Compute desired position. For the last tick, right-align the label within drawCols
+		// so it doesn't get cut off by the terminal edge.
+		pos := x
+		if i == nTicks-1 || x == drawCols-1 {
+			rightAligned := drawCols - len(label)
+			if rightAligned < 0 {
+				rightAligned = 0
+			}
+			pos = rightAligned
+		}
+
+		// Do not move backward and overwrite previous labels
+		if pos < last {
+			pos = last
+		}
+
+		spaces := pos - last
 		for k := 0; k < spaces; k++ {
 			fmt.Print(" ")
 		}
 
 		fmt.Print(label)
-		last = x + len(label)
-		// avoid labels overlapping too much: if i < len-1 and last > next tick, it will just overflow slightly which is acceptable for ASCII
-		_ = i
+		last = pos + len(label)
 	}
 
 	fmt.Println()
@@ -1208,6 +1223,11 @@ func main() {
 	// Progress output: either interactive bar (TTY) or periodic text reporter
 	const progressBarHz = 8 // fixed refresh rate for bar
 
+	if isTTY() {
+		fmt.Print("\x1b[2J\x1b[3J\x1b[H")
+		fmt.Println("Running test...")
+	}
+
 	if *progressBar && isTTY() {
 		// Interactive single-line progress bar pinned to the bottom (TTY only)
 		go func() {
@@ -1302,7 +1322,7 @@ func main() {
 					p90Ms := int(p90 / time.Millisecond)
 
 					right := fmt.Sprintf(
-						" [rps: %7.1f] [ok: %7s] [err: %7s] [abort: %7s] [skip: %7s] [avg: %6s] [p50: %6s] [p90: %6s]",
+						" [rps: %7.1f] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 						rps,
 						humanCount(m),
 						humanCount(he),
@@ -1313,28 +1333,18 @@ func main() {
 						humanMs(p90Ms),
 					)
 
-					// Render layout: " " + left + " " + BAR + right
+					// Two-line layout:
+					//   Top:    right (status, RPS, counters, latencies)
+					//   Bottom: left + BAR (no right)
 					const minBar = 10
 					leftW := displayWidth(left)
-					rightW := displayWidth(right)
 
-					fixedSpaces := 2 // leading space and space before bar
-					available := termW - fixedSpaces - leftW - rightW
-
-					if available < minBar {
-						// Prefer shrinking right part
-						need := minBar - available
-						newRightW := rightW - need
-						if newRightW < 0 {
-							newRightW = 0
-						}
-						right = truncateToCells(right, newRightW)
-						rightW = displayWidth(right)
-						available = termW - fixedSpaces - leftW - rightW
-					}
+					// Width available for the bar (exclude right completely)
+					fixedSpaces := 2 // leading space + space before the bar
+					available := termW - fixedSpaces - leftW
 
 					if available < minBar {
-						// Then shrink left label if still necessary
+						// If needed, shrink left label to keep a minimal bar width
 						need := minBar - available
 						newLeftW := leftW - need
 						if newLeftW < 0 {
@@ -1342,7 +1352,7 @@ func main() {
 						}
 						left = truncateToCells(left, newLeftW)
 						leftW = displayWidth(left)
-						available = termW - fixedSpaces - leftW - rightW
+						available = termW - fixedSpaces - leftW
 					}
 
 					barWidth := available
@@ -1360,18 +1370,31 @@ func main() {
 					}
 
 					bar := strings.Repeat("█", fill) + strings.Repeat("·", barWidth-fill)
-					line := " " + left + " " + bar + right
 
-					// Ensure final line matches terminal width in display cells
-					dw := displayWidth(line)
-					if dw < termW {
-						line = padToCellsRight(line, termW)
-					} else if dw > termW {
-						line = truncateToCells(line, termW)
+					// Top line: right
+					top := " " + right
+					dwTop := displayWidth(top)
+					if dwTop < termW {
+						top = padToCellsRight(top, termW)
+					} else if dwTop > termW {
+						top = truncateToCells(top, termW)
 					}
 
-					// Draw at bottom row: save pos → move → clear → print → restore
-					fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", termH, line)
+					// Bottom line: left + bar
+					bottom := " " + left + " " + bar
+					dwBottom := displayWidth(bottom)
+					if dwBottom < termW {
+						bottom = padToCellsRight(bottom, termW)
+					} else if dwBottom > termW {
+						bottom = truncateToCells(bottom, termW)
+					}
+
+					// Draw two lines pinned to the bottom; fallback to one line if height < 2
+					if termH >= 2 {
+						fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s\x1b[u", termH-1, top, termH, bottom)
+					} else {
+						fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", termH, bottom)
+					}
 
 					prevTotal = t
 					prevTime = now
@@ -1861,15 +1884,23 @@ func main() {
 
 	dur := time.Since(start)
 
-	fmt.Printf("\nDone in %s\n", dur)
-	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, aborted, skipped, toleratedBF)
-	if *compareParallel {
-		fmt.Printf("parallel_matched=%d parallel_mismatched=%d\n", parallelMatched, parallelMismatched)
+	// Option 1: Clear screen AND scrollback, then print the entire final output anew
+	if isTTY() {
+		fmt.Print("\x1b[2J\x1b[3J\x1b[H")
 	}
+
+	fmt.Printf("Done in %s\n", dur)
+	fmt.Printf("total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d\n", total, matched, mismatched, httpErrs, aborted, skipped, toleratedBF)
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())
 	}
+
+	if *compareParallel {
+		fmt.Printf("parallel_matched=%d parallel_mismatched=%d\n", parallelMatched, parallelMismatched)
+	}
+
+	fmt.Println()
 
 	if total > 0 {
 		avg := time.Duration(totalLatencyNs / total)
@@ -1884,32 +1915,35 @@ func main() {
 
 		fmt.Printf("max_latency=%s\n", time.Duration(maxLatencyNs))
 
+		fmt.Println()
+
 		// Print percentiles from histogram
 		p50 := percentileFromBuckets(0.50)
 		p90 := percentileFromBuckets(0.90)
 		p99 := percentileFromBuckets(0.99)
 
 		fmt.Printf("p50=%s p90=%s p99=%s\n", p50, p90, p99)
+		fmt.Println()
 
 		of := atomic.LoadInt64(&latOverflow)
 		if of > 0 {
 			fmt.Printf("latency_overflow(>%dms)=%d\n", maxLatencyMs, of)
 		}
 
-		// ASCII histogram (60 columns, 10 rows) nur in TTY-Kontexten ausgeben
+		// Print HTTP status codes summary (code, count)
+		fmt.Println("http_status_counts:")
+		for code, cnt := range statusCounts {
+			if cnt != 0 {
+				fmt.Printf("  %d: %d\n", code, cnt)
+			}
+		}
+
+		// ASCII histogram (60 columns, 10 rows); print only in TTY contexts
 		if isTTY() {
 			fmt.Println()
 			printLatencyHistogramASCII(0, 10, true)
 			fmt.Println()
 		}
-
 	}
 
-	// Print HTTP status codes summary (code, count)
-	fmt.Println("http_status_counts:")
-	for code, cnt := range statusCounts {
-		if cnt != 0 {
-			fmt.Printf("  %d: %d\n", code, cnt)
-		}
-	}
 }
