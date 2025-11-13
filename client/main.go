@@ -16,6 +16,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/signal"
 	"strconv"
@@ -1155,7 +1156,10 @@ func main() {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 0,
 	}
-	client := &http.Client{Timeout: time.Duration(*timeoutMs) * time.Millisecond, Transport: transport}
+
+	// Enable cookie handling: remember Set-Cookie across requests
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Timeout: time.Duration(*timeoutMs) * time.Millisecond, Transport: transport, Jar: jar}
 
 	// Build base headers once and clone per request
 	baseHeader := make(http.Header)
