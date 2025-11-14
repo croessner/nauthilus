@@ -1,3 +1,18 @@
+// Copyright (C) 2025 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 // Package luapool provides a pool for reusing Lua states.
 package luapool
 
@@ -38,9 +53,24 @@ func Put(L *lua.LState) {
 	luaStatePool.Put(L)
 }
 
-// ResetLuaState resets a Lua state to its initial state.
-// This is a best-effort approach since gopher-lua doesn't provide a Reset method.
+// ResetLuaState resets a Lua state between requests.
+// Adaptive behavior:
+//   - If the state was created via NewLuaState (markers present), perform a lightweight request reset
+//     that only clears the request environment and transient globals while keeping baseEnv and
+//     package.loaded warm.
+//   - Otherwise, fall back to a deep reset that emulates a fresh state.
 func ResetLuaState(L *lua.LState) {
+	if hasRequestEnvMarkers(L) {
+		resetRequestEnv(L)
+
+		return
+	}
+
+	deepResetLuaState(L)
+}
+
+// deepResetLuaState performs the legacy, heavy reset to approximate a new Lua state.
+func deepResetLuaState(L *lua.LState) {
 	// Clear the stack
 	L.SetTop(0)
 
@@ -138,4 +168,19 @@ func ResetLuaState(L *lua.LState) {
 			L.SetField(loadedTable, "nauthilus_util", lua.LNil)
 		}
 	}
+}
+
+// hasRequestEnvMarkers checks whether the state uses the new base/req env model.
+func hasRequestEnvMarkers(L *lua.LState) bool {
+	// We consider markers present if __NAUTH_BASE_ENV exists and is a table
+	// or if __NAUTH_REQ_ENV exists (set during PrepareRequestEnv).
+	if v := L.GetGlobal("__NAUTH_BASE_ENV"); v.Type() == lua.LTTable {
+		return true
+	}
+
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v.Type() == lua.LTTable {
+		return true
+	}
+
+	return false
 }

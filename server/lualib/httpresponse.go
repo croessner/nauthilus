@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
+
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -217,3 +218,37 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// LoaderHTTPResponseStateless returns an empty, stateless module table for nauthilus_http_response.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderHTTPResponseStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
+
+// SetHTTPResponseHeaderWithCtx is a factory alias that returns the same function as SetHTTPResponseHeader(ctx).
+func SetHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPResponseHeader(ctx) }
+
+// AddHTTPResponseHeaderWithCtx is a factory alias that returns the same function as AddHTTPResponseHeader(ctx).
+func AddHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return AddHTTPResponseHeader(ctx) }
+
+// RemoveHTTPResponseHeaderWithCtx is a factory alias that returns the same function as RemoveHTTPResponseHeader(ctx).
+func RemoveHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction {
+	return RemoveHTTPResponseHeader(ctx)
+}
+
+// SetHTTPStatusWithCtx is a factory alias that returns the same function as SetHTTPStatus(ctx).
+func SetHTTPStatusWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPStatus(ctx) }
+
+// WriteHTTPResponseBodyWithCtx is a factory alias that returns the same function as WriteHTTPResponseBody(ctx).
+func WriteHTTPResponseBodyWithCtx(ctx *gin.Context) lua.LGFunction { return WriteHTTPResponseBody(ctx) }
+
+// SetHTTPContentTypeWithCtx is a factory alias that returns the same function as SetHTTPContentType(ctx).
+func SetHTTPContentTypeWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPContentType(ctx) }
+
+// HTTPStringWithCtx is a factory alias that returns the same function as HTTPString(ctx).
+func HTTPStringWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPString(ctx) }

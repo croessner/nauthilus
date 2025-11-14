@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -190,3 +191,36 @@ func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction { // ctx reserved for fu
 		return 1
 	}
 }
+
+// LoaderHTTPRequestStateless returns an empty, stateless module table for nauthilus_http_request.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithMeta factories.
+func LoaderHTTPRequestStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
+
+// GetAllHTTPRequestHeadersWithMeta is a factory alias that returns the same function as GetAllHTTPRequestHeaders(meta).
+func GetAllHTTPRequestHeadersWithMeta(meta HTTPRequestMeta) lua.LGFunction {
+	return GetAllHTTPRequestHeaders(meta)
+}
+
+// GetHTTPRequestHeaderWithMeta is a factory alias that returns the same function as GetHTTPRequestHeader(meta).
+func GetHTTPRequestHeaderWithMeta(meta HTTPRequestMeta) lua.LGFunction {
+	return GetHTTPRequestHeader(meta)
+}
+
+// GetHTTPRequestBodyWithMeta is a factory alias that returns the same function as GetHTTPRequestBody(meta).
+func GetHTTPRequestBodyWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPRequestBody(meta) }
+
+// GetHTTPMethodWithMeta is a factory alias that returns the same function as GetHTTPMethod(meta).
+func GetHTTPMethodWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPMethod(meta) }
+
+// GetHTTPPathWithMeta is a factory alias that returns the same function as GetHTTPPath(meta).
+func GetHTTPPathWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPPath(meta) }
+
+// GetHTTPQueryParamWithMeta is a factory alias that returns the same function as GetHTTPQueryParam(meta).
+func GetHTTPQueryParamWithMeta(meta HTTPRequestMeta) lua.LGFunction { return GetHTTPQueryParam(meta) }

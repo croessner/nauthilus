@@ -59,6 +59,17 @@ func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	}
 }
 
+// LoaderLDAPStateless returns an empty, stateless module table for nauthilus_ldap.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderLDAPStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
+
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It now uses a priority queue instead of channels for better request handling.

@@ -38,6 +38,17 @@ func LoaderModContext(ctx *Context) lua.LGFunction {
 	}
 }
 
+// LoaderContextStateless returns an empty, stateless module table for nauthilus_context.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderContextStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
+
 // Context is a system-wide Lua context designed to exchange Lua LValues between all Lua levels. Even it implements all
 // methodes from Context, its use is limitted to data exchange. It can not be used to abort running threads. Usage of
 // this context is thread safe.
@@ -168,3 +179,12 @@ func ContextDelete(ctx *Context) lua.LGFunction {
 		return 0
 	}
 }
+
+// ContextSetWithCtx is a factory alias that returns the same function as ContextSet(ctx).
+func ContextSetWithCtx(ctx *Context) lua.LGFunction { return ContextSet(ctx) }
+
+// ContextGetWithCtx is a factory alias that returns the same function as ContextGet(ctx).
+func ContextGetWithCtx(ctx *Context) lua.LGFunction { return ContextGet(ctx) }
+
+// ContextDeleteWithCtx is a factory alias that returns the same function as ContextDelete(ctx).
+func ContextDeleteWithCtx(ctx *Context) lua.LGFunction { return ContextDelete(ctx) }
