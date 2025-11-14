@@ -19,7 +19,6 @@
 // APIs:
 //  - NewLuaState(httpClient *http.Client) *lua.LState
 //  - PrepareRequestEnv(L *lua.LState, ctx any) *lua.LTable
-//  - ResetRequestEnv(L *lua.LState)
 //  - bindModuleIntoReq (helper function from the migration plan)
 
 package luapool
@@ -30,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/metrics"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 
 	"github.com/cjoudrey/gluahttp"
 	"github.com/vadv/gopher-lua-libs/plugin"
@@ -64,6 +64,15 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc)
 	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus)
 
+	// Preload stateless placeholders for ctx-bound modules. These will be
+	// replaced per request via BindModuleIntoReq when a bound version is
+	// available. Keeping them warm avoids dynamic_loader use for ctx-bound
+	// modules and satisfies static analyzers.
+	L.PreloadModule(definitions.LuaModRedis, redislib.Loader())
+	L.PreloadModule(definitions.LuaModHTTPRequest, lualib.LoaderHTTPRequestStateless())
+	L.PreloadModule(definitions.LuaModHTTPResponse, lualib.LoaderHTTPResponseStateless())
+	L.PreloadModule(definitions.LuaModContext, lualib.LoaderContextStateless())
+
 	return L
 }
 
@@ -83,19 +92,13 @@ func PrepareRequestEnv(L *lua.LState, ctx any) *lua.LTable {
 	L.SetField(mt, "__index", base)
 	L.SetMetatable(req, mt)
 
-	// Call binding skeletons (currently no-ops; placeholders for Phase 2+).
-	bindRequestFunctions(L, req, ctx)
-	bindRequestModules(L, req, ctx)
+	// Request environment prepared; concrete per-request bindings are provided
+	// by subsystems using BindModuleIntoReq where needed.
 
 	// Set as global marker.
 	L.SetGlobal(reqEnvKey, req)
 
 	return req
-}
-
-// ResetRequestEnv clears the request environment and removes transient globals.
-func ResetRequestEnv(L *lua.LState) {
-	resetRequestEnv(L)
 }
 
 // --- Helper functions ---
@@ -146,8 +149,6 @@ func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTa
 	}
 }
 
-func isTable(v lua.LValue) bool { _, ok := v.(*lua.LTable); return ok }
-
 // resetRequestEnv clears only the request env and some transient globals; keeps baseEnv and package.loaded warm.
 func resetRequestEnv(L *lua.LState) {
 	// Clear stack and context
@@ -180,12 +181,23 @@ func resetRequestEnv(L *lua.LState) {
 	L.SetGlobal("dynamic_loader", lua.LNil)
 }
 
-// bindRequestFunctions registers request-bound helpers directly on reqEnv (Phase 1: stub).
-func bindRequestFunctions(L *lua.LState, req *lua.LTable, ctx any) {
-	// Placeholder for Phase 2+: logging, tracing, status, etc.
-}
+// BindModuleIntoReq exposes the module-binding helper for subsystems that need
+// to bind request-scoped modules (e.g., backend/action/filter/feature) without
+// directly mutating globals. It ensures the module is visible both via direct
+// access from the reqEnv and via require() through package.loaded.
+func BindModuleIntoReq(L *lua.LState, name string, mod *lua.LTable) {
+	// Try to get the current request environment; if missing, create one.
+	var req *lua.LTable
 
-// bindRequestModules clones stateless modules and replaces functions with ctx-bound closures (Phase 1: stub).
-func bindRequestModules(L *lua.LState, req *lua.LTable, ctx any) {
-	// Placeholder: Phase 2 will add Redis/HTTP/LDAP/Context/Backend bindings here.
+	if v := L.GetGlobal(reqEnvKey); v != nil {
+		if t, ok := v.(*lua.LTable); ok {
+			req = t
+		}
+	}
+
+	if req == nil {
+		req = PrepareRequestEnv(L, nil)
+	}
+
+	bindModuleIntoReq(L, req, name, mod)
 }

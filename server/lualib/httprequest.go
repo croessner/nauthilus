@@ -178,12 +178,12 @@ func GetHTTPQueryParam(meta HTTPRequestMeta) lua.LGFunction {
 func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction { // ctx reserved for future use (timeouts, etc.)
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeaders(meta),
-			definitions.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeader(meta),
-			definitions.LuaFnGetHTTPRequestBody:       GetHTTPRequestBody(meta),
-			definitions.LuaFnGetHTTPMethod:            GetHTTPMethod(meta),
-			definitions.LuaFnGetHTTPQueryParam:        GetHTTPQueryParam(meta),
-			definitions.LuaFnGetHTTPPath:              GetHTTPPath(meta),
+			definitions.LuaFnGetAllHTTPRequestHeaders: GetAllHTTPRequestHeadersWithMeta(meta),
+			definitions.LuaFnGetHTTPRequestHeader:     GetHTTPRequestHeaderWithMeta(meta),
+			definitions.LuaFnGetHTTPRequestBody:       GetHTTPRequestBodyWithMeta(meta),
+			definitions.LuaFnGetHTTPMethod:            GetHTTPMethodWithMeta(meta),
+			definitions.LuaFnGetHTTPQueryParam:        GetHTTPQueryParamWithMeta(meta),
+			definitions.LuaFnGetHTTPPath:              GetHTTPPathWithMeta(meta),
 		})
 
 		L.Push(mod)

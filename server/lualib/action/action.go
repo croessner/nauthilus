@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -42,14 +43,6 @@ var (
 	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
 	RequestChan chan *Action
 )
-
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
 
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
@@ -190,54 +183,6 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	aw.actionScripts = append(aw.actionScripts, luaAction)
 }
 
-// registerDynamicLoader registers a dynamic module loader for Lua state and configures it with HTTP request context.
-func (aw *Worker) registerDynamicLoader(ctx *gin.Context, L *lua.LState, httpRequest *http.Request) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, aw.ctx, modName, registry, httpClient)
-		aw.registerModule(ctx, L, httpRequest, modName, registry)
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule initializes and preloads a specific Lua module into the given Lua state based on the provided module name.
-// It verifies if the module is valid and satisfies specific conditions (e.g., LDAP backend availability for LuaModLDAP).
-// The method updates the registry map to track that the module has been successfully registered.
-// An error is raised in the Lua state if an invalid or unsupported module is requested.
-func (aw *Worker) registerModule(ctx *gin.Context, L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
-	switch modName {
-	case definitions.LuaModContext:
-		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
-	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest)))
-	case definitions.LuaModHTTPResponse:
-		if ctx != nil {
-			L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx))
-		} else {
-			L.RaiseError("HTTP context not available")
-		}
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
-
 // logActionsSummary logs a summary of Lua actions including session details and additional provided key-value data.
 func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 	level.Info(log.Logger).Log(
@@ -294,7 +239,64 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	// Prepare per-request environment: ensures request-local globals and module bindings
 	luapool.PrepareRequestEnv(L, aw.luaActionRequest)
 
-	aw.registerDynamicLoader(aw.luaActionRequest.HTTPContext, L, httpRequest)
+	// Bind request-scoped modules into reqEnv so that require() resolves correctly.
+	// 1) nauthilus_context
+	if loader := lualib.LoaderModContext(aw.luaActionRequest.Context); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 2) nauthilus_http_request
+	if httpRequest != nil {
+		loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest))
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 3) nauthilus_http_response
+	if aw.luaActionRequest.HTTPContext != nil {
+		loader := lualib.LoaderModHTTPResponse(aw.luaActionRequest.HTTPContext)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 4) nauthilus_redis (use worker context for deadlines)
+	if loader := redislib.LoaderModRedis(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_ldap (if enabled)
+	if config.GetFile().HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(aw.ctx)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
 
 	logs := new(lualib.CustomLogKeyValue)
 

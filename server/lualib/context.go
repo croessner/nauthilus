@@ -27,9 +27,9 @@ import (
 func LoaderModContext(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCtxSet:    ContextSet(ctx),
-			definitions.LuaFnCtxGet:    ContextGet(ctx),
-			definitions.LuaFnCtxDelete: ContextDelete(ctx),
+			definitions.LuaFnCtxSet:    ContextSetWithCtx(ctx),
+			definitions.LuaFnCtxGet:    ContextGetWithCtx(ctx),
+			definitions.LuaFnCtxDelete: ContextDeleteWithCtx(ctx),
 		})
 
 		L.Push(mod)
