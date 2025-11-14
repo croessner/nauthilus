@@ -20,6 +20,7 @@ package vmpool
 
 import (
 	"context"
+	stdhttp "net/http"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -27,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -45,6 +47,8 @@ type Pool struct {
 	opts   PoolOptions
 	states chan *lua.LState
 	mu     sync.Mutex
+	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
+	httpClient *stdhttp.Client
 }
 
 func newPool(key PoolKey, opts PoolOptions) *Pool {
@@ -56,10 +60,14 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		key:    key,
 		opts:   opts,
 		states: make(chan *lua.LState, opts.MaxVMs),
+		// Create a dedicated HTTP client for this pool's VMs.
+		httpClient: util.NewHTTPClient(),
 	}
 
 	for i := 0; i < opts.MaxVMs; i++ {
-		p.states <- lua.NewState()
+		// Create Lua states using the new runtime helper with base/request env markers
+		// and stateless preloads. The httpClient enables glua_http preloading.
+		p.states <- luapool.NewLuaState(p.httpClient)
 	}
 
 	// initialize gauge to 0 in use
@@ -113,7 +121,7 @@ func (p *Pool) Replace(L *lua.LState) {
 
 	stats.GetMetrics().GetLuaVMReplacedTotal().WithLabelValues(string(p.key)).Inc()
 	select {
-	case p.states <- lua.NewState():
+	case p.states <- luapool.NewLuaState(p.httpClient):
 	default:
 		// Should not happen; drop
 	}
