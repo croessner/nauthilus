@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -255,6 +256,8 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	L.SetContext(luaCtx)
 
+	luapool.PrepareRequestEnv(L, luaRequest)
+
 	lualib.RegisterBackendResultType(
 		L,
 		definitions.LuaBackendResultAuthenticated,
@@ -343,12 +346,21 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 		processError(err, luaRequest, logs)
 	}
 
-	// Check if the script has a "luaCommand" function
-	commandFunc := L.GetGlobal(luaCommand)
+	var commandFunc = lua.LNil
 
-	if commandFunc.Type() == lua.LTFunction {
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, luaCommand); fn != nil {
+			commandFunc = fn
+		}
+	}
+
+	if commandFunc == lua.LNil {
+		commandFunc = L.GetGlobal(luaCommand)
+	}
+
+	if commandFunc != nil && commandFunc.Type() == lua.LTFunction {
 		if err = L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(luaCommand),
+			Fn:      commandFunc,
 			NRet:    nret,
 			Protect: true,
 		}, request); err != nil {
