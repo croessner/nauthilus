@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
@@ -554,6 +555,9 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			Llocal.SetContext(luaCtx)
 
+			// Prepare per-request environment so that request-local globals and module bindings are visible
+			luapool.PrepareRequestEnv(Llocal, r)
+
 			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}
 
 			// Execute script
@@ -573,8 +577,18 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				return e
 			}
 
-			// Call filter function if present
-			filterFunc := Llocal.GetGlobal(definitions.LuaFnCallFilter)
+			// Call filter function if present (reqEnv-first lookup)
+			filterFunc := lua.LNil
+			if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+				if fn := Llocal.GetField(v, definitions.LuaFnCallFilter); fn != nil {
+					filterFunc = fn
+				}
+			}
+
+			if filterFunc == lua.LNil {
+				filterFunc = Llocal.GetGlobal(definitions.LuaFnCallFilter)
+			}
+
 			if filterFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
 					if stopTimer != nil {

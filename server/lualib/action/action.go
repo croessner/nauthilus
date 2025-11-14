@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -290,6 +291,9 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}()
 
+	// Prepare per-request environment: ensures request-local globals and module bindings
+	luapool.PrepareRequestEnv(L, aw.luaActionRequest)
+
 	aw.registerDynamicLoader(aw.luaActionRequest.HTTPContext, L, httpRequest)
 
 	logs := new(lualib.CustomLogKeyValue)
@@ -414,12 +418,21 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 		return err
 	}
 
-	// Check if the script has a nauthilus_call_action function
-	actionFunc := L.GetGlobal(definitions.LuaFnCallAction)
+	// Check if the script has a nauthilus_call_action function (reqEnv-first lookup)
+	actionFunc := lua.LNil
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, definitions.LuaFnCallAction); fn != nil {
+			actionFunc = fn
+		}
+	}
+
+	if actionFunc == lua.LNil {
+		actionFunc = L.GetGlobal(definitions.LuaFnCallAction)
+	}
 
 	if actionFunc.Type() == lua.LTFunction {
 		if err := L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(definitions.LuaFnCallAction),
+			Fn:      actionFunc,
 			NRet:    1,
 			Protect: true,
 		}, request); err != nil {

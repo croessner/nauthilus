@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -331,6 +332,9 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 			Llocal.SetContext(luaCtx)
 
+			// Prepare per-request environment so that request-local globals and module bindings are visible
+			luapool.PrepareRequestEnv(Llocal, r)
+
 			fr := &featResult{name: feature.Name, statusText: &localStatus}
 
 			// Load package path and execute compiled script
@@ -350,8 +354,18 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 				return e
 			}
 
-			// Invoke nauthilus_call_feature if present
-			callFeaturesFunc := Llocal.GetGlobal(definitions.LuaFnCallFeature)
+			// Invoke nauthilus_call_feature if present (reqEnv-first lookup)
+			callFeaturesFunc := lua.LNil
+			if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+				if fn := Llocal.GetField(v, definitions.LuaFnCallFeature); fn != nil {
+					callFeaturesFunc = fn
+				}
+			}
+
+			if callFeaturesFunc == lua.LNil {
+				callFeaturesFunc = Llocal.GetGlobal(definitions.LuaFnCallFeature)
+			}
+
 			if callFeaturesFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
 					if stopTimer != nil {
