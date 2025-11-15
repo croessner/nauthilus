@@ -1282,6 +1282,26 @@ func isAlphanumSymbol(fl validator.FieldLevel) bool {
 	})
 }
 
+// hostnameRFC1123WithOptionalTrailingDot validates that the field value is a valid RFC1123 hostname
+// and additionally allows an optional trailing dot (FQDN form).
+// Implementation detail: If the value ends with a dot, the dot is stripped before validating
+// using the built-in "hostname_rfc1123" rule from go-playground/validator.
+func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
+	s := fl.Field().String()
+
+	// Allow optional trailing dot for FQDNs, but not a string that is only "."
+	if strings.HasSuffix(s, ".") {
+		s = strings.TrimSuffix(s, ".")
+		if s == "" {
+			return false
+		}
+	}
+
+	// Reuse the standard validator's built-in hostname_rfc1123 rule
+	v := validator.New()
+	return v.Var(s, "hostname_rfc1123") == nil
+}
+
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.
 type PrometheusTimer struct {
 	Enabled bool     `mapstructure:"enabled"`
