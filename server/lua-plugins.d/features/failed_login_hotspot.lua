@@ -21,13 +21,8 @@ local N = "failed_login_hotspot"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
-
-dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 
 -- Env knobs (conservative defaults)

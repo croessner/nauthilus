@@ -30,13 +30,8 @@
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_http_request")
 local nauthilus_http_request = require("nauthilus_http_request")
-
-dynamic_loader("nauthilus_http_response")
 local nauthilus_http_response = require("nauthilus_http_response")
-
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
 local N = "dynamic-textmap-demo"

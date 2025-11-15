@@ -15,21 +15,22 @@
 
 local N = "telegram"
 
+local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_password = require("nauthilus_password")
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
+local http = require("http")
+local telegram = require("telegram")
+local template = require("template")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_action(request)
     if request.no_auth then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    -- Go-backed password module
-    dynamic_loader("nauthilus_password")
-    local nauthilus_password = require("nauthilus_password")
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
 
     local send_message = false
     local pwnd_info = "n/a"
@@ -125,18 +126,6 @@ function nauthilus_call_action(request)
 
     -- Only send if authentication failed AND account is set
     if send_message and (not request.authenticated) and request.account and request.account ~= "" then
-        dynamic_loader("nauthilus_prometheus")
-        local nauthilus_prometheus = require("nauthilus_prometheus")
-
-        dynamic_loader("nauthilus_gll_http")
-        local http = require("http")
-
-        dynamic_loader("nauthilus_gll_telegram")
-        local telegram = require("telegram")
-
-        dynamic_loader("nauthilus_gll_template")
-        local template = require("template")
-
         local client = http.client()
         local bot = telegram.bot(os.getenv("TELEGRAM_PASSWORD"), client)
 

@@ -17,13 +17,6 @@
 --  - Introduce small, risk-based delays (50–200 ms) without blocking
 --  - Rely on long-window account metrics and flags
 --  - Log decisions; remain conservative to avoid harming legit users
---
-local N = "soft_delay"
-
-local nauthilus_util = require("nauthilus_util")
-
-dynamic_loader("nauthilus_redis")
-local nauthilus_redis = require("nauthilus_redis")
 
 -- Env thresholds (defaults conservative):
 --  - SOFT_DELAY_MIN_MS default 50
@@ -34,7 +27,11 @@ local nauthilus_redis = require("nauthilus_redis")
 --  - SOFT_DELAY_THRESH_FAIL7D default 10
 --  - CUSTOM_REDIS_POOL_NAME optional pool
 
-dynamic_loader("nauthilus_gll_time")
+local N = "soft_delay"
+
+local nauthilus_util = require("nauthilus_util")
+local nauthilus_redis = require("nauthilus_redis")
+
 local time = require("time")
 
 -- Read env with default fallback

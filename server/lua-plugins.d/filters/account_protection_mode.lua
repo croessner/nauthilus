@@ -40,21 +40,13 @@ local N = "account_protection_mode"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
-
-dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
-
-dynamic_loader("nauthilus_http_response")
 local nauthilus_http_response = require("nauthilus_http_response")
-
-dynamic_loader("nauthilus_gll_time")
-local time = require("time")
-
--- Local short-lived cache for protection computations (reduces Redis spikes; multi-instance safe)
-dynamic_loader("nauthilus_cache")
 local nauthilus_cache = require("nauthilus_cache")
+local nauthilus_context = require("nauthilus_context")
+
+local time = require("time")
 
 -- env helpers
 local function getenv_num(name, def)
@@ -278,8 +270,6 @@ function nauthilus_call_filter(request)
 
         -- Enrich rt so downstream actions (e.g., telegram) can include protection info
         do
-            dynamic_loader("nauthilus_context")
-            local nauthilus_context = require("nauthilus_context")
             local rt = nauthilus_context.context_get("rt") or {}
             if type(rt) == "table" then
                 rt.account_protection = {

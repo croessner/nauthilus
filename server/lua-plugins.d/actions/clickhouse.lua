@@ -30,6 +30,16 @@
 -- Data format: JSONEachRow with fields documented in README.
 
 local N = "clickhouse"
+
+local nauthilus_password = require("nauthilus_password")
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_cache = require("nauthilus_cache")
+local nauthilus_redis = require("nauthilus_redis")
+
+local json = require("json")
+local http = require("glua_http")
+local base64 = require("base64")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_action(request)
@@ -87,22 +97,6 @@ function nauthilus_call_action(request)
         return string.format("%s.%s", base, ms)
     end
 
-    -- Modules
-    dynamic_loader("nauthilus_password")
-    local nauthilus_password = require("nauthilus_password")
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
-
-    dynamic_loader("nauthilus_gluahttp")
-    local http = require("glua_http")
-
-    dynamic_loader("nauthilus_cache")
-    local nauthilus_cache = require("nauthilus_cache")
-
     local feature_from_ctx = {}
     local builtin_features = nauthilus_context.context_get("__lua_ctx_builtin__")
     if nauthilus_util.is_table(builtin_features) and nauthilus_util.table_length(builtin_features) > 0 then
@@ -140,8 +134,6 @@ function nauthilus_call_action(request)
         local username = (request.username ~= "" and request.username) or ""
         local cip = (request.client_ip ~= "" and request.client_ip) or ""
         if username ~= "" and cip ~= "" then
-            dynamic_loader("nauthilus_redis")
-            local nauthilus_redis = require("nauthilus_redis")
             local dedup_key = "ntc:clickhouse:authdedup:" .. tostring(username) .. ":" .. tostring(cip)
             local n, rerr = nauthilus_redis.redis_incr("default", dedup_key)
             if n then
@@ -316,7 +308,6 @@ function nauthilus_call_action(request)
         if #to_send > 0 then
             -- Prepare HTTP client and request
             log_line("info", "clickhouse: flushing batch", { count = #to_send })
-            dynamic_loader("nauthilus_prometheus")
             local nauthilus_prometheus = require("nauthilus_prometheus")
 
             local insert_url = os.getenv("CLICKHOUSE_INSERT_URL")
@@ -340,9 +331,6 @@ function nauthilus_call_action(request)
                 -- Prefer Basic auth if both user and pass are provided; do NOT send X- headers simultaneously.
                 -- If Basic cannot be created (e.g., base64 unavailable), fall back to X- headers.
                 if user and user ~= "" and pass and pass ~= "" then
-                    dynamic_loader("nauthilus_gll_base64")
-                    local base64 = require("base64")
-
                     local credentials = tostring(user) .. ":" .. tostring(pass)
                     local encoded
                     local ok_enc, err_enc = pcall(function() encoded = base64.RawStdEncoding:encode_to_string(credentials) end)

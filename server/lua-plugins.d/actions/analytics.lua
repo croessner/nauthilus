@@ -15,18 +15,15 @@
 
 local N = "analytics"
 
+local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
 function nauthilus_call_action(request)
     if request.no_auth or request.authenticated then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
-    dynamic_loader("nauthilus_prometheus")
-    local nauthilus_prometheus = require("nauthilus_prometheus")
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt")

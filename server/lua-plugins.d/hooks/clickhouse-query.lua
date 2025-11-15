@@ -31,13 +31,9 @@
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_http_request")
 local nauthilus_http_request = require("nauthilus_http_request")
 
-dynamic_loader("nauthilus_gluahttp")
 local http = require("glua_http")
-
-dynamic_loader("nauthilus_gll_json")
 local json = require("json")
 
 local N = "clickhouse-query"

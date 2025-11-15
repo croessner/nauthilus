@@ -16,11 +16,9 @@
 -- testing_csv_backend.lua
 -- Implements the official backend function using CSV data persisted in the Go-backed nauthilus_cache.
 
-dynamic_loader("nauthilus_cache")
-local cache = require("nauthilus_cache")
-
--- Built-in helpers/types provided by nauthilus
 local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_cache = require("nauthilus_cache")
 
 -- Ensure the backend result type is available in the VM
 -- In production, this is registered by Go side; here we just use it.
@@ -45,7 +43,7 @@ end
 
 -- Helper to load default CSV via init plugin if not already loaded
 local function ensure_loaded()
-  if cache.cache_exists(KEY_LOADED) then return true end
+  if nauthilus_cache.cache_exists(KEY_LOADED) then return true end
   -- try to require the init loader and run it
   local ok, initmod = pcall(require, "testing_csv_loader")
   if ok and type(initmod) == "table" and type(initmod.init) == "function" then
@@ -76,7 +74,7 @@ function nauthilus_backend_verify_password(request)
   local password = trim(as_string(request.password))
   local client_ip = trim(as_string(request.client_ip))
 
-  local rec = cache.cache_get(KEY_USER_PREFIX .. username)
+  local rec = nauthilus_cache.cache_get(KEY_USER_PREFIX .. username)
   if not nauthilus_util.is_table(rec) then
     -- user not found
     if add_custom_log then add_custom_log("csv_auth", "user_not_found:" .. username) end

@@ -33,13 +33,8 @@ local N = "security_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_prometheus")
 local prom = require("nauthilus_prometheus")
-
-dynamic_loader("nauthilus_redis")
-local r = require("nauthilus_redis")
-
--- bit module no longer required; using pure Lua modulo for djb2 hashing
+local nauthilus_redis = require("nauthilus_redis")
 
 -- Deterministic string hash (djb2) to support stable sampling by username
 -- Pure Lua implementation using modulo to keep values in unsigned 32-bit range
@@ -74,7 +69,7 @@ local function should_emit_per_user(client, username)
 
     -- Always include protected accounts (check hash flag set by account_protection_mode)
     local prot_hash_key = "ntc:acct:" .. username .. ":protection"
-    local prot_active = r.redis_hget(client, prot_hash_key, "active")
+    local prot_active = nauthilus_redis.redis_hget(client, prot_hash_key, "active")
     if prot_active == "true" then
         return true
     end
@@ -115,21 +110,21 @@ function nauthilus_call_feature(request)
     local pool_name = os.getenv("CUSTOM_REDIS_POOL_NAME")
     if pool_name ~= nil and pool_name ~= "" then
         local err
-        client, err = r.get_redis_connection(pool_name)
+        client, err = nauthilus_redis.get_redis_connection(pool_name)
         nauthilus_util.if_error_raise(err)
     end
 
     -- Per-account gauges (guarded to avoid high cardinality)
     if username ~= "" and should_emit_per_user(client, username) then
         -- unique IPs per user over 24h and 7d (prefer HLL; fallback to multilayer ZSET if HLL unavailable)
-        local uniq24 = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:86400")) or 0
-        local uniq7d = tonumber(r.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:604800")) or 0
+        local uniq24 = tonumber(nauthilus_redis.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:86400")) or 0
+        local uniq7d = tonumber(nauthilus_redis.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:604800")) or 0
 
         if uniq24 == 0 then
-            uniq24 = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:86400", now - 86400, now)) or 0
+            uniq24 = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:86400", now - 86400, now)) or 0
         end
         if uniq7d == 0 then
-            uniq7d = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:604800", now - 604800, now)) or 0
+            uniq7d = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":ips:604800", now - 604800, now)) or 0
         end
 
         prom.set_gauge("security_unique_ips_per_user", uniq24, { username = username, window = "24h" })
@@ -137,18 +132,18 @@ function nauthilus_call_feature(request)
 
         -- failures in 1h/24h/7d windows (prefer account_longwindow ZSET; fallback to multilayer ZSET)
         local zkey = "ntc:z:acct:" .. username .. ":fails"
-        local f1h = tonumber(r.redis_zcount(client, zkey, now - 3600, now)) or 0
-        local f24 = tonumber(r.redis_zcount(client, zkey, now - 86400, now)) or 0
-        local f7d = tonumber(r.redis_zcount(client, zkey, now - 604800, now)) or 0
+        local f1h = tonumber(nauthilus_redis.redis_zcount(client, zkey, now - 3600, now)) or 0
+        local f24 = tonumber(nauthilus_redis.redis_zcount(client, zkey, now - 86400, now)) or 0
+        local f7d = tonumber(nauthilus_redis.redis_zcount(client, zkey, now - 604800, now)) or 0
 
         if f1h == 0 then
-            f1h = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:3600", now - 3600, now)) or 0
+            f1h = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:3600", now - 3600, now)) or 0
         end
         if f24 == 0 then
-            f24 = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:86400", now - 86400, now)) or 0
+            f24 = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:86400", now - 86400, now)) or 0
         end
         if f7d == 0 then
-            f7d = tonumber(r.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:604800", now - 604800, now)) or 0
+            f7d = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:account:" .. username .. ":fails:604800", now - 604800, now)) or 0
         end
 
         prom.set_gauge("security_account_fail_budget_used", f1h, { username = username, window = "1h" })
@@ -163,9 +158,9 @@ function nauthilus_call_feature(request)
 
     -- Global ips_per_user over 24h and 7d (requires global_pattern_monitoring.lua to collect these windows)
     local function get_metric(window)
-        local attempts = tonumber(r.redis_zcount(client, "ntc:multilayer:global:auth_attempts:" .. window, now - window, now)) or 0
-        local unique_ips = tonumber(r.redis_zcount(client, "ntc:multilayer:global:unique_ips:" .. window, now - window, now)) or 0
-        local unique_users = tonumber(r.redis_zcount(client, "ntc:multilayer:global:unique_users:" .. window, now - window, now)) or 0
+        local attempts = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:global:auth_attempts:" .. window, now - window, now)) or 0
+        local unique_ips = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:global:unique_ips:" .. window, now - window, now)) or 0
+        local unique_users = tonumber(nauthilus_redis.redis_zcount(client, "ntc:multilayer:global:unique_users:" .. window, now - window, now)) or 0
         local ips_per_user = 0.0
         if unique_users > 0 then ips_per_user = unique_ips / unique_users end
         return ips_per_user
@@ -179,7 +174,7 @@ function nauthilus_call_feature(request)
 
     -- Accounts in protection mode (size of Redis set maintained by account_protection_mode.lua)
     local prot_set = "ntc:acct:protection_active"
-    local prot_count = tonumber(r.redis_scard(client, prot_set) or 0) or 0
+    local prot_count = tonumber(nauthilus_redis.redis_scard(client, prot_set) or 0) or 0
     prom.set_gauge("security_accounts_in_protection_mode_total", prot_count, { })
 
     return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_OK

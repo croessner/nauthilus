@@ -33,38 +33,23 @@ Postmaster
 
 local N = "haveibeenpwnd"
 
+local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_mail = require("nauthilus_mail")
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
+local crypto = require('crypto')
+local http = require("glua_http")
+local strings = require("strings")
+local template = require("template")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_action(request)
     if not request.no_auth and request.authenticated then
-        local nauthilus_util = require("nauthilus_util")
-
-        dynamic_loader("nauthilus_redis")
-        local nauthilus_redis = require("nauthilus_redis")
-
-        dynamic_loader("nauthilus_mail")
-        local nauthilus_mail = require("nauthilus_mail")
-
-        dynamic_loader("nauthilus_context")
-        local nauthilus_context = require("nauthilus_context")
-
-        dynamic_loader("nauthilus_prometheus")
-        local nauthilus_prometheus = require("nauthilus_prometheus")
-
-        dynamic_loader("nauthilus_gluacrypto")
-        local crypto = require('crypto')
-
-        dynamic_loader("nauthilus_gluahttp")
-        local http = require("glua_http")
-
-        dynamic_loader("nauthilus_gll_strings")
-        local strings = require("strings")
-
-        dynamic_loader("nauthilus_gll_template")
-        local template = require("template")
-
         -- In-process cache to reduce Redis/HTTP for repeated checks (multi-instance safe via TTL)
-        dynamic_loader("nauthilus_cache")
         local nauthilus_cache = require("nauthilus_cache")
 
         local redis_key = "ntc:HAVEIBEENPWND:" .. crypto.md5(request.account)

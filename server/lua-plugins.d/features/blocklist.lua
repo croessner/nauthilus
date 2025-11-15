@@ -15,26 +15,20 @@
 
 local N = "blocklist"
 
+local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_prometheus = require("nauthilus_prometheus")
+
+local http = require("glua_http")
+local json = require("json")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 function nauthilus_call_feature(request)
     if request.no_auth then
         return nauthilus_builtin.FEATURE_TRIGGER_NO, nauthilus_builtin.FEATURES_ABORT_NO, nauthilus_builtin.FEATURE_RESULT_YES
     end
-
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
-    dynamic_loader("nauthilus_prometheus")
-    local nauthilus_prometheus = require("nauthilus_prometheus")
-
-    dynamic_loader("nauthilus_gluahttp")
-    local http = require("glua_http")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
 
     -- Get result table
     local rt = nauthilus_context.context_get("rt")

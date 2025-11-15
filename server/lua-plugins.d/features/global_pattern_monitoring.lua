@@ -17,8 +17,8 @@ local N = "global_pattern_monitoring"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_feature(request)
     if request.no_auth then
@@ -167,8 +167,6 @@ function nauthilus_call_feature(request)
 
     -- Enrich rt for downstream actions (e.g., telegram)
     do
-        dynamic_loader("nauthilus_context")
-        local nauthilus_context = require("nauthilus_context")
         local rt = nauthilus_context.context_get("rt") or {}
         if type(rt) == "table" then
             rt.feature_global_pattern = true
