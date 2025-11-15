@@ -28,6 +28,8 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
@@ -237,7 +239,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}()
 
 	// Prepare per-request environment: ensures request-local globals and module bindings
-	luapool.PrepareRequestEnv(L, aw.luaActionRequest)
+	luapool.PrepareRequestEnv(L)
 
 	// Bind request-scoped modules into reqEnv so that require() resolves correctly.
 	// 1) nauthilus_context
@@ -293,6 +295,39 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 8) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
 		} else {
 			L.Pop(1)
 		}
@@ -447,14 +482,27 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 
 // logScriptFailure logs details about a script failure, including session ID, script path, error, and custom log data.
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
-	level.Error(log.Logger).Log(
-		append([]any{
-			definitions.LogKeyGUID, aw.luaActionRequest.Session,
-			"script", aw.actionScripts[index].ScriptPath,
-			definitions.LogKeyMsg, "failed to execute Lua script",
-			definitions.LogKeyError, err,
-		}, toLoggable(logs)...)...,
-	)
+	parts := []any{
+		definitions.LogKeyGUID, aw.luaActionRequest.Session,
+		"script", aw.actionScripts[index].ScriptPath,
+		definitions.LogKeyMsg, "failed to execute Lua script",
+	}
+
+	var ae *lua.ApiError
+	if errors.As(err, &ae) && ae != nil {
+		parts = append(parts,
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	}
+
+	if logs != nil && len(*logs) > 0 {
+		for i := range *logs {
+			parts = append(parts, (*logs)[i])
+		}
+	}
+
+	level.Error(log.Logger).Log(parts...)
 }
 
 // createResultLogMessage generates a log message based on the given result code.

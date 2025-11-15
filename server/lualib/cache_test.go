@@ -7,7 +7,7 @@ import (
 )
 
 func setupCacheModule(L *lua.LState) {
-	L.PreloadModule("nauthilus_cache", LoaderModCache())
+	L.PreloadModule("nauthilus_cache", LoaderModCache)
 }
 
 func TestLuaCacheSetGetDelete(t *testing.T) {

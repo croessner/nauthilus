@@ -45,6 +45,16 @@ func (m *MailModule) Loader(L *lua.LState) int {
 	return 1
 }
 
+// LoaderModMail is a stateless module loader for nauthilus_mail.
+// It pre-binds a real SMTP client implementation and exposes send_mail()
+// to Lua. This module does not require request context and can be preloaded
+// once per VM.
+func LoaderModMail(L *lua.LState) int {
+	mail := NewMailModule(&smtp.EmailClient{})
+
+	return mail.Loader(L)
+}
+
 // getStringFromTable retrieves a string value from a Lua table by its key. Returns an empty string if the key is not found.
 func getStringFromTable(table *lua.LTable, key string) string {
 	value := table.RawGetString(key)

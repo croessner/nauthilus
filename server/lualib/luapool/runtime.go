@@ -27,12 +27,16 @@ import (
 	stdhttp "net/http"
 
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/metrics"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 
 	"github.com/cjoudrey/gluahttp"
-	"github.com/vadv/gopher-lua-libs/plugin"
+	libs "github.com/vadv/gopher-lua-libs"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -51,7 +55,7 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	setBaseEnv(L, L.Get(lua.GlobalsIndex))
 
 	// Preload all gopher-lua-libs at once.
-	plugin.Preload(L)
+	libs.Preload(L)
 
 	// Special case glua_http: needs an httpClient.
 	if httpClient != nil {
@@ -63,22 +67,30 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	L.PreloadModule(definitions.LuaModPassword, lualib.LoaderModPassword)
 	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc)
 	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus)
+	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache)
+	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftWhitelist)
+	L.PreloadModule(definitions.LuaModMail, lualib.LoaderModMail)
+	L.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 
-	// Preload stateless placeholders for ctx-bound modules. These will be
+	// Preload stateless placeholders for context-bound modules. These will be
 	// replaced per request via BindModuleIntoReq when a bound version is
-	// available. Keeping them warm avoids dynamic_loader use for ctx-bound
+	// available. Keeping them warm avoids dynamic_loader usage for ctx-bound
 	// modules and satisfies static analyzers.
 	L.PreloadModule(definitions.LuaModRedis, redislib.Loader())
 	L.PreloadModule(definitions.LuaModHTTPRequest, lualib.LoaderHTTPRequestStateless())
 	L.PreloadModule(definitions.LuaModHTTPResponse, lualib.LoaderHTTPResponseStateless())
 	L.PreloadModule(definitions.LuaModContext, lualib.LoaderContextStateless())
+	L.PreloadModule(definitions.LuaModLDAP, lualib.LoaderLDAPStateless())
+	L.PreloadModule(definitions.LuaModPsnet, connmgr.LoaderPsnetStateless())
+	L.PreloadModule(definitions.LuaModDNS, lualib.LoaderDNSStateless())
+	L.PreloadModule(definitions.LuaModBruteForce, bflib.LoaderBruteForceStateless())
 
 	return L
 }
 
 // PrepareRequestEnv creates a per-request environment that inherits from the base environment via metatable.
 // It calls binding skeletons to register request-bound functions/modules (currently stubs).
-func PrepareRequestEnv(L *lua.LState, ctx any) *lua.LTable {
+func PrepareRequestEnv(L *lua.LState) *lua.LTable {
 	base := getBaseEnv(L)
 	if base == nil {
 		// Fallback: If markers are missing, use _G as the base env.
@@ -97,6 +109,9 @@ func PrepareRequestEnv(L *lua.LState, ctx any) *lua.LTable {
 
 	// Set as global marker.
 	L.SetGlobal(reqEnvKey, req)
+
+	// Install per-request dynamic_loader stub for backward compatibility
+	ensureDynamicLoaderStub(L)
 
 	return req
 }
@@ -177,8 +192,29 @@ func resetRequestEnv(L *lua.LState) {
 	L.SetGlobal(definitions.LuaDefaultTable, lua.LNil)
 	L.SetGlobal(definitions.LuaBackendResultTypeName, lua.LNil)
 
-	// Force dynamic_loader to be recreated per request
-	L.SetGlobal("dynamic_loader", lua.LNil)
+	// Recreate dynamic_loader stub per request
+	ensureDynamicLoaderStub(L)
+}
+
+// ensureDynamicLoaderStub installs a no-op dynamic_loader function that logs usage.
+// This keeps legacy scripts running while making remaining dynamic_loader calls visible.
+func ensureDynamicLoaderStub(L *lua.LState) {
+	if v := L.GetGlobal("dynamic_loader"); v != lua.LNil && v != nil {
+		return
+	}
+
+	stub := L.NewFunction(func(L *lua.LState) int {
+		name := L.OptString(1, "")
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "Lua dynamic_loader called",
+			"module", name,
+		)
+
+		// no return values (no-op)
+		return 0
+	})
+
+	L.SetGlobal("dynamic_loader", stub)
 }
 
 // BindModuleIntoReq exposes the module-binding helper for subsystems that need
@@ -196,7 +232,7 @@ func BindModuleIntoReq(L *lua.LState, name string, mod *lua.LTable) {
 	}
 
 	if req == nil {
-		req = PrepareRequestEnv(L, nil)
+		req = PrepareRequestEnv(L)
 	}
 
 	bindModuleIntoReq(L, req, name, mod)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -553,25 +554,24 @@ func luaCachePopAll(L *lua.LState) int {
 // LoaderModCache registers the nauthilus_cache module into a Lua state.
 // The module exposes cache_set/get/delete/exists/update/keys/size/flush/push/pop_all.
 // The cache is process-wide (no per-request state needed).
-func LoaderModCache() lua.LGFunction {
-	return func(L *lua.LState) int {
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCacheSet:    luaCacheSet,
-			definitions.LuaFnCacheGet:    luaCacheGet,
-			definitions.LuaFnCacheDelete: luaCacheDelete,
-			definitions.LuaFnCacheExists: luaCacheExists,
-			definitions.LuaFnCacheUpdate: luaCacheUpdate,
-			definitions.LuaFnCacheKeys:   luaCacheKeys,
-			definitions.LuaFnCacheSize:   luaCacheSize,
-			definitions.LuaFnCacheFlush:  luaCacheFlush,
-			definitions.LuaFnCachePush:   luaCachePush,
-			definitions.LuaFnCachePopAll: luaCachePopAll,
-		})
+// Usage: L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache)
+func LoaderModCache(L *lua.LState) int {
+	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+		definitions.LuaFnCacheSet:    luaCacheSet,
+		definitions.LuaFnCacheGet:    luaCacheGet,
+		definitions.LuaFnCacheDelete: luaCacheDelete,
+		definitions.LuaFnCacheExists: luaCacheExists,
+		definitions.LuaFnCacheUpdate: luaCacheUpdate,
+		definitions.LuaFnCacheKeys:   luaCacheKeys,
+		definitions.LuaFnCacheSize:   luaCacheSize,
+		definitions.LuaFnCacheFlush:  luaCacheFlush,
+		definitions.LuaFnCachePush:   luaCachePush,
+		definitions.LuaFnCachePopAll: luaCachePopAll,
+	})
 
-		L.Push(mod)
+	L.Push(mod)
 
-		return 1
-	}
+	return 1
 }
 
 // StopGlobalCache is an optional helper to stop the janitor; can be used by shutdown hooks.

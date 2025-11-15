@@ -27,12 +27,15 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
@@ -501,7 +504,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			Llocal.SetContext(luaCtx)
 
 			// Prepare per-request environment so that request-local globals and module bindings are visible
-			luapool.PrepareRequestEnv(Llocal, r)
+			luapool.PrepareRequestEnv(Llocal)
 
 			// Bind request-scoped modules into reqEnv so that require() resolves correctly.
 			// 1) nauthilus_context
@@ -562,7 +565,40 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				}
 			}
 
-			// 6) nauthilus_backend (preload stateless placeholder, then request-bound)
+			// 6) nauthilus_psnet (connection monitoring)
+			if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 7) nauthilus_dns (DNS lookups)
+			if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 8) nauthilus_brute_force (toleration and blocking helpers)
+			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
 			Llocal.PreloadModule(definitions.LuaModBackend, LoaderBackendStateless())
 			{
 				loader := LoaderModBackend(r, &localBackendResult, &localRemoveAttrs)

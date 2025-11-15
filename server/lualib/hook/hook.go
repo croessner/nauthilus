@@ -17,6 +17,7 @@ package hook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,6 +31,8 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
@@ -428,7 +431,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	L.SetContext(luaCtx)
 
 	// Prepare per-request environment so that request-local globals and module bindings are visible
-	luapool.PrepareRequestEnv(L, luaCtx)
+	luapool.PrepareRequestEnv(L)
 
 	// Bind required per-request modules so that require() resolves to the bound versions.
 	// 1) nauthilus_context (fresh per-request context)
@@ -460,6 +463,39 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 4) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
 		} else {
 			L.Pop(1)
 		}
@@ -530,7 +566,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	L.SetContext(luaCtx)
 
 	// Prepare per-request environment so that request-local globals and module bindings are visible
-	luapool.PrepareRequestEnv(L, ctx)
+	luapool.PrepareRequestEnv(L)
 
 	// Bind required per-request modules so that require() resolves to the bound versions.
 	// 1) nauthilus_context (fresh per-request context)
@@ -587,6 +623,39 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 		}
 	}
 
+	// 6) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 8) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
 	logTable := setupLogging(L)
 
 	result, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
@@ -636,8 +705,27 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 		processError(err, hook)
 	}
 
+	// Resolve the entry function nauthilus_run_hook from the request env first, then fall back to _G.
+	// Because the script chunk is executed under __NAUTH_REQ_ENV (via DoCompiledFile + SetFEnv),
+	// global assignments inside the script land in the reqEnv table, not in _G.
+	runHookFn := lua.LNil
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, definitions.LuaFnRunHook); fn != nil {
+			runHookFn = fn
+		}
+	}
+
+	if runHookFn == lua.LNil {
+		runHookFn = L.GetGlobal(definitions.LuaFnRunHook)
+	}
+
+	if runHookFn.Type() != lua.LTFunction {
+		// Provide a clear error instead of attempting to call a non-function (which results in "attempt to call a non-function object").
+		return nil, fmt.Errorf("entry function '%s' is not defined as a function in the loaded script (hook: %s)", definitions.LuaFnRunHook, hook)
+	}
+
 	if err = L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(definitions.LuaFnRunHook),
+		Fn:      runHookFn,
 		NRet:    1,
 		Protect: true,
 	}, logTable, lua.LString(guid)); err != nil {
@@ -674,6 +762,19 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 
 // processError logs an error with the associated script hook for debugging or monitoring purposes.
 func processError(err error, hook string) {
+	// Include Lua stacktrace when available to simplify debugging
+	var ae *lua.ApiError
+	if errors.As(err, &ae) && ae != nil {
+		level.Error(log.Logger).Log(
+			"script", hook,
+			definitions.LogKeyMsg, "Error executing script",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+
+		return
+	}
+
 	level.Error(log.Logger).Log(
 		"script", hook,
 		definitions.LogKeyMsg, "Error executing script",

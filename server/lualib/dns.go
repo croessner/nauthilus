@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/util"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -149,6 +150,17 @@ func LoaderModDNS(ctx context.Context) lua.LGFunction {
 		})
 
 		L.Push(mod)
+
+		return 1
+	}
+}
+
+// LoaderDNSStateless returns an empty, stateless module placeholder for nauthilus_dns.
+// It allows require("nauthilus_dns") to succeed before per-request binding replaces it
+// with a context-aware version via BindModuleIntoReq.
+func LoaderDNSStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
 
 		return 1
 	}

@@ -29,6 +29,8 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
@@ -262,7 +264,7 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 			Llocal.SetContext(luaCtx)
 
 			// Prepare per-request environment so that request-local globals and module bindings are visible
-			luapool.PrepareRequestEnv(Llocal, r)
+			luapool.PrepareRequestEnv(Llocal)
 
 			// Bind required per-request modules so that require() resolves to the bound versions.
 			// 1) nauthilus_context
@@ -318,6 +320,39 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
 					Llocal.Pop(1)
 					luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 6) nauthilus_psnet (connection monitoring)
+			if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 7) nauthilus_dns (DNS lookups)
+			if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 8) nauthilus_brute_force (toleration and blocking helpers)
+			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
 				} else {
 					Llocal.Pop(1)
 				}
@@ -434,12 +469,23 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
-	level.Error(log.Logger).Log(
-		definitions.LogKeyGUID, r.Session,
-		"name", scriptName,
-		definitions.LogKeyMsg, "Lua feature failed",
-		definitions.LogKeyError, err,
-	)
+	// Include Lua stacktrace when available for better diagnostics
+	if ae, ok := err.(*lua.ApiError); ok && ae != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, r.Session,
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua feature failed",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	} else {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, r.Session,
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua feature failed",
+			definitions.LogKeyError, err,
+		)
+	}
 
 	if stopTimer != nil {
 		stopTimer()

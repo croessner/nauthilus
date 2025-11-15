@@ -28,6 +28,8 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
@@ -210,7 +212,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	L.SetContext(luaCtx)
 
-	luapool.PrepareRequestEnv(L, luaRequest)
+	luapool.PrepareRequestEnv(L)
 
 	// Bind per-request modules into reqEnv so that require() resolves to the bound versions.
 	// 1) nauthilus_context
@@ -258,6 +260,39 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
 			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
 		} else {
 			L.Pop(1)
 		}

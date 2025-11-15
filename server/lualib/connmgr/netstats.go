@@ -343,3 +343,14 @@ func LoaderModPsnet(ctx context.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// LoaderPsnetStateless returns an empty, stateless module placeholder for nauthilus_psnet.
+// It allows require("nauthilus_psnet") to succeed before per-request binding replaces it
+// with a context-aware version via BindModuleIntoReq.
+func LoaderPsnetStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
