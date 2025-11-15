@@ -19,7 +19,7 @@ import "fmt"
 
 type RelayDomainsSection struct {
 	SoftWhitelist `mapstructure:"soft_whitelist"`
-	StaticDomains []string `mapstructure:"static" validate:"required,dive,hostname_rfc1123"`
+	StaticDomains []string `mapstructure:"static" validate:"required,dive,hostname_rfc1123_with_opt_trailing_dot"`
 }
 
 func (r *RelayDomainsSection) String() string {
@@ -52,7 +52,7 @@ func (r *RelayDomainsSection) GetSoftWhitelist() SoftWhitelist {
 
 type BackendServer struct {
 	Protocol      string `mapstructure:"protocol" validate:"required,oneof=imap pop3 lmtp smtp sieve http"`
-	Host          string `mapstructure:"host" validate:"required,hostname_rfc1123|ip"`
+	Host          string `mapstructure:"host" validate:"required,hostname_rfc1123_with_opt_trailing_dot|ip"`
 	DeepCheck     bool   `mapstructure:"deep_check"`
 	RequestURI    string `mapstructure:"request_uri" validate:"omitempty,url_encoded"`
 	TestUsername  string `mapstructure:"test_username" validate:"omitempty,excludesall= "`
