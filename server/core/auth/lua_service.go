@@ -16,7 +16,6 @@
 package auth
 
 import (
-	"errors"
 	stderrors "errors"
 	"fmt"
 
@@ -131,7 +130,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
 			// Include Lua stacktrace when available
 			var ae *lua.ApiError
-			if errors.As(err, &ae) && ae != nil {
+			if stderrors.As(err, &ae) && ae != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyGUID, auth.GUID,
 					definitions.LogKeyMsg, "Error calling Lua filter",
