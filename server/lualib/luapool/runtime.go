@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/metrics"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
+	gluacrypto "github.com/tengattack/gluacrypto/crypto"
 
 	"github.com/cjoudrey/gluahttp"
 	libs "github.com/vadv/gopher-lua-libs"
@@ -56,6 +57,9 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 
 	// Preload all gopher-lua-libs at once.
 	libs.Preload(L)
+
+	// Preload gluacrypto.
+	L.PreloadModule("glua_crypto", gluacrypto.Loader)
 
 	// Special case glua_http: needs an httpClient.
 	if httpClient != nil {
