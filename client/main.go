@@ -302,6 +302,26 @@ func humanMs(ms int) string {
 	return fmt.Sprintf("%ds", int(s+0.5))
 }
 
+// humanETA renders a fixed-width ETA string in format "hh:mm:ss" (8 chars).
+// The value is clamped to [0, 99:59:59] to keep width stable.
+func humanETA(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+
+	// Cap at 99:59:59 so width is stable and doesn't overflow
+	maxDuration := 99*time.Hour + 59*time.Minute + 59*time.Second
+	if d > maxDuration {
+		d = maxDuration
+	}
+
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	s := int((d % time.Minute) / time.Second)
+
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
 // humanCount formats large counts for Y-axis (e.g., 1.2k, 3.4M)
 func humanCount(n int64) string {
 	if n < 1000 {
@@ -1490,6 +1510,7 @@ func main() {
 					// Progress ratio and left label
 					var ratio float64
 					var leftLabel string
+
 					if plannedTotal == -2 { // duration-based
 						if *runFor > 0 {
 							ratio = float64(now.Sub(start)) / float64(*runFor)
@@ -1536,12 +1557,38 @@ func main() {
 						trkStr = ""
 					}
 
+					// ETA (fixed-width). For duration-based runs, show remaining time.
+					// For count-based runs (known total), estimate based on current RPS.
+					// Otherwise, display placeholder.
+					etaStr := "--:--:--"
+					if plannedTotal == -2 { // duration-based (--run-for)
+						if *runFor > 0 {
+							remain := (*runFor) - now.Sub(start)
+							if remain < 0 {
+								remain = 0
+							}
+
+							etaStr = humanETA(remain)
+						}
+					} else if plannedTotal > 0 { // count-based (known total)
+						remain := plannedTotal - t
+						if remain < 0 {
+							remain = 0
+						}
+
+						if rps > 0 {
+							etaDur := time.Duration(float64(remain) / rps * float64(time.Second))
+							etaStr = humanETA(etaDur)
+						}
+					}
+
 					right := fmt.Sprintf(
-						" [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						" [rps: %7.1f] [trps: %7d]%s [conc: %4d] [eta: %s] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 						rps,
 						uint64(trps),
 						trkStr,
 						concVal,
+						etaStr,
 						humanCount(s.Matched),
 						humanCount(s.HttpErrs),
 						humanCount(s.Aborted),
