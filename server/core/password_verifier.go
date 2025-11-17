@@ -80,7 +80,17 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 
 		finalRes = res
 
-		if res.Authenticated || auth.NoAuth {
+		// Restore legacy no-auth semantics: if a backend finds the user in no-auth
+		// mode, treat it as authenticated. This keeps followers/SingleFlight safe
+		// because we only mutate the local PassDBResult, not AuthState.
+		if auth.NoAuth && res.UserFound && !res.Authenticated {
+			res.Authenticated = true
+		}
+
+		// Consolidated exit condition: use PassDBResult.Authenticated as the
+		// single stop criterion. In no-auth, the mapping above ensures the
+		// correct behavior without sprinkling special cases here.
+		if res.Authenticated {
 			return res, nil
 		}
 	}

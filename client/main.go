@@ -39,6 +39,77 @@ const maxLatencyMs = 60000
 
 var latBuckets [maxLatencyMs + 1]int64 // index = ms
 
+// --- Adaptive Auto-Mode helpers (Pacer) ---
+
+// Pacer generates ticks at a configurable RPS and allows live reconfiguration.
+// Important: It exposes a STABLE tick channel that remains valid across SetRPS calls.
+type Pacer struct {
+	mu    sync.Mutex
+	rps   float64
+	ch    chan time.Time
+	stopC chan struct{}
+}
+
+func NewPacer(rps float64) *Pacer {
+	p := &Pacer{
+		ch:    make(chan time.Time, 1),
+		stopC: make(chan struct{}),
+	}
+
+	if rps <= 0 {
+		rps = 1 // ensure a sane default pacing when enabled
+	}
+
+	p.rps = rps
+
+	go p.loop()
+
+	return p
+}
+
+func (p *Pacer) loop() {
+	for {
+		// Capture current RPS atomically under mutex
+		p.mu.Lock()
+		r := p.rps
+		p.mu.Unlock()
+
+		// Compute sleep interval
+		interval := time.Duration(float64(time.Second) / r)
+		if interval <= 0 {
+			interval = time.Nanosecond
+		}
+
+		select {
+		case <-time.After(interval):
+			// Non-blocking send to avoid piling up if consumer is slow
+			select {
+			case p.ch <- time.Now():
+			default:
+			}
+		case <-p.stopC:
+			return
+		}
+	}
+}
+
+// SetRPS updates the pacing rate. The exposed tick channel remains the same.
+func (p *Pacer) SetRPS(rps float64) {
+	if rps <= 0 {
+		rps = 1
+	}
+
+	p.mu.Lock()
+	p.rps = rps
+	p.mu.Unlock()
+}
+
+// Tick returns a stable receive-only channel delivering pacing ticks.
+func (p *Pacer) Tick() <-chan time.Time { return p.ch }
+
+// Stop terminates the internal goroutine.
+func (p *Pacer) Stop() { close(p.stopC) }
+
 // TTY/Terminal Utilities
 func isTTY() bool {
 	fd := os.Stdout.Fd()
@@ -77,12 +148,91 @@ func padToCellsRight(s string, w int) string { return runewidth.FillRight(s, w) 
 
 var latOverflow int64 // count of latencies > maxLatencyMs
 
+// --- Adaptive state exposure for UI ---
+// We expose current target RPS (as set by the controller) via an atomic uint64
+// holding math.Float64bits, and the current desired concurrency via an int64.
+var (
+	tgtRPSBits  uint64 // atomic: math.Float64bits(current target rps); 0 = not set/unlimited
+	desiredConc int64  // atomic: current desired concurrency in auto mode; 0 means fallback to configured
+)
+
+func setTargetRPS(v float64) { atomic.StoreUint64(&tgtRPSBits, math.Float64bits(v)) }
+func getTargetRPS() float64  { return math.Float64frombits(atomic.LoadUint64(&tgtRPSBits)) }
+
+// clamp01 confines a float value into the inclusive range [0,1].
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+
+	if x > 1 {
+		return 1
+	}
+
+	return x
+}
+
+// helpers since generics/builtins may not be available in all build envs
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+// normalizeCtrlEvery ensures a sane controller cadence: (0, 5s].
+func normalizeCtrlEvery(d time.Duration) time.Duration {
+	if d <= 0 || d > 5*time.Second {
+		return 5 * time.Second
+	}
+
+	return d
+}
+
+// applyRPS is the single point to set the current RPS both in the pacer and the exported target value.
+// It clamps the value to >= 1 and returns the applied value.
+func applyRPS(p *Pacer, r float64) float64 {
+	if r <= 0 {
+		r = 1
+	}
+
+	if p != nil {
+		p.SetRPS(r)
+	}
+
+	setTargetRPS(r)
+
+	return r
+}
+
+// Stats is a read-only snapshot of key counters and latency percentiles.
+type Stats struct {
+	Total, Matched, Mismatched, HttpErrs, Aborted, Skipped, ToleratedBF int64
+	Avg, P50, P90, P99                                                  time.Duration
+	Min, Max                                                            time.Duration
+	Elapsed                                                             time.Duration
+	TargetRPS                                                           float64
+	Concurrency                                                         int64
+}
+
+// statsSnapshot is defined inside main() to atomically sample counters there.
+
 // computeHistogramCounts aggregates the global latency buckets into "cols" columns.
 // The range [start..end] (inclusive, in ms) is partitioned into columns of size bucketSpan.
 // It returns the per-column counts and the total across all considered buckets.
 func computeHistogramCounts(start, end, bucketSpan, cols int) ([]int64, int64) {
 	counts := make([]int64, cols)
 	var total int64
+
 	for i := 0; i < cols; i++ {
 		lo := start + i*bucketSpan
 		hi := lo + bucketSpan - 1
@@ -98,6 +248,7 @@ func computeHistogramCounts(start, end, bucketSpan, cols int) ([]int64, int64) {
 		counts[i] = c
 		total += c
 	}
+
 	return counts, total
 }
 
@@ -149,6 +300,26 @@ func humanMs(ms int) string {
 	}
 
 	return fmt.Sprintf("%ds", int(s+0.5))
+}
+
+// humanETA renders a fixed-width ETA string in format "hh:mm:ss" (8 chars).
+// The value is clamped to [0, 99:59:59] to keep width stable.
+func humanETA(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+
+	// Cap at 99:59:59 so width is stable and doesn't overflow
+	maxDuration := 99*time.Hour + 59*time.Minute + 59*time.Second
+	if d > maxDuration {
+		d = maxDuration
+	}
+
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	s := int((d % time.Minute) / time.Second)
+
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
 }
 
 // humanCount formats large counts for Y-axis (e.g., 1.2k, 3.4M)
@@ -700,7 +871,7 @@ func randomHostInCIDR(baseNet uint32, mask uint32) uint32 {
 }
 
 type Row struct {
-	Fields     map[string]string // alle CSV-Felder pro Zeile
+	Fields     map[string]string
 	ExpectedOK bool
 }
 
@@ -838,7 +1009,7 @@ func readCSV(path string, delim rune, debug bool) ([]Row, error) {
 	return rows, nil
 }
 
-// Erlaubte JSON-Schlüssel gemäß server/model/authdto/json_request.go
+// Allowed JSON keys per server/model/authdto/json_request.go
 var allowedKeys = map[string]struct{}{
 	"username":              {},
 	"password":              {},
@@ -1066,6 +1237,33 @@ func main() {
 		compareParallel = flag.Bool("compare-parallel", false, "Compare responses within a parallel group (strict byte equality)")
 		useIdemKey      = flag.Bool("idempotency-key", false, "Add Idempotency-Key header computed from request body (SHA-256)")
 		progressBar     = flag.Bool("progress-bar", false, "Render a single-line progress bar (TTY only)")
+
+		// Graceful shutdown
+		graceSeconds = flag.Int("grace-seconds", 10, "Graceful shutdown timeout before forcing cancel")
+
+		// Auto-mode flags (adaptive pacing & concurrency)
+		autoMode      = flag.Bool("auto", false, "Adaptive Auto-Mode for rps/concurrency")
+		autoTargetP95 = flag.Int("auto-target-p95", 400, "Target p95 latency in ms")
+		autoMaxRPS    = flag.Float64("auto-max-rps", 0, "Upper cap for auto rps (0=unlimited)")
+		autoMaxConc   = flag.Int("auto-max-concurrency", 0, "Upper cap for auto concurrency (0=use --concurrency)")
+		autoStartRPS  = flag.Float64("auto-start-rps", 1, "Starting RPS for auto mode")
+		autoStartConc = flag.Int("auto-start-concurrency", 0, "Starting concurrency for auto mode (0=use --concurrency when focus=rps)")
+		autoStepRPS   = flag.Float64("auto-step-rps", 5, "+RPS per window")
+		autoStepConc  = flag.Int("auto-step-concurrency", 1, "+Concurrency per window")
+		autoBackoff   = flag.Float64("auto-backoff", 0.7, "Multiplicative backoff factor on violation")
+		autoMaxErr    = flag.Float64("auto-max-err", 1.0, "Max error rate in % per window")
+		autoMinSample = flag.Int("auto-min-sample", 200, "Min requests per window to judge")
+		autoFocus     = flag.String("auto-focus", "rps", "rps|concurrency|both")
+		// Optional plateau detection flags
+		autoPlateau         = flag.Bool("auto-plateau", false, "Enable plateau detection to pause increases when RPS gain stalls")
+		autoPlateauWindows  = flag.Int("auto-plateau-windows", 3, "Number of control windows to detect a plateau (min 2)")
+		autoPlateauGain     = flag.Float64("auto-plateau-gain", 5.0, "Minimum relative RPS gain in percent across the window; below this is considered a plateau")
+		autoPlateauAction   = flag.String("auto-plateau-action", "freeze", "Action on plateau: freeze|backoff")
+		autoPlateauCooldown = flag.Int("auto-plateau-cooldown", 2, "Cooldown windows after plateau before resuming increases")
+		// Tracking-based plateau detection (rps vs trps)
+		autoPlateauTrackThreshold = flag.Float64("auto-plateau-track-threshold", 0.9, "Tracking threshold rps/trps (0..1). Below this over N windows is considered a plateau")
+		autoPlateauTrackWindows   = flag.Int("auto-plateau-track-windows", 0, "Windows for tracking plateau (0=use --auto-plateau-windows)")
+		autoPlateauTrackAction    = flag.String("auto-plateau-track-action", "freeze", "Action on tracking plateau: freeze|backoff|shift (shift: pause RPS increases, raise concurrency)")
 	)
 
 	flag.Parse()
@@ -1194,20 +1392,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle Ctrl+C (SIGINT) and SIGTERM to print results on interrupt
+	// Global stop flag (used for legacy checks in some loops)
 	var stopFlag int32
-
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-
-		fmt.Println("\nInterrupt received, stopping...")
-		atomic.StoreInt32(&stopFlag, 1)
-
-		cancel()
-	}()
 
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
@@ -1223,6 +1409,47 @@ func main() {
 	var statusCounts [600]int64
 
 	start := time.Now()
+
+	// Define a local snapshot helper to avoid duplicating metric reads/derivations
+	statsSnapshot := func() Stats {
+		t := atomic.LoadInt64(&total)
+		m := atomic.LoadInt64(&matched)
+		mm := atomic.LoadInt64(&mismatched)
+		he := atomic.LoadInt64(&httpErrs)
+		ab := atomic.LoadInt64(&aborted)
+		sk := atomic.LoadInt64(&skipped)
+		bf := atomic.LoadInt64(&toleratedBF)
+		tls := atomic.LoadInt64(&totalLatencyNs)
+
+		var avg time.Duration
+		if t > 0 {
+			avg = time.Duration(tls / t)
+		}
+
+		concVal := atomic.LoadInt64(&desiredConc)
+		if concVal <= 0 {
+			concVal = int64(*concurrency)
+		}
+
+		return Stats{
+			Total:       t,
+			Matched:     m,
+			Mismatched:  mm,
+			HttpErrs:    he,
+			Aborted:     ab,
+			Skipped:     sk,
+			ToleratedBF: bf,
+			Avg:         avg,
+			P50:         percentileFromBuckets(0.50),
+			P90:         percentileFromBuckets(0.90),
+			P99:         percentileFromBuckets(0.99),
+			Min:         time.Duration(atomic.LoadInt64(&minLatencyNs)),
+			Max:         time.Duration(atomic.LoadInt64(&maxLatencyNs)),
+			Elapsed:     time.Since(start),
+			TargetRPS:   getTargetRPS(),
+			Concurrency: concVal,
+		}
+	}
 
 	// Progress output: either interactive bar (TTY) or periodic text reporter
 	const progressBarHz = 8 // fixed refresh rate for bar
@@ -1240,7 +1467,7 @@ func main() {
 				fmt.Printf("\x1b[?25h\r\x1b[2K\n")
 			}()
 
-			tick := time.NewTicker(time.Second / time.Duration(max(1, progressBarHz)))
+			tick := time.NewTicker(time.Second / time.Duration(maxInt(1, progressBarHz)))
 			defer tick.Stop()
 
 			prevTotal := int64(0)
@@ -1269,29 +1496,21 @@ func main() {
 						dt = 1
 					}
 
-					t := atomic.LoadInt64(&total)
-					m := atomic.LoadInt64(&matched)
-					he := atomic.LoadInt64(&httpErrs)
-					ab := atomic.LoadInt64(&aborted)
-					sk := atomic.LoadInt64(&skipped)
-					tls := atomic.LoadInt64(&totalLatencyNs)
-
-					var avg time.Duration
-					if t > 0 {
-						avg = time.Duration(tls / t)
-					}
+					s := statsSnapshot()
+					t := s.Total
 
 					// RPS since last tick
 					delta := t - prevTotal
 					rps := float64(delta) / dt
 
-					// Percentiles
-					p50 := percentileFromBuckets(0.50)
-					p90 := percentileFromBuckets(0.90)
+					// Percentiles from snapshot
+					p50 := s.P50
+					p90 := s.P90
 
 					// Progress ratio and left label
 					var ratio float64
 					var leftLabel string
+
 					if plannedTotal == -2 { // duration-based
 						if *runFor > 0 {
 							ratio = float64(now.Sub(start)) / float64(*runFor)
@@ -1321,17 +1540,59 @@ func main() {
 					// Build left and right parts
 					left := leftLabel
 
-					avgMs := int(avg / time.Millisecond)
+					avgMs := int(s.Avg / time.Millisecond)
 					p50Ms := int(p50 / time.Millisecond)
 					p90Ms := int(p90 / time.Millisecond)
 
+					// Determine current concurrency and target rps from snapshot
+					concVal := s.Concurrency
+					trps := s.TargetRPS
+					var trkStr string
+
+					if trps > 0 {
+						trk := clamp01(rps / trps)
+
+						trkStr = fmt.Sprintf(" [trk: %3.0f%%]", trk*100)
+					} else {
+						trkStr = ""
+					}
+
+					// ETA (fixed-width). For duration-based runs, show remaining time.
+					// For count-based runs (known total), estimate based on current RPS.
+					// Otherwise, display placeholder.
+					etaStr := "--:--:--"
+					if plannedTotal == -2 { // duration-based (--run-for)
+						if *runFor > 0 {
+							remain := (*runFor) - now.Sub(start)
+							if remain < 0 {
+								remain = 0
+							}
+
+							etaStr = humanETA(remain)
+						}
+					} else if plannedTotal > 0 { // count-based (known total)
+						remain := plannedTotal - t
+						if remain < 0 {
+							remain = 0
+						}
+
+						if rps > 0 {
+							etaDur := time.Duration(float64(remain) / rps * float64(time.Second))
+							etaStr = humanETA(etaDur)
+						}
+					}
+
 					right := fmt.Sprintf(
-						" [rps: %7.1f] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						" [rps: %7.1f] [trps: %7d]%s [conc: %4d] [eta: %s] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 						rps,
-						humanCount(m),
-						humanCount(he),
-						humanCount(ab),
-						humanCount(sk),
+						uint64(trps),
+						trkStr,
+						concVal,
+						etaStr,
+						humanCount(s.Matched),
+						humanCount(s.HttpErrs),
+						humanCount(s.Aborted),
+						humanCount(s.Skipped),
 						humanMs(avgMs),
 						humanMs(p50Ms),
 						humanMs(p90Ms),
@@ -1350,10 +1611,12 @@ func main() {
 					if available < minBar {
 						// If needed, shrink left label to keep a minimal bar width
 						need := minBar - available
+
 						newLeftW := leftW - need
 						if newLeftW < 0 {
 							newLeftW = 0
 						}
+
 						left = truncateToCells(left, newLeftW)
 						leftW = displayWidth(left)
 						available = termW - fixedSpaces - leftW
@@ -1369,6 +1632,7 @@ func main() {
 					if fill < 0 {
 						fill = 0
 					}
+
 					if fill > barWidth {
 						fill = barWidth
 					}
@@ -1378,6 +1642,7 @@ func main() {
 					// Top line: right
 					top := " " + right
 					dwTop := displayWidth(top)
+
 					if dwTop < termW {
 						top = padToCellsRight(top, termW)
 					} else if dwTop > termW {
@@ -1425,30 +1690,19 @@ func main() {
 						dt = 1
 					}
 
-					t := atomic.LoadInt64(&total)
-					m := atomic.LoadInt64(&matched)
-					mm := atomic.LoadInt64(&mismatched)
-					he := atomic.LoadInt64(&httpErrs)
-					ab := atomic.LoadInt64(&aborted)
-					sk := atomic.LoadInt64(&skipped)
-					bf := atomic.LoadInt64(&toleratedBF)
-					tls := atomic.LoadInt64(&totalLatencyNs)
-					mn := time.Duration(atomic.LoadInt64(&minLatencyNs))
-					mx := time.Duration(atomic.LoadInt64(&maxLatencyNs))
+					s := statsSnapshot()
+					t := s.Total
 
 					delta := t - prevTotal
 					rps := float64(delta) / dt
-					var avg time.Duration
-					if t > 0 {
-						avg = time.Duration(tls / t)
+					elapsed := s.Elapsed
+					trackRatio := 0.0
+					if s.TargetRPS > 0 {
+						trackRatio = clamp01(rps / s.TargetRPS)
 					}
-					elapsed := now.Sub(start)
-					p50 := percentileFromBuckets(0.50)
-					p90 := percentileFromBuckets(0.90)
-					p99 := percentileFromBuckets(0.99)
 
-					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
-						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, avg, mn, mx, p50, p90, p99,
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
+						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
 					)
 
 					prevTotal = t
@@ -1474,8 +1728,51 @@ func main() {
 		groupN   int
 	}
 
-	jobs := make(chan job, *concurrency)
+	// Jobs channel capacity: allow larger buffer when auto-mode may raise concurrency
+	jobsCap := *concurrency
+	if *autoMode {
+		capMax := *autoMaxConc
+		if capMax <= 0 {
+			capMax = *concurrency
+		}
+
+		if capMax > jobsCap {
+			jobsCap = capMax
+		}
+	}
+
+	jobs := make(chan job, jobsCap)
+
+	// Track and safely close the current jobs channel
+	var jobsMu sync.Mutex
+	var jobsClosed bool
+
+	closeJobsIfOpen := func() {
+		jobsMu.Lock()
+		defer jobsMu.Unlock()
+
+		if !jobsClosed {
+			close(jobs)
+			jobsClosed = true
+		}
+	}
+
+	// Graceful shutdown: signal to stop producing new jobs
+	stopProduce := make(chan struct{})
+	var stopProduceOnce sync.Once
+
+	closeStopProduce := func() {
+		stopProduceOnce.Do(func() {
+			close(stopProduce)
+		})
+	}
+
 	var wg sync.WaitGroup
+	// buffered so reduceWorkers won't block if no worker is immediately selecting on quitCh
+	quitCh := make(chan struct{}, 1024)
+	// adaptive concurrency state and manager function placeholders
+	var spawnWorkers func(int)
+	var reduceWorkers func(int)
 
 	// Parallel comparison state (only used when --compare-parallel)
 	var (
@@ -1506,12 +1803,14 @@ func main() {
 			baseC := groupCodes[gid][0]
 			baseT := groupCTypes[gid][0]
 			same := true
+
 			for i := 1; i < len(groupBodies[gid]); i++ {
 				if !bytes.Equal(baseB, groupBodies[gid][i]) || baseC != groupCodes[gid][i] || baseT != groupCTypes[gid][i] {
 					same = false
 					break
 				}
 			}
+
 			if same {
 				atomic.AddInt64(&parallelMatched, 1)
 			} else {
@@ -1520,6 +1819,7 @@ func main() {
 					fmt.Printf("PARALLEL MISMATCH group=%d samples=%d\n", gid, len(groupBodies[gid]))
 				}
 			}
+
 			delete(groupBodies, gid)
 			delete(groupCodes, gid)
 			delete(groupCTypes, gid)
@@ -1532,8 +1832,18 @@ func main() {
 
 		// Per-worker reusable buffer to drain response bodies without per-request allocations
 		buf := make([]byte, 32<<10)
+		for {
+			var jb job
+			var ok bool
+			select {
+			case <-quitCh:
+				return
+			case jb, ok = <-jobs:
+				if !ok {
+					return
+				}
+			}
 
-		for jb := range jobs {
 			idx := jb.rowIndex
 			if *delayMs > 0 {
 				time.Sleep(time.Duration(*delayMs) * time.Millisecond)
@@ -1584,6 +1894,8 @@ func main() {
 					req.Header.Add(k, v)
 				}
 			}
+
+			// Worker function shared by both modes
 
 			req.ContentLength = int64(len(bb))
 
@@ -1646,16 +1958,19 @@ func main() {
 				if lns >= old {
 					break
 				}
+
 				if atomic.CompareAndSwapInt64(&minLatencyNs, old, lns) {
 					break
 				}
 			}
+
 			// max
 			for {
 				old := atomic.LoadInt64(&maxLatencyNs)
 				if lns <= old {
 					break
 				}
+
 				if atomic.CompareAndSwapInt64(&maxLatencyNs, old, lns) {
 					break
 				}
@@ -1686,8 +2001,10 @@ func main() {
 			func() {
 				defer resp.Body.Close()
 				var gotOK bool
+
 				code := resp.StatusCode
 				ctype := resp.Header.Get("Content-Type")
+
 				if *compareParallel {
 					// We need raw bytes for comparison
 					bodyBytes, _ := io.ReadAll(resp.Body)
@@ -1695,11 +2012,13 @@ func main() {
 						var jr struct {
 							OK bool `json:"ok"`
 						}
+
 						_ = json.Unmarshal(bodyBytes, &jr)
 						gotOK = jr.OK
 					} else {
 						gotOK = code == *okStatus
 					}
+
 					// Record for comparison if grouped
 					if jb.groupID != 0 && jb.groupN > 1 {
 						recordParallelResult(jb.groupID, jb.groupN, bodyBytes, code, ctype)
@@ -1709,11 +2028,13 @@ func main() {
 						var jr struct {
 							OK bool `json:"ok"`
 						}
+
 						_ = json.NewDecoder(resp.Body).Decode(&jr)
 						gotOK = jr.OK
 					} else {
 						gotOK = code == *okStatus
 					}
+
 					// Drain body with per-worker buffer to keep connections reusable without per-request allocs
 					io.CopyBuffer(io.Discard, resp.Body, buf)
 				}
@@ -1770,26 +2091,372 @@ func main() {
 			gid = atomic.AddUint64(&groupSeq, 1)
 		}
 
-		// Enqueue jobs
+		// Enqueue jobs; stop gracefully if stopProduce is closed
 		for k := 0; k < total; k++ {
-			jobs <- job{rowIndex: i, groupID: gid, groupN: total}
+			select {
+			case <-stopProduce:
+				// Stop producing and close jobs for workers to drain
+				closeJobsIfOpen()
+
+				return
+			case jobs <- job{rowIndex: i, groupID: gid, groupN: total}:
+			}
 		}
+	}
+
+	// Now that worker() is defined, bind manager functions
+	spawnWorkers = func(n int) {
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go worker()
+		}
+	}
+
+	reduceWorkers = func(n int) {
+		for i := 0; i < n; i++ {
+			// signal one worker to exit
+			quitCh <- struct{}{}
+		}
+	}
+
+	// Graceful shutdown control
+	var stopSigCount int32
+
+	// Two-stage signal handler (graceful then force)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		for {
+			<-sigCh
+
+			n := atomic.AddInt32(&stopSigCount, 1)
+
+			if n == 1 {
+				fmt.Println("\nInterrupt received. Finishing in-flight requests…")
+				atomic.StoreInt32(&stopFlag, 1)
+
+				// Stop producing new jobs and prevent new keep-alives
+				closeStopProduce()
+				transport.DisableKeepAlives = true
+
+				// After grace timeout, force cancel if still running
+				grace := time.Duration(maxInt(0, *graceSeconds)) * time.Second
+				if grace > 0 {
+					time.AfterFunc(grace, func() {
+						if atomic.LoadInt32(&stopSigCount) < 2 {
+							fmt.Println("\nGrace period elapsed. Forcing shutdown…")
+							cancel()
+						}
+					})
+				}
+			} else {
+				fmt.Println("\nSecond interrupt. Forcing shutdown now…")
+				cancel()
+
+				return
+			}
+		}
+	}()
+
+	// Prepare pacer (RPS limiter)
+	var pacer *Pacer
+	if *autoMode {
+		startR := *autoStartRPS
+		if startR <= 0 {
+			startR = 1
+		}
+
+		pacer = NewPacer(startR)
+		// ensure exported target value is in sync
+		applyRPS(pacer, startR)
+	} else if *rps > 0 {
+		pacer = NewPacer(*rps)
+		applyRPS(pacer, *rps)
 	}
 
 	// Duration mode: loop over CSV until time elapses
 	if *runFor > 0 {
 		var tick <-chan time.Time
-		var t *time.Ticker
-
-		if *rps > 0 {
-			interval := time.Duration(float64(time.Second) / *rps)
-			t = time.NewTicker(interval)
-			tick = t.C
+		if pacer != nil {
+			tick = pacer.Tick()
 		}
 
-		wg.Add(*concurrency)
-		for i := 0; i < *concurrency; i++ {
-			go worker()
+		if *autoMode {
+			// Start with configured or default concurrency
+			initConc := *autoStartConc
+			if initConc < 1 {
+				// If focus is RPS only, start with the regular --concurrency to avoid underutilization
+				if *autoFocus == "rps" && *concurrency > 0 {
+					initConc = *concurrency
+				} else {
+					initConc = 1
+				}
+			}
+
+			maxC := *autoMaxConc
+			if maxC <= 0 {
+				maxC = *concurrency
+			}
+
+			if initConc > maxC {
+				initConc = maxC
+			}
+
+			atomic.StoreInt64(&desiredConc, int64(initConc))
+			spawnWorkers(initConc)
+		} else {
+			spawnWorkers(*concurrency)
+		}
+
+		// Start adaptive controller if enabled (after workers are spawned)
+		if *autoMode {
+			startController := func(durationMode bool) {
+				// Control cadence: at most every 5s to ramp faster regardless of progress interval
+				ctrlEvery := normalizeCtrlEvery(*progressEvery)
+
+				maxR := *autoMaxRPS
+				if maxR < 0 {
+					maxR = 0
+				}
+
+				maxC := *autoMaxConc
+				if maxC <= 0 {
+					maxC = *concurrency
+				}
+
+				currR := *autoStartRPS
+				currR = applyRPS(pacer, currR)
+
+				var lastTotal = atomic.LoadInt64(&total)
+				var lastErrs = atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
+
+				go func() {
+					tk := time.NewTicker(ctrlEvery)
+					defer tk.Stop()
+					// Plateau detection state
+					var prevRPS float64
+					var plateauStreak int
+					var freezeWins int
+					// Pause RPS increases only (for tracking action "shift")
+					var freezeRPSWins int
+
+					// Helpers to reduce duplicate logic
+					incConcurrencyStep := func() {
+						if *autoFocus != "rps" && durationMode {
+							old := int(atomic.LoadInt64(&desiredConc))
+
+							newC := old + *autoStepConc
+							if maxC > 0 && newC > maxC {
+								newC = maxC
+							}
+
+							if newC != old {
+								spawnWorkers(newC - old)
+								atomic.StoreInt64(&desiredConc, int64(newC))
+							}
+						}
+					}
+
+					backoffConcurrency := func() {
+						if *autoFocus != "rps" && durationMode {
+							old := int(atomic.LoadInt64(&desiredConc))
+							newC := int(math.Ceil(float64(old) * (*autoBackoff)))
+							if newC < 1 {
+								newC = 1
+							}
+
+							if maxC > 0 && newC > maxC {
+								newC = maxC
+							}
+
+							if newC != old {
+								if newC > old {
+									spawnWorkers(newC - old)
+								} else {
+									reduceWorkers(old - newC)
+								}
+
+								atomic.StoreInt64(&desiredConc, int64(newC))
+							}
+						}
+					}
+
+					applyPacerClamp := func() {
+						if pacer != nil {
+							if maxR > 0 && currR > maxR {
+								currR = maxR
+							}
+
+							applyRPS(pacer, currR)
+						}
+					}
+
+					for {
+						select {
+						case <-tk.C:
+							tNow := atomic.LoadInt64(&total)
+							eNow := atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
+							dt := tNow - lastTotal
+							de := eNow - lastErrs
+							lastTotal = tNow
+							lastErrs = eNow
+							// Scale min-sample to the control window. The default 1m window with 200 samples
+							// becomes ~16-17 samples for a 5s window.
+							effMin := int64(math.Max(1, math.Round(float64(*autoMinSample)*ctrlEvery.Seconds()/60.0)))
+
+							if dt < effMin {
+								// Too few samples to judge yet: ramp up optimistically to get signal
+								if *autoFocus != "concurrency" {
+									currR += *autoStepRPS
+									if maxR > 0 && currR > maxR {
+										currR = maxR
+									}
+								}
+
+								if *autoFocus != "rps" && durationMode {
+									incConcurrencyStep()
+								}
+
+								applyPacerClamp()
+
+								continue
+							}
+
+							p95 := percentileFromBuckets(0.95)
+							errPct := 100 * float64(de) / float64(maxInt64(1, dt))
+
+							violate := errPct > *autoMaxErr || p95 > time.Duration(*autoTargetP95)*time.Millisecond
+							if violate {
+								currR = math.Max(1, currR*(*autoBackoff))
+								backoffConcurrency()
+
+								// Reset plateau state on violation
+								plateauStreak = 0
+								// Do not change freezeWins here; backoff overrides freeze
+							} else {
+								// Plateau detection (optional), only when we have enough samples
+								if *autoPlateau && *autoPlateauWindows >= 2 {
+									// Compute current window RPS
+									winRPS := float64(dt) / ctrlEvery.Seconds()
+									thr := (*autoPlateauGain) / 100.0
+									if thr < 0 {
+										thr = 0
+									}
+
+									// Only evaluate if we have a previous RPS to compare
+									if prevRPS > 0 {
+										gain := (winRPS - prevRPS) / prevRPS
+										if gain < thr {
+											plateauStreak++
+										} else {
+											plateauStreak = 0
+										}
+									}
+
+									prevRPS = winRPS
+									if plateauStreak >= *autoPlateauWindows {
+										plateauStreak = 0
+										// Decide action
+										switch strings.ToLower(strings.TrimSpace(*autoPlateauAction)) {
+										case "backoff":
+											currR = math.Max(1, currR*(*autoBackoff))
+											backoffConcurrency()
+											// No freeze after explicit backoff
+										default: // freeze
+											if *autoPlateauCooldown > 0 {
+												freezeWins = *autoPlateauCooldown
+											} else {
+												freezeWins = 1
+											}
+										}
+									}
+
+									// Tracking-based plateau detection: sustained underdelivery rps<trps
+									tw := *autoPlateauTrackWindows
+									if tw <= 0 {
+										tw = *autoPlateauWindows
+									}
+
+									if tw < 2 {
+										tw = 2
+									}
+
+									if currR > 0 && tw >= 2 {
+										track := winRPS / currR
+										if track < *autoPlateauTrackThreshold {
+											// Underdelivery
+											plateauStreak++
+										} else {
+											plateauStreak = 0
+										}
+
+										if plateauStreak >= tw {
+											plateauStreak = 0
+											switch strings.ToLower(strings.TrimSpace(*autoPlateauTrackAction)) {
+											case "backoff":
+												currR = math.Max(1, currR*(*autoBackoff))
+												backoffConcurrency()
+											case "shift":
+												// Pause RPS increases; increase concurrency once (if allowed)
+												if *autoPlateauCooldown > 0 {
+													freezeRPSWins = *autoPlateauCooldown
+												} else {
+													freezeRPSWins = 1
+												}
+
+												incConcurrencyStep()
+											default: // freeze
+												if *autoPlateauCooldown > 0 {
+													freezeWins = *autoPlateauCooldown
+												} else {
+													freezeWins = 1
+												}
+											}
+										}
+									}
+								}
+
+								// Apply increases only if not in freeze cooldown
+								if freezeWins > 0 {
+									freezeWins--
+								} else {
+									if *autoFocus != "concurrency" {
+										if freezeRPSWins > 0 {
+											freezeRPSWins--
+										} else {
+											currR += *autoStepRPS
+											if maxR > 0 && currR > maxR {
+												currR = maxR
+											}
+										}
+									}
+
+									if *autoFocus != "rps" && durationMode {
+										old := int(atomic.LoadInt64(&desiredConc))
+
+										newC := old + *autoStepConc
+										if maxC > 0 && newC > maxC {
+											newC = maxC
+										}
+
+										if newC != old {
+											spawnWorkers(newC - old)
+											atomic.StoreInt64(&desiredConc, int64(newC))
+										}
+									}
+								}
+							}
+
+							applyPacerClamp()
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+			}
+
+			startController(true)
 		}
 
 		deadline := time.Now().Add(*runFor)
@@ -1799,6 +2466,13 @@ func main() {
 				break
 			}
 
+			// Graceful stop request: stop producing
+			select {
+			case <-stopProduce:
+				break outerLoop
+			default:
+			}
+
 			if time.Now().After(deadline) {
 				break
 			}
@@ -1806,6 +2480,8 @@ func main() {
 			if tick != nil {
 				select {
 				case <-tick:
+				case <-stopProduce:
+					break outerLoop
 				case <-ctx.Done():
 					break outerLoop
 				}
@@ -1814,11 +2490,11 @@ func main() {
 			enqueueParallelGroup(i)
 		}
 
-		close(jobs)
+		closeJobsIfOpen()
 		wg.Wait()
 
-		if t != nil {
-			t.Stop()
+		if pacer != nil {
+			pacer.Stop()
 		}
 	} else {
 		// Legacy loops mode (kept for backward compatibility)
@@ -1826,27 +2502,178 @@ func main() {
 		for cycle := 1; cycle <= *loops; cycle++ {
 			// Per-cycle rate limiter
 			var tick <-chan time.Time
-			var t *time.Ticker
-
-			if *rps > 0 {
-				interval := time.Duration(float64(time.Second) / *rps)
-				t = time.NewTicker(interval)
-				tick = t.C
+			if pacer != nil {
+				tick = pacer.Tick()
 			}
 
-			wg.Add(*concurrency)
-			for i := 0; i < *concurrency; i++ {
-				go worker()
+			// Start workers consistently via helper
+			spawnWorkers(*concurrency)
+
+			if *autoMode && cycle == 1 {
+				// Start controller once for loops mode (RPS only)
+				startController := func() {
+					// Faster cadence: at most every 5s
+					ctrlEvery := normalizeCtrlEvery(*progressEvery)
+
+					maxR := *autoMaxRPS
+					if maxR < 0 {
+						maxR = 0
+					}
+
+					currR := *autoStartRPS
+					currR = applyRPS(pacer, currR)
+
+					var lastTotal = atomic.LoadInt64(&total)
+					var lastErrs = atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
+					go func() {
+						tk := time.NewTicker(ctrlEvery)
+						defer tk.Stop()
+
+						// Plateau detection state (RPS-only in loops mode)
+						var prevRPS float64
+						var plateauStreak int
+						var freezeWins int
+						var freezeRPSWins int
+
+						for {
+							select {
+							case <-tk.C:
+								tNow := atomic.LoadInt64(&total)
+								eNow := atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
+								dt := tNow - lastTotal
+								de := eNow - lastErrs
+								lastTotal = tNow
+								lastErrs = eNow
+
+								if dt < int64(*autoMinSample) {
+									// Too few samples in this window: ramp RPS up optimistically
+									currR += *autoStepRPS
+									if maxR > 0 && currR > maxR {
+										currR = maxR
+									}
+
+									if pacer != nil {
+										applyRPS(pacer, currR)
+									}
+
+									continue
+								}
+
+								p95 := percentileFromBuckets(0.95)
+								errPct := 100 * float64(de) / float64(maxInt64(1, dt))
+
+								violate := errPct > *autoMaxErr || p95 > time.Duration(*autoTargetP95)*time.Millisecond
+								if violate {
+									currR = math.Max(1, currR*(*autoBackoff))
+									plateauStreak = 0
+								} else {
+									// Plateau detection (optional)
+									if *autoPlateau && *autoPlateauWindows >= 2 {
+										winRPS := float64(dt) / ctrlEvery.Seconds()
+
+										thr := (*autoPlateauGain) / 100.0
+										if thr < 0 {
+											thr = 0
+										}
+
+										if prevRPS > 0 {
+											gain := (winRPS - prevRPS) / prevRPS
+											if gain < thr {
+												plateauStreak++
+											} else {
+												plateauStreak = 0
+											}
+										}
+
+										prevRPS = winRPS
+										if plateauStreak >= *autoPlateauWindows {
+											plateauStreak = 0
+											switch strings.ToLower(strings.TrimSpace(*autoPlateauAction)) {
+											case "backoff":
+												currR = math.Max(1, currR*(*autoBackoff))
+											default: // freeze
+												if *autoPlateauCooldown > 0 {
+													freezeWins = *autoPlateauCooldown
+												} else {
+													freezeWins = 1
+												}
+											}
+										}
+										// Tracking-based plateau detection (rps<trps over N windows)
+										tw := *autoPlateauTrackWindows
+										if tw <= 0 {
+											tw = *autoPlateauWindows
+										}
+
+										if tw < 2 {
+											tw = 2
+										}
+
+										if currR > 0 && tw >= 2 {
+											track := winRPS / currR
+											if track < *autoPlateauTrackThreshold {
+												plateauStreak++
+											} else {
+												plateauStreak = 0
+											}
+
+											if plateauStreak >= tw {
+												plateauStreak = 0
+												switch strings.ToLower(strings.TrimSpace(*autoPlateauTrackAction)) {
+												case "backoff":
+													currR = math.Max(1, currR*(*autoBackoff))
+												case "shift":
+													if *autoPlateauCooldown > 0 {
+														freezeRPSWins = *autoPlateauCooldown
+													} else {
+														freezeRPSWins = 1
+													}
+												default: // freeze
+													if *autoPlateauCooldown > 0 {
+														freezeWins = *autoPlateauCooldown
+													} else {
+														freezeWins = 1
+													}
+												}
+											}
+										}
+									}
+
+									if freezeWins > 0 {
+										freezeWins--
+									} else {
+										if freezeRPSWins > 0 {
+											freezeRPSWins--
+										} else {
+											currR += *autoStepRPS
+											if maxR > 0 && currR > maxR {
+												currR = maxR
+											}
+										}
+									}
+								}
+
+								if pacer != nil {
+									if maxR > 0 && currR > maxR {
+										currR = maxR
+									}
+
+									applyRPS(pacer, currR)
+								}
+							case <-ctx.Done():
+								return
+							}
+						}
+					}()
+				}
+
+				startController()
 			}
 
 			for i := range rows {
 				if atomic.LoadInt32(&stopFlag) == 1 {
-					close(jobs)
+					closeJobsIfOpen()
 					wg.Wait()
-
-					if t != nil {
-						t.Stop()
-					}
 
 					break outerCycles
 				}
@@ -1854,13 +2681,14 @@ func main() {
 				if tick != nil {
 					select {
 					case <-tick:
-					case <-ctx.Done():
-						close(jobs)
+					case <-stopProduce:
+						closeJobsIfOpen()
 						wg.Wait()
 
-						if t != nil {
-							t.Stop()
-						}
+						break outerCycles
+					case <-ctx.Done():
+						closeJobsIfOpen()
+						wg.Wait()
 
 						break outerCycles
 					}
@@ -1869,19 +2697,41 @@ func main() {
 				enqueueParallelGroup(i)
 			}
 
-			close(jobs)
+			closeJobsIfOpen()
 			wg.Wait()
 
-			if t != nil {
-				t.Stop()
-			}
+			// Keep pacer running across cycles; controller adjusts it
 
 			// Recreate jobs channel for next cycle
 			if cycle != *loops {
-				jobs = make(chan job, *concurrency)
+				jobsCap = *concurrency
+				if *autoMode {
+					capMax := *autoMaxConc
+					if capMax <= 0 {
+						capMax = *concurrency
+					}
+
+					if capMax > jobsCap {
+						jobsCap = capMax
+					}
+				}
+
+				jobs = make(chan job, jobsCap)
+
+				// Reset close state for the new channel
+				jobsMu.Lock()
+				jobsClosed = false
+				jobsMu.Unlock()
 			}
 		}
+
+		if pacer != nil {
+			pacer.Stop()
+		}
 	}
+
+	// Close idle connections after all workers are done
+	transport.CloseIdleConnections()
 
 	// Stop progress reporter
 	cancel()
@@ -1898,6 +2748,18 @@ func main() {
 
 	if dur > 0 {
 		fmt.Printf("throughput=%.2f req/s\n", float64(total)/dur.Seconds())
+	}
+
+	// Auto-mode: print final controller targets for transparency
+	if *autoMode {
+		trps := getTargetRPS()
+
+		concVal := atomic.LoadInt64(&desiredConc)
+		if concVal <= 0 {
+			concVal = int64(*concurrency)
+		}
+
+		fmt.Printf("final_target_rps=%.f final_concurrency=%d focus=%s\n", trps, concVal, *autoFocus)
 	}
 
 	if *compareParallel {
@@ -1949,5 +2811,4 @@ func main() {
 			fmt.Println()
 		}
 	}
-
 }

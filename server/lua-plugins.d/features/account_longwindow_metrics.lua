@@ -24,17 +24,10 @@ local N = "account_longwindow_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
-
-dynamic_loader("nauthilus_misc")
 local nauthilus_misc = require("nauthilus_misc")
-
-dynamic_loader("nauthilus_gll_time")
-local time = require("time")
-
-dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
+local nauthilus_password = require("nauthilus_password")
 
 function nauthilus_call_feature(request)
     -- This feature should run regardless of success/failure, but respect no_auth
@@ -97,9 +90,6 @@ function nauthilus_call_feature(request)
     -- No plaintext is persisted or logged. If no password is present, nothing is counted.
     local pw_token
     if request.password and request.password ~= "" then
-        dynamic_loader("nauthilus_password")
-        local nauthilus_password = require("nauthilus_password")
-
         local ok, token = pcall(nauthilus_password.generate_password_hash, request.password)
         if ok and token and token ~= "" then
             pw_token = token

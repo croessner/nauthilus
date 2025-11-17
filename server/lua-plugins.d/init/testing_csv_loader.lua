@@ -18,10 +18,8 @@
 -- Persist CSV-based login test data into the Go-backed nauthilus_cache so all Lua VMs share it.
 -- This script is meant to run as an init plugin. It loads once at startup and can be reloaded on demand.
 
-dynamic_loader("nauthilus_cache")
-local cache = require("nauthilus_cache")
-
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_cache = require("nauthilus_cache")
 
 local M = {}
 
@@ -113,14 +111,14 @@ local function load_csv_into_cache(csv_path)
   if ix_expected < 0 then return nil, "CSV must contain an expected_ok column" end
 
   -- clear previous dataset
-  if cache.cache_exists(KEY_INDEX) then
-    local users = cache.cache_get(KEY_INDEX) or {}
+  if nauthilus_cache.cache_exists(KEY_INDEX) then
+    local users = nauthilus_cache.cache_get(KEY_INDEX) or {}
     if type(users) == "table" then
       for _, u in ipairs(users) do
-        cache.cache_delete(KEY_USER_PREFIX .. tostring(u))
+        nauthilus_cache.cache_delete(KEY_USER_PREFIX .. tostring(u))
       end
     end
-    cache.cache_delete(KEY_INDEX)
+    nauthilus_cache.cache_delete(KEY_INDEX)
   end
 
   local index = {}
@@ -155,14 +153,14 @@ local function load_csv_into_cache(csv_path)
           attrs = attrs,
         }
 
-        cache.cache_set(KEY_USER_PREFIX .. username, user_obj, 0)
+        nauthilus_cache.cache_set(KEY_USER_PREFIX .. username, user_obj, 0)
         index[#index+1] = username
       end
     end
   end
 
-  cache.cache_set(KEY_INDEX, index, 0)
-  cache.cache_set(KEY_LOADED, true, 0)
+  nauthilus_cache.cache_set(KEY_INDEX, index, 0)
+  nauthilus_cache.cache_set(KEY_LOADED, true, 0)
 
   return true
 end
@@ -181,13 +179,13 @@ end
 
 -- Check login using cache content; returns ok(bool), attrs(table)
 function M.check_login(username, password, client_ip)
-  if not cache.cache_exists(KEY_LOADED) then
+  if not nauthilus_cache.cache_exists(KEY_LOADED) then
     -- Best effort: try to initialize from default path
     M.init({})
   end
 
   local key = KEY_USER_PREFIX .. trim(username)
-  local rec = cache.cache_get(key)
+  local rec = nauthilus_cache.cache_get(key)
   if type(rec) ~= "table" then
     return false, { reason = "user_not_found" }
   end
@@ -212,7 +210,7 @@ function M.check_login(username, password, client_ip)
 end
 
 -- On load at startup, populate cache once unless already loaded
-if not cache.cache_exists(KEY_LOADED) then
+if not nauthilus_cache.cache_exists(KEY_LOADED) then
   local _ = M.init({ csv = os.getenv("TESTING_CSV") or "client/logins.csv" })
 end
 
@@ -225,7 +223,7 @@ function nauthilus_run_hook(logging, session)
     return { ok = false, error = tostring(err), csv = csv_path }
   end
 
-  local idx = cache.cache_get(KEY_INDEX)
+  local idx = nauthilus_cache.cache_get(KEY_INDEX)
   local count = 0
   if type(idx) == "table" then count = #idx end
 
@@ -238,14 +236,14 @@ function nauthilus_run_hook(logging, session)
     message = string.format("CSV test data loaded (%d users) – system is ready.", count),
     csv = csv_path,
     users = count,
-    loaded = cache.cache_exists(KEY_LOADED),
+    loaded = nauthilus_cache.cache_exists(KEY_LOADED),
   }
     
   if logging and (logging.log_level == "debug" or logging.log_level == "info" or logging.log_level == "warn") then
     nauthilus_util.print_result(logging, result)
   end
 
-  return { ok = true, loaded = cache.cache_exists(KEY_LOADED), users = count, csv = csv_path }
+  return { ok = true, loaded = nauthilus_cache.cache_exists(KEY_LOADED), users = count, csv = csv_path }
 end
 
 return M

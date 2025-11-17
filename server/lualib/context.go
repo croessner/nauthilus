@@ -27,12 +27,23 @@ import (
 func LoaderModContext(ctx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCtxSet:    ContextSet(ctx),
-			definitions.LuaFnCtxGet:    ContextGet(ctx),
-			definitions.LuaFnCtxDelete: ContextDelete(ctx),
+			definitions.LuaFnCtxSet:    ContextSetWithCtx(ctx),
+			definitions.LuaFnCtxGet:    ContextGetWithCtx(ctx),
+			definitions.LuaFnCtxDelete: ContextDeleteWithCtx(ctx),
 		})
 
 		L.Push(mod)
+
+		return 1
+	}
+}
+
+// LoaderContextStateless returns an empty, stateless module table for nauthilus_context.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderContextStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
 
 		return 1
 	}
@@ -168,3 +179,12 @@ func ContextDelete(ctx *Context) lua.LGFunction {
 		return 0
 	}
 }
+
+// ContextSetWithCtx is a factory alias that returns the same function as ContextSet(ctx).
+func ContextSetWithCtx(ctx *Context) lua.LGFunction { return ContextSet(ctx) }
+
+// ContextGetWithCtx is a factory alias that returns the same function as ContextGet(ctx).
+func ContextGetWithCtx(ctx *Context) lua.LGFunction { return ContextGet(ctx) }
+
+// ContextDeleteWithCtx is a factory alias that returns the same function as ContextDelete(ctx).
+func ContextDeleteWithCtx(ctx *Context) lua.LGFunction { return ContextDelete(ctx) }

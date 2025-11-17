@@ -8,6 +8,7 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -171,6 +172,17 @@ func LoaderModBruteForce(ctx context.Context) lua.LGFunction {
 		})
 
 		L.Push(mod)
+
+		return 1
+	}
+}
+
+// LoaderBruteForceStateless returns an empty, stateless module placeholder for nauthilus_brute_force.
+// It allows require("nauthilus_brute_force") to succeed before per-request binding replaces it
+// with a context-aware version via BindModuleIntoReq.
+func LoaderBruteForceStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
 
 		return 1
 	}

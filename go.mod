@@ -27,6 +27,8 @@ require (
 	github.com/justinas/nosurf v1.2.0
 	github.com/klauspost/compress v1.18.0
 	github.com/mackerelio/go-osstat v0.2.6
+	github.com/mattn/go-isatty v0.0.20
+	github.com/mattn/go-runewidth v0.0.19
 	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/ory/hydra-client-go/v2 v2.2.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
@@ -50,6 +52,7 @@ require (
 	golang.org/x/net v0.46.0
 	golang.org/x/oauth2 v0.32.0
 	golang.org/x/sync v0.17.0
+	golang.org/x/sys v0.37.0
 	golang.org/x/text v0.30.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
@@ -99,8 +102,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mattn/go-sqlite3 v1.14.32 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -130,7 +131,6 @@ require (
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect

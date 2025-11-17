@@ -19,7 +19,6 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
@@ -30,6 +29,10 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -42,14 +45,6 @@ import (
 
 // LuaFeatures is a global variable that holds a collection of pre-compiled Lua features for the application.
 var LuaFeatures *PreCompiledLuaFeatures
-
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
 
 // PreCompileLuaFeatures pre-compiles Lua features listed in the configuration and initializes the global `LuaFeatures` variable.
 // Returns an error if the pre-compilation process or Lua feature initialization fails, otherwise returns nil.
@@ -142,48 +137,6 @@ type Request struct {
 	*lualib.CommonRequest
 }
 
-// registerDynamicLoader registers a Lua function "dynamic_loader" to dynamically load Lua modules in the given context.
-func (r *Request) registerDynamicLoader(L *lua.LState, ctx *gin.Context) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
-		r.registerModule(L, ctx, modName, registry)
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule preloads a Lua module by its name into the Lua state if not already registered in the registry.
-// It supports specific modules like context, HTTP requests, LDAP, and neural, raising errors for unsupported configurations.
-func (r *Request) registerModule(L *lua.LState, ctx *gin.Context, modName string, registry map[string]bool) {
-	switch modName {
-	case definitions.LuaModContext:
-		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
-	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request)))
-	case definitions.LuaModHTTPResponse:
-		L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx))
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
-
 // CallFeatureLua executes Lua scripts associated with features within the context of a request.
 // It triggers actions or aborts features based on script results.
 // Returns whether a feature was triggered, if features should be aborted, and any execution error.
@@ -210,24 +163,6 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 	triggered, abortFeatures, err = r.executeScripts(ctx, pool)
 
 	return
-}
-
-// setGlobals initializes global Lua variables and functions for the given Lua state, setting up essential Lua constants and utilities.
-func (r *Request) setGlobals(L *lua.LState) {
-	r.Logs = new(lualib.CustomLogKeyValue)
-	globals := L.NewTable()
-
-	globals.RawSet(lua.LString(definitions.LuaFeatureTriggerNo), lua.LBool(false))
-	globals.RawSet(lua.LString(definitions.LuaFeatureTriggerYes), lua.LBool(true))
-	globals.RawSet(lua.LString(definitions.LuaFeatureAbortNo), lua.LBool(false))
-	globals.RawSet(lua.LString(definitions.LuaFeatureAbortYes), lua.LBool(true))
-	globals.RawSet(lua.LString(definitions.LuaFeatureResultOk), lua.LNumber(0))
-	globals.RawSet(lua.LString(definitions.LuaFeatureResultFail), lua.LNumber(1))
-
-	globals.RawSetString(definitions.LuaFnAddCustomLog, L.NewFunction(lualib.AddCustomLog(r.Logs)))
-	globals.RawSetString(definitions.LuaFnSetStatusMessage, L.NewFunction(lualib.SetStatusMessage(&r.StatusMessage)))
-
-	L.SetGlobal(definitions.LuaDefaultTable, globals)
 }
 
 // setRequest creates a new Lua table and sets the request properties as key-value pairs in the table. The table is then returned.
@@ -297,9 +232,6 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 				}
 			}()
 
-			// Register dynamic loader for this state
-			r.registerDynamicLoader(Llocal, ctx)
-
 			// Per-feature globals and local logs/status
 			localLogs := new(lualib.CustomLogKeyValue)
 
@@ -331,32 +263,134 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 			Llocal.SetContext(luaCtx)
 
+			// Prepare per-request environment so that request-local globals and module bindings are visible
+			luapool.PrepareRequestEnv(Llocal)
+
+			// Bind required per-request modules so that require() resolves to the bound versions.
+			// 1) nauthilus_context
+			if loader := lualib.LoaderModContext(r.Context); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 2) nauthilus_http_request (from gin context)
+			if ctx != nil && ctx.Request != nil {
+				loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 3) nauthilus_http_response
+			if ctx != nil {
+				loader := lualib.LoaderModHTTPResponse(ctx)
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 4) nauthilus_redis (use luaCtx deadline)
+			if loader := redislib.LoaderModRedis(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 5) nauthilus_ldap (if enabled)
+			if config.GetFile().HaveLDAPBackend() {
+				loader := backend.LoaderModLDAP(luaCtx)
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 6) nauthilus_psnet (connection monitoring)
+			if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 7) nauthilus_dns (DNS lookups)
+			if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 8) nauthilus_brute_force (toleration and blocking helpers)
+			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
 			fr := &featResult{name: feature.Name, statusText: &localStatus}
 
 			// Load package path and execute compiled script
 			if e := lualib.PackagePath(Llocal); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				// log with stacktrace and ensure timer/cancel are handled
+				r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				// log with stacktrace and ensure timer/cancel are handled
+				r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
 
-			// Invoke nauthilus_call_feature if present
-			callFeaturesFunc := Llocal.GetGlobal(definitions.LuaFnCallFeature)
+			// Invoke nauthilus_call_feature if present (reqEnv-first lookup)
+			callFeaturesFunc := lua.LNil
+			if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+				if fn := Llocal.GetField(v, definitions.LuaFnCallFeature); fn != nil {
+					callFeaturesFunc = fn
+				}
+			}
+
+			if callFeaturesFunc == lua.LNil {
+				callFeaturesFunc = Llocal.GetGlobal(definitions.LuaFnCallFeature)
+			}
+
 			if callFeaturesFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
-					if stopTimer != nil {
-						stopTimer()
-					}
+					// log with stacktrace and ensure timer/cancel are handled
+					r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 					return e
 				} else {
@@ -432,12 +466,23 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 // handleError logs the error message and cancels the Lua context.
 func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
-	level.Error(log.Logger).Log(
-		definitions.LogKeyGUID, r.Session,
-		"name", scriptName,
-		definitions.LogKeyMsg, "Lua feature failed",
-		definitions.LogKeyError, err,
-	)
+	// Include Lua stacktrace when available for better diagnostics
+	if ae, ok := err.(*lua.ApiError); ok && ae != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, r.Session,
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua feature failed",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	} else {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, r.Session,
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua feature failed",
+			definitions.LogKeyError, err,
+		)
+	}
 
 	if stopTimer != nil {
 		stopTimer()

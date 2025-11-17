@@ -15,16 +15,10 @@
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_prometheus")
 local nauthilus_prometheus = require("nauthilus_prometheus")
-
-dynamic_loader("nauthilus_psnet")
 local nauthilus_psnet = require("nauthilus_psnet")
-
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
-dynamic_loader("nauthilus_gll_time")
 local time = require("time")
 
 local N = "init"

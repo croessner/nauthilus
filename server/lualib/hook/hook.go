@@ -17,6 +17,7 @@ package hook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,7 +31,11 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -52,14 +57,6 @@ var (
 // customLocation is a map that associates each Location with its corresponding CustomHook.
 // It allows retrieving precompiled Lua scripts based on location and HTTP method.
 var customLocation CustomLocation
-
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
 
 // PrecompiledLuaScript represents a type that holds a precompiled Lua script and
 // allows safe concurrent access to the script.
@@ -395,61 +392,10 @@ func setupLogging(L *lua.LState) *lua.LTable {
 	return logTable
 }
 
-// registerDynamicLoader sets up a new function in the Lua state that allows for dynamic loading of modules based on their names.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, useGin bool) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
-
-		if useGin {
-			registerModule(L, ctx.(*gin.Context), modName, registry, useGin)
-		} else {
-			registerModule(L, ctx, modName, registry, useGin)
-		}
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule registers a specific Lua module into the given Lua state based on the provided module name and context.
-func registerModule(L *lua.LState, ctx context.Context, modName string, registry map[string]bool, useGin bool) {
-	switch modName {
-	case definitions.LuaModHTTPRequest:
-		if useGin {
-			L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.(*gin.Context).Request)))
-		} else {
-			return
-		}
-	case definitions.LuaModHTTPResponse:
-		if useGin {
-			L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx.(*gin.Context)))
-		} else {
-			return
-		}
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
-
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader func(*lua.LState, context.Context)) error {
+func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	var (
 		found  bool
 		script *PrecompiledLuaScript
@@ -482,8 +428,78 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 		}
 	}()
 
-	registerDynamicLoader(L, ctx)
 	L.SetContext(luaCtx)
+
+	// Prepare per-request environment so that request-local globals and module bindings are visible
+	luapool.PrepareRequestEnv(L)
+
+	// Bind required per-request modules so that require() resolves to the bound versions.
+	// 1) nauthilus_context (fresh per-request context)
+	if loader := lualib.LoaderModContext(lualib.NewContext()); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 2) nauthilus_redis (use luaCtx deadline)
+	if loader := redislib.LoaderModRedis(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 3) nauthilus_ldap (if enabled)
+	if config.GetFile().HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(luaCtx)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 4) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
 
 	logTable := setupLogging(L)
 
@@ -494,7 +510,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string, registerDynamicLoader
 
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
 // It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
-func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LState, context.Context)) (gin.H, error) {
+func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	var script *PrecompiledLuaScript
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -547,8 +563,98 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 		}
 	}()
 
-	registerDynamicLoader(L, ctx)
 	L.SetContext(luaCtx)
+
+	// Prepare per-request environment so that request-local globals and module bindings are visible
+	luapool.PrepareRequestEnv(L)
+
+	// Bind required per-request modules so that require() resolves to the bound versions.
+	// 1) nauthilus_context (fresh per-request context)
+	if loader := lualib.LoaderModContext(lualib.NewContext()); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 2) nauthilus_http_request (from gin request)
+	loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
+	_ = loader(L)
+	if mod, ok := L.Get(-1).(*lua.LTable); ok {
+		L.Pop(1)
+		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
+	} else {
+		L.Pop(1)
+	}
+
+	// 3) nauthilus_http_response
+	loader = lualib.LoaderModHTTPResponse(ctx)
+	_ = loader(L)
+	if mod, ok := L.Get(-1).(*lua.LTable); ok {
+		L.Pop(1)
+		luapool.BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
+	} else {
+		L.Pop(1)
+	}
+
+	// 4) nauthilus_redis (use luaCtx deadline)
+	if loader = redislib.LoaderModRedis(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_ldap (if enabled)
+	if config.GetFile().HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(luaCtx)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 8) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
 
 	logTable := setupLogging(L)
 
@@ -570,24 +676,14 @@ func runLuaCustomWrapper(ctx *gin.Context, registerDynamicLoader func(*lua.LStat
 	return result, err
 }
 
-// registerDynamicLoaderGin registers a dynamic loader function in the Lua state (L)
-func registerDynamicLoaderGin(L *lua.LState, ctx context.Context) {
-	registerDynamicLoader(L, ctx, true)
-}
-
-// registerDynamicLoaderInit initializes the dynamic loader functionality within the given Lua state.
-func registerDynamicLoaderInit(L *lua.LState, ctx context.Context) {
-	registerDynamicLoader(L, ctx, false)
-}
-
 // RunLuaHook executes a precompiled Lua script based on a hook parameter from the gin.Context.
 func RunLuaHook(ctx *gin.Context) (gin.H, error) {
-	return runLuaCustomWrapper(ctx, registerDynamicLoaderGin)
+	return runLuaCustomWrapper(ctx)
 }
 
 // RunLuaInit initializes and runs a Lua script based on the specified hook.
 func RunLuaInit(ctx context.Context, hook string) error {
-	return runLuaCommonWrapper(ctx, hook, registerDynamicLoaderInit)
+	return runLuaCommonWrapper(ctx, hook)
 }
 
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.
@@ -609,8 +705,27 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 		processError(err, hook)
 	}
 
+	// Resolve the entry function nauthilus_run_hook from the request env first, then fall back to _G.
+	// Because the script chunk is executed under __NAUTH_REQ_ENV (via DoCompiledFile + SetFEnv),
+	// global assignments inside the script land in the reqEnv table, not in _G.
+	runHookFn := lua.LNil
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, definitions.LuaFnRunHook); fn != nil {
+			runHookFn = fn
+		}
+	}
+
+	if runHookFn == lua.LNil {
+		runHookFn = L.GetGlobal(definitions.LuaFnRunHook)
+	}
+
+	if runHookFn.Type() != lua.LTFunction {
+		// Provide a clear error instead of attempting to call a non-function (which results in "attempt to call a non-function object").
+		return nil, fmt.Errorf("entry function '%s' is not defined as a function in the loaded script (hook: %s)", definitions.LuaFnRunHook, hook)
+	}
+
 	if err = L.CallByParam(lua.P{
-		Fn:      L.GetGlobal(definitions.LuaFnRunHook),
+		Fn:      runHookFn,
 		NRet:    1,
 		Protect: true,
 	}, logTable, lua.LString(guid)); err != nil {
@@ -647,6 +762,19 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 
 // processError logs an error with the associated script hook for debugging or monitoring purposes.
 func processError(err error, hook string) {
+	// Include Lua stacktrace when available to simplify debugging
+	var ae *lua.ApiError
+	if errors.As(err, &ae) && ae != nil {
+		level.Error(log.Logger).Log(
+			"script", hook,
+			definitions.LogKeyMsg, "Error executing script",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+
+		return
+	}
+
 	level.Error(log.Logger).Log(
 		"script", hook,
 		definitions.LogKeyMsg, "Error executing script",

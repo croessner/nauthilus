@@ -1033,12 +1033,6 @@ func initializeHTTPClients() {
 	if config.GetFile().GetServer().Frontend.Enabled {
 		core.InitHTTPClient()
 	}
-
-	backend.InitHTTPClient()
-	action.InitHTTPClient()
-	filter.InitHTTPClient()
-	feature.InitHTTPClient()
-	hook.InitHTTPClient()
 }
 
 // runConnectionManager initializes the ConnectionManager, registers the server address, and starts a ticker to update connection counts.

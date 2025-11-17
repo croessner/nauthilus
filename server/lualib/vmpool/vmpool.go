@@ -1,3 +1,18 @@
+// Copyright (C) 2025 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 // Package vmpool provides per-key (backend/category) pools of reusable Lua VMs.
 // The pool is bounded and enforces backpressure via Acquire with context.
 // Each VM is reset between uses to avoid cross-request/global residue.
@@ -5,6 +20,7 @@ package vmpool
 
 import (
 	"context"
+	stdhttp "net/http"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -12,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -30,6 +47,8 @@ type Pool struct {
 	opts   PoolOptions
 	states chan *lua.LState
 	mu     sync.Mutex
+	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
+	httpClient *stdhttp.Client
 }
 
 func newPool(key PoolKey, opts PoolOptions) *Pool {
@@ -41,10 +60,14 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		key:    key,
 		opts:   opts,
 		states: make(chan *lua.LState, opts.MaxVMs),
+		// Create a dedicated HTTP client for this pool's VMs.
+		httpClient: util.NewHTTPClient(),
 	}
 
 	for i := 0; i < opts.MaxVMs; i++ {
-		p.states <- lua.NewState()
+		// Create Lua states using the new runtime helper with base/request env markers
+		// and stateless preloads. The httpClient enables glua_http preloading.
+		p.states <- luapool.NewLuaState(p.httpClient)
 	}
 
 	// initialize gauge to 0 in use
@@ -98,7 +121,7 @@ func (p *Pool) Replace(L *lua.LState) {
 
 	stats.GetMetrics().GetLuaVMReplacedTotal().WithLabelValues(string(p.key)).Inc()
 	select {
-	case p.states <- lua.NewState():
+	case p.states <- luapool.NewLuaState(p.httpClient):
 	default:
 		// Should not happen; drop
 	}

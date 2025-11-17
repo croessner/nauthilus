@@ -28,6 +28,10 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -41,14 +45,6 @@ var (
 	// RequestChan is a buffered channel of type `*Action` used to send action requests to a worker.
 	RequestChan chan *Action
 )
-
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
 
 // Done is an empty struct that can be used to signal the completion of a task or operation.
 type Done struct{}
@@ -189,54 +185,6 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	aw.actionScripts = append(aw.actionScripts, luaAction)
 }
 
-// registerDynamicLoader registers a dynamic module loader for Lua state and configures it with HTTP request context.
-func (aw *Worker) registerDynamicLoader(ctx *gin.Context, L *lua.LState, httpRequest *http.Request) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, aw.ctx, modName, registry, httpClient)
-		aw.registerModule(ctx, L, httpRequest, modName, registry)
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule initializes and preloads a specific Lua module into the given Lua state based on the provided module name.
-// It verifies if the module is valid and satisfies specific conditions (e.g., LDAP backend availability for LuaModLDAP).
-// The method updates the registry map to track that the module has been successfully registered.
-// An error is raised in the Lua state if an invalid or unsupported module is requested.
-func (aw *Worker) registerModule(ctx *gin.Context, L *lua.LState, httpRequest *http.Request, modName string, registry map[string]bool) {
-	switch modName {
-	case definitions.LuaModContext:
-		L.PreloadModule(modName, lualib.LoaderModContext(aw.luaActionRequest.Context))
-	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest)))
-	case definitions.LuaModHTTPResponse:
-		if ctx != nil {
-			L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx))
-		} else {
-			L.RaiseError("HTTP context not available")
-		}
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(definitions.LuaModLDAP, backend.LoaderModLDAP(aw.ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
-
 // logActionsSummary logs a summary of Lua actions including session details and additional provided key-value data.
 func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 	level.Info(log.Logger).Log(
@@ -290,7 +238,100 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}()
 
-	aw.registerDynamicLoader(aw.luaActionRequest.HTTPContext, L, httpRequest)
+	// Prepare per-request environment: ensures request-local globals and module bindings
+	luapool.PrepareRequestEnv(L)
+
+	// Bind request-scoped modules into reqEnv so that require() resolves correctly.
+	// 1) nauthilus_context
+	if loader := lualib.LoaderModContext(aw.luaActionRequest.Context); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 2) nauthilus_http_request
+	if httpRequest != nil {
+		loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(httpRequest))
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 3) nauthilus_http_response
+	if aw.luaActionRequest.HTTPContext != nil {
+		loader := lualib.LoaderModHTTPResponse(aw.luaActionRequest.HTTPContext)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPResponse, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 4) nauthilus_redis (use worker context for deadlines)
+	if loader := redislib.LoaderModRedis(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_ldap (if enabled)
+	if config.GetFile().HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(aw.ctx)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 8) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(aw.ctx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
 
 	logs := new(lualib.CustomLogKeyValue)
 
@@ -414,12 +455,21 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 		return err
 	}
 
-	// Check if the script has a nauthilus_call_action function
-	actionFunc := L.GetGlobal(definitions.LuaFnCallAction)
+	// Check if the script has a nauthilus_call_action function (reqEnv-first lookup)
+	actionFunc := lua.LNil
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, definitions.LuaFnCallAction); fn != nil {
+			actionFunc = fn
+		}
+	}
+
+	if actionFunc == lua.LNil {
+		actionFunc = L.GetGlobal(definitions.LuaFnCallAction)
+	}
 
 	if actionFunc.Type() == lua.LTFunction {
 		if err := L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(definitions.LuaFnCallAction),
+			Fn:      actionFunc,
 			NRet:    1,
 			Protect: true,
 		}, request); err != nil {
@@ -432,14 +482,27 @@ func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) e
 
 // logScriptFailure logs details about a script failure, including session ID, script path, error, and custom log data.
 func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogKeyValue) {
-	level.Error(log.Logger).Log(
-		append([]any{
-			definitions.LogKeyGUID, aw.luaActionRequest.Session,
-			"script", aw.actionScripts[index].ScriptPath,
-			definitions.LogKeyMsg, "failed to execute Lua script",
-			definitions.LogKeyError, err,
-		}, toLoggable(logs)...)...,
-	)
+	parts := []any{
+		definitions.LogKeyGUID, aw.luaActionRequest.Session,
+		"script", aw.actionScripts[index].ScriptPath,
+		definitions.LogKeyMsg, "failed to execute Lua script",
+	}
+
+	var ae *lua.ApiError
+	if errors.As(err, &ae) && ae != nil {
+		parts = append(parts,
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	}
+
+	if logs != nil && len(*logs) > 0 {
+		for i := range *logs {
+			parts = append(parts, (*logs)[i])
+		}
+	}
+
+	level.Error(log.Logger).Log(parts...)
 }
 
 // createResultLogMessage generates a log message based on the given result code.

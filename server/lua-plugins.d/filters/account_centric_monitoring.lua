@@ -17,7 +17,6 @@ local N = "account_centric_monitoring"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
 
 -- Env thresholds (defaults conservative):
@@ -87,8 +86,8 @@ function nauthilus_call_filter(request)
         if not request.authenticated then
             local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
             local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
-            local _, err_script = nauthilus_redis.redis_run_script(
-                    custom_pool,
+             _, err_script = nauthilus_redis.redis_run_script(
+                custom_pool,
                 "", 
                 "ZAddRemExpire", 
                 {fail_key}, 

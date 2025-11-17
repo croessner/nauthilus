@@ -18,7 +18,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -29,7 +28,11 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/lualib/convert"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -37,23 +40,29 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
+// reference stateless LDAP loader to avoid unused warnings and document intent
+var _ = LoaderLDAPStateless
 
 // LoaderModLDAP initializes and loads the LDAP module into the Lua state with predefined functions for LDAP operations.
 func LoaderModLDAP(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnLDAPSearch: LuaLDAPSearch(ctx),
-			definitions.LuaFnLDAPModify: LuaLDAPModify(ctx),
+			definitions.LuaFnLDAPSearch: LDAPSearchWithCtx(ctx),
+			definitions.LuaFnLDAPModify: LDAPModifyWithCtx(ctx),
 		})
 
 		L.Push(mod)
+
+		return 1
+	}
+}
+
+// LoaderLDAPStateless returns an empty, stateless module table for nauthilus_ldap.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderLDAPStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
 
 		return 1
 	}
@@ -154,47 +163,6 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	return
 }
 
-// registerDynamicLoader registers a dynamic_loader function in the Lua state to dynamically load modules at runtime.
-func registerDynamicLoader(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRequest) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
-		registerModule(L, ctx, luaRequest, modName, registry)
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule loads a specified Lua module into the Lua state and registers it as available in the provided registry.
-// It supports modules for context, HTTP requests, and LDAP based on the given module name and configurations.
-// If the LDAP backend is not activated, an error is raised for the LDAP module.
-func registerModule(L *lua.LState, ctx context.Context, luaRequest *bktype.LuaRequest, modName string, registry map[string]bool) {
-	switch modName {
-	case definitions.LuaModContext:
-		L.PreloadModule(modName, lualib.LoaderModContext(luaRequest.Context))
-	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest)))
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(modName, LoaderModLDAP(ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
-
 // handleLuaRequest processes a Lua script execution request in the given context using the specified compiled script.
 // It initializes a Lua state, sets up the environment, runs the script, and handles return values or errors.
 // Parameters:
@@ -244,6 +212,92 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	L.SetContext(luaCtx)
 
+	luapool.PrepareRequestEnv(L)
+
+	// Bind per-request modules into reqEnv so that require() resolves to the bound versions.
+	// 1) nauthilus_context
+	{
+		loader := lualib.LoaderModContext(luaRequest.Context)
+		if loader != nil {
+			_ = loader(L)
+			if mod, ok := L.Get(-1).(*lua.LTable); ok {
+				L.Pop(1)
+				luapool.BindModuleIntoReq(L, definitions.LuaModContext, mod)
+			} else {
+				L.Pop(1)
+			}
+		}
+	}
+
+	// 2) nauthilus_http_request
+	if luaRequest.HTTPClientRequest != nil {
+		loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModHTTPRequest, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 3) nauthilus_redis
+	{
+		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModRedis, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 4) nauthilus_ldap (if enabled)
+	if config.GetFile().HaveLDAPBackend() {
+		loader := LoaderModLDAP(luaCtx)
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModLDAP, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 5) nauthilus_psnet (connection monitoring)
+	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModPsnet, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 6) nauthilus_dns (DNS lookups)
+	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
+	// 7) nauthilus_brute_force (toleration and blocking helpers)
+	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+		_ = loader(L)
+		if mod, ok := L.Get(-1).(*lua.LTable); ok {
+			L.Pop(1)
+			luapool.BindModuleIntoReq(L, definitions.LuaModBruteForce, mod)
+		} else {
+			L.Pop(1)
+		}
+	}
+
 	lualib.RegisterBackendResultType(
 		L,
 		definitions.LuaBackendResultAuthenticated,
@@ -255,8 +309,6 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 		definitions.LuaBackendResultDisplayNameField,
 		definitions.LuaBackendResultAttributes,
 	)
-
-	registerDynamicLoader(L, ctx, luaRequest)
 
 	setupGlobals(luaRequest, L, logs)
 
@@ -332,12 +384,21 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 		processError(err, luaRequest, logs)
 	}
 
-	// Check if the script has a "luaCommand" function
-	commandFunc := L.GetGlobal(luaCommand)
+	var commandFunc = lua.LNil
 
-	if commandFunc.Type() == lua.LTFunction {
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		if fn := L.GetField(v, luaCommand); fn != nil {
+			commandFunc = fn
+		}
+	}
+
+	if commandFunc == lua.LNil {
+		commandFunc = L.GetGlobal(luaCommand)
+	}
+
+	if commandFunc != nil && commandFunc.Type() == lua.LTFunction {
 		if err = L.CallByParam(lua.P{
-			Fn:      L.GetGlobal(luaCommand),
+			Fn:      commandFunc,
 			NRet:    nret,
 			Protect: true,
 		}, request); err != nil {

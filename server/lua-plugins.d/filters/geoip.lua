@@ -15,6 +15,15 @@
 
 local N = "geoippolicyd"
 
+local nauthilus_util = require("nauthilus_util")
+
+local nauthilus_prometheus = require("nauthilus_prometheus")
+local nauthilus_context = require("nauthilus_context")
+local nauthilus_cache = require("nauthilus_cache")
+
+local http = require("glua_http")
+local json = require("json")
+
 local HCCR = "http_client_concurrent_requests_total"
 
 -- Shared helpers for filter and action
@@ -56,11 +65,6 @@ local function normalize_iso(code)
 end
 
 local function build_payload_and_cache_key(request)
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
-
     local acc = request.account
     local sender = (acc ~= nil and acc ~= "" and acc) or "unknown"
 
@@ -77,17 +81,6 @@ local function build_payload_and_cache_key(request)
 end
 
 local function http_geoip_request(url, payload)
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_prometheus")
-    local nauthilus_prometheus = require("nauthilus_prometheus")
-
-    dynamic_loader("nauthilus_gluahttp")
-    local http = require("glua_http")
-
-    dynamic_loader("nauthilus_gll_json")
-    local json = require("json")
-
     nauthilus_prometheus.increment_gauge(HCCR, { service = N })
     local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
 
@@ -112,11 +105,6 @@ local function http_geoip_request(url, payload)
 end
 
 local function process_response_and_context(response)
-    local nauthilus_util = require("nauthilus_util")
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
     local current_iso_code = ""
 
     nauthilus_builtin.custom_log_add(N .. "_guid", response.guid)
@@ -186,8 +174,6 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    local nauthilus_util = require("nauthilus_util")
-
     -- Check if the IP is routable at the very beginning
     local is_routable = false
 
@@ -201,15 +187,6 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
-    dynamic_loader("nauthilus_prometheus")
-    local nauthilus_prometheus = require("nauthilus_prometheus")
-
-    -- Short-lived local cache to reduce outbound GEOIP policy requests under load
-    dynamic_loader("nauthilus_cache")
-    local nauthilus_cache = require("nauthilus_cache")
 
     local payload, base_cache_key = build_payload_and_cache_key(request)
     -- Use a dedicated namespace for filter cache to avoid mixing with action cache
@@ -265,8 +242,6 @@ function nauthilus_call_filter(request)
 end
 
 function nauthilus_call_action(request)
-    local nauthilus_util = require("nauthilus_util")
-
     -- Skip non-routable IPs quickly; nothing to store
     local is_routable = false
 
@@ -277,12 +252,6 @@ function nauthilus_call_action(request)
     if not is_routable then
         return nauthilus_builtin.ACTION_RESULT_OK
     end
-
-    dynamic_loader("nauthilus_context")
-    local nauthilus_context = require("nauthilus_context")
-
-    dynamic_loader("nauthilus_cache")
-    local nauthilus_cache = require("nauthilus_cache")
 
     -- Build payload and a dedicated cache key for info-mode to avoid mixing with policy cache
     local payload, base_cache_key = build_payload_and_cache_key(request)

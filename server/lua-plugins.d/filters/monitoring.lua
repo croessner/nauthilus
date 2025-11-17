@@ -15,11 +15,9 @@
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_http_request")
 local nauthilus_http_request = require("nauthilus_http_request")
-
-dynamic_loader("nauthilus_backend")
 local nauthilus_backend = require("nauthilus_backend")
+local nauthilus_redis = require("nauthilus_redis")
 
 local N = "director"
 
@@ -52,8 +50,6 @@ function nauthilus_call_filter(request)
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    dynamic_loader("nauthilus_redis")
-    local nauthilus_redis = require("nauthilus_redis")
     local redis_key = "ntc:DS:" .. request.account
 
     local custom_pool = "default"

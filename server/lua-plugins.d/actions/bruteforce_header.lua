@@ -25,10 +25,7 @@
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
-
-dynamic_loader("nauthilus_http_response")
 local nauthilus_http_response = require("nauthilus_http_response")
 
 local HEADER_NAME = os.getenv("BRUTEFORCE_HEADER_NAME") or "X-Nauthilus-Bruteforce"

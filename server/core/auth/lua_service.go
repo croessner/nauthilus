@@ -31,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // DefaultLuaFilter mirrors the previous AuthState.FilterLua behavior.
@@ -127,11 +128,16 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyGUID, auth.GUID,
-				definitions.LogKeyMsg, "Error calling Lua filter",
-				definitions.LogKeyError, err,
-			)
+			// Include Lua stacktrace when available
+			var ae *lua.ApiError
+			if stderrors.As(err, &ae) && ae != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, auth.GUID,
+					definitions.LogKeyMsg, "Error calling Lua filter",
+					definitions.LogKeyError, ae.Error(),
+					"stacktrace", ae.StackTrace,
+				)
+			}
 
 			// Return the CommonRequest to the pool even if there's an error
 			lualib.PutCommonRequest(commonRequest)

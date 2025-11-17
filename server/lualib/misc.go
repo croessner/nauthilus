@@ -215,6 +215,14 @@ func CompileLua(filePath string) (*lua.FunctionProto, error) {
 func DoCompiledFile(L *lua.LState, proto *lua.FunctionProto) error {
 	lfunc := L.NewFunctionFromProto(proto)
 
+	// If a per-request environment is present, run the chunk under that env
+	// to ensure request-local globals and module bindings are visible.
+	// The request environment is advertised via a global marker __NAUTH_REQ_ENV
+	// (see server/lualib/luapool/runtime.go).
+	if v := L.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+		L.SetFEnv(lfunc, v)
+	}
+
 	L.Push(lfunc)
 
 	return L.PCall(0, lua.MultRet, nil)

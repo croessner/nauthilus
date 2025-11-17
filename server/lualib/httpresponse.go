@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
+
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -172,16 +173,16 @@ func HTTPRedirect(ctx *gin.Context) lua.LGFunction {
 func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnSetHTTPResponseHeader:    SetHTTPResponseHeader(ctx),
-			definitions.LuaFnAddHTTPResponseHeader:    AddHTTPResponseHeader(ctx),
-			definitions.LuaFnRemoveHTTPResponseHeader: RemoveHTTPResponseHeader(ctx),
-			definitions.LuaFnSetHTTPStatus:            SetHTTPStatus(ctx),
-			definitions.LuaFnWriteHTTPResponseBody:    WriteHTTPResponseBody(ctx),
-			definitions.LuaFnSetHTTPContentType:       SetHTTPContentType(ctx),
-			definitions.LuaFnHTTPString:               HTTPString(ctx),
-			definitions.LuaFnHTTPData:                 HTTPData(ctx),
-			definitions.LuaFnHTTPHTML:                 HTTPHTML(ctx),
-			definitions.LuaFnHTTPRedirect:             HTTPRedirect(ctx),
+			definitions.LuaFnSetHTTPResponseHeader:    SetHTTPResponseHeaderWithCtx(ctx),
+			definitions.LuaFnAddHTTPResponseHeader:    AddHTTPResponseHeaderWithCtx(ctx),
+			definitions.LuaFnRemoveHTTPResponseHeader: RemoveHTTPResponseHeaderWithCtx(ctx),
+			definitions.LuaFnSetHTTPStatus:            SetHTTPStatusWithCtx(ctx),
+			definitions.LuaFnWriteHTTPResponseBody:    WriteHTTPResponseBodyWithCtx(ctx),
+			definitions.LuaFnSetHTTPContentType:       SetHTTPContentTypeWithCtx(ctx),
+			definitions.LuaFnHTTPString:               HTTPStringWithCtx(ctx),
+			definitions.LuaFnHTTPData:                 HTTPDataWithCtx(ctx),
+			definitions.LuaFnHTTPHTML:                 HTTPHTMLWithCtx(ctx),
+			definitions.LuaFnHTTPRedirect:             HTTPRedirectWithCtx(ctx),
 		})
 
 		// Expose essential HTTP status codes as UPPER_CASE module variables
@@ -217,3 +218,46 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 		return 1
 	}
 }
+
+// LoaderHTTPResponseStateless returns an empty, stateless module table for nauthilus_http_response.
+// It is intended to be preloaded once per VM (base environment). Per-request bindings will later
+// clone this table and inject bound functions via WithCtx factories.
+func LoaderHTTPResponseStateless() lua.LGFunction {
+	return func(L *lua.LState) int {
+		L.Push(L.NewTable())
+
+		return 1
+	}
+}
+
+// SetHTTPResponseHeaderWithCtx is a factory alias that returns the same function as SetHTTPResponseHeader(ctx).
+func SetHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPResponseHeader(ctx) }
+
+// AddHTTPResponseHeaderWithCtx is a factory alias that returns the same function as AddHTTPResponseHeader(ctx).
+func AddHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction { return AddHTTPResponseHeader(ctx) }
+
+// RemoveHTTPResponseHeaderWithCtx is a factory alias that returns the same function as RemoveHTTPResponseHeader(ctx).
+func RemoveHTTPResponseHeaderWithCtx(ctx *gin.Context) lua.LGFunction {
+	return RemoveHTTPResponseHeader(ctx)
+}
+
+// SetHTTPStatusWithCtx is a factory alias that returns the same function as SetHTTPStatus(ctx).
+func SetHTTPStatusWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPStatus(ctx) }
+
+// WriteHTTPResponseBodyWithCtx is a factory alias that returns the same function as WriteHTTPResponseBody(ctx).
+func WriteHTTPResponseBodyWithCtx(ctx *gin.Context) lua.LGFunction { return WriteHTTPResponseBody(ctx) }
+
+// SetHTTPContentTypeWithCtx is a factory alias that returns the same function as SetHTTPContentType(ctx).
+func SetHTTPContentTypeWithCtx(ctx *gin.Context) lua.LGFunction { return SetHTTPContentType(ctx) }
+
+// HTTPStringWithCtx is a factory alias that returns the same function as HTTPString(ctx).
+func HTTPStringWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPString(ctx) }
+
+// HTTPDataWithCtx is a factory alias that returns the same function as HTTPData(ctx).
+func HTTPDataWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPData(ctx) }
+
+// HTTPHTMLWithCtx is a factory alias that returns the same function as HTTPHTML(ctx).
+func HTTPHTMLWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPHTML(ctx) }
+
+// HTTPRedirectWithCtx is a factory alias that returns the same function as HTTPRedirect(ctx).
+func HTTPRedirectWithCtx(ctx *gin.Context) lua.LGFunction { return HTTPRedirect(ctx) }

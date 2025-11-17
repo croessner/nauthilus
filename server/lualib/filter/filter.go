@@ -17,8 +17,8 @@ package filter
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -27,69 +27,23 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
+	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
+	"github.com/croessner/nauthilus/server/lualib/connmgr"
+	"github.com/croessner/nauthilus/server/lualib/luapool"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 	"golang.org/x/sync/errgroup"
 )
-
-// httpClient is a pre-configured instance of http.Client with custom timeout and TLS settings for making HTTP requests.
-var httpClient *http.Client
-
-// InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
-
-// registerDynamicLoader sets up a global function "dynamic_loader" in the Lua state to dynamically load Lua modules.
-func registerDynamicLoader(L *lua.LState, ctx *gin.Context, r *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
-	dynamicLoader := L.NewFunction(func(L *lua.LState) int {
-		modName := L.CheckString(1)
-
-		registry := make(map[string]bool)
-		if _, found := registry[modName]; found {
-			return 0
-		}
-
-		lualib.RegisterCommonLuaLibraries(L, ctx, modName, registry, httpClient)
-		registerModule(L, ctx, r, modName, registry, backendResult, removeAttributes)
-
-		return 0
-	})
-
-	L.SetGlobal("dynamic_loader", dynamicLoader)
-}
-
-// registerModule registers a Lua module in the given Lua state if it matches predefined module names.
-// It also ensures the module is added to the registry map to prevent duplicate registrations.
-// Modules include context, HTTP request, LDAP, and backend, with validation for dependencies.
-func registerModule(L *lua.LState, ctx *gin.Context, r *Request, modName string, registry map[string]bool, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) {
-	switch modName {
-	case definitions.LuaModContext:
-		L.PreloadModule(modName, lualib.LoaderModContext(r.Context))
-	case definitions.LuaModHTTPRequest:
-		L.PreloadModule(modName, lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request)))
-	case definitions.LuaModHTTPResponse:
-		L.PreloadModule(modName, lualib.LoaderModHTTPResponse(ctx))
-	case definitions.LuaModLDAP:
-		if config.GetFile().HaveLDAPBackend() {
-			L.PreloadModule(modName, backend.LoaderModLDAP(ctx))
-		} else {
-			L.RaiseError("LDAP backend not activated")
-		}
-	case definitions.LuaModBackend:
-		L.PreloadModule(modName, LoaderModBackend(r, backendResult, removeAttributes))
-	default:
-		return
-	}
-
-	registry[modName] = true
-}
 
 // LuaFilters holds pre-compiled Lua scripts for use across the application.
 // It allows faster access and execution of frequently used scripts.
@@ -99,11 +53,11 @@ var LuaFilters *PreCompiledLuaFilters
 func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetBackendServers:       getBackendServers(request.BackendServers),
-			definitions.LuaFnSelectBackendServer:     selectBackendServer(&request.UsedBackendAddress, &request.UsedBackendPort),
-			definitions.LuaFnCheckBackendConnection:  lualib.CheckBackendConnection(monitoring.NewMonitor()),
-			definitions.LuaFnApplyBackendResult:      applyBackendResult(backendResult),
-			definitions.LuaFnRemoveFromBackendResult: removeFromBackendResult(removeAttributes),
+			definitions.LuaFnGetBackendServers:       GetBackendServersWithReq(request),
+			definitions.LuaFnSelectBackendServer:     SelectBackendServerWithReq(request),
+			definitions.LuaFnCheckBackendConnection:  CheckBackendConnectionWithMonitor(monitoring.NewMonitor()),
+			definitions.LuaFnApplyBackendResult:      ApplyBackendResultWithPtr(backendResult),
+			definitions.LuaFnRemoveFromBackendResult: RemoveFromBackendResultWithList(removeAttributes),
 		})
 
 		L.Push(mod)
@@ -244,6 +198,36 @@ type Request struct {
 
 	// CommonRequest represents a common request object with various properties used in different functionalities.
 	*lualib.CommonRequest
+}
+
+// handleError logs Lua execution errors for filters with stacktrace when available,
+// stops the running timer and cancels the Lua context to abort pending operations.
+func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+	// Try to include Lua stacktrace for easier diagnostics
+	var ae *lua.ApiError
+	if stderrs.As(err, &ae) && ae != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, func() string {
+				if r != nil && r.CommonRequest != nil {
+					return r.CommonRequest.Session
+				}
+
+				return ""
+			}(),
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua filter failed",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	}
+
+	if stopTimer != nil {
+		stopTimer()
+	}
+
+	if luaCancel != nil {
+		luaCancel()
+	}
 }
 
 // The userData constellation method:
@@ -524,8 +508,6 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			localBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
 			localRemoveAttrs := make([]string, 0)
 
-			// Register dynamic loader and backend result type for this state
-			registerDynamicLoader(Llocal, ctx, r, &localBackendResult, &localRemoveAttrs)
 			lualib.RegisterBackendResultType(Llocal, definitions.LuaBackendResultAttributes)
 
 			// Globals for this state
@@ -554,32 +536,144 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			Llocal.SetContext(luaCtx)
 
+			// Prepare per-request environment so that request-local globals and module bindings are visible
+			luapool.PrepareRequestEnv(Llocal)
+
+			// Bind request-scoped modules into reqEnv so that require() resolves correctly.
+			// 1) nauthilus_context
+			if loader := lualib.LoaderModContext(r.Context); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModContext, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 2) nauthilus_http_request
+			if ctx != nil && ctx.Request != nil {
+				loader := lualib.LoaderModHTTP(lualib.NewHTTPMetaFromRequest(ctx.Request))
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPRequest, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 3) nauthilus_http_response
+			if ctx != nil {
+				loader := lualib.LoaderModHTTPResponse(ctx)
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModHTTPResponse, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 4) nauthilus_redis
+			if loader := redislib.LoaderModRedis(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModRedis, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 5) nauthilus_ldap (optional)
+			if config.GetFile().HaveLDAPBackend() {
+				loader := backend.LoaderModLDAP(luaCtx)
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModLDAP, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 6) nauthilus_psnet (connection monitoring)
+			if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModPsnet, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 7) nauthilus_dns (DNS lookups)
+			if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModDNS, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 8) nauthilus_brute_force (toleration and blocking helpers)
+			if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBruteForce, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
+			// 9) nauthilus_backend (preload stateless placeholder, then request-bound)
+			Llocal.PreloadModule(definitions.LuaModBackend, LoaderBackendStateless())
+			{
+				loader := LoaderModBackend(r, &localBackendResult, &localRemoveAttrs)
+				_ = loader(Llocal)
+				if mod, ok := Llocal.Get(-1).(*lua.LTable); ok {
+					Llocal.Pop(1)
+					luapool.BindModuleIntoReq(Llocal, definitions.LuaModBackend, mod)
+				} else {
+					Llocal.Pop(1)
+				}
+			}
+
 			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}
 
 			// Execute script
 			if e := lualib.PackagePath(Llocal); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 				return e
 			}
 
-			// Call filter function if present
-			filterFunc := Llocal.GetGlobal(definitions.LuaFnCallFilter)
+			// Call filter function if present (reqEnv-first lookup)
+			filterFunc := lua.LNil
+			if v := Llocal.GetGlobal("__NAUTH_REQ_ENV"); v != nil && v.Type() == lua.LTTable {
+				if fn := Llocal.GetField(v, definitions.LuaFnCallFilter); fn != nil {
+					filterFunc = fn
+				}
+			}
+
+			if filterFunc == lua.LNil {
+				filterFunc = Llocal.GetGlobal(definitions.LuaFnCallFilter)
+			}
+
 			if filterFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
-					if stopTimer != nil {
-						stopTimer()
-					}
+					r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 					return e
 				}

@@ -13,10 +13,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-dynamic_loader("nauthilus_gll_time")
 local time = require("time")
-
-dynamic_loader("nauthilus_gll_json")
 local json = require("json")
 
 local nauthilus_util = {}

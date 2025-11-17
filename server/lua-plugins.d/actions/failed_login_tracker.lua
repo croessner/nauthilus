@@ -17,10 +17,7 @@ local N = "failed_login_tracker"
 
 local nauthilus_util = require("nauthilus_util")
 
-dynamic_loader("nauthilus_redis")
 local nauthilus_redis = require("nauthilus_redis")
-
-dynamic_loader("nauthilus_context")
 local nauthilus_context = require("nauthilus_context")
 
 function nauthilus_call_action(request)
