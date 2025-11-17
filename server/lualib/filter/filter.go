@@ -17,6 +17,7 @@ package filter
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,6 +27,8 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
@@ -195,6 +198,36 @@ type Request struct {
 
 	// CommonRequest represents a common request object with various properties used in different functionalities.
 	*lualib.CommonRequest
+}
+
+// handleError logs Lua execution errors for filters with stacktrace when available,
+// stops the running timer and cancels the Lua context to abort pending operations.
+func (r *Request) handleError(luaCancel context.CancelFunc, err error, scriptName string, stopTimer func()) {
+	// Try to include Lua stacktrace for easier diagnostics
+	var ae *lua.ApiError
+	if stderrs.As(err, &ae) && ae != nil {
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, func() string {
+				if r != nil && r.CommonRequest != nil {
+					return r.CommonRequest.Session
+				}
+
+				return ""
+			}(),
+			"name", scriptName,
+			definitions.LogKeyMsg, "Lua filter failed",
+			definitions.LogKeyError, ae.Error(),
+			"stacktrace", ae.StackTrace,
+		)
+	}
+
+	if stopTimer != nil {
+		stopTimer()
+	}
+
+	if luaCancel != nil {
+		luaCancel()
+	}
 }
 
 // The userData constellation method:
@@ -615,17 +648,13 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			// Execute script
 			if e := lualib.PackagePath(Llocal); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 				return e
 			}
@@ -644,9 +673,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 			if filterFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
-					if stopTimer != nil {
-						stopTimer()
-					}
+					r.handleError(luaCancel, e, sc.Name, stopTimer)
 
 					return e
 				}

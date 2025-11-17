@@ -362,17 +362,15 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 			// Load package path and execute compiled script
 			if e := lualib.PackagePath(Llocal); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				// log with stacktrace and ensure timer/cancel are handled
+				r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, feature.CompiledScript); e != nil {
-				if stopTimer != nil {
-					stopTimer()
-				}
+				// log with stacktrace and ensure timer/cancel are handled
+				r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 				return e
 			}
@@ -391,9 +389,8 @@ func (r *Request) executeScripts(ctx *gin.Context, pool *vmpool.Pool) (triggered
 
 			if callFeaturesFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: callFeaturesFunc, NRet: 3, Protect: true}, request); e != nil {
-					if stopTimer != nil {
-						stopTimer()
-					}
+					// log with stacktrace and ensure timer/cancel are handled
+					r.handleError(luaCancel, e, feature.Name, stopTimer)
 
 					return e
 				} else {

@@ -139,20 +139,6 @@ func setBaseEnv(L *lua.LState, v lua.LValue) {
 	L.SetGlobal(baseEnvKey, v)
 }
 
-// cloneTable creates a shallow copy of a Lua table (keys/values only, no metatable copy).
-func cloneTable(L *lua.LState, src *lua.LTable) *lua.LTable {
-	if src == nil {
-		return L.NewTable()
-	}
-
-	dst := L.NewTable()
-	src.ForEach(func(k, val lua.LValue) {
-		dst.RawSet(k, val)
-	})
-
-	return dst
-}
-
 // bindModuleIntoReq makes a module visible both in the reqEnv and in package.loaded.
 func bindModuleIntoReq(L *lua.LState, req *lua.LTable, name string, mod *lua.LTable) {
 	// 1) Visible in the request env (direct global access in reqEnv)
