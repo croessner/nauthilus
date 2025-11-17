@@ -1512,9 +1512,9 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
-	if !a.NoAuth && useCache && a.isCacheInCorrectPosition(backendPos) {
+	if useCache && a.isCacheInCorrectPosition(backendPos) {
 		if cs := getCacheService(); cs != nil {
-			if authenticated {
+			if authenticated || (a.NoAuth && a.UserFound) {
 				if err := cs.OnSuccess(a, accountName); err != nil {
 					return err
 				}
