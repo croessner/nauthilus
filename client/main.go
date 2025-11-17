@@ -1218,6 +1218,9 @@ func main() {
 		useIdemKey      = flag.Bool("idempotency-key", false, "Add Idempotency-Key header computed from request body (SHA-256)")
 		progressBar     = flag.Bool("progress-bar", false, "Render a single-line progress bar (TTY only)")
 
+		// Graceful shutdown
+		graceSeconds = flag.Int("grace-seconds", 10, "Graceful shutdown timeout before forcing cancel")
+
 		// Auto-mode flags (adaptive pacing & concurrency)
 		autoMode      = flag.Bool("auto", false, "Adaptive Auto-Mode for rps/concurrency")
 		autoTargetP95 = flag.Int("auto-target-p95", 400, "Target p95 latency in ms")
@@ -1369,20 +1372,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle Ctrl+C (SIGINT) and SIGTERM to print results on interrupt
+	// Global stop flag (used for legacy checks in some loops)
 	var stopFlag int32
-
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-
-		fmt.Println("\nInterrupt received, stopping...")
-		atomic.StoreInt32(&stopFlag, 1)
-
-		cancel()
-	}()
 
 	var total, matched, mismatched, httpErrs int64
 	var skipped int64
@@ -1704,6 +1695,31 @@ func main() {
 	}
 
 	jobs := make(chan job, jobsCap)
+
+	// Track and safely close the current jobs channel
+	var jobsMu sync.Mutex
+	var jobsClosed bool
+
+	closeJobsIfOpen := func() {
+		jobsMu.Lock()
+		defer jobsMu.Unlock()
+
+		if !jobsClosed {
+			close(jobs)
+			jobsClosed = true
+		}
+	}
+
+	// Graceful shutdown: signal to stop producing new jobs
+	stopProduce := make(chan struct{})
+	var stopProduceOnce sync.Once
+
+	closeStopProduce := func() {
+		stopProduceOnce.Do(func() {
+			close(stopProduce)
+		})
+	}
+
 	var wg sync.WaitGroup
 	// buffered so reduceWorkers won't block if no worker is immediately selecting on quitCh
 	quitCh := make(chan struct{}, 1024)
@@ -2028,9 +2044,16 @@ func main() {
 			gid = atomic.AddUint64(&groupSeq, 1)
 		}
 
-		// Enqueue jobs
+		// Enqueue jobs; stop gracefully if stopProduce is closed
 		for k := 0; k < total; k++ {
-			jobs <- job{rowIndex: i, groupID: gid, groupN: total}
+			select {
+			case <-stopProduce:
+				// Stop producing and close jobs for workers to drain
+				closeJobsIfOpen()
+
+				return
+			case jobs <- job{rowIndex: i, groupID: gid, groupN: total}:
+			}
 		}
 	}
 
@@ -2048,6 +2071,46 @@ func main() {
 			quitCh <- struct{}{}
 		}
 	}
+
+	// Graceful shutdown control
+	var stopSigCount int32
+
+	// Two-stage signal handler (graceful then force)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		for {
+			<-sigCh
+
+			n := atomic.AddInt32(&stopSigCount, 1)
+
+			if n == 1 {
+				fmt.Println("\nInterrupt received. Finishing in-flight requests…")
+				atomic.StoreInt32(&stopFlag, 1)
+
+				// Stop producing new jobs and prevent new keep-alives
+				closeStopProduce()
+				transport.DisableKeepAlives = true
+
+				// After grace timeout, force cancel if still running
+				grace := time.Duration(maxInt(0, *graceSeconds)) * time.Second
+				if grace > 0 {
+					time.AfterFunc(grace, func() {
+						if atomic.LoadInt32(&stopSigCount) < 2 {
+							fmt.Println("\nGrace period elapsed. Forcing shutdown…")
+							cancel()
+						}
+					})
+				}
+			} else {
+				fmt.Println("\nSecond interrupt. Forcing shutdown now…")
+				cancel()
+
+				return
+			}
+		}
+	}()
 
 	// Prepare pacer (RPS limiter)
 	var pacer *Pacer
@@ -2356,6 +2419,13 @@ func main() {
 				break
 			}
 
+			// Graceful stop request: stop producing
+			select {
+			case <-stopProduce:
+				break outerLoop
+			default:
+			}
+
 			if time.Now().After(deadline) {
 				break
 			}
@@ -2363,6 +2433,8 @@ func main() {
 			if tick != nil {
 				select {
 				case <-tick:
+				case <-stopProduce:
+					break outerLoop
 				case <-ctx.Done():
 					break outerLoop
 				}
@@ -2371,8 +2443,9 @@ func main() {
 			enqueueParallelGroup(i)
 		}
 
-		close(jobs)
+		closeJobsIfOpen()
 		wg.Wait()
+
 		if pacer != nil {
 			pacer.Stop()
 		}
@@ -2552,7 +2625,7 @@ func main() {
 
 			for i := range rows {
 				if atomic.LoadInt32(&stopFlag) == 1 {
-					close(jobs)
+					closeJobsIfOpen()
 					wg.Wait()
 
 					break outerCycles
@@ -2561,8 +2634,13 @@ func main() {
 				if tick != nil {
 					select {
 					case <-tick:
+					case <-stopProduce:
+						closeJobsIfOpen()
+						wg.Wait()
+
+						break outerCycles
 					case <-ctx.Done():
-						close(jobs)
+						closeJobsIfOpen()
 						wg.Wait()
 
 						break outerCycles
@@ -2572,7 +2650,7 @@ func main() {
 				enqueueParallelGroup(i)
 			}
 
-			close(jobs)
+			closeJobsIfOpen()
 			wg.Wait()
 
 			// Keep pacer running across cycles; controller adjusts it
@@ -2592,6 +2670,11 @@ func main() {
 				}
 
 				jobs = make(chan job, jobsCap)
+
+				// Reset close state for the new channel
+				jobsMu.Lock()
+				jobsClosed = false
+				jobsMu.Unlock()
 			}
 		}
 
@@ -2599,6 +2682,9 @@ func main() {
 			pacer.Stop()
 		}
 	}
+
+	// Close idle connections after all workers are done
+	transport.CloseIdleConnections()
 
 	// Stop progress reporter
 	cancel()
