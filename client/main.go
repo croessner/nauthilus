@@ -159,12 +159,80 @@ var (
 func setTargetRPS(v float64) { atomic.StoreUint64(&tgtRPSBits, math.Float64bits(v)) }
 func getTargetRPS() float64  { return math.Float64frombits(atomic.LoadUint64(&tgtRPSBits)) }
 
+// clamp01 confines a float value into the inclusive range [0,1].
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+
+	if x > 1 {
+		return 1
+	}
+
+	return x
+}
+
+// helpers since generics/builtins may not be available in all build envs
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+// normalizeCtrlEvery ensures a sane controller cadence: (0, 5s].
+func normalizeCtrlEvery(d time.Duration) time.Duration {
+	if d <= 0 || d > 5*time.Second {
+		return 5 * time.Second
+	}
+
+	return d
+}
+
+// applyRPS is the single point to set the current RPS both in the pacer and the exported target value.
+// It clamps the value to >= 1 and returns the applied value.
+func applyRPS(p *Pacer, r float64) float64 {
+	if r <= 0 {
+		r = 1
+	}
+
+	if p != nil {
+		p.SetRPS(r)
+	}
+
+	setTargetRPS(r)
+
+	return r
+}
+
+// Stats is a read-only snapshot of key counters and latency percentiles.
+type Stats struct {
+	Total, Matched, Mismatched, HttpErrs, Aborted, Skipped, ToleratedBF int64
+	Avg, P50, P90, P99                                                  time.Duration
+	Min, Max                                                            time.Duration
+	Elapsed                                                             time.Duration
+	TargetRPS                                                           float64
+	Concurrency                                                         int64
+}
+
+// statsSnapshot is defined inside main() to atomically sample counters there.
+
 // computeHistogramCounts aggregates the global latency buckets into "cols" columns.
 // The range [start..end] (inclusive, in ms) is partitioned into columns of size bucketSpan.
 // It returns the per-column counts and the total across all considered buckets.
 func computeHistogramCounts(start, end, bucketSpan, cols int) ([]int64, int64) {
 	counts := make([]int64, cols)
 	var total int64
+
 	for i := 0; i < cols; i++ {
 		lo := start + i*bucketSpan
 		hi := lo + bucketSpan - 1
@@ -180,6 +248,7 @@ func computeHistogramCounts(start, end, bucketSpan, cols int) ([]int64, int64) {
 		counts[i] = c
 		total += c
 	}
+
 	return counts, total
 }
 
@@ -782,7 +851,7 @@ func randomHostInCIDR(baseNet uint32, mask uint32) uint32 {
 }
 
 type Row struct {
-	Fields     map[string]string // alle CSV-Felder pro Zeile
+	Fields     map[string]string
 	ExpectedOK bool
 }
 
@@ -1330,6 +1399,47 @@ func main() {
 
 	start := time.Now()
 
+	// Define a local snapshot helper to avoid duplicating metric reads/derivations
+	statsSnapshot := func() Stats {
+		t := atomic.LoadInt64(&total)
+		m := atomic.LoadInt64(&matched)
+		mm := atomic.LoadInt64(&mismatched)
+		he := atomic.LoadInt64(&httpErrs)
+		ab := atomic.LoadInt64(&aborted)
+		sk := atomic.LoadInt64(&skipped)
+		bf := atomic.LoadInt64(&toleratedBF)
+		tls := atomic.LoadInt64(&totalLatencyNs)
+
+		var avg time.Duration
+		if t > 0 {
+			avg = time.Duration(tls / t)
+		}
+
+		concVal := atomic.LoadInt64(&desiredConc)
+		if concVal <= 0 {
+			concVal = int64(*concurrency)
+		}
+
+		return Stats{
+			Total:       t,
+			Matched:     m,
+			Mismatched:  mm,
+			HttpErrs:    he,
+			Aborted:     ab,
+			Skipped:     sk,
+			ToleratedBF: bf,
+			Avg:         avg,
+			P50:         percentileFromBuckets(0.50),
+			P90:         percentileFromBuckets(0.90),
+			P99:         percentileFromBuckets(0.99),
+			Min:         time.Duration(atomic.LoadInt64(&minLatencyNs)),
+			Max:         time.Duration(atomic.LoadInt64(&maxLatencyNs)),
+			Elapsed:     time.Since(start),
+			TargetRPS:   getTargetRPS(),
+			Concurrency: concVal,
+		}
+	}
+
 	// Progress output: either interactive bar (TTY) or periodic text reporter
 	const progressBarHz = 8 // fixed refresh rate for bar
 
@@ -1346,7 +1456,7 @@ func main() {
 				fmt.Printf("\x1b[?25h\r\x1b[2K\n")
 			}()
 
-			tick := time.NewTicker(time.Second / time.Duration(max(1, progressBarHz)))
+			tick := time.NewTicker(time.Second / time.Duration(maxInt(1, progressBarHz)))
 			defer tick.Stop()
 
 			prevTotal := int64(0)
@@ -1375,25 +1485,16 @@ func main() {
 						dt = 1
 					}
 
-					t := atomic.LoadInt64(&total)
-					m := atomic.LoadInt64(&matched)
-					he := atomic.LoadInt64(&httpErrs)
-					ab := atomic.LoadInt64(&aborted)
-					sk := atomic.LoadInt64(&skipped)
-					tls := atomic.LoadInt64(&totalLatencyNs)
-
-					var avg time.Duration
-					if t > 0 {
-						avg = time.Duration(tls / t)
-					}
+					s := statsSnapshot()
+					t := s.Total
 
 					// RPS since last tick
 					delta := t - prevTotal
 					rps := float64(delta) / dt
 
-					// Percentiles
-					p50 := percentileFromBuckets(0.50)
-					p90 := percentileFromBuckets(0.90)
+					// Percentiles from snapshot
+					p50 := s.P50
+					p90 := s.P90
 
 					// Progress ratio and left label
 					var ratio float64
@@ -1427,27 +1528,17 @@ func main() {
 					// Build left and right parts
 					left := leftLabel
 
-					avgMs := int(avg / time.Millisecond)
+					avgMs := int(s.Avg / time.Millisecond)
 					p50Ms := int(p50 / time.Millisecond)
 					p90Ms := int(p90 / time.Millisecond)
 
-					// Determine current concurrency (auto mode may adjust it)
-					concVal := atomic.LoadInt64(&desiredConc)
-					if concVal <= 0 {
-						concVal = int64(*concurrency)
-					}
-
-					trps := getTargetRPS()
+					// Determine current concurrency and target rps from snapshot
+					concVal := s.Concurrency
+					trps := s.TargetRPS
 					var trkStr string
-					if trps > 0 {
-						trk := rps / trps
-						if trk > 1 {
-							trk = 1
-						}
 
-						if trk < 0 {
-							trk = 0
-						}
+					if trps > 0 {
+						trk := clamp01(rps / trps)
 
 						trkStr = fmt.Sprintf(" [trk: %3.0f%%]", trk*100)
 					} else {
@@ -1460,10 +1551,10 @@ func main() {
 						uint64(trps),
 						trkStr,
 						concVal,
-						humanCount(m),
-						humanCount(he),
-						humanCount(ab),
-						humanCount(sk),
+						humanCount(s.Matched),
+						humanCount(s.HttpErrs),
+						humanCount(s.Aborted),
+						humanCount(s.Skipped),
 						humanMs(avgMs),
 						humanMs(p50Ms),
 						humanMs(p90Ms),
@@ -1561,52 +1652,19 @@ func main() {
 						dt = 1
 					}
 
-					t := atomic.LoadInt64(&total)
-					m := atomic.LoadInt64(&matched)
-					mm := atomic.LoadInt64(&mismatched)
-					he := atomic.LoadInt64(&httpErrs)
-					ab := atomic.LoadInt64(&aborted)
-					sk := atomic.LoadInt64(&skipped)
-					bf := atomic.LoadInt64(&toleratedBF)
-					tls := atomic.LoadInt64(&totalLatencyNs)
-					mn := time.Duration(atomic.LoadInt64(&minLatencyNs))
-					mx := time.Duration(atomic.LoadInt64(&maxLatencyNs))
+					s := statsSnapshot()
+					t := s.Total
 
 					delta := t - prevTotal
 					rps := float64(delta) / dt
-					var avg time.Duration
-
-					if t > 0 {
-						avg = time.Duration(tls / t)
+					elapsed := s.Elapsed
+					trackRatio := 0.0
+					if s.TargetRPS > 0 {
+						trackRatio = clamp01(rps / s.TargetRPS)
 					}
 
-					elapsed := now.Sub(start)
-					p50 := percentileFromBuckets(0.50)
-					p90 := percentileFromBuckets(0.90)
-					p99 := percentileFromBuckets(0.99)
-
-					// Include current target RPS and concurrency
-					trps := getTargetRPS()
-
-					concVal := atomic.LoadInt64(&desiredConc)
-					if concVal <= 0 {
-						concVal = int64(*concurrency)
-					}
-
-					var trackRatio float64
-					if trps > 0 {
-						trackRatio = rps / trps
-						if trackRatio > 1 {
-							trackRatio = 1
-						}
-
-						if trackRatio < 0 {
-							trackRatio = 0
-						}
-					}
-
-					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
-						elapsed.Truncate(time.Second), t, m, mm, he, ab, sk, bf, rps, trps, trackRatio, concVal, avg, mn, mx, p50, p90, p99,
+					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
+						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
 					)
 
 					prevTotal = t
@@ -2000,10 +2058,11 @@ func main() {
 		}
 
 		pacer = NewPacer(startR)
-		setTargetRPS(startR)
+		// ensure exported target value is in sync
+		applyRPS(pacer, startR)
 	} else if *rps > 0 {
 		pacer = NewPacer(*rps)
-		setTargetRPS(*rps)
+		applyRPS(pacer, *rps)
 	}
 
 	// Duration mode: loop over CSV until time elapses
@@ -2037,20 +2096,14 @@ func main() {
 			atomic.StoreInt64(&desiredConc, int64(initConc))
 			spawnWorkers(initConc)
 		} else {
-			wg.Add(*concurrency)
-			for i := 0; i < *concurrency; i++ {
-				go worker()
-			}
+			spawnWorkers(*concurrency)
 		}
 
 		// Start adaptive controller if enabled (after workers are spawned)
 		if *autoMode {
 			startController := func(durationMode bool) {
 				// Control cadence: at most every 5s to ramp faster regardless of progress interval
-				ctrlEvery := *progressEvery
-				if ctrlEvery <= 0 || ctrlEvery > 5*time.Second {
-					ctrlEvery = 5 * time.Second
-				}
+				ctrlEvery := normalizeCtrlEvery(*progressEvery)
 
 				maxR := *autoMaxRPS
 				if maxR < 0 {
@@ -2063,14 +2116,7 @@ func main() {
 				}
 
 				currR := *autoStartRPS
-				if currR <= 0 {
-					currR = 1
-				}
-
-				if pacer != nil {
-					pacer.SetRPS(currR)
-					setTargetRPS(currR)
-				}
+				currR = applyRPS(pacer, currR)
 
 				var lastTotal = atomic.LoadInt64(&total)
 				var lastErrs = atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
@@ -2084,6 +2130,57 @@ func main() {
 					var freezeWins int
 					// Pause RPS increases only (for tracking action "shift")
 					var freezeRPSWins int
+
+					// Helpers to reduce duplicate logic
+					incConcurrencyStep := func() {
+						if *autoFocus != "rps" && durationMode {
+							old := int(atomic.LoadInt64(&desiredConc))
+
+							newC := old + *autoStepConc
+							if maxC > 0 && newC > maxC {
+								newC = maxC
+							}
+
+							if newC != old {
+								spawnWorkers(newC - old)
+								atomic.StoreInt64(&desiredConc, int64(newC))
+							}
+						}
+					}
+
+					backoffConcurrency := func() {
+						if *autoFocus != "rps" && durationMode {
+							old := int(atomic.LoadInt64(&desiredConc))
+							newC := int(math.Ceil(float64(old) * (*autoBackoff)))
+							if newC < 1 {
+								newC = 1
+							}
+
+							if maxC > 0 && newC > maxC {
+								newC = maxC
+							}
+
+							if newC != old {
+								if newC > old {
+									spawnWorkers(newC - old)
+								} else {
+									reduceWorkers(old - newC)
+								}
+
+								atomic.StoreInt64(&desiredConc, int64(newC))
+							}
+						}
+					}
+
+					applyPacerClamp := func() {
+						if pacer != nil {
+							if maxR > 0 && currR > maxR {
+								currR = maxR
+							}
+
+							applyRPS(pacer, currR)
+						}
+					}
 
 					for {
 						select {
@@ -2108,58 +2205,21 @@ func main() {
 								}
 
 								if *autoFocus != "rps" && durationMode {
-									old := int(atomic.LoadInt64(&desiredConc))
-
-									newC := old + *autoStepConc
-									if maxC > 0 && newC > maxC {
-										newC = maxC
-									}
-
-									if newC != old {
-										spawnWorkers(newC - old)
-										atomic.StoreInt64(&desiredConc, int64(newC))
-									}
+									incConcurrencyStep()
 								}
 
-								if pacer != nil {
-									if maxR > 0 && currR > maxR {
-										currR = maxR
-									}
-
-									pacer.SetRPS(currR)
-									setTargetRPS(currR)
-								}
+								applyPacerClamp()
 
 								continue
 							}
 
 							p95 := percentileFromBuckets(0.95)
-							errPct := 100 * float64(de) / float64(max(1, dt))
+							errPct := 100 * float64(de) / float64(maxInt64(1, dt))
 
 							violate := errPct > *autoMaxErr || p95 > time.Duration(*autoTargetP95)*time.Millisecond
 							if violate {
 								currR = math.Max(1, currR*(*autoBackoff))
-								if *autoFocus != "rps" && durationMode {
-									old := int(atomic.LoadInt64(&desiredConc))
-									newC := int(math.Ceil(float64(old) * (*autoBackoff)))
-									if newC < 1 {
-										newC = 1
-									}
-
-									if maxC > 0 && newC > maxC {
-										newC = maxC
-									}
-
-									if newC != old {
-										if newC > old {
-											spawnWorkers(newC - old)
-										} else {
-											reduceWorkers(old - newC)
-										}
-
-										atomic.StoreInt64(&desiredConc, int64(newC))
-									}
-								}
+								backoffConcurrency()
 
 								// Reset plateau state on violation
 								plateauStreak = 0
@@ -2191,28 +2251,7 @@ func main() {
 										switch strings.ToLower(strings.TrimSpace(*autoPlateauAction)) {
 										case "backoff":
 											currR = math.Max(1, currR*(*autoBackoff))
-											if *autoFocus != "rps" && durationMode {
-												old := int(atomic.LoadInt64(&desiredConc))
-
-												newC := int(math.Ceil(float64(old) * (*autoBackoff)))
-												if newC < 1 {
-													newC = 1
-												}
-
-												if maxC > 0 && newC > maxC {
-													newC = maxC
-												}
-
-												if newC != old {
-													if newC > old {
-														spawnWorkers(newC - old)
-													} else {
-														reduceWorkers(old - newC)
-													}
-
-													atomic.StoreInt64(&desiredConc, int64(newC))
-												}
-											}
+											backoffConcurrency()
 											// No freeze after explicit backoff
 										default: // freeze
 											if *autoPlateauCooldown > 0 {
@@ -2247,28 +2286,7 @@ func main() {
 											switch strings.ToLower(strings.TrimSpace(*autoPlateauTrackAction)) {
 											case "backoff":
 												currR = math.Max(1, currR*(*autoBackoff))
-												if *autoFocus != "rps" && durationMode {
-													old := int(atomic.LoadInt64(&desiredConc))
-
-													newC := int(math.Ceil(float64(old) * (*autoBackoff)))
-													if newC < 1 {
-														newC = 1
-													}
-
-													if maxC > 0 && newC > maxC {
-														newC = maxC
-													}
-
-													if newC != old {
-														if newC > old {
-															spawnWorkers(newC - old)
-														} else {
-															reduceWorkers(old - newC)
-														}
-
-														atomic.StoreInt64(&desiredConc, int64(newC))
-													}
-												}
+												backoffConcurrency()
 											case "shift":
 												// Pause RPS increases; increase concurrency once (if allowed)
 												if *autoPlateauCooldown > 0 {
@@ -2277,19 +2295,7 @@ func main() {
 													freezeRPSWins = 1
 												}
 
-												if *autoFocus != "rps" && durationMode {
-													old := int(atomic.LoadInt64(&desiredConc))
-
-													newC := old + *autoStepConc
-													if maxC > 0 && newC > maxC {
-														newC = maxC
-													}
-
-													if newC != old {
-														spawnWorkers(newC - old)
-														atomic.StoreInt64(&desiredConc, int64(newC))
-													}
-												}
+												incConcurrencyStep()
 											default: // freeze
 												if *autoPlateauCooldown > 0 {
 													freezeWins = *autoPlateauCooldown
@@ -2332,14 +2338,7 @@ func main() {
 								}
 							}
 
-							if pacer != nil {
-								if maxR > 0 && currR > maxR {
-									currR = maxR
-								}
-
-								pacer.SetRPS(currR)
-								setTargetRPS(currR)
-							}
+							applyPacerClamp()
 						case <-ctx.Done():
 							return
 						}
@@ -2387,19 +2386,14 @@ func main() {
 				tick = pacer.Tick()
 			}
 
-			wg.Add(*concurrency)
-			for i := 0; i < *concurrency; i++ {
-				go worker()
-			}
+			// Start workers consistently via helper
+			spawnWorkers(*concurrency)
 
 			if *autoMode && cycle == 1 {
 				// Start controller once for loops mode (RPS only)
 				startController := func() {
 					// Faster cadence: at most every 5s
-					ctrlEvery := *progressEvery
-					if ctrlEvery <= 0 || ctrlEvery > 5*time.Second {
-						ctrlEvery = time.Second * 5
-					}
+					ctrlEvery := normalizeCtrlEvery(*progressEvery)
 
 					maxR := *autoMaxRPS
 					if maxR < 0 {
@@ -2407,14 +2401,7 @@ func main() {
 					}
 
 					currR := *autoStartRPS
-					if currR <= 0 {
-						currR = 1
-					}
-
-					if pacer != nil {
-						pacer.SetRPS(currR)
-						setTargetRPS(currR)
-					}
+					currR = applyRPS(pacer, currR)
 
 					var lastTotal = atomic.LoadInt64(&total)
 					var lastErrs = atomic.LoadInt64(&httpErrs) + atomic.LoadInt64(&aborted)
@@ -2446,15 +2433,14 @@ func main() {
 									}
 
 									if pacer != nil {
-										pacer.SetRPS(currR)
-										setTargetRPS(currR)
+										applyRPS(pacer, currR)
 									}
 
 									continue
 								}
 
 								p95 := percentileFromBuckets(0.95)
-								errPct := 100 * float64(de) / float64(max(1, dt))
+								errPct := 100 * float64(de) / float64(maxInt64(1, dt))
 
 								violate := errPct > *autoMaxErr || p95 > time.Duration(*autoTargetP95)*time.Millisecond
 								if violate {
@@ -2552,8 +2538,7 @@ func main() {
 										currR = maxR
 									}
 
-									pacer.SetRPS(currR)
-									setTargetRPS(currR)
+									applyRPS(pacer, currR)
 								}
 							case <-ctx.Done():
 								return
@@ -2641,7 +2626,7 @@ func main() {
 			concVal = int64(*concurrency)
 		}
 
-		fmt.Printf("final_target_rps=%f final_concurrency=%d focus=%s\n", trps, concVal, *autoFocus)
+		fmt.Printf("final_target_rps=%.f final_concurrency=%d focus=%s\n", trps, concVal, *autoFocus)
 	}
 
 	if *compareParallel {
@@ -2693,5 +2678,4 @@ func main() {
 			fmt.Println()
 		}
 	}
-
 }
