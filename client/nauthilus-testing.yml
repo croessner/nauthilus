@@ -8,6 +8,7 @@ server:
   address: "0.0.0.0:8080"
   max_concurrent_requests: 10000
   instance_name: "nauthilus-testing"
+
   log:
     level: "warn"
     add_source: true

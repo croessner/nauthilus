@@ -17,14 +17,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/mattn/go-isatty"
@@ -225,6 +229,403 @@ type Stats struct {
 }
 
 // statsSnapshot is defined inside main() to atomically sample counters there.
+
+// metricsLine holds the most recent single-line summary of server-side Lua/VM pool metrics.
+// It is updated by the metrics poller and read by both the progress bar and periodic reporter.
+var metricsLine atomic.Value // stores string
+
+// deriveMetricsURL builds the /metrics endpoint URL from the provided API endpoint URL.
+// It keeps scheme/host and replaces the path with "/metrics".
+func deriveMetricsURL(apiURL string) string {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return ""
+	}
+
+	u.Path = "/metrics"
+	u.RawQuery = ""
+	u.Fragment = ""
+
+	return u.String()
+}
+
+// parseLabels parses a Prometheus label set string including braces, e.g. {backend="default",key="backend:default"}.
+// It returns a map of label key to unquoted value. Escapes inside quoted strings are handled.
+func parseLabels(s string) map[string]string {
+	m := map[string]string{}
+	// Robustly split on commas outside of quoted segments and handle escaped quotes.
+	var (
+		key, val     string
+		inKey, inVal bool
+		inQuote, esc bool
+	)
+
+	add := func() {
+		if key != "" {
+			m[strings.TrimSpace(key)] = val
+		}
+
+		key, val = "", ""
+	}
+
+	inKey = true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inVal {
+			if inQuote {
+				if esc {
+					val += string(c)
+					esc = false
+
+					continue
+				}
+
+				if c == '\\' {
+					esc = true
+
+					continue
+				}
+
+				if c == '"' {
+					inQuote = false
+
+					continue
+				}
+
+				val += string(c)
+
+				continue
+			}
+
+			if c == ',' {
+				add()
+				inKey, inVal = true, false
+
+				continue
+			}
+
+			if c == '"' {
+				inQuote = true
+
+				continue
+			}
+
+			if c == '}' {
+				add()
+
+				break
+			}
+
+			if !unicode.IsSpace(rune(c)) {
+				val += string(c)
+			}
+
+			continue
+		}
+
+		if inKey {
+			if c == '=' {
+				inKey, inVal = false, true
+
+				continue
+			}
+
+			if c == ',' {
+				add()
+				inKey, inVal = true, false
+
+				continue
+			}
+
+			if c == '}' {
+				add()
+
+				break
+			}
+
+			if c == '{' {
+				continue
+			}
+
+			if !unicode.IsSpace(rune(c)) {
+				key += string(c)
+			}
+
+			continue
+		}
+	}
+
+	if key != "" {
+		add()
+	}
+
+	return m
+}
+
+// startMetricsPoller periodically fetches the Prometheus text endpoint and stores a compact summary line.
+// The Authorization and other headers are copied from baseHeader so auth follows the existing client configuration.
+func startMetricsPoller(ctx context.Context, httpClient *http.Client, metricsURL string, baseHeader http.Header, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	// Store initial placeholder for display components.
+	metricsLine.Store("[metrics: collecting…]")
+
+	// Track last seen values for counters to compute deltas.
+	lastDropped := map[string]float64{}  // by backend
+	lastReplaced := map[string]float64{} // by key
+
+	// Precompile regexes for the metrics we care about to keep scan fast.
+	wanted := []*regexp.Regexp{
+		regexp.MustCompile(`^lua_queue_depth\b`),
+		regexp.MustCompile(`^lua_queue_wait_seconds_(sum|count)\b`),
+		regexp.MustCompile(`^lua_queue_dropped_total\b`),
+		regexp.MustCompile(`^lua_vm_in_use\b`),
+		regexp.MustCompile(`^lua_vm_replaced_total\b`),
+	}
+
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				line := fetchAndFormatMetrics(ctx, httpClient, metricsURL, baseHeader, wanted, lastDropped, lastReplaced)
+				if line == "" {
+					line = "[metrics: n/a]"
+				}
+
+				metricsLine.Store(line)
+			}
+		}
+	}()
+}
+
+// fetchAndFormatMetrics performs a single fetch of the Prometheus text exposition and returns a compact one-line summary.
+func fetchAndFormatMetrics(ctx context.Context, httpClient *http.Client, metricsURL string, baseHeader http.Header, wanted []*regexp.Regexp, lastDropped, lastReplaced map[string]float64) string {
+	if metricsURL == "" {
+		return ""
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
+	if err != nil {
+		return ""
+	}
+
+	// Copy headers so metrics endpoint uses the same Authorization or other headers as load generation.
+	for k, v := range baseHeader {
+		for _, vv := range v {
+			req.Header.Add(k, vv)
+		}
+	}
+
+	// Prefer Prometheus text format v0.0.4
+	req.Header.Set("Accept", "text/plain; version=0.0.4")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return ""
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	// Aggregators
+	depthByBackend := map[string]float64{}
+	var waitSum, waitCount float64
+	droppedByBackend := map[string]float64{}
+	vmInUseByKey := map[string]float64{}
+	replacedByKey := map[string]float64{}
+
+	// Use a larger scanner buffer to handle large Prometheus pages (many series/buckets).
+	scanner := bufio.NewScanner(resp.Body)
+	// Initial buffer 64 KiB, max 10 MiB to be safe for large metric dumps.
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		matched := false
+		for _, re := range wanted {
+			if re.MatchString(line) {
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			continue
+		}
+
+		// Split into metric head and value (ignore optional timestamp)
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+
+		head := parts[0]
+		valStr := parts[1]
+		val, err := strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			continue
+		}
+
+		name := head
+		labels := map[string]string{}
+		if i := strings.IndexByte(head, '{'); i >= 0 {
+			name = head[:i]
+			j := strings.LastIndexByte(head, '}')
+			if j > i {
+				labels = parseLabels(head[i : j+1])
+			}
+		}
+
+		switch name {
+		case "lua_queue_depth":
+			b := labels["backend"]
+			depthByBackend[b] += val
+		case "lua_queue_wait_seconds_sum":
+			waitSum += val
+		case "lua_queue_wait_seconds_count":
+			waitCount += val
+		case "lua_queue_dropped_total":
+			b := labels["backend"]
+			droppedByBackend[b] = val
+		case "lua_vm_in_use":
+			k := labels["key"]
+			vmInUseByKey[k] = val
+		case "lua_vm_replaced_total":
+			k := labels["key"]
+			replacedByKey[k] = val
+		}
+	}
+
+	// Helpers to select top-N
+	type kv struct {
+		k string
+		v float64
+	}
+
+	pickTop := func(m map[string]float64, n int) []kv {
+		a := make([]kv, 0, len(m))
+		for k, v := range m {
+			// Filter out zero values to avoid misleading "=0" entries when nothing is active.
+			if v <= 0 {
+				continue
+			}
+
+			a = append(a, kv{k, v})
+		}
+
+		sort.Slice(a, func(i, j int) bool { return a[i].v > a[j].v })
+		if n > 0 && len(a) > n {
+			a = a[:n]
+		}
+
+		return a
+	}
+
+	topsDepth := pickTop(depthByBackend, 3)
+	topsVM := pickTop(vmInUseByKey, 3)
+	// Totals across all series to provide a stable signal even if Top-N are filtered out
+	var depthTotal float64
+	for _, v := range depthByBackend {
+		depthTotal += v
+	}
+
+	var vmInUseTotal float64
+	for _, v := range vmInUseByKey {
+		vmInUseTotal += v
+	}
+
+	avgWaitMs := 0.0
+	if waitCount > 0 {
+		avgWaitMs = (waitSum / waitCount) * 1000.0
+	}
+
+	// Compute deltas for counters
+	droppedDeltaTotal := 0.0
+	for b, cur := range droppedByBackend {
+		prev := lastDropped[b]
+		if cur >= prev {
+			droppedDeltaTotal += (cur - prev)
+		}
+
+		lastDropped[b] = cur
+	}
+
+	replacedDeltaTotal := 0.0
+	for k, cur := range replacedByKey {
+		prev := lastReplaced[k]
+		if cur >= prev {
+			replacedDeltaTotal += cur - prev
+		}
+
+		lastReplaced[k] = cur
+	}
+
+	// Build compact one-liner. Fits in a single terminal line and is easy to scan during tests.
+	var sb strings.Builder
+	sb.WriteString("[lua qDepth: ")
+	if len(topsDepth) == 0 {
+		sb.WriteString("-")
+	} else {
+		for i, kv := range topsDepth {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+
+			sb.WriteString(fmt.Sprintf("%s=%.0f", kv.k, kv.v))
+		}
+	}
+
+	// Always include total depth as integer for quick glance
+	sb.WriteString(fmt.Sprintf(" | total=%.0f] ", depthTotal))
+	sb.WriteString("[qWait(avg)=")
+	sb.WriteString(fmt.Sprintf("%.1fms] ", avgWaitMs))
+	sb.WriteString("[dropped(Δ)=")
+	sb.WriteString(fmt.Sprintf("%.0f] ", droppedDeltaTotal))
+	sb.WriteString("[vmInUse: ")
+
+	if len(topsVM) == 0 {
+		sb.WriteString("-")
+	} else {
+		for i, kv := range topsVM {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+
+			sb.WriteString(fmt.Sprintf("%s=%.0f", kv.k, kv.v))
+		}
+	}
+
+	// Include total in-use across all pools
+	sb.WriteString(fmt.Sprintf(" | total=%.0f] ", vmInUseTotal))
+	sb.WriteString("[vmRepl(Δ)=")
+	sb.WriteString(fmt.Sprintf("%.0f]", replacedDeltaTotal))
+
+	// If scanner hit an error, still return whatever we aggregated so far.
+	if err := scanner.Err(); err != nil {
+		// On error, prefer a minimal marker to hint about partial metrics in the UI.
+		// We keep the aggregated line but append a short note.
+		s := sb.String()
+		if s == "" {
+			return "[metrics: error]"
+		}
+
+		return s + " [partial]"
+	}
+
+	return sb.String()
+}
 
 // computeHistogramCounts aggregates the global latency buckets into "cols" columns.
 // The range [start..end] (inclusive, in ms) is partitioned into columns of size bucketSpan.
@@ -1392,6 +1793,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Metrics poller: always on. Auth for /metrics follows the existing headers (e.g., Basic/JWT) –
+	// no extra flags required. This lets us display server-side Lua/VM pool metrics live during the test.
+	metricsURL := deriveMetricsURL(*endpoint)
+	startMetricsPoller(ctx, client, metricsURL, baseHeader, time.Second)
+
 	// Global stop flag (used for legacy checks in some loops)
 	var stopFlag int32
 
@@ -1583,7 +1989,7 @@ func main() {
 					}
 
 					right := fmt.Sprintf(
-						" [rps: %7.1f] [trps: %7d]%s [conc: %4d] [eta: %s] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						"[rps: %7.1f] [trps: %7d]%s [conc: %4d] [eta: %s] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
 						rps,
 						uint64(trps),
 						trkStr,
@@ -1598,20 +2004,41 @@ func main() {
 						humanMs(p90Ms),
 					)
 
-					// Two-line layout:
-					//   Top:    right (status, RPS, counters, latencies)
-					//   Bottom: left + BAR (no right)
+					// Metrics one-liner from poller (always displayed)
+					mline := metricsLine.Load()
+					mstr, _ := mline.(string)
+					if mstr == "" {
+						mstr = "[metrics: n/a]"
+					}
+
+					// Header area under "Running test...":
+					//  - Row 2: textual status (right string)
+					//  - Row 3: metrics line
+					hdr1 := " " + right
+
+					if displayWidth(hdr1) < termW {
+						hdr1 = padToCellsRight(hdr1, termW)
+					} else {
+						hdr1 = truncateToCells(hdr1, termW)
+					}
+
+					hdr2 := " " + mstr
+					if displayWidth(hdr2) < termW {
+						hdr2 = padToCellsRight(hdr2, termW)
+					} else {
+						hdr2 = truncateToCells(hdr2, termW)
+					}
+
+					fmt.Printf("\x1b[s\x1b[2;1H\x1b[2K%s\x1b[3;1H\x1b[2K%s\x1b[u", hdr1, hdr2)
+
+					// Bottom progress bar: left + BAR only (kept at the last row)
 					const minBar = 10
 					leftW := displayWidth(left)
-
-					// Width available for the bar (exclude right completely)
 					fixedSpaces := 2 // leading space + space before the bar
 					available := termW - fixedSpaces - leftW
 
 					if available < minBar {
-						// If needed, shrink left label to keep a minimal bar width
 						need := minBar - available
-
 						newLeftW := leftW - need
 						if newLeftW < 0 {
 							newLeftW = 0
@@ -1627,7 +2054,6 @@ func main() {
 						barWidth = minBar
 					}
 
-					// Compute fill length rounded to nearest cell
 					fill := int(math.Round(ratio * float64(barWidth)))
 					if fill < 0 {
 						fill = 0
@@ -1638,30 +2064,15 @@ func main() {
 					}
 
 					bar := strings.Repeat("█", fill) + strings.Repeat("·", barWidth-fill)
-
-					// Top line: right
-					top := " " + right
-					dwTop := displayWidth(top)
-
-					if dwTop < termW {
-						top = padToCellsRight(top, termW)
-					} else if dwTop > termW {
-						top = truncateToCells(top, termW)
-					}
-
-					// Bottom line: left + bar
 					bottom := " " + left + " " + bar
-					dwBottom := displayWidth(bottom)
-					if dwBottom < termW {
+
+					if displayWidth(bottom) < termW {
 						bottom = padToCellsRight(bottom, termW)
-					} else if dwBottom > termW {
+					} else {
 						bottom = truncateToCells(bottom, termW)
 					}
 
-					// Draw two lines pinned to the bottom; fallback to one line if height < 2
-					if termH >= 2 {
-						fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[%d;1H\x1b[2K%s\x1b[u", termH-1, top, termH, bottom)
-					} else {
+					if termH >= 1 {
 						fmt.Printf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", termH, bottom)
 					}
 
@@ -1704,6 +2115,13 @@ func main() {
 					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
 						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
 					)
+
+					// Always print the metrics one-liner as well so metrics are visible in non-TTY mode too.
+					if ml := metricsLine.Load(); ml != nil {
+						if mstr, ok := ml.(string); ok && mstr != "" {
+							fmt.Println(mstr)
+						}
+					}
 
 					prevTotal = t
 					prevTime = now
