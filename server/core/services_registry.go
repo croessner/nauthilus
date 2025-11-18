@@ -26,6 +26,9 @@ import (
 var (
 	regLuaFilter    LuaFilter
 	regPostAction   PostAction
+	regFeatureEng   FeatureEngine
+	regActionDisp   ActionDispatcher
+	regRBLService   RBLService
 	regBF           BruteForceService
 	regCacheService CacheService
 	regPassVerifier PasswordVerifier
@@ -37,6 +40,15 @@ func RegisterLuaFilter(l LuaFilter) { regLuaFilter = l }
 // RegisterPostAction registers the active PostAction implementation.
 func RegisterPostAction(p PostAction) { regPostAction = p }
 
+// RegisterFeatureEngine registers the active FeatureEngine implementation.
+func RegisterFeatureEngine(f FeatureEngine) { regFeatureEng = f }
+
+// RegisterActionDispatcher registers the active ActionDispatcher implementation.
+func RegisterActionDispatcher(a ActionDispatcher) { regActionDisp = a }
+
+// RegisterRBLService registers the active RBLService implementation.
+func RegisterRBLService(r RBLService) { regRBLService = r }
+
 // RegisterCacheService registers the active CacheService implementation.
 func RegisterCacheService(c CacheService) { regCacheService = c }
 
@@ -45,6 +57,9 @@ func RegisterPasswordVerifier(v PasswordVerifier) { regPassVerifier = v }
 
 func getLuaFilter() LuaFilter                 { return regLuaFilter }
 func getPostAction() PostAction               { return regPostAction }
+func getFeatureEngine() FeatureEngine         { return regFeatureEng }
+func getActionDispatcher() ActionDispatcher   { return regActionDisp }
+func getRBLService() RBLService               { return regRBLService }
 func getBruteForceService() BruteForceService { return regBF }
 func getCacheService() CacheService           { return regCacheService }
 func getPasswordVerifier() PasswordVerifier   { return regPassVerifier }
@@ -57,6 +72,10 @@ func RegisterBruteForceService(b BruteForceService) { regBF = b }
 func GetBruteForceService() BruteForceService { return getBruteForceService() }
 func GetCacheService() CacheService           { return getCacheService() }
 func GetPasswordVerifier() PasswordVerifier   { return getPasswordVerifier() }
+
+func GetFeatureEngine() FeatureEngine       { return getFeatureEngine() }
+func GetActionDispatcher() ActionDispatcher { return getActionDispatcher() }
+func GetRBLService() RBLService             { return getRBLService() }
 
 // Optional convenience helpers for callers that don't have *AuthState.
 // They keep signatures local to core while allowing external implementations.

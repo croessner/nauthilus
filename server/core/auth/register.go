@@ -27,6 +27,9 @@ func init() {
 	// Register default implementations provided by subpackage.
 	core.RegisterLuaFilter(DefaultLuaFilter{})
 	core.RegisterPostAction(DefaultPostAction{})
+	core.RegisterFeatureEngine(DefaultFeatureEngine{})
+	core.RegisterActionDispatcher(DefaultActionDispatcher{})
+	core.RegisterRBLService(DefaultRBLService{})
 	core.RegisterBruteForceService(DefaultBruteForceService{})
 	core.RegisterCacheService(DefaultCacheService{})
 	core.RegisterPasswordVerifier(DefaultPasswordVerifier{})
