@@ -40,3 +40,30 @@ type PostActionInput struct {
 type PostAction interface {
 	Run(input PostActionInput)
 }
+
+// FeatureEngine encapsulates the evaluation of Lua-based features.
+// It returns whether a feature was triggered, whether further features should be aborted,
+// and optional logs plus a new StatusMessage.
+//
+//goland:nointerface
+type FeatureEngine interface {
+	Evaluate(ctx *gin.Context, view *StateView) (triggered bool, abort bool, logs []any, newStatus *string, err error)
+}
+
+// ActionDispatcher encapsulates triggering Lua actions (performAction).
+//
+//goland:nointerface
+type ActionDispatcher interface {
+	Dispatch(view *StateView, featureName string, luaAction definitions.LuaAction)
+}
+
+// RBLService encapsulates RBL checking and aggregation.
+//
+//goland:nointerface
+type RBLService interface {
+	// Score computes the aggregated RBL score for the request.
+	Score(ctx *gin.Context, view *StateView) (int, error)
+
+	// Threshold returns the configured threshold at which a feature is triggered.
+	Threshold() int
+}

@@ -18,47 +18,22 @@ package core
 import (
 	"fmt"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
-	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 )
 
-// isLocalOrEmptyIP checks if the given IP address is localhost or an empty string.
-//
-// It returns true if the IP address is localhost (either IPv4 or IPv6) or an empty string,
-// and false otherwise.
-//
-// Parameters:
-//   - ip: The IP address to check.
-//
-// Returns:
-//   - bool: True if the IP address is localhost or empty, false otherwise.
+// isLocalOrEmptyIP checks whether the provided IP is empty, an IPv4 localhost, or an IPv6 localhost.
 func isLocalOrEmptyIP(ip string) bool {
 	return ip == definitions.Localhost4 || ip == definitions.Localhost6 || ip == ""
 }
 
-// logAddMessage logs a message with the specified parameters using the global logger. It is intended to be a handleAuthentication logging function.
-//
-// Parameters:
-//   - auth: Pointer to AuthState
-//   - message: The message to log.
-//   - feature: The feature name.
-//
-// Example usage:
-//
-//	logAddMessage("This is a log message", "12345", "feature", "192.168.0.1")
+// logAddMessage appends a feature and message to the AdditionalLogs slice of the provided AuthState if it is not nil.
 func logAddMessage(auth *AuthState, message, feature string) {
 	if auth == nil {
 		return
@@ -68,16 +43,7 @@ func logAddMessage(auth *AuthState, message, feature string) {
 	auth.AdditionalLogs = append(auth.AdditionalLogs, message)
 }
 
-// logAddLocalhost adds the given feature to the whitelist of additional logs
-// in the AuthState struct. It appends the feature name and "localhost" to the
-// AdditionalLogs slice.
-//
-// Parameters:
-//   - a: A pointer to an AuthState instance.
-//   - feature: The name of the feature to be added to the whitelist.
-//
-// Returns:
-//   - None.
+// logAddLocalhost appends feature-specific logs and the "localhost" indicator to the auth state if the auth pointer is valid.
 func logAddLocalhost(auth *AuthState, feature string) {
 	if auth == nil {
 		return
@@ -117,76 +83,24 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 		defer stopTimer()
 	}
 
-	accountName := a.GetAccount()
-
-	// Get a CommonRequest from the pool
-	commonRequest := lualib.GetCommonRequest()
-	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = false // unavailable
-	commonRequest.UserFound = func() bool { return accountName != "" }()
-	commonRequest.Authenticated = false // unavailable
-	commonRequest.NoAuth = a.NoAuth
-	commonRequest.BruteForceCounter = 0 // unavailable
-	commonRequest.Service = a.Service
-	commonRequest.Session = a.GUID
-	commonRequest.ClientIP = a.ClientIP
-	commonRequest.ClientPort = a.XClientPort
-	commonRequest.ClientNet = "" // unavailable
-	commonRequest.ClientHost = a.ClientHost
-	commonRequest.ClientID = a.XClientID
-	commonRequest.UserAgent = a.UserAgent
-	commonRequest.LocalIP = a.XLocalIP
-	commonRequest.LocalPort = a.XPort
-	commonRequest.Username = a.Username
-	commonRequest.Account = accountName
-	commonRequest.AccountField = a.GetAccountField()
-	commonRequest.UniqueUserID = "" // unavailable
-	commonRequest.DisplayName = ""  // unavailable
-	commonRequest.Password = a.Password
-	commonRequest.Protocol = a.Protocol.String()
-	commonRequest.OIDCCID = a.OIDCCID
-	commonRequest.BruteForceName = "" // unavailable
-	commonRequest.FeatureName = ""    // unavailable
-	commonRequest.StatusMessage = &a.StatusMessage
-	commonRequest.XSSL = a.XSSL
-	commonRequest.XSSLSessionID = a.XSSLSessionID
-	commonRequest.XSSLClientVerify = a.XSSLClientVerify
-	commonRequest.XSSLClientDN = a.XSSLClientDN
-	commonRequest.XSSLClientCN = a.XSSLClientCN
-	commonRequest.XSSLIssuer = a.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = a.XSSLProtocol
-	commonRequest.XSSLCipher = a.XSSLCipher
-	commonRequest.SSLSerial = a.SSLSerial
-	commonRequest.SSLFingerprint = a.SSLFingerprint
-
-	featureRequest := feature.Request{
-		Context:       a.Context,
-		CommonRequest: commonRequest,
-	}
-
-	triggered, abortFeatures, err = featureRequest.CallFeatureLua(ctx)
-
-	if featureRequest.Logs != nil {
-		for index := range *featureRequest.Logs {
-			a.AdditionalLogs = append(a.AdditionalLogs, (*featureRequest.Logs)[index])
+	if engine := GetFeatureEngine(); engine != nil {
+		trig, abort, logs, newStatus, evalErr := engine.Evaluate(ctx, a.View())
+		if evalErr != nil {
+			return false, false, evalErr
 		}
+
+		if len(logs) > 0 {
+			a.AdditionalLogs = append(a.AdditionalLogs, logs...)
+		}
+
+		if newStatus != nil && *newStatus != a.StatusMessage {
+			a.StatusMessage = *newStatus
+		}
+
+		return trig, abort, nil
 	}
 
-	if statusMessage := featureRequest.StatusMessage; *statusMessage != a.StatusMessage {
-		a.StatusMessage = *statusMessage
-	}
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
-
-	return
+	return false, false, nil
 }
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
@@ -268,146 +182,10 @@ func (a *AuthState) FeatureRelayDomains() (triggered bool) {
 	return
 }
 
-// processRBL processes the given RBL (Real-time Blackhole BlockedIPAddresses) by checking if the IP address is listed.
-// It uses the isListed method to check if the IP address is listed in the RBL.
-// If an error occurs while checking the RBL, handleRBLError is called to handle the error.
-// If the IP address is listed in the RBL, it logs the matched RBL and returns the weight associated with the RBL.
-// If the IP address is not listed in the RBL, it returns 0 as the weight.
-// The method runs concurrently using goroutines and waits for all goroutines to finish using a wait group.
-//
-// Parameters:
-//
-//	ctx - is a Gin context
-//	rbl - is the RBL configuration
-//	rblChan - is the channel to send the RBL weight
-//	waitGroup - is used to synchronize the goroutines
-//
-// dnsResolverErr - is an atomic boolean to indicate if a DNS resolver error occurred
-func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
-	isListed, rblName, rblErr := a.isListed(ctx, rbl)
-	if rblErr != nil {
-		handleRBLError(a.GUID, rblErr, rbl, dnsResolverErr)
-		handleRBLOutcome(rblChan, 0)
-
-		return
-	}
-
-	if isListed {
-		stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
-		logMatchedRBL(a, rblName, rbl.Weight)
-		handleRBLOutcome(rblChan, rbl.Weight)
-
-		return
-	}
-
-	handleRBLOutcome(rblChan, 0)
-}
-
-// handleRBLOutcome handles the outcome of the RBL processing by sending the weight to the rblChan channel.
-// It decreases the wait group counter by calling the Done() method on the wait group.
-//
-// Parameters:
-//
-//	waitGroup - is used to synchronize the goroutines by decreasing the counter
-//	rblChan - is the channel to send the RBL weight
-//	weight - is the weight associated with the RBL
-//
-// Usage example:
-//
-//	handleRBLOutcome(waitGroup, rblChan, rbl.Weight)
-func handleRBLOutcome(rblChan chan int, weight int) {
-	rblChan <- weight
-}
-
-// handleRBLError handles errors that occur during RBL processing.
-// If the error is a network DNS error with "no such host" message, it logs the error in debug mode.
-// Otherwise, if AllowFailure is false, it sets dnsResolverErr to true.
-// Finally, it logs the error at the error level.
-func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
-	if strings.Contains(err.Error(), "no such host") {
-		util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
-	} else {
-		if !rbl.IsAllowFailure() {
-			dnsResolverErr.Store(true)
-		}
-
-		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "RBL check failed",
-			definitions.LogKeyError, err,
-		)
-	}
-}
-
-// logMatchedRBL logs the matched RBL information.
-//
-// Parameters:
-//
-//	 auth - pointer to AuthState
-//		rblName - the name of the RBL that was matched
-//		weight - the weight associated with the RBL
-func logMatchedRBL(auth *AuthState, rblName string, weight int) {
-	if auth == nil {
-		return
-	}
-
-	auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
-	auth.AdditionalLogs = append(auth.AdditionalLogs, weight)
-}
-
-// checkRBLs checks the remote client IP address against a list of realtime blocklists.
-func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
-	var (
-		dnsResolverErr atomic.Bool
-	)
-
-	rbls := config.GetFile().GetRBLs()
-	if rbls == nil {
-		return
-	}
-
-	g := &sync.WaitGroup{}
-
-	dnsResolverErr.Store(false)
-	rblLists := rbls.GetLists()
-	numberOfRBLs := len(rblLists)
-	rblChan := make(chan int, numberOfRBLs)
-
-	for _, rbl := range rblLists {
-		r := rbl
-		g.Go(func() {
-			a.processRBL(ctx, &r, rblChan, &dnsResolverErr)
-		})
-	}
-
-	g.Wait()
-
-	if dnsResolverErr.Load() {
-		err = errors.ErrDNSResolver
-
-		return
-	}
-
-	for rblScore := range rblChan {
-		totalRBLScore += rblScore
-		numberOfRBLs--
-
-		if numberOfRBLs == 0 {
-			break
-		}
-	}
-
-	return
-}
-
 // FeatureRBLs is a method that checks if the client IP address is whitelisted, and then performs an RBL check
 // on the client's IP address. If the RBL score exceeds the configured threshold, the 'triggered' flag is set to true.
 // It returns the 'triggered' flag and any error that occurred during the check.
 func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
-	var (
-		totalRBLScore int
-	)
-
 	rbls := config.GetFile().GetRBLs()
 	if rbls == nil {
 		return
@@ -426,23 +204,23 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	}
 
 	stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.FeatureRBL)
-
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	totalRBLScore, err = a.checkRBLs(ctx)
-	if err != nil {
-		return
+	if svc := GetRBLService(); svc != nil {
+		score, e := svc.Score(ctx, a.View())
+		if e != nil {
+			return false, e
+		}
+
+		if score >= svc.Threshold() {
+			updateLuaContext(a.Context, definitions.FeatureRBL)
+			return true, nil
+		}
 	}
 
-	if totalRBLScore >= rbls.GetThreshold() {
-		updateLuaContext(a.Context, definitions.FeatureRBL)
-
-		triggered = true
-	}
-
-	return
+	return false, nil
 }
 
 // initializeAccountName initializes the account name if it is not already set by calling refreshUserAccount.
@@ -588,71 +366,17 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	}
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAction, luaActionName)
-
 	if stopTimer != nil {
 		defer stopTimer()
 	}
-
-	finished := make(chan action.Done)
 
 	if a.GetAccount() == "" {
 		a.initializeAccountName()
 	}
 
-	// Get a CommonRequest from the pool
-	commonRequest := lualib.GetCommonRequest()
-
-	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.UserFound = func() bool { return a.GetAccount() != "" }()
-	commonRequest.NoAuth = a.NoAuth
-	commonRequest.Service = a.Service
-	commonRequest.Session = a.GUID
-	commonRequest.ClientIP = a.ClientIP
-	commonRequest.ClientPort = a.XClientPort
-	commonRequest.ClientHost = a.ClientHost
-	commonRequest.ClientID = a.XClientID
-	commonRequest.LocalIP = a.XLocalIP
-	commonRequest.LocalPort = a.XPort
-	commonRequest.UserAgent = a.UserAgent
-	commonRequest.Username = a.Username
-	commonRequest.Account = a.GetAccount()
-	commonRequest.AccountField = a.GetAccountField()
-	commonRequest.Password = a.Password
-	commonRequest.Protocol = a.Protocol.Get()
-	commonRequest.OIDCCID = a.OIDCCID
-	commonRequest.FeatureName = a.FeatureName
-	commonRequest.StatusMessage = &a.StatusMessage
-	commonRequest.XSSL = a.XSSL
-	commonRequest.XSSLSessionID = a.XSSLSessionID
-	commonRequest.XSSLClientVerify = a.XSSLClientVerify
-	commonRequest.XSSLClientDN = a.XSSLClientDN
-	commonRequest.XSSLClientCN = a.XSSLClientCN
-	commonRequest.XSSLIssuer = a.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = a.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = a.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = a.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = a.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = a.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = a.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = a.XSSLProtocol
-	commonRequest.XSSLCipher = a.XSSLCipher
-	commonRequest.SSLSerial = a.SSLSerial
-	commonRequest.SSLFingerprint = a.SSLFingerprint
-
-	action.RequestChan <- &action.Action{
-		LuaAction:     luaAction,
-		Context:       a.Context,
-		FinishedChan:  finished,
-		HTTPRequest:   a.HTTPClientRequest,
-		HTTPContext:   a.HTTPClientContext,
-		CommonRequest: commonRequest,
+	if disp := GetActionDispatcher(); disp != nil {
+		disp.Dispatch(a.View(), a.FeatureName, luaAction)
 	}
-
-	<-finished
-
-	// Return the CommonRequest to the pool
-	lualib.PutCommonRequest(commonRequest)
 }
 
 // HandleFeatures processes multiple security features associated with authentication requests and returns the result.

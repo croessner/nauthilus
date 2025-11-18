@@ -20,16 +20,32 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/errors"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// RBLIsListed is a small wrapper exposing the internal isListed logic to subpackages
+// without duplicating implementation details. It accepts a StateView to avoid import cycles.
+func RBLIsListed(ctx *gin.Context, view *StateView, rbl *config.RBL) (bool, string, error) {
+	if view == nil || view.auth == nil {
+		return false, "", nil
+	}
+
+	return view.auth.isListed(ctx, rbl)
+}
 
 // isListed triggers a result of true, if an IP address was found on a RBL list. It also returns a human readable name.
 func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus bool, rblName string, err error) {
@@ -122,4 +138,102 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	}
 
 	return false, "", nil
+}
+
+// processRBL processes a single RBL check for a given AuthState and updates associated metrics or outcomes.
+func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
+	isListed, rblName, rblErr := a.isListed(ctx, rbl)
+	if rblErr != nil {
+		handleRBLError(a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLOutcome(rblChan, 0)
+
+		return
+	}
+
+	if isListed {
+		stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
+		logMatchedRBL(a, rblName, rbl.Weight)
+		handleRBLOutcome(rblChan, rbl.Weight)
+
+		return
+	}
+
+	handleRBLOutcome(rblChan, 0)
+}
+
+// handleRBLOutcome sends the provided weight value to the specified rblChan channel.
+func handleRBLOutcome(rblChan chan int, weight int) {
+	rblChan <- weight
+}
+
+// handleRBLError handles errors encountered during RBL checks, logs them, and updates failure status if needed.
+func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
+	if strings.Contains(err.Error(), "no such host") {
+		util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+	} else {
+		if !rbl.IsAllowFailure() {
+			dnsResolverErr.Store(true)
+		}
+
+		level.Error(log.Logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "RBL check failed",
+			definitions.LogKeyError, err,
+		)
+	}
+}
+
+// logMatchedRBL appends the RBL name and weight to the AdditionalLogs of the provided AuthState, if it's not nil.
+func logMatchedRBL(auth *AuthState, rblName string, weight int) {
+	if auth == nil {
+		return
+	}
+
+	auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
+	auth.AdditionalLogs = append(auth.AdditionalLogs, weight)
+}
+
+// checkRBLs checks the remote client IP address against a list of realtime blocklists.
+func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
+	var (
+		dnsResolverErr atomic.Bool
+	)
+
+	rbls := config.GetFile().GetRBLs()
+	if rbls == nil {
+		return
+	}
+
+	g := &sync.WaitGroup{}
+
+	dnsResolverErr.Store(false)
+	rblLists := rbls.GetLists()
+	numberOfRBLs := len(rblLists)
+	rblChan := make(chan int, numberOfRBLs)
+
+	for _, rbl := range rblLists {
+		r := rbl
+		g.Go(func() {
+			a.processRBL(ctx, &r, rblChan, &dnsResolverErr)
+		})
+	}
+
+	g.Wait()
+
+	if dnsResolverErr.Load() {
+		err = errors.ErrDNSResolver
+
+		return
+	}
+
+	for rblScore := range rblChan {
+		totalRBLScore += rblScore
+		numberOfRBLs--
+
+		if numberOfRBLs == 0 {
+			break
+		}
+	}
+
+	return
 }
