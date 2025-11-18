@@ -593,6 +593,8 @@ func fetchAndFormatMetrics(ctx context.Context, httpClient *http.Client, metrics
 	sb.WriteString(fmt.Sprintf("%.1fms] ", avgWaitMs))
 	sb.WriteString("[dropped(Δ)=")
 	sb.WriteString(fmt.Sprintf("%.0f] ", droppedDeltaTotal))
+	sb.WriteString("[vmRepl(Δ)=")
+	sb.WriteString(fmt.Sprintf("%.0f] ", replacedDeltaTotal))
 	sb.WriteString("[vmInUse: ")
 
 	if len(topsVM) == 0 {
@@ -608,9 +610,7 @@ func fetchAndFormatMetrics(ctx context.Context, httpClient *http.Client, metrics
 	}
 
 	// Include total in-use across all pools
-	sb.WriteString(fmt.Sprintf(" | total=%.0f] ", vmInUseTotal))
-	sb.WriteString("[vmRepl(Δ)=")
-	sb.WriteString(fmt.Sprintf("%.0f]", replacedDeltaTotal))
+	sb.WriteString(fmt.Sprintf(" | total=%.0f]", vmInUseTotal))
 
 	// If scanner hit an error, still return whatever we aggregated so far.
 	if err := scanner.Err(); err != nil {
@@ -1796,7 +1796,7 @@ func main() {
 	// Metrics poller: always on. Auth for /metrics follows the existing headers (e.g., Basic/JWT) –
 	// no extra flags required. This lets us display server-side Lua/VM pool metrics live during the test.
 	metricsURL := deriveMetricsURL(*endpoint)
-	startMetricsPoller(ctx, client, metricsURL, baseHeader, time.Second)
+	startMetricsPoller(ctx, client, metricsURL, baseHeader, 5*time.Second)
 
 	// Global stop flag (used for legacy checks in some loops)
 	var stopFlag int32
@@ -1989,12 +1989,12 @@ func main() {
 					}
 
 					right := fmt.Sprintf(
-						"[rps: %7.1f] [trps: %7d]%s [conc: %4d] [eta: %s] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						"[eta: %s] [rps: %7.1f] [trps: %7d]%s [conc: %4d] [ok: %4s] [err: %s] [abort: %s] [skip: %s] [avg: %3s] [p50: %3s] [p90: %3s]",
+						etaStr,
 						rps,
 						uint64(trps),
 						trkStr,
 						concVal,
-						etaStr,
 						humanCount(s.Matched),
 						humanCount(s.HttpErrs),
 						humanCount(s.Aborted),
