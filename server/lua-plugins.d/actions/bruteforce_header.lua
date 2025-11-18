@@ -32,11 +32,6 @@ local HEADER_NAME = os.getenv("BRUTEFORCE_HEADER_NAME") or "X-Nauthilus-Brutefor
 local HEADER_BUCKET = "X-Nauthilus-Bruteforce-Bucket"
 
 function nauthilus_call_action(request)
-    -- Safety: default to an empty table if request is nil
-    if request == nil then
-        request = {}
-    end
-
     -- Detect if brute-force logic has been applied
     local is_bruteforce = false
 
