@@ -22,6 +22,7 @@ import (
 	"context"
 	stdhttp "net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -49,6 +50,8 @@ type Pool struct {
 	mu     sync.Mutex
 	// httpClient is used by luapool.NewLuaState to preload glua_http once per VM.
 	httpClient *stdhttp.Client
+	// inUse tracks the number of VMs currently checked out from the pool.
+	inUse int64
 }
 
 func newPool(key PoolKey, opts PoolOptions) *Pool {
@@ -70,7 +73,7 @@ func newPool(key PoolKey, opts PoolOptions) *Pool {
 		p.states <- luapool.NewLuaState(p.httpClient)
 	}
 
-	// initialize gauge to 0 in use
+	// Initialize gauge to 0 in-use
 	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(key)).Set(0)
 
 	return p
@@ -82,10 +85,10 @@ func (p *Pool) Acquire(ctx context.Context) (*lua.LState, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case st := <-p.states:
-		// update in-use gauge
-		inUse := float64(p.opts.MaxVMs - len(p.states))
-
-		stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(inUse)
+		// Increment in-use counter and update gauge. Using an explicit counter avoids
+		// race-y observations based on len(chan) under heavy concurrency.
+		n := atomic.AddInt64(&p.inUse, 1)
+		stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
 
 		return st, nil
 	}
@@ -108,9 +111,15 @@ func (p *Pool) Release(L *lua.LState) {
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "lua_vm_pool_overflow_close", "key", string(p.key))
 	}
 
-	inUse := float64(p.opts.MaxVMs - len(p.states))
+	// Decrement in-use counter and update gauge
+	n := atomic.AddInt64(&p.inUse, -1)
+	if n < 0 {
+		// Should not happen; self-heal to zero
+		atomic.StoreInt64(&p.inUse, 0)
+		n = 0
+	}
 
-	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(inUse)
+	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
 }
 
 // Replace discards a broken VM and replaces it with a fresh one.
@@ -126,9 +135,14 @@ func (p *Pool) Replace(L *lua.LState) {
 		// Should not happen; drop
 	}
 
-	inUse := float64(p.opts.MaxVMs - len(p.states))
+	// A replaced VM ends the in-use phase just like Release
+	n := atomic.AddInt64(&p.inUse, -1)
+	if n < 0 {
+		atomic.StoreInt64(&p.inUse, 0)
+		n = 0
+	}
 
-	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(inUse)
+	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
 }
 
 // Manager provides global access to per-key pools.
