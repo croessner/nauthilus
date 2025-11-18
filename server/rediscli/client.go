@@ -111,6 +111,15 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		PoolSize:         redisCfg.GetPoolSize(),
 		MinIdleConns:     redisCfg.GetIdlePoolSize(),
 		TLSConfig:        RedisTLSOptions(redisCfg.GetTLS()),
+
+		ContextTimeoutEnabled: true,
+		PoolTimeout:           redisCfg.GetPoolTimeout(),
+		DialTimeout:           redisCfg.GetDialTimeout(),
+		ReadTimeout:           redisCfg.GetReadTimeout(),
+		WriteTimeout:          redisCfg.GetWriteTimeout(),
+		PoolFIFO:              redisCfg.GetPoolFIFO(),
+		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
+		MaxRetries:            redisCfg.GetMaxRetries(),
 	})
 
 	return
@@ -129,6 +138,15 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+
+		ContextTimeoutEnabled: true,
+		PoolTimeout:           redisCfg.GetPoolTimeout(),
+		DialTimeout:           redisCfg.GetDialTimeout(),
+		ReadTimeout:           redisCfg.GetReadTimeout(),
+		WriteTimeout:          redisCfg.GetWriteTimeout(),
+		PoolFIFO:              redisCfg.GetPoolFIFO(),
+		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
+		MaxRetries:            redisCfg.GetMaxRetries(),
 	})
 }
 
@@ -148,6 +166,15 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+
+		ContextTimeoutEnabled: true,
+		PoolTimeout:           redisCfg.GetPoolTimeout(),
+		DialTimeout:           redisCfg.GetDialTimeout(),
+		ReadTimeout:           redisCfg.GetReadTimeout(),
+		WriteTimeout:          redisCfg.GetWriteTimeout(),
+		PoolFIFO:              redisCfg.GetPoolFIFO(),
+		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
+		MaxRetries:            redisCfg.GetMaxRetries(),
 
 		// Topology awareness options
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
@@ -186,6 +213,15 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		PoolSize:     redisCfg.GetPoolSize(),
 		MinIdleConns: redisCfg.GetIdlePoolSize(),
 		TLSConfig:    RedisTLSOptions(redisCfg.GetTLS()),
+
+		ContextTimeoutEnabled: true,
+		PoolTimeout:           redisCfg.GetPoolTimeout(),
+		DialTimeout:           redisCfg.GetDialTimeout(),
+		ReadTimeout:           redisCfg.GetReadTimeout(),
+		WriteTimeout:          redisCfg.GetWriteTimeout(),
+		PoolFIFO:              redisCfg.GetPoolFIFO(),
+		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
+		MaxRetries:            redisCfg.GetMaxRetries(),
 
 		// Topology awareness options - force ReadOnly to true
 		RouteByLatency: clusterCfg.GetRouteByLatency(),

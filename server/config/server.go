@@ -860,6 +860,21 @@ type Redis struct {
 	Replica        Replica       `mapstructure:"replica" validate:"omitempty"`
 	Sentinels      Sentinels     `mapstructure:"sentinels" validate:"omitempty"`
 	Cluster        Cluster       `mapstructure:"cluster" validate:"omitempty"`
+
+	// Connection/timeout tuning; defaults mirror previous hard-coded values
+	// Sensible bounds via validator tags to avoid extreme misconfiguration
+	// PoolTimeout: time to wait for a free connection from the pool (1ms–30s)
+	PoolTimeout *time.Duration `mapstructure:"pool_timeout" validate:"omitempty,min=1ms,max=30s"`
+	// DialTimeout: TCP connect timeout (1ms–60s)
+	DialTimeout *time.Duration `mapstructure:"dial_timeout" validate:"omitempty,min=1ms,max=60s"`
+	// ReadTimeout: per-read operation timeout (1ms–60s)
+	ReadTimeout *time.Duration `mapstructure:"read_timeout" validate:"omitempty,min=1ms,max=60s"`
+	// WriteTimeout: per-write operation timeout (1ms–60s)
+	WriteTimeout *time.Duration `mapstructure:"write_timeout" validate:"omitempty,min=1ms,max=60s"`
+	PoolFIFO     *bool          `mapstructure:"pool_fifo" validate:"omitempty"`
+	// ConnMaxIdleTime: maximum time a connection may remain idle before being closed (0s–24h)
+	ConnMaxIdleTime *time.Duration `mapstructure:"conn_max_idle_time" validate:"omitempty,min=0s,max=24h"`
+	MaxRetries      *int           `mapstructure:"max_retries" validate:"omitempty,gte=0"`
 }
 
 // GetDatabaseNumber retrieves the configured database number for the Redis instance.
@@ -944,6 +959,69 @@ func (r *Redis) GetNegCacheTTL() time.Duration {
 	}
 
 	return r.NegCacheTTL
+}
+
+// GetPoolTimeout returns the configured pool timeout or the default of 80ms.
+func (r *Redis) GetPoolTimeout() time.Duration {
+	if r == nil || r.PoolTimeout == nil {
+		return 80 * time.Millisecond
+	}
+
+	return *r.PoolTimeout
+}
+
+// GetDialTimeout returns the configured dial timeout or the default of 200ms.
+func (r *Redis) GetDialTimeout() time.Duration {
+	if r == nil || r.DialTimeout == nil {
+		return 200 * time.Millisecond
+	}
+
+	return *r.DialTimeout
+}
+
+// GetReadTimeout returns the configured read timeout or the default of 100ms.
+func (r *Redis) GetReadTimeout() time.Duration {
+	if r == nil || r.ReadTimeout == nil {
+		return 100 * time.Millisecond
+	}
+
+	return *r.ReadTimeout
+}
+
+// GetWriteTimeout returns the configured write timeout or the default of 100ms.
+func (r *Redis) GetWriteTimeout() time.Duration {
+	if r == nil || r.WriteTimeout == nil {
+		return 100 * time.Millisecond
+	}
+
+	return *r.WriteTimeout
+}
+
+// GetPoolFIFO returns whether FIFO should be used in the connection pool. Defaults to true.
+func (r *Redis) GetPoolFIFO() bool {
+	if r == nil || r.PoolFIFO == nil {
+		return true
+	}
+
+	return *r.PoolFIFO
+}
+
+// GetConnMaxIdleTime returns the maximum idle time for a connection or the default of 90s.
+func (r *Redis) GetConnMaxIdleTime() time.Duration {
+	if r == nil || r.ConnMaxIdleTime == nil {
+		return 90 * time.Second
+	}
+
+	return *r.ConnMaxIdleTime
+}
+
+// GetMaxRetries returns the maximum retry count or the default of 1.
+func (r *Redis) GetMaxRetries() int {
+	if r == nil || r.MaxRetries == nil {
+		return 1
+	}
+
+	return *r.MaxRetries
 }
 
 // GetStandaloneMaster returns a pointer to the Master configuration of the Redis instance.
