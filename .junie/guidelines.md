@@ -70,11 +70,71 @@ We verified this flow by temporarily adding a trivial test under server/util and
 - Language for comments and docs
   - Write all code comments and public Go doc comments in English only. This includes inline // ..., block /* ... */, and doc comments above declarations, as well as Lua -- comments and YAML/TOML # comments. User‑facing messages may be localized; internal comments must remain English.
   - Prefer English for commit messages and PR descriptions as well, to keep the history consistent.
+- Linting and whitespace (mandatory)
+  - Keep code readable — no “pressed” code. The following whitespace/cuddling rules are mandatory and should be enforced locally (see golangci-lint snippet below):
+    - Do not cuddle declarations with control flow: put a blank line between a block of variable/constant declarations and a following if/for/switch/select.
+    - After a closing if/for/switch block, insert a blank line before unrelated code. Exception: else/else if belongs directly after the closing brace of the same if.
+    - Keep at most one blank line between logical blocks; avoid multiple consecutive empty lines.
+    - Example (good):
+      
+      // local declarations
+      v := compute()
+      n := len(v)
+      
+      if n == 0 {
+          return nil
+      }
+      
+      doSomething(v)
+      
+    - Example (bad – declarations cuddled to if, missing blank line after if):
+      
+      v := compute()
+      n := len(v)
+      if n == 0 {
+          return nil
+      }
+      doSomething(v)
+      
+  - Run a linter locally before pushing. Recommended baseline: golangci-lint with wsl (whitespace), funlen (function size), gocyclo (complexity), dupl/goconst (duplication), revive/govet (general quality), errcheck.
+  - Optional golangci-lint configuration (add a .golangci.yml at repo root):
+    
+    linters:
+      enable:
+        - wsl         # whitespace/cuddling rules
+        - funlen      # maximum function length
+        - gocyclo     # cyclomatic complexity
+        - dupl        # duplicate code blocks
+        - goconst     # duplicate literals/consts
+        - revive      # general lint rules (successor of golint)
+        - govet       # vet checks
+        - errcheck    # error handling
+    linters-settings:
+      wsl:
+        allow-assign-and-anything: false
+        allow-cuddle-declarations: false   # force a blank line before control flow after declarations
+        allow-cuddle-return-with-block: false
+        allow-trailing-comment: true
+      funlen:
+        lines: 60         # soft cap; refactor above this
+        statements: 40
+      gocyclo:
+        min-complexity: 12
+      dupl:
+        threshold: 75
+      goconst:
+        min-occurrences: 2
+        min-lines: 2
 - Code style and layout
   - Standard Go formatting via gofmt/goimports; keep imports grouped and minimal. The repo favors standard testing and explicit error checks.
   - Logging: the server uses a custom log package with levels (server/log and server/log/level), plus slog/jsoniter integrations. Prefer level.Debug/Info/Warn/Error wrappers to keep logs structured. For bridging standard log to slog, server uses a custom writer (see server.go).
   - JSON: json-iterator (ConfigFastest) is used for performance-sensitive JSON encoding/decoding.
   - Vendoring: updates to dependencies must be vendored (go mod tidy && go mod vendor) so Makefile builds are reproducible.
+- Design preferences (OO, small and DRY)
+  - Prefer an object-oriented style with small types and methods. Define narrow interfaces at package boundaries (e.g., storage, Redis, HTTP clients) and inject them where needed for testability.
+  - Keep functions short and focused. As a guideline, aim for fewer than ~60 lines and low cyclomatic complexity; split into helpers or methods when a function grows, or when multiple responsibilities appear.
+  - DRY: avoid duplication of logic. Extract common code into private helpers or shared packages; promote constants for repeated literals and use table-driven tests to consolidate similar test flows.
+  - Favor early returns to keep indentation shallow; prefer explicit error handling over deeply nested branches.
 - Profiles and observability
   - Block profiling is toggled via the configuration (insights). When enabled, runtime.SetBlockProfileRate(1) is applied. Ensure pprof endpoints or collection are configured if you need to consume profiles.
   - Prometheus metrics are used; instance info metric is labeled with instance name and version (stats.GetMetrics().GetInstanceInfo()).
