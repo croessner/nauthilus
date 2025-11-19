@@ -28,6 +28,8 @@ import (
 	"reflect"
 	"runtime"
 	"time"
+
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
 // Logger is compatible with the minimal subset of the go-kit Logger interface
@@ -72,6 +74,12 @@ func Debug(l *slog.Logger) Logger {
 // Info returns a Logger that logs at slog.LevelInfo.
 func Info(l *slog.Logger) Logger {
 	return &slogLevelLogger{l: l, lvl: slog.LevelInfo}
+}
+
+// Notice returns a Logger that logs at a custom NOTICE level placed between info and warn (INFO+2).
+// The numeric value aligns with slog.LevelInfo + definitions.SlogNoticeLevelOffset.
+func Notice(l *slog.Logger) Logger {
+	return &slogLevelLogger{l: l, lvl: slog.LevelInfo + definitions.SlogNoticeLevelOffset}
 }
 
 // Warn returns a Logger that logs at slog.LevelWarn.
@@ -233,6 +241,8 @@ func levelToDefaultMessage(lvl slog.Level) string {
 		return "debug"
 	case slog.LevelInfo:
 		return "info"
+	case slog.LevelInfo + definitions.SlogNoticeLevelOffset:
+		return "notice"
 	case slog.LevelWarn:
 		return "warn"
 	case slog.LevelError:

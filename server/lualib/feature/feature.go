@@ -147,7 +147,8 @@ func (r *Request) CallFeatureLua(ctx *gin.Context) (triggered bool, abortFeature
 		if r.Logs == nil {
 			r.Logs = new(lualib.CustomLogKeyValue)
 		}
-		r.Logs.Set(definitions.LogKeyFeatureLatency, fmt.Sprintf("%v", latency))
+
+		r.Logs.Set(definitions.LogKeyFeatureLatency, util.FormatDurationMs(latency))
 	}()
 
 	if LuaFeatures == nil || len(LuaFeatures.LuaScripts) == 0 {

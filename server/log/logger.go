@@ -52,6 +52,9 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 			minLevel = slog.LevelError
 		case definitions.LogLevelWarn:
 			minLevel = slog.LevelWarn
+		case definitions.LogLevelNotice:
+			// Custom NOTICE sits between info and warn
+			minLevel = slog.LevelInfo + definitions.SlogNoticeLevelOffset
 		case definitions.LogLevelInfo:
 			minLevel = slog.LevelInfo
 		case definitions.LogLevelDebug:
@@ -60,7 +63,20 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 			minLevel = slog.LevelInfo
 		}
 
-		handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource}
+		// ReplaceAttr maps custom level values to well-known names (e.g., NOTICE instead of INFO+2).
+		replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.LevelKey {
+				if lv, ok := a.Value.Any().(slog.Level); ok {
+					if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
+						a.Value = slog.StringValue("NOTICE")
+					}
+				}
+			}
+
+			return a
+		}
+
+		handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource, ReplaceAttr: replaceAttr}
 
 		// Choose output target: for LogLevelNone, discard everything using io.Discard
 		var out io.Writer = os.Stdout

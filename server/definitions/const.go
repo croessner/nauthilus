@@ -347,7 +347,6 @@ const (
 	MetaUserAccount = "__nauthilus_meta_user_account__"
 )
 
-// Log level.
 const (
 	// LogLevelNone is the iota constant representing no logs
 	LogLevelNone = iota
@@ -357,6 +356,9 @@ const (
 
 	// LogLevelWarn is the iota constant for warning logs
 	LogLevelWarn
+
+	// LogLevelNotice is the iota constant representing notice-level logs, typically used for normal but significant events.
+	LogLevelNotice
 
 	// LogLevelInfo is the iota constant for info logs
 	LogLevelInfo
@@ -436,6 +438,32 @@ const (
 	// LogFormatJSON represents the sting "json".
 	LogFormatJSON = "json"
 )
+
+// Log level names and numeric offsets used across the application.
+// Keep strings centralized to avoid typos and ensure consistent comparisons.
+const (
+	// LogLevelNameNone represents disabled logging.
+	LogLevelNameNone = "none"
+
+	// LogLevelNameError represents the error logging level.
+	LogLevelNameError = "error"
+
+	// LogLevelNameWarn represents the warning logging level.
+	LogLevelNameWarn = "warn"
+
+	// LogLevelNameNotice represents the notice logging level.
+	LogLevelNameNotice = "notice"
+
+	// LogLevelNameInfo represents the info logging level.
+	LogLevelNameInfo = "info"
+
+	// LogLevelNameDebug represents the debug logging level.
+	LogLevelNameDebug = "debug"
+)
+
+// SlogNoticeLevelOffset defines the custom slog level value used for NOTICE relative to slog.LevelInfo.
+// slog uses LevelInfo (0), LevelWarn (4), LevelError (8). We place NOTICE between info and warn at +2.
+const SlogNoticeLevelOffset = 2
 
 // Pre-definied protocols with a fixed semantic.
 const (

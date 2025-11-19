@@ -404,7 +404,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			r.Logs = new(lualib.CustomLogKeyValue)
 		}
 
-		r.Logs.Set(definitions.LogKeyFilterLatency, fmt.Sprintf("%v", latency))
+		r.Logs.Set(definitions.LogKeyFilterLatency, util.FormatDurationMs(latency))
 	}()
 
 	if LuaFilters == nil || len(LuaFilters.LuaScripts) == 0 {

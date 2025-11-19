@@ -201,7 +201,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	defer func() {
 		latency := time.Since(startTime)
 		logs := new(lualib.CustomLogKeyValue)
-		logs.Set(definitions.LogKeyLatency, fmt.Sprintf("%v", latency))
+		logs.Set(definitions.LogKeyLatency, util.FormatDurationMs(latency))
 		level.Info(log.Logger).Log(
 			append([]any{
 				definitions.LogKeyGUID, aw.luaActionRequest.Session,
@@ -407,7 +407,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	defer func() {
 		scriptLatency := time.Since(scriptStartTime)
 		scriptName := getTaskName(aw.actionScripts[index])
-		logs.Set(fmt.Sprintf("latency_%s", scriptName), fmt.Sprintf("%v", scriptLatency))
+		logs.Set(fmt.Sprintf("latency_%s", scriptName), util.FormatDurationMs(scriptLatency))
 	}()
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAction, getTaskName(aw.actionScripts[index]))

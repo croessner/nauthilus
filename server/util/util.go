@@ -60,6 +60,15 @@ func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
 	level.Info(log.Logger).Log("redis", fmt.Sprintf(format, values...))
 }
 
+// FormatDurationMs formats a time.Duration as milliseconds with a fixed precision.
+// The output is always in milliseconds using three fractional digits, e.g., "12.345ms".
+// This ensures consistent latency units across logs regardless of the duration magnitude.
+func FormatDurationMs(d time.Duration) string {
+	ms := float64(d) / float64(time.Millisecond)
+
+	return fmt.Sprintf("%.3fms", ms)
+}
+
 // CryptPassword is a container for an encrypted password typically used in SQL fields.
 type CryptPassword struct {
 	definitions.Algorithm

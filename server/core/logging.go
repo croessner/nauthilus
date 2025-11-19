@@ -16,7 +16,6 @@
 package core
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -41,7 +40,7 @@ func handleLogging(ctx *gin.Context, auth *AuthState) {
 	}(), ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request was successful")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Notice(log.Logger).Log(keyvals...)
 }
 
 // logProcessingRequest writes a prominent log line similar to the final one, but for the beginning of request processing.
@@ -56,7 +55,7 @@ func logProcessingRequest(ctx *gin.Context, auth *AuthState) {
 	// Add a human-readable message field as requested
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Notice(log.Logger).Log(keyvals...)
 }
 
 // LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.
@@ -105,7 +104,7 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
 		definitions.LogKeyAuthorized, a.Authorized,
 		definitions.LogKeyAuthenticatedBool, a.Authenticated,
-		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Since(a.StartTime)),
+		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.StartTime)),
 	}
 
 	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {

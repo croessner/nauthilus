@@ -978,7 +978,7 @@ func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	keyvals := a.LogLineTemplate("fail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request has failed")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Notice(log.Logger).Log(keyvals...)
 
 	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
 	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()

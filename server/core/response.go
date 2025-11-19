@@ -132,7 +132,7 @@ func (DefaultResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason 
 	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Warn(log.Logger).Log(keyvals...)
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.
