@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"
@@ -88,7 +89,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 			definitions.LogKeyMethod, ctx.Request.Method,
 			definitions.LogKeyProtocol, ctx.Request.Proto,
 			definitions.LogKeyHTTPStatus, ctx.Writer.Status(),
-			definitions.LogKeyLatency, latency,
+			definitions.LogKeyLatency, util.FormatDurationMs(latency),
 			definitions.LogKeyUserAgent, func() string {
 				if ctx.Request.UserAgent() != "" {
 					return ctx.Request.UserAgent()

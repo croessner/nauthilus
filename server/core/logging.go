@@ -16,7 +16,6 @@
 package core
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -105,7 +104,7 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
 		definitions.LogKeyAuthorized, a.Authorized,
 		definitions.LogKeyAuthenticatedBool, a.Authenticated,
-		definitions.LogKeyLatency, fmt.Sprintf("%v", time.Since(a.StartTime)),
+		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.StartTime)),
 	}
 
 	if len(a.AdditionalLogs) > 0 && len(a.AdditionalLogs)%2 == 0 {
