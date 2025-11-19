@@ -41,7 +41,7 @@ func handleLogging(ctx *gin.Context, auth *AuthState) {
 	}(), ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request was successful")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Notice(log.Logger).Log(keyvals...)
 }
 
 // logProcessingRequest writes a prominent log line similar to the final one, but for the beginning of request processing.
@@ -56,7 +56,7 @@ func logProcessingRequest(ctx *gin.Context, auth *AuthState) {
 	// Add a human-readable message field as requested
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Processing incoming request")
 
-	level.Info(log.Logger).Log(keyvals...)
+	level.Notice(log.Logger).Log(keyvals...)
 }
 
 // LogLineTemplate constructs a key-value slice for logging authentication state and related metadata.

@@ -55,15 +55,17 @@ func (v *Verbosity) Set(value string) error {
 	value = strings.TrimSpace(value)
 
 	switch value {
-	case "none", "":
+	case definitions.LogLevelNameNone, "":
 		v.verboseLevel = definitions.LogLevelNone
-	case "error":
+	case definitions.LogLevelNameError:
 		v.verboseLevel = definitions.LogLevelError
-	case "warn":
+	case definitions.LogLevelNameWarn:
 		v.verboseLevel = definitions.LogLevelWarn
-	case "info":
+	case definitions.LogLevelNameNotice:
+		v.verboseLevel = definitions.LogLevelNotice
+	case definitions.LogLevelNameInfo:
 		v.verboseLevel = definitions.LogLevelInfo
-	case "debug":
+	case definitions.LogLevelNameDebug:
 		v.verboseLevel = definitions.LogLevelDebug
 	default:
 		return fmt.Errorf(errors.ErrWrongVerboseLevel.Error(), value)
