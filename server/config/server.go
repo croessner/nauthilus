@@ -1000,7 +1000,7 @@ func (r *Redis) GetWriteTimeout() time.Duration {
 // GetPoolFIFO returns whether FIFO should be used in the connection pool. Defaults to true.
 func (r *Redis) GetPoolFIFO() bool {
 	if r == nil || r.PoolFIFO == nil {
-		return false
+		return true
 	}
 
 	return *r.PoolFIFO
