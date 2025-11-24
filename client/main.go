@@ -36,6 +36,98 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ANSI color helpers and styles for optional colored output in the client.
+// These helpers are no-ops when colors are disabled.
+const (
+	ansiReset = "\x1b[0m"
+	ansiDim   = "\x1b[2m"
+	ansiBold  = "\x1b[1m"
+
+	// Use bright ANSI colors to ensure good contrast on dark terminals
+	// 90–97 are the bright variants of 30–37
+	fgRed     = "\x1b[91m"
+	fgGreen   = "\x1b[92m"
+	fgYellow  = "\x1b[93m"
+	fgBlue    = "\x1b[94m"
+	fgMagenta = "\x1b[95m"
+	fgCyan    = "\x1b[96m"
+	fgWhite   = "\x1b[97m"
+)
+
+type colorStyle struct{ open, close string }
+
+func style(enabled bool, open string) colorStyle {
+	if !enabled {
+		return colorStyle{"", ""}
+	}
+
+	return colorStyle{open: open, close: ansiReset}
+}
+
+func (cs colorStyle) S(s string) string { return cs.open + s + cs.close }
+
+var (
+	stOK    colorStyle
+	stWarn  colorStyle
+	stCrit  colorStyle
+	stInfo  colorStyle
+	stPlate colorStyle
+	stDim   colorStyle
+	stBold  colorStyle
+	// stAxis colors axis glyphs in histograms and similar charts.
+	stAxis colorStyle
+)
+
+func initColorStyles(enabled bool) {
+	stOK = style(enabled, fgGreen)
+	stWarn = style(enabled, fgYellow)
+	stCrit = style(enabled, fgRed)
+	stInfo = style(enabled, fgCyan)
+	stPlate = style(enabled, fgMagenta)
+	stDim = style(enabled, ansiDim)
+	stBold = style(enabled, ansiBold)
+	stAxis = style(enabled, fgBlue)
+}
+
+// Global indicator for plateau status to influence UI coloring.
+var plateauActive int32 // 0 = no, 1 = yes
+
+// supportsUnicode attempts to detect if the terminal likely supports UTF-8.
+// If not, the client will fall back to pure ASCII characters for the progress bar
+// to avoid mojibake (e.g., "���").
+func supportsUnicode() bool {
+	// Prefer LC_ALL, then LC_CTYPE, then LANG
+	if v := strings.ToLower(os.Getenv("LC_ALL")); v != "" {
+		return strings.Contains(v, "utf-8") || strings.Contains(v, "utf8")
+	}
+
+	if v := strings.ToLower(os.Getenv("LC_CTYPE")); v != "" {
+		return strings.Contains(v, "utf-8") || strings.Contains(v, "utf8")
+	}
+
+	if v := strings.ToLower(os.Getenv("LANG")); v != "" {
+		return strings.Contains(v, "utf-8") || strings.Contains(v, "utf8")
+	}
+
+	// Default to true for modern systems, but you may set LANG=C or NO_UTF8 to force ASCII.
+	if os.Getenv("NO_UTF8") != "" {
+		return false
+	}
+
+	return true
+}
+
+// calcErrorRatePct computes error rate percentage from a Stats snapshot.
+func calcErrorRatePct(s Stats) float64 {
+	if s.Total <= 0 {
+		return 0
+	}
+
+	err := s.HttpErrs + s.Mismatched + s.Aborted
+
+	return (float64(err) / float64(s.Total)) * 100.0
+}
+
 var json = jsoniter.ConfigFastest
 
 // Latency histogram in milliseconds: 0..60000 ms; >60s counted into overflow and clamped to last bucket
@@ -970,15 +1062,17 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 		acc += w
 	}
 
-	// Print Y-axis header (right-aligned to labelWidth)
-	fmt.Printf("%*s %c\n", labelWidth, "count", '↑')
+	// Print Y-axis header (right-aligned to labelWidth); color the axis arrow in blue
+	fmt.Printf("%*s ", labelWidth, "count")
+	fmt.Println(stAxis.S("↑"))
 
 	// Bars from top to bottom with Y-axis labels
 	for row := height; row >= 1; row-- {
 		// threshold for this row
 		thr := int64(math.Round(float64(maxC) * float64(row) / float64(height)))
 		fmt.Printf("%*s ", labelWidth, humanCount(thr))
-		fmt.Print("│")
+		// Color the Y-axis separator
+		fmt.Print(stAxis.S("│"))
 
 		for i := 0; i < cols; i++ {
 			// height for this column in rows
@@ -999,8 +1093,9 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 		fmt.Println()
 	}
 
-	// X axis with ticks over drawing width
-	fmt.Printf("%*s └", labelWidth, "")
+	// X axis with ticks over drawing width; color the axis glyphs in blue
+	fmt.Printf("%*s ", labelWidth, "")
+	fmt.Print(stAxis.S("└"))
 
 	// precompute tick positions at 0%,25%,50%,75%,100% in drawing space
 	tickPos := []int{0, int(math.Round(float64(drawCols-1) * 0.25)), int(math.Round(float64(drawCols-1) * 0.5)), int(math.Round(float64(drawCols-1) * 0.75)), drawCols - 1}
@@ -1016,9 +1111,9 @@ func printLatencyHistogramASCII(maxCols, height int, showMarkers bool) {
 		}
 
 		if isTick {
-			fmt.Print("┬")
+			fmt.Print(stAxis.S("┬"))
 		} else {
-			fmt.Print("─")
+			fmt.Print(stAxis.S("─"))
 		}
 	}
 
@@ -1638,6 +1733,14 @@ func main() {
 		compareParallel = flag.Bool("compare-parallel", false, "Compare responses within a parallel group (strict byte equality)")
 		useIdemKey      = flag.Bool("idempotency-key", false, "Add Idempotency-Key header computed from request body (SHA-256)")
 		progressBar     = flag.Bool("progress-bar", false, "Render a single-line progress bar (TTY only)")
+		colorMode       = flag.String("color", "auto", "Color output: auto|always|never")
+		// Optional thresholds for coloring
+		warnP95   = flag.Int("warn-p95", 300, "Warn threshold for p95 latency in ms")
+		critP95   = flag.Int("crit-p95", 600, "Critical threshold for p95 latency in ms")
+		warnErr   = flag.Float64("warn-error-rate", 0.5, "Warn threshold for error rate in %")
+		critErr   = flag.Float64("crit-error-rate", 1.0, "Critical threshold for error rate in %")
+		warnTrack = flag.Float64("warn-track", 0.85, "Warn threshold for tracking ratio rps/target_rps")
+		critTrack = flag.Float64("crit-track", 0.70, "Critical threshold for tracking ratio rps/target_rps")
 
 		// Graceful shutdown
 		graceSeconds = flag.Int("grace-seconds", 10, "Graceful shutdown timeout before forcing cancel")
@@ -1668,6 +1771,24 @@ func main() {
 	)
 
 	flag.Parse()
+
+	// Decide color usage
+	useColor := func() bool {
+		switch strings.ToLower(strings.TrimSpace(*colorMode)) {
+		case "always":
+			return true
+		case "never":
+			return false
+		default:
+			return isTTY()
+		}
+	}()
+
+	if os.Getenv("NO_COLOR") != "" {
+		useColor = false
+	}
+
+	initColorStyles(useColor)
 
 	// Sanitize concurrency
 	if *concurrency < 1 {
@@ -2011,10 +2132,29 @@ func main() {
 						mstr = "[metrics: n/a]"
 					}
 
+					// Compute coloring severity and plateau state
+					errPct := calcErrorRatePct(s)
+					trkRatio := 0.0
+					if trps > 0 {
+						trkRatio = clamp01(rps / trps)
+					}
+
+					severity := "ok"
+					if s.P90 >= time.Duration(*critP95)*time.Millisecond || errPct >= *critErr || (trps > 0 && trkRatio <= *critTrack) {
+						severity = "crit"
+					} else if s.P90 >= time.Duration(*warnP95)*time.Millisecond || errPct >= *warnErr || (trps > 0 && trkRatio <= *warnTrack) {
+						severity = "warn"
+					}
+
+					isPlateau := atomic.LoadInt32(&plateauActive) == 1
+
 					// Header area under "Running test...":
 					//  - Row 2: textual status (right string)
 					//  - Row 3: metrics line
 					hdr1 := " " + right
+					if useColor {
+						hdr1 = " " + stInfo.S(right)
+					}
 
 					if displayWidth(hdr1) < termW {
 						hdr1 = padToCellsRight(hdr1, termW)
@@ -2023,6 +2163,9 @@ func main() {
 					}
 
 					hdr2 := " " + mstr
+					if useColor {
+						hdr2 = " " + stDim.S(mstr)
+					}
 					if displayWidth(hdr2) < termW {
 						hdr2 = padToCellsRight(hdr2, termW)
 					} else {
@@ -2063,8 +2206,72 @@ func main() {
 						fill = barWidth
 					}
 
-					bar := strings.Repeat("█", fill) + strings.Repeat("·", barWidth-fill)
-					bottom := " " + left + " " + bar
+					// Left label coloring
+					leftColored := left
+					if useColor {
+						switch {
+						case isPlateau:
+							leftColored = stPlate.S(left)
+						case severity == "crit":
+							leftColored = stCrit.S(left)
+						case severity == "warn":
+							leftColored = stWarn.S(left)
+						default:
+							leftColored = stOK.S(left)
+						}
+					}
+
+					// Bar content and coloring (avoid slicing UTF-8 by bytes)
+					// Choose characters based on terminal Unicode support
+					useUni := supportsUnicode()
+					fillChar := "#"
+					emptyChar := "-"
+					if useUni {
+						fillChar = "█"
+						emptyChar = "·"
+					}
+					if isPlateau {
+						if useUni {
+							fillChar = "▒"
+						} else {
+							fillChar = "="
+						}
+					}
+
+					var bar string
+					filled := ""
+					rest := ""
+					if fill > 0 {
+						filled = strings.Repeat(fillChar, fill)
+					}
+					if barWidth-fill > 0 {
+						rest = strings.Repeat(emptyChar, barWidth-fill)
+					}
+
+					if useColor {
+						var c colorStyle
+						switch {
+						case isPlateau:
+							c = stPlate
+						case severity == "crit":
+							c = stCrit
+						case severity == "warn":
+							c = stWarn
+						default:
+							c = stOK
+						}
+
+						if fill > 0 {
+							bar = c.S(filled) + stDim.S(rest)
+						} else {
+							// no filled part; dim the entire bar
+							bar = stDim.S(rest)
+						}
+					} else {
+						bar = filled + rest
+					}
+
+					bottom := " " + leftColored + " " + bar
 
 					if displayWidth(bottom) < termW {
 						bottom = padToCellsRight(bottom, termW)
@@ -2112,14 +2319,50 @@ func main() {
 						trackRatio = clamp01(rps / s.TargetRPS)
 					}
 
-					fmt.Printf("\n[progress %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
+					// Severity and optional coloring for non-TTY reporter
+					errPct := 0.0
+					if t > 0 {
+						errPct = (float64(s.HttpErrs+s.Mismatched+s.Aborted) / float64(t)) * 100
+					}
+
+					sev := "ok"
+					if s.P90 >= time.Duration(*critP95)*time.Millisecond || errPct >= *critErr || (s.TargetRPS > 0 && trackRatio <= *critTrack) {
+						sev = "crit"
+					} else if s.P90 >= time.Duration(*warnP95)*time.Millisecond || errPct >= *warnErr || (s.TargetRPS > 0 && trackRatio <= *warnTrack) {
+						sev = "warn"
+					}
+
+					label := "progress"
+					if atomic.LoadInt32(&plateauActive) == 1 {
+						if useColor {
+							label = stPlate.S(label)
+						} else {
+							label = "plateau " + label
+						}
+					} else if useColor {
+						switch sev {
+						case "crit":
+							label = stCrit.S(label)
+						case "warn":
+							label = stWarn.S(label)
+						default:
+							label = stOK.S(label)
+						}
+					}
+
+					fmt.Printf("\n[%s %s] total=%d matched=%d mismatched=%d http_errors=%d aborted=%d skipped=%d tolerated_bf=%d rps=%.2f target_rps=%.f track_ratio=%.2f concurrency=%d avg_latency=%s min_latency=%s max_latency=%s p50=%s p90=%s p99=%s\n",
+						label,
 						elapsed.Truncate(time.Second), t, s.Matched, s.Mismatched, s.HttpErrs, s.Aborted, s.Skipped, s.ToleratedBF, rps, s.TargetRPS, trackRatio, s.Concurrency, s.Avg, s.Min, s.Max, s.P50, s.P90, s.P99,
 					)
 
 					// Always print the metrics one-liner as well so metrics are visible in non-TTY mode too.
 					if ml := metricsLine.Load(); ml != nil {
 						if mstr, ok := ml.(string); ok && mstr != "" {
-							fmt.Println(mstr)
+							if useColor {
+								fmt.Println(stDim.S(mstr))
+							} else {
+								fmt.Println(mstr)
+							}
 						}
 					}
 
@@ -2751,6 +2994,7 @@ func main() {
 
 								// Reset plateau state on violation
 								plateauStreak = 0
+								atomic.StoreInt32(&plateauActive, 0)
 								// Do not change freezeWins here; backoff overrides freeze
 							} else {
 								// Plateau detection (optional), only when we have enough samples
@@ -2781,12 +3025,14 @@ func main() {
 											currR = math.Max(1, currR*(*autoBackoff))
 											backoffConcurrency()
 											// No freeze after explicit backoff
+											atomic.StoreInt32(&plateauActive, 1)
 										default: // freeze
 											if *autoPlateauCooldown > 0 {
 												freezeWins = *autoPlateauCooldown
 											} else {
 												freezeWins = 1
 											}
+											atomic.StoreInt32(&plateauActive, 1)
 										}
 									}
 
@@ -2815,6 +3061,7 @@ func main() {
 											case "backoff":
 												currR = math.Max(1, currR*(*autoBackoff))
 												backoffConcurrency()
+												atomic.StoreInt32(&plateauActive, 1)
 											case "shift":
 												// Pause RPS increases; increase concurrency once (if allowed)
 												if *autoPlateauCooldown > 0 {
@@ -2824,12 +3071,14 @@ func main() {
 												}
 
 												incConcurrencyStep()
+												atomic.StoreInt32(&plateauActive, 1)
 											default: // freeze
 												if *autoPlateauCooldown > 0 {
 													freezeWins = *autoPlateauCooldown
 												} else {
 													freezeWins = 1
 												}
+												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
 									}
@@ -2863,6 +3112,13 @@ func main() {
 											atomic.StoreInt64(&desiredConc, int64(newC))
 										}
 									}
+								}
+
+								// Update plateauActive based on cooldowns
+								if freezeWins > 0 || freezeRPSWins > 0 {
+									atomic.StoreInt32(&plateauActive, 1)
+								} else {
+									atomic.StoreInt32(&plateauActive, 0)
 								}
 							}
 
@@ -2984,6 +3240,7 @@ func main() {
 								if violate {
 									currR = math.Max(1, currR*(*autoBackoff))
 									plateauStreak = 0
+									atomic.StoreInt32(&plateauActive, 0)
 								} else {
 									// Plateau detection (optional)
 									if *autoPlateau && *autoPlateauWindows >= 2 {
@@ -3009,12 +3266,14 @@ func main() {
 											switch strings.ToLower(strings.TrimSpace(*autoPlateauAction)) {
 											case "backoff":
 												currR = math.Max(1, currR*(*autoBackoff))
+												atomic.StoreInt32(&plateauActive, 1)
 											default: // freeze
 												if *autoPlateauCooldown > 0 {
 													freezeWins = *autoPlateauCooldown
 												} else {
 													freezeWins = 1
 												}
+												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
 										// Tracking-based plateau detection (rps<trps over N windows)
@@ -3053,6 +3312,7 @@ func main() {
 														freezeWins = 1
 													}
 												}
+												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
 									}
@@ -3068,6 +3328,12 @@ func main() {
 												currR = maxR
 											}
 										}
+									}
+									// Update plateau flag based on cooldowns
+									if freezeWins > 0 || freezeRPSWins > 0 {
+										atomic.StoreInt32(&plateauActive, 1)
+									} else {
+										atomic.StoreInt32(&plateauActive, 0)
 									}
 								}
 
