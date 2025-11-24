@@ -25,6 +25,7 @@ package luapool
 
 import (
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
@@ -195,9 +196,26 @@ func ensureDynamicLoaderStub(L *lua.LState) {
 
 	stub := L.NewFunction(func(L *lua.LState) int {
 		name := L.OptString(1, "")
+
+		// Capture caller location and a short stack trace for easier debugging.
+		caller := L.Where(1)
+
+		frames := make([]string, 0, 4)
+		for i := 1; i <= 4; i++ {
+			if w := L.Where(i); w != "" {
+				frames = append(frames, w)
+			} else {
+				break
+			}
+		}
+
+		stack := strings.Join(frames, " <- ")
+
 		level.Warn(log.Logger).Log(
 			definitions.LogKeyMsg, "Lua dynamic_loader called",
 			"module", name,
+			"caller", caller,
+			"stack", stack,
 		)
 
 		// no return values (no-op)
