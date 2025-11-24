@@ -119,6 +119,21 @@ func (sc *MemoryShardedCache) startJanitor() {
 	}
 }
 
+// Stop stops the background janitor if it is running.
+// It is safe to call multiple times.
+func (sc *MemoryShardedCache) Stop() {
+	if sc == nil || sc.janitor == nil {
+		return
+	}
+
+	// Non-blocking stop signal; janitor goroutine exits on receipt
+	select {
+	case sc.janitor.stop <- true:
+	default:
+		// already signaled or drained
+	}
+}
+
 // Set adds an item to the MemoryShardedCache with the given expiration duration
 func (sc *MemoryShardedCache) Set(k string, x any, d time.Duration) {
 	var exp int64
@@ -226,6 +241,9 @@ func (c *Cache) startJanitor() {
 	c.MemoryShardedCache.startJanitor()
 }
 
+// Stop stops the background janitor on the underlying sharded cache, if any.
+func (c *Cache) Stop() { c.MemoryShardedCache.Stop() }
+
 // Set delegates to MemoryShardedCache.Set
 func (c *Cache) Set(k string, x any, d time.Duration) {
 	c.MemoryShardedCache.Set(k, x, d)
@@ -251,9 +269,10 @@ func (c *Cache) resetAndReturnToPoolIfPassDBResult(obj any) {
 	c.MemoryShardedCache.resetAndReturnToPoolIfPassDBResult(obj)
 }
 
-// LocalCache is a cache object with a default expiration duration of 5 minutes
-// and a cleanup interval of 10 minutes.
-var LocalCache = NewCache(5*time.Minute, 10*time.Minute)
+// LocalCache is a cache object with a default expiration duration of 5 minutes.
+// Cleanup interval is set to 0 to avoid a globally running janitor. Specific
+// subsystems (e.g., LDAP) should manage their own lifecycle-bound janitors.
+var LocalCache = NewCache(5*time.Minute, 0)
 
 // Len returns the total number of items currently stored across all shards.
 func (sc *MemoryShardedCache) Len() int {
