@@ -2183,7 +2183,7 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 		out := SFOutcome{
 			Result:              res,
 			AccountField:        a.AccountField,
-			Attributes:          a.Attributes,
+			Attributes:          a.GetAttributesCopy(),
 			TOTPSecretField:     a.TOTPSecretField,
 			UniqueUserIDField:   a.UniqueUserIDField,
 			DisplayNameField:    a.DisplayNameField,
@@ -2837,7 +2837,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		}
 
 		for _, attributeName := range removeAttributes {
-			delete(a.Attributes, attributeName)
+			a.DeleteAttribute(attributeName)
 		}
 
 		if luaBackendResult != nil {
@@ -2845,9 +2845,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 			if (*luaBackendResult).Attributes != nil {
 				for key, value := range (*luaBackendResult).Attributes {
 					if keyName, assertOk := key.(string); assertOk {
-						if _, okay := a.Attributes[keyName]; !okay {
-							a.Attributes[keyName] = []any{value}
-						}
+						a.SetAttributeIfAbsent(keyName, value)
 					}
 				}
 			}
