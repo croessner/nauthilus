@@ -1,0 +1,25 @@
+dn: uid={{ uuid4 }},ou=tests,ou=people,ou=it,dc=roessner-net,dc=de
+objectClass: extensibleObject
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: rnsMSDovecotAccount
+objectClass: rnsMSPostfixAccount
+objectClass: top
+cn: Test
+sn: Test
+givenName: Test
+mail: {{ localpart }}@srvint.net
+rnsMSDovecotUser: {{ localpart }}@srvint.net
+organizationalStatus: user
+rnsMSEnableDovecot: TRUE
+rnsMSEnablePostfix: TRUE
+rnsMSMailPath: sdbox:~/sdbox
+rnsMSOverQuota: FALSE
+rnsMSQuota: 2147483648
+rnsMSRecipientAddress: {{ localpart }}@srvint.net
+rnsMSRecipientAddress: {{ localpart }}@srvint.net
+rnsMSRequireTls: TRUE
+uid: {{ uuid4 }}
+uniqueIdentifier: {{ localpart }}
+userPassword: {{ password }}
