@@ -1688,7 +1688,8 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 	passDBResult.UniqueUserIDField = &uniqueUserIDField
 	passDBResult.DisplayNameField = &displayNameField
 	passDBResult.Backend = auth.GetUsedPassDBBackend()
-	passDBResult.Attributes = auth.GetAttributes()
+	// Avoid sharing internal map by value; hand over a deep copy instead
+	passDBResult.Attributes = auth.GetAttributesCopy()
 
 	authResult = auth.FilterLua(passDBResult, ctx)
 

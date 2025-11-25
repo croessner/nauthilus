@@ -468,6 +468,12 @@ type AuthState struct {
 	// attribute name as a key and the corresponding result as a value.
 	Attributes bktype.AttributeMapping
 
+	// attributesMu protects the Attributes map against concurrent writes and write-vs-iterate scenarios.
+	// Note: Go maps are not safe for concurrent writes. We currently lock around mutation sites
+	// (e.g., Lua filter), which eliminates fatal "concurrent map writes". Reads may still happen
+	// without a lock where acceptable for performance; extend locking to reads if needed.
+	attributesMu sync.RWMutex
+
 	// Protocol is set by the HTTP request header "Auth-Protocol" (Nginx protocol).
 	Protocol *config.Protocol
 
@@ -828,6 +834,117 @@ func (a *AuthState) GetAttributes() bktype.AttributeMapping {
 	return a.Attributes
 }
 
+// GetAttributesCopy returns a deep copy of the Attributes map to avoid aliasing across components.
+// The copy is made under a read lock; callers may safely mutate the returned map.
+func (a *AuthState) GetAttributesCopy() bktype.AttributeMapping {
+	a.attributesMu.RLock()
+	defer a.attributesMu.RUnlock()
+
+	if a.Attributes == nil {
+		return nil
+	}
+
+	cp := make(bktype.AttributeMapping, len(a.Attributes))
+	for k, v := range a.Attributes {
+		if v != nil {
+			vv := make([]any, len(v))
+			copy(vv, v)
+			cp[k] = vv
+		} else {
+			cp[k] = nil
+		}
+	}
+
+	return cp
+}
+
+// DeleteAttribute removes the attribute with the given name from the AuthState in a concurrency-safe manner.
+// It is safe to call from multiple goroutines.
+func (a *AuthState) DeleteAttribute(name string) {
+	if a == nil || name == "" {
+		return
+	}
+
+	a.attributesMu.Lock()
+	if a.Attributes != nil {
+		delete(a.Attributes, name)
+	}
+
+	a.attributesMu.Unlock()
+}
+
+// SetAttributeIfAbsent sets the attribute to a single-value slice if it does not exist yet.
+// This mirrors typical usage where scripts want to add an attribute only when missing.
+// It allocates the Attributes map lazily and is concurrency-safe.
+func (a *AuthState) SetAttributeIfAbsent(name string, value any) {
+	if a == nil || name == "" {
+		return
+	}
+
+	a.attributesMu.Lock()
+	if a.Attributes == nil {
+		a.Attributes = make(bktype.AttributeMapping)
+	}
+
+	if _, ok := a.Attributes[name]; !ok {
+		a.Attributes[name] = []any{value}
+	}
+
+	a.attributesMu.Unlock()
+}
+
+// ReplaceAllAttributes replaces the entire Attributes map with a deep copy of the provided map, under write lock.
+// Passing nil will set Attributes to nil.
+func (a *AuthState) ReplaceAllAttributes(m bktype.AttributeMapping) {
+	a.attributesMu.Lock()
+	defer a.attributesMu.Unlock()
+
+	if m == nil {
+		a.Attributes = nil
+
+		return
+	}
+
+	cp := make(bktype.AttributeMapping, len(m))
+	for k, v := range m {
+		if v != nil {
+			vv := make([]any, len(v))
+			copy(vv, v)
+			cp[k] = vv
+		} else {
+			cp[k] = nil
+		}
+	}
+
+	a.Attributes = cp
+}
+
+// GetAttribute returns the attribute slice and a boolean indicating presence, under a read lock.
+func (a *AuthState) GetAttribute(name string) ([]any, bool) {
+	a.attributesMu.RLock()
+	defer a.attributesMu.RUnlock()
+
+	if a.Attributes == nil {
+		return nil, false
+	}
+
+	v, ok := a.Attributes[name]
+
+	return v, ok
+}
+
+// RangeAttributes iterates over all attributes under a read lock and calls fn for each key/value.
+// If fn returns false, iteration stops early.
+func (a *AuthState) RangeAttributes(fn func(string, []any) bool) {
+	a.attributesMu.RLock()
+	defer a.attributesMu.RUnlock()
+	for k, v := range a.Attributes {
+		if !fn(k, v) {
+			return
+		}
+	}
+}
+
 // GetAdditionalLogs returns a slice of additional logs associated with the AuthState instance.
 func (a *AuthState) GetAdditionalLogs() []any {
 	return a.AdditionalLogs
@@ -936,7 +1053,7 @@ func (a *AuthState) LogLineProcessingTemplate(endpoint string) []any {
 // GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
 func (a *AuthState) GetAccount() string {
-	if account, okay := a.Attributes[a.AccountField]; okay {
+	if account, okay := a.GetAttribute(a.AccountField); okay {
 		if value, assertOk := account[definitions.LDAPSingleValue].(string); assertOk {
 			return value
 		}
@@ -955,7 +1072,7 @@ func (a *AuthState) GetAccountOk() (string, bool) {
 
 // GetTOTPSecret returns the TOTP secret for a user. If there is no secret, it returns the empty string "".
 func (a *AuthState) GetTOTPSecret() string {
-	if totpSecret, okay := a.Attributes[a.GetTOTPSecretField()]; okay {
+	if totpSecret, okay := a.GetAttribute(a.GetTOTPSecretField()); okay {
 		if value, assertOk := totpSecret[definitions.LDAPSingleValue].(string); assertOk {
 			return value
 		}
@@ -974,7 +1091,7 @@ func (a *AuthState) GetTOTPSecretOk() (string, bool) {
 
 // GetUniqueUserID returns the unique WebAuthn user identifier for a user. If there is no id, it returns the empty string "".
 func (a *AuthState) GetUniqueUserID() string {
-	if webAuthnUserID, okay := a.Attributes[a.GetUniqueUserIDField()]; okay {
+	if webAuthnUserID, okay := a.GetAttribute(a.GetUniqueUserIDField()); okay {
 		if value, assertOk := webAuthnUserID[definitions.LDAPSingleValue].(string); assertOk {
 			return value
 		}
@@ -993,7 +1110,7 @@ func (a *AuthState) GetUniqueUserIDOk() (string, bool) {
 
 // GetDisplayName returns the display name for a user. If there is no account, it returns the empty string "".
 func (a *AuthState) GetDisplayName() string {
-	if account, okay := a.Attributes[a.GetDisplayNameField()]; okay {
+	if account, okay := a.GetAttribute(a.GetDisplayNameField()); okay {
 		if value, assertOk := account[definitions.SliceWithOneElement].(string); assertOk {
 			return value
 		}
@@ -1546,7 +1663,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 	}
 
 	if passDBResult.Attributes != nil && len(passDBResult.Attributes) > 0 {
-		auth.Attributes = passDBResult.Attributes
+		auth.ReplaceAllAttributes(passDBResult.Attributes)
 	}
 
 	// Handle AdditionalFeatures if they exist in the PassDBResult
@@ -1600,7 +1717,7 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 
 		a.AccountField = accountField
 		attributes[definitions.MetaUserAccount] = []any{accountName}
-		a.Attributes = attributes
+		a.ReplaceAllAttributes(attributes)
 	}
 
 	return
@@ -2222,7 +2339,8 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 	result.UniqueUserIDField = a.UniqueUserIDField
 	result.DisplayNameField = a.DisplayNameField
 	result.Backend = a.UsedPassDBBackend
-	result.Attributes = a.Attributes
+	// Hand out a copy to avoid aliasing with the live AuthState map
+	result.Attributes = a.GetAttributesCopy()
 
 	return result
 }
@@ -2854,7 +2972,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 	}
 
 	if a.AccountField != "" {
-		if values, assertOk = a.Attributes[a.AccountField]; !assertOk {
+		if values, assertOk = a.GetAttribute(a.AccountField); !assertOk {
 			return "", errors.ErrNoAccount
 		}
 
