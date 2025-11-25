@@ -89,7 +89,8 @@ type SFOutcome struct {
 
 func applyOutcome(dst *AuthState, o SFOutcome) {
 	dst.AccountField = o.AccountField
-	dst.Attributes = o.Attributes
+	// Avoid aliasing maps across AuthState instances
+	dst.ReplaceAllAttributes(o.Attributes)
 	dst.TOTPSecretField = o.TOTPSecretField
 	dst.UniqueUserIDField = o.UniqueUserIDField
 	dst.DisplayNameField = o.DisplayNameField
