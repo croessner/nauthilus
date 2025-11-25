@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/csv"
@@ -1591,6 +1592,25 @@ func makePayload(fields map[string]string) map[string]any {
 	return p
 }
 
+// secureCSVPassword returns a 32-character, CSV-safe password string.
+// It uses 24 bytes of cryptographically secure randomness and encodes
+// them with URL-safe base64 without padding, resulting in exactly 32 characters.
+// Characters are limited to [A-Za-z0-9-_], which are safe in CSV without quoting.
+func secureCSVPassword() string {
+	const n = 24 // 24 random bytes -> 32 base64url characters (no padding)
+	buf := make([]byte, n)
+	_, err := crand.Read(buf)
+
+	if err != nil {
+		// Fallback: in the extremely unlikely case crypto rand fails,
+		// return a deterministic but clearly marked placeholder of the correct length
+		// to keep generator functional.
+		return "x" + base64.RawURLEncoding.EncodeToString([]byte("nauthilus-fallback-rand"))[:31]
+	}
+
+	return base64.RawURLEncoding.EncodeToString(buf)
+}
+
 // generateCSV creates a CSV file at the specified path with a given number of rows based on predefined test data patterns.
 // It returns an error if file creation or writing fails.
 func generateCSV(path string, total int, cidrProb float64, cidrPrefix int) error {
@@ -1643,7 +1663,7 @@ func generateCSV(path string, total int, cidrProb float64, cidrPrefix int) error
 
 	for i := 1; i <= total; i++ {
 		username := fmt.Sprintf("user%05d", i)
-		password := fmt.Sprintf("pw%05d", i)
+		password := secureCSVPassword()
 
 		// Decide IP generation mode
 		var ipU32 uint32
