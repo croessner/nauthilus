@@ -275,8 +275,13 @@ func getNegCache(pool string, conf *config.LDAPConf) localcache.SimpleCache {
 
 		c = lru
 	} else {
-		// Use shared sharded TTL cache; per-call TTL will be respected.
-		c = localcache.LocalCache.MemoryShardedCache
+		// Use LDAP-scoped shared sharded TTL cache; per-call TTL will be respected.
+		if st := getSharedTTL(); st != nil {
+			c = st
+		} else {
+			// Fallback to global cache (no janitor by default); safe but without periodic cleanup
+			c = localcache.LocalCache.MemoryShardedCache
+		}
 	}
 
 	negCaches.Store(pool, c)
@@ -979,8 +984,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 				// Negative result: cache it
 				negTTL := conf.GetNegativeCacheTTL()
 
-				cache.Set(negKey, true, negTTL)
-				stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+				// If TTL <= 0, treat as disabled: do not store in negative cache.
+				if negTTL > 0 {
+					cache.Set(negKey, true, negTTL)
+					stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
+				}
 			}
 		} else {
 			doLog = true

@@ -40,7 +40,6 @@ To effectively detect and mitigate distributed brute force attacks, we propose a
 
 ```lua
 -- Example Lua script for global pattern monitoring
-dynamic_loader("nauthilus_redis")
 local redis = require("nauthilus_redis")
 
 -- Track global authentication metrics in sliding windows

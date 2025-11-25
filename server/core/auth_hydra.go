@@ -37,7 +37,7 @@ import (
 // It is used in the Hydra/OIDC claim processing flow.
 func (a *AuthState) processClaim(claimName string, claimValue string, claims map[string]any) {
 	if claimValue != "" {
-		if value, found := a.Attributes[claimValue]; found {
+		if value, found := a.GetAttribute(claimValue); found {
 			if arg, assertOk := value[definitions.SliceWithOneElement].(string); assertOk {
 				claims[claimName] = arg
 
@@ -56,7 +56,7 @@ func (a *AuthState) processClaim(claimName string, claimValue string, claims map
 func applyClaim(claimKey string, attributeKey string, auth *AuthState, claims map[string]any, claimHandlers []ClaimHandler) {
 	var success bool
 
-	if attributeValue, found := auth.Attributes[attributeKey]; found {
+	if attributeValue, found := auth.GetAttribute(attributeKey); found {
 		for _, handler := range claimHandlers {
 			if t := reflect.TypeOf(attributeValue).Kind(); t == handler.Type {
 				success = handler.ApplyFunc(attributeValue, claims, claimKey)
@@ -175,7 +175,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
 	if config.GetFile().GetOauth2().Clients[index].Claims.Groups != "" {
-		if value, found := a.Attributes[config.GetFile().GetOauth2().Clients[index].Claims.Groups]; found {
+		if value, found := a.GetAttribute(config.GetFile().GetOauth2().Clients[index].Claims.Groups); found {
 			var stringSlice []string
 
 			util.DebugModule(
@@ -224,7 +224,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 			}
 
 			if claimValue, assertOk := claim.(string); assertOk {
-				if value, found := a.Attributes[claimValue]; found {
+				if value, found := a.GetAttribute(claimValue); found {
 					util.DebugModule(
 						definitions.DbgAuth,
 						definitions.LogKeyGUID, a.GUID,
@@ -319,7 +319,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		if client.Subject != "" {
 			var value []any
 
-			if value, okay = a.Attributes[client.Subject]; !okay {
+			if value, okay = a.GetAttribute(client.Subject); !okay {
 				level.Info(log.Logger).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, fmt.Sprintf(
@@ -329,9 +329,11 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 					"attributes", func() string {
 						var attributes []string
 
-						for key := range a.Attributes {
+						a.RangeAttributes(func(key string, _ []any) bool {
 							attributes = append(attributes, key)
-						}
+
+							return true
+						})
 
 						return strings.Join(attributes, ", ")
 					}(),

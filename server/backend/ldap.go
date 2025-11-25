@@ -32,6 +32,10 @@ import (
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
 func LDAPMainWorker(ctx context.Context, poolName string) {
+	// Ensure the LDAP-scoped shared TTL cache is initialized and its janitor is
+	// bound to this worker's lifecycle. This avoids running the TTL janitor when
+	// no LDAP backend is active.
+	ldappool.StartSharedTTLCache(ctx)
 
 	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
 

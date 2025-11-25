@@ -108,3 +108,4 @@ bin/*
 /node_modules/
 temp/*
 client/logins.local.csv
+client/result.ldif

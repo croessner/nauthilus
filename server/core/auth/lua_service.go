@@ -168,7 +168,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		}
 
 		for _, attributeName := range removeAttributes {
-			delete(auth.Attributes, attributeName)
+			auth.DeleteAttribute(attributeName)
 		}
 
 		if luaBackendResult != nil {
@@ -176,9 +176,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 			if (*luaBackendResult).Attributes != nil {
 				for key, value := range (*luaBackendResult).Attributes {
 					if keyName, assertOk := key.(string); assertOk {
-						if _, okay := auth.Attributes[keyName]; !okay {
-							auth.Attributes[keyName] = []any{value}
-						}
+						auth.SetAttributeIfAbsent(keyName, value)
 					}
 				}
 			}
