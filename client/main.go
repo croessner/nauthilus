@@ -3078,6 +3078,7 @@ func main() {
 												} else {
 													freezeWins = 1
 												}
+
 												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
@@ -3273,6 +3274,7 @@ func main() {
 												} else {
 													freezeWins = 1
 												}
+
 												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
@@ -3312,6 +3314,7 @@ func main() {
 														freezeWins = 1
 													}
 												}
+
 												atomic.StoreInt32(&plateauActive, 1)
 											}
 										}
@@ -3329,6 +3332,7 @@ func main() {
 											}
 										}
 									}
+
 									// Update plateau flag based on cooldowns
 									if freezeWins > 0 || freezeRPSWins > 0 {
 										atomic.StoreInt32(&plateauActive, 1)
