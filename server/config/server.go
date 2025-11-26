@@ -875,6 +875,18 @@ type Redis struct {
 	// ConnMaxIdleTime: maximum time a connection may remain idle before being closed (0s–24h)
 	ConnMaxIdleTime *time.Duration `mapstructure:"conn_max_idle_time" validate:"omitempty,min=0s,max=24h"`
 	MaxRetries      *int           `mapstructure:"max_retries" validate:"omitempty,gte=0"`
+
+	// AccountLocalCache allows configuring an in-process cache for username->account mapping
+	AccountLocalCache AccountLocalCache `mapstructure:"account_local_cache" validate:"omitempty"`
+}
+
+// AccountLocalCache config for the in-process username->account cache
+type AccountLocalCache struct {
+	Enabled  bool          `mapstructure:"enabled"`
+	TTL      time.Duration `mapstructure:"ttl" validate:"omitempty,min=0s,max=24h"`
+	Shards   int           `mapstructure:"shards" validate:"omitempty,gte=1,lte=1024"`
+	CleanUp  time.Duration `mapstructure:"cleanup_interval" validate:"omitempty,min=0s,max=1h"`
+	MaxItems int           `mapstructure:"max_items" validate:"omitempty,gte=0"`
 }
 
 // GetDatabaseNumber retrieves the configured database number for the Redis instance.
@@ -1022,6 +1034,55 @@ func (r *Redis) GetMaxRetries() int {
 	}
 
 	return *r.MaxRetries
+}
+
+// GetAccountLocalCache returns pointer to account local cache config
+func (r *Redis) GetAccountLocalCache() *AccountLocalCache {
+	if r == nil {
+		return &AccountLocalCache{}
+	}
+
+	return &r.AccountLocalCache
+}
+
+func (a *AccountLocalCache) IsEnabled() bool {
+	if a == nil {
+		return false
+	}
+
+	return a.Enabled
+}
+
+func (a *AccountLocalCache) GetTTL() time.Duration {
+	if a == nil || a.TTL <= 0 {
+		return 60 * time.Second
+	}
+
+	return a.TTL
+}
+
+func (a *AccountLocalCache) GetShards() int {
+	if a == nil || a.Shards <= 0 {
+		return 32
+	}
+
+	return a.Shards
+}
+
+func (a *AccountLocalCache) GetCleanupInterval() time.Duration {
+	if a == nil || a.CleanUp <= 0 {
+		return 10 * time.Minute
+	}
+
+	return a.CleanUp
+}
+
+func (a *AccountLocalCache) GetMaxItems() int {
+	if a == nil || a.MaxItems < 0 {
+		return 0
+	}
+
+	return a.MaxItems
 }
 
 // GetStandaloneMaster returns a pointer to the Master configuration of the Redis instance.

@@ -223,13 +223,6 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	return false, nil
 }
 
-// initializeAccountName initializes the account name if it is not already set by calling refreshUserAccount.
-func (a *AuthState) initializeAccountName() {
-	if a.refreshUserAccount() == "" {
-		a.refreshUserAccount()
-	}
-}
-
 // logFeatureWhitelisting appends the given feature name and a soft whitelisted message to the additional logs of AuthState.
 func (a *AuthState) logFeatureWhitelisting(featureName string) {
 	a.AdditionalLogs = append(a.AdditionalLogs, featureName, definitions.SoftWhitelisted)
@@ -371,7 +364,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 	}
 
 	if a.GetAccount() == "" {
-		a.initializeAccountName()
+		a.refreshUserAccount()
 	}
 
 	if disp := GetActionDispatcher(); disp != nil {
@@ -384,7 +377,7 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 // The method returns an appropriate authentication result based on the features that are triggered or aborted.
 func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
-		a.initializeAccountName()
+		a.refreshUserAccount()
 	}
 
 	if triggered, abortFeatures, err := a.checkLuaFeature(ctx); err != nil {

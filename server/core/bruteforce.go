@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
+	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -63,14 +65,29 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		isRepeating := alreadyTriggered || (bfCount >= rule.GetFailedRequests())
 
-		// Fallback: if counter path didn't mark repeating, but this network is known in pre-result map, treat as repeating
-		if !isRepeating && clientNet != "" {
-			key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		// If still unknown, combine account lookup + repeating flag via Redis Lua preflight
+		if (!isRepeating || accountName == "") && clientNet != "" {
+			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Username, clientNet); err == nil {
+				if accountName == "" && acc != "" {
+					accountName = acc
+					// Mirror into AuthState
+					if a.AccountField == "" {
+						a.AccountField = definitions.MetaUserAccount
+					}
 
-			stats.GetMetrics().GetRedisReadCounter().Inc()
+					if a.Attributes == nil || len(a.Attributes) == 0 {
+						attrs := make(bktype.AttributeMapping)
+						attrs[definitions.MetaUserAccount] = []any{acc}
+						a.ReplaceAllAttributes(attrs)
+					}
 
-			if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, clientNet).Result(); err == nil && exists {
-				isRepeating = true
+					// Store into in-process account cache
+					accountcache.GetManager().Set(a.Username, acc)
+				}
+
+				if !isRepeating && rep {
+					isRepeating = true
+				}
 			}
 		}
 
@@ -392,7 +409,18 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	// IMPORTANT: set request attributes before saving counters
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
+	// Try to avoid Redis if possible: use state or in-process cache first
+	accountName := a.GetAccount()
+	if accountName == "" {
+		if acc, ok := accountcache.GetManager().Get(a.Username); ok {
+			accountName = acc
+		}
+	}
+
+	if accountName == "" {
+		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
+	}
+
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
