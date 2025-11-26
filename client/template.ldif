@@ -17,7 +17,7 @@ rnsMSEnablePostfix: TRUE
 rnsMSMailPath: sdbox:~/sdbox
 rnsMSOverQuota: FALSE
 rnsMSQuota: 2147483648
-rnsMSRecipientAddress: {{ localpart }}@srvint.net
+rnsMSDeliverToAddress: {{ localpart }}@srvint.net
 rnsMSRecipientAddress: {{ localpart }}@srvint.net
 rnsMSRequireTls: TRUE
 uid: {{ uuid4 }}
