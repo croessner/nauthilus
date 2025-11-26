@@ -40,6 +40,7 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 )
 
 // bruteForceBucketCounter represents a cache mechanism to handle brute force attack mitigation using brute force buckets.
@@ -147,6 +148,9 @@ type bucketManagerImpl struct {
 	// ip scoper used to normalize addresses per feature context (e.g., RWP IPv6 CIDR)
 	scoper ipscoper.IPScoper
 }
+
+// sgBurst entdoppelt parallele identische Burst-Gate-Anfragen (gleicher Burst-Key) ohne Logikänderung.
+var sgBurst singleflight.Group
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
 func (bm *bucketManagerImpl) GetLoginAttempts() uint {
@@ -558,9 +562,16 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 	key := bm.bfBurstKey()
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
-	defer cancel()
 
-	res, err := rediscli.ExecuteScript(dCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
+	// Dedupliziere identische parallele Script-Aufrufe pro Burst-Key
+	resAny, err, _ := sgBurst.Do("burst:"+key, func() (any, error) {
+		defer cancel()
+
+		return rediscli.ExecuteScript(dCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
+	})
+
+	res := resAny
+
 	if err != nil {
 		// Fail-open: better to overcount than miss, and avoid blocking auth
 		level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Burst gate script error: %v", err))
