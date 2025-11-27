@@ -53,8 +53,54 @@ type ServerSection struct {
 	HTTPClient                HTTPClient               `mapstructure:"http_client" validate:"omitempty"`
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
-	Timeouts                  Timeouts                 `mapstructure:"timeouts" validate:"omitempty"`
+	// Middlewares holds feature switches to enable/disable individual HTTP middlewares.
+	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
+	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
+	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
 }
+
+// Middlewares defines switches for enabling/disabling individual HTTP middlewares.
+// All switches default to true when omitted in configuration to preserve legacy behavior.
+type Middlewares struct {
+	Logging              *bool `mapstructure:"logging" validate:"omitempty"`
+	Limit                *bool `mapstructure:"limit" validate:"omitempty"`
+	Recovery             *bool `mapstructure:"recovery" validate:"omitempty"`
+	TrustedProxies       *bool `mapstructure:"trusted_proxies" validate:"omitempty"`
+	RequestDecompression *bool `mapstructure:"request_decompression" validate:"omitempty"`
+	ResponseCompression  *bool `mapstructure:"response_compression" validate:"omitempty"`
+	Metrics              *bool `mapstructure:"metrics" validate:"omitempty"`
+}
+
+// GetMiddlewares returns the middlewares section or a zero-value if nil.
+func (s *ServerSection) GetMiddlewares() *Middlewares {
+	if s == nil {
+		return &Middlewares{}
+	}
+
+	return &s.Middlewares
+}
+
+func boolOrDefaultTrue(v *bool) bool {
+	if v == nil {
+		return true
+	}
+
+	return *v
+}
+
+func (m *Middlewares) IsLoggingEnabled() bool        { return boolOrDefaultTrue(m.Logging) }
+func (m *Middlewares) IsLimitEnabled() bool          { return boolOrDefaultTrue(m.Limit) }
+func (m *Middlewares) IsRecoveryEnabled() bool       { return boolOrDefaultTrue(m.Recovery) }
+func (m *Middlewares) IsTrustedProxiesEnabled() bool { return boolOrDefaultTrue(m.TrustedProxies) }
+func (m *Middlewares) IsRequestDecompressionEnabled() bool {
+	return boolOrDefaultTrue(m.RequestDecompression)
+}
+
+func (m *Middlewares) IsResponseCompressionEnabled() bool {
+	return boolOrDefaultTrue(m.ResponseCompression)
+}
+
+func (m *Middlewares) IsMetricsEnabled() bool { return boolOrDefaultTrue(m.Metrics) }
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
 // Returns an empty string if the ServerSection is nil.
@@ -875,6 +921,49 @@ type Redis struct {
 	// ConnMaxIdleTime: maximum time a connection may remain idle before being closed (0s–24h)
 	ConnMaxIdleTime *time.Duration `mapstructure:"conn_max_idle_time" validate:"omitempty,min=0s,max=24h"`
 	MaxRetries      *int           `mapstructure:"max_retries" validate:"omitempty,gte=0"`
+
+	// AccountLocalCache allows configuring an in-process cache for username->account mapping
+	AccountLocalCache AccountLocalCache `mapstructure:"account_local_cache" validate:"omitempty"`
+
+	// Batching config: optional client-side command batching to reduce Redis round-trips
+	Batching RedisBatching `mapstructure:"batching" validate:"omitempty"`
+}
+
+// RedisBatching controls optional client-side command batching.
+// When enabled, individual commands issued by the application are queued briefly
+// and flushed as a single Redis pipeline based on size/time thresholds.
+// This can significantly reduce network round-trips under high concurrency.
+type RedisBatching struct {
+	// Enabled toggles the batching hook.
+	Enabled bool `mapstructure:"enabled"`
+
+	// MaxBatchSize defines how many commands are flushed at most in a single pipeline.
+	// Defaults to 16. Safe range enforced via validation in getters.
+	MaxBatchSize int `mapstructure:"max_batch_size" validate:"omitempty,gte=2,lte=1024"`
+
+	// MaxWait defines the maximum time a command may wait in the queue before we force a flush.
+	// Defaults to 2ms. Allowed range 0–200ms (0 disables the timer; only size-based flushing).
+	MaxWait time.Duration `mapstructure:"max_wait" validate:"omitempty,min=0s,max=200ms"`
+
+	// QueueCapacity bounds the internal queue. When full, commands bypass batching and execute immediately.
+	// Defaults to 8192. 0 means unbuffered (effectively disables batching under load).
+	QueueCapacity int `mapstructure:"queue_capacity" validate:"omitempty,gte=0,lte=100000"`
+
+	// SkipCommands lists command names that must not be batched (lowercase, e.g. "blpop").
+	// Useful to exclude blocking commands or PubSub.
+	SkipCommands []string `mapstructure:"skip_commands" validate:"omitempty,dive,printascii"`
+
+	// PipelineTimeout specifies the maximum time to wait for a pipeline batch to send, with valid range 0s to 10s.
+	PipelineTimeout time.Duration `mapstructure:"pipeline_timeout" validate:"omitempty,min=0s,max=10s"`
+}
+
+// AccountLocalCache config for the in-process username->account cache
+type AccountLocalCache struct {
+	Enabled  bool          `mapstructure:"enabled"`
+	TTL      time.Duration `mapstructure:"ttl" validate:"omitempty,min=0s,max=24h"`
+	Shards   int           `mapstructure:"shards" validate:"omitempty,gte=1,lte=1024"`
+	CleanUp  time.Duration `mapstructure:"cleanup_interval" validate:"omitempty,min=0s,max=1h"`
+	MaxItems int           `mapstructure:"max_items" validate:"omitempty,gte=0"`
 }
 
 // GetDatabaseNumber retrieves the configured database number for the Redis instance.
@@ -919,6 +1008,106 @@ func (r *Redis) GetPoolSize() int {
 	}
 
 	return r.PoolSize
+}
+
+// GetBatching returns a pointer to the RedisBatching config; never nil.
+func (r *Redis) GetBatching() *RedisBatching {
+	if r == nil {
+		return &RedisBatching{}
+	}
+
+	return &r.Batching
+}
+
+// IsBatchingEnabled returns true if the batching hook is enabled.
+func (b *RedisBatching) IsBatchingEnabled() bool {
+	if b == nil {
+		return false
+	}
+
+	return b.Enabled
+}
+
+// GetMaxBatchSize returns the max batch size with a safe default.
+func (b *RedisBatching) GetMaxBatchSize() int {
+	if b == nil || b.MaxBatchSize <= 0 {
+		return 16
+	}
+
+	if b.MaxBatchSize < 2 {
+		return 2
+	}
+	if b.MaxBatchSize > 1024 {
+		return 1024
+	}
+
+	return b.MaxBatchSize
+}
+
+// GetMaxWait returns the max wait duration with a safe default and cap.
+func (b *RedisBatching) GetMaxWait() time.Duration {
+	if b == nil {
+		return 2 * time.Millisecond
+	}
+
+	if b.MaxWait < 0 {
+		return 0
+	}
+
+	if b.MaxWait == 0 {
+		return 2 * time.Millisecond
+	}
+
+	if b.MaxWait > 200*time.Millisecond {
+		return 200 * time.Millisecond
+	}
+
+	return b.MaxWait
+}
+
+// GetQueueCapacity returns the internal queue capacity with a default.
+func (b *RedisBatching) GetQueueCapacity() int {
+	if b == nil || b.QueueCapacity < 0 {
+		return 8192
+	}
+
+	if b.QueueCapacity == 0 {
+		return 8192
+	}
+
+	if b.QueueCapacity > 100000 {
+		return 100000
+	}
+
+	return b.QueueCapacity
+}
+
+// GetSkipCommands returns the list of commands to skip (lowercased), may be empty.
+func (b *RedisBatching) GetSkipCommands() []string {
+	if b == nil || len(b.SkipCommands) == 0 {
+		return nil
+	}
+
+	// Normalize to lowercase to simplify matching.
+	out := make([]string, 0, len(b.SkipCommands))
+	for _, s := range b.SkipCommands {
+		out = append(out, strings.ToLower(s))
+	}
+
+	return out
+}
+
+// GetPipelineTimeout returns the pipeline timeout duration with a default fallback value of 5 seconds.
+func (b *RedisBatching) GetPipelineTimeout() time.Duration {
+	if b == nil {
+		return 5 * time.Second
+	}
+
+	if b.PipelineTimeout <= 0 {
+		return 5 * time.Second
+	}
+
+	return b.PipelineTimeout
 }
 
 // GetIdlePoolSize retrieves the number of idle connections allowed in the connection pool.
@@ -1022,6 +1211,55 @@ func (r *Redis) GetMaxRetries() int {
 	}
 
 	return *r.MaxRetries
+}
+
+// GetAccountLocalCache returns pointer to account local cache config
+func (r *Redis) GetAccountLocalCache() *AccountLocalCache {
+	if r == nil {
+		return &AccountLocalCache{}
+	}
+
+	return &r.AccountLocalCache
+}
+
+func (a *AccountLocalCache) IsEnabled() bool {
+	if a == nil {
+		return false
+	}
+
+	return a.Enabled
+}
+
+func (a *AccountLocalCache) GetTTL() time.Duration {
+	if a == nil || a.TTL <= 0 {
+		return 60 * time.Second
+	}
+
+	return a.TTL
+}
+
+func (a *AccountLocalCache) GetShards() int {
+	if a == nil || a.Shards <= 0 {
+		return 32
+	}
+
+	return a.Shards
+}
+
+func (a *AccountLocalCache) GetCleanupInterval() time.Duration {
+	if a == nil || a.CleanUp <= 0 {
+		return 10 * time.Minute
+	}
+
+	return a.CleanUp
+}
+
+func (a *AccountLocalCache) GetMaxItems() int {
+	if a == nil || a.MaxItems < 0 {
+		return 0
+	}
+
+	return a.MaxItems
 }
 
 // GetStandaloneMaster returns a pointer to the Master configuration of the Redis instance.

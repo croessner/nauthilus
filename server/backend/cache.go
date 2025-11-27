@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -401,6 +402,11 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
 // Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
 func GetUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
+	// First try in-process account cache when enabled
+	if acc, ok := accountcache.GetManager().Get(username); ok && acc != "" {
+		return acc
+	}
+
 	var err error
 
 	accountName, err = LookupUserAccountFromRedis(ctx, username)
@@ -415,6 +421,9 @@ func GetUserAccountFromCache(ctx context.Context, username string, guid string) 
 	if accountName == "" {
 		return ""
 	}
+
+	// Store positive result in in-process cache
+	accountcache.GetManager().Set(username, accountName)
 
 	return accountName
 }

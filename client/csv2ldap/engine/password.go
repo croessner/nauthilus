@@ -2,6 +2,7 @@ package engine
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 
@@ -14,6 +15,47 @@ import (
 // PasswordEncoder abstracts password formatting for LDIF.
 type PasswordEncoder interface {
 	Encode(plain string) (string, error)
+}
+
+// --- SHA encoder (unsalted SHA-1) ---
+
+// SHAEncoder renders passwords as LDAP-style {SHA} digests.
+// It computes SHA-1 over the plain text password without a salt.
+// The payload can be encoded as base64 (default) or hex to match
+// the SSHA encoder behavior when Encoding is set to "hex".
+//
+// Output format examples:
+// - Base64 (default): {SHA}BASE64(SHA1(password))
+// - Hex:              {SHA.HEX}HEX(SHA1(password))
+type SHAEncoder struct {
+	// Encoding: "b64" or "hex" (default b64)
+	Encoding string
+}
+
+func (e *SHAEncoder) Encode(plain string) (string, error) {
+	sum := sha1.Sum([]byte(plain))
+
+	// Choose encoding
+	enc := lower(e.Encoding)
+	switch enc {
+	case "", "b64":
+		payload := base64.StdEncoding.EncodeToString(sum[:])
+
+		return "{SHA}" + payload, nil
+	case "hex":
+		// inline hex without importing encoding/hex to keep surface small
+		hex := make([]byte, len(sum)*2)
+		const hexdigits = "0123456789abcdef"
+
+		for i, b := range sum {
+			hex[i*2] = hexdigits[b>>4]
+			hex[i*2+1] = hexdigits[b&0x0F]
+		}
+
+		return "{SHA.HEX}" + string(hex), nil
+	default:
+		return "", fmt.Errorf("unsupported SHA encoding: %s", e.Encoding)
+	}
 }
 
 // --- SSHA encoder (256/512) ---
@@ -72,6 +114,7 @@ func (e *SSHAEncoder) Encode(plain string) (string, error) {
 	if alg == srvdefs.SSHA256 {
 		prefix = "{SSHA256}"
 	}
+
 	if opt == srvdefs.ENCHEX {
 		if alg == srvdefs.SSHA256 {
 			prefix = "{SSHA256.HEX}"
@@ -107,6 +150,7 @@ func (e *Argon2Encoder) Encode(plain string) (string, error) {
 	if sl <= 0 {
 		sl = 16
 	}
+
 	salt := make([]byte, sl)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -116,14 +160,17 @@ func (e *Argon2Encoder) Encode(plain string) (string, error) {
 	if t == 0 {
 		t = 2
 	}
+
 	m := e.MemoryKiB
 	if m == 0 {
 		m = 65536
 	}
+
 	p := e.Parallelism
 	if p == 0 {
 		p = 1
 	}
+
 	keyLen := e.KeyLen
 	if keyLen == 0 {
 		keyLen = 32
@@ -131,6 +178,7 @@ func (e *Argon2Encoder) Encode(plain string) (string, error) {
 
 	var hash []byte
 	var vStr string
+
 	switch e.Variant {
 	case Argon2i:
 		hash = argon2.Key([]byte(plain), salt, t, m, p, keyLen)

@@ -32,6 +32,8 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -145,6 +147,8 @@ type tolerateImpl struct {
 	pctTolerated       uint8
 	customTolerates    []config.Tolerate
 	mu                 sync.Mutex
+	// sg dedupliziert parallele identische Redis-Script-Aufrufe pro IP (logikgleich, weniger RTT)
+	sg singleflight.Group
 }
 
 // SetCustomTolerations sets the custom toleration configurations in a thread-safe manner. It replaces existing values.
@@ -232,7 +236,7 @@ func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
 
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
 // It sets a TTL for the hash key to manage the expiration of the tolerance data.
-func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool) {
+func (t *tolerateImpl) SetIPAddress(_ context.Context, ipAddress string, username string, authenticated bool) {
 	if strings.TrimSpace(ipAddress) == "" {
 		return
 	}
@@ -360,18 +364,23 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
-		result, err := rediscli.ExecuteScript(
-			dCtx,
-			"CalculateAdaptiveToleration",
-			rediscli.LuaScripts["CalculateAdaptiveToleration"],
-			[]string{redisKey},
-			minToleratePercent,
-			maxToleratePercent,
-			scaleFactor,
-			pctTolerated,
-			adaptiveEnabled,
-		)
-		cancel()
+		resultAny, err, _ := t.sg.Do("tol:"+redisKey, func() (any, error) {
+			defer cancel()
+
+			return rediscli.ExecuteScript(
+				dCtx,
+				"CalculateAdaptiveToleration",
+				rediscli.LuaScripts["CalculateAdaptiveToleration"],
+				[]string{redisKey},
+				minToleratePercent,
+				maxToleratePercent,
+				scaleFactor,
+				pctTolerated,
+				adaptiveEnabled,
+			)
+		})
+
+		result := resultAny
 
 		if err != nil {
 			t.logRedisError(ipAddress, err)
@@ -566,7 +575,8 @@ func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
 func (t *tolerateImpl) getRedisKey(ipAddress string) string {
 	// Apply tolerations scoping (e.g., IPv6 /CIDR) so all components use consistent keys
 	scoped := tolScoper.Scope(ipscoper.ScopeTolerations, ipAddress)
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + scoped
+
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:{" + scoped + "}"
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.

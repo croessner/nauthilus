@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -270,6 +271,55 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 	}
 
 	return result, nil
+}
+
+// AuthPreflight performs a combined account lookup (HGET USER) and brute-force repeat check (HEXISTS BF)
+// using the registered AuthPreflight Lua script. It returns the mapped account (may be empty) and whether
+// the client network is considered repeating (true/false).
+func AuthPreflight(ctx context.Context, username, clientNet string) (account string, repeating bool, err error) {
+	// Build keys with proper prefix
+	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	userKey := prefix + definitions.RedisUserHashKey
+	bfKey := prefix + definitions.RedisBruteForceHashKey
+
+	keys := []string{userKey, bfKey}
+	// Ensure hash slot alignment if cluster
+	if isClusterClient(GetClient().GetWriteHandle()) {
+		keys = ensureKeysInSameSlot(keys)
+	}
+
+	// Use bounded context
+	dctx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	defer cancel()
+
+	res, e := ExecuteScript(dctx, "AuthPreflight", LuaScripts["AuthPreflight"], keys, username, clientNet)
+	if e != nil {
+		err = e
+
+		return
+	}
+
+	// Expect array reply: {account(string), repeating(number)}
+	if arr, ok := res.([]interface{}); ok && len(arr) == 2 {
+		if s, ok2 := arr[0].(string); ok2 {
+			account = s
+		}
+		// go-redis may decode integers as int64
+		switch v := arr[1].(type) {
+		case int64:
+			repeating = v == 1
+		case int:
+			repeating = v == 1
+		case string:
+			repeating = v == "1"
+		default:
+			repeating = false
+		}
+	} else {
+		err = fmt.Errorf("invalid preflight reply: %#v", res)
+	}
+
+	return
 }
 
 // UploadAllScripts uploads all Lua scripts defined in lua_scripts.go to Redis.

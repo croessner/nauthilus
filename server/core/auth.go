@@ -1300,8 +1300,13 @@ func (a *AuthState) userExists() (bool, error) {
 // refreshUserAccount updates the user account information from the cache.
 // It sets the account field and attributes if they are nil and the account name is found.
 func (a *AuthState) refreshUserAccount() (accountName string) {
-	// Use a service-scoped Redis read context to avoid inheriting a canceled request context
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(nil)
+	// If account already present in state/attributes, avoid Redis
+	if acc := a.GetAccount(); acc != "" {
+		return acc
+	}
+
+	// Use request/service context with bounded deadline to avoid leaks and reuse caller context
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(a.Ctx())
 	accountName = backend.GetUserAccountFromCache(dCtx, a.Username, a.GUID)
 	cancel()
 
@@ -1309,11 +1314,14 @@ func (a *AuthState) refreshUserAccount() (accountName string) {
 		return
 	}
 
-	if a.AccountField == "" && a.Attributes == nil {
-		accountField := definitions.MetaUserAccount
-		attributes := make(bktype.AttributeMapping)
+	// Memoize into state attributes
+	if a.AccountField == "" {
+		a.AccountField = definitions.MetaUserAccount
+	}
 
-		a.AccountField = accountField
+	// Set attribute if missing
+	if a.Attributes == nil || len(a.Attributes) == 0 {
+		attributes := make(bktype.AttributeMapping)
 		attributes[definitions.MetaUserAccount] = []any{accountName}
 		a.ReplaceAllAttributes(attributes)
 	}

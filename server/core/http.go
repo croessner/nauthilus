@@ -97,10 +97,17 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		pprof.Register(r)
 	}
 
-	limitCounter := mdlimit.NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
+	mw := config.GetFile().GetServer().GetMiddlewares()
 
-	r.Use(limitCounter.Middleware())
-	r.Use(mdlog.LoggerMiddleware())
+	if mw.IsLimitEnabled() {
+		limitCounter := mdlimit.NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
+
+		r.Use(limitCounter.Middleware())
+	}
+
+	if mw.IsLoggingEnabled() {
+		r.Use(mdlog.LoggerMiddleware())
+	}
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
@@ -109,12 +116,28 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 func (DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 	rb := approuter.NewRouter(config.GetFile())
 	rb.Engine = r
-	rb.
-		WithRecovery().
-		WithTrustedProxies().
-		WithRequestDecompression().
-		WithResponseCompression().
-		WithMetricsMiddleware()
+
+	mw := config.GetFile().GetServer().GetMiddlewares()
+
+	if mw.IsRecoveryEnabled() {
+		rb.WithRecovery()
+	}
+
+	if mw.IsTrustedProxiesEnabled() {
+		rb.WithTrustedProxies()
+	}
+
+	if mw.IsRequestDecompressionEnabled() {
+		rb.WithRequestDecompression()
+	}
+
+	if mw.IsResponseCompressionEnabled() {
+		rb.WithResponseCompression()
+	}
+
+	if mw.IsMetricsEnabled() {
+		rb.WithMetricsMiddleware()
+	}
 }
 
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend

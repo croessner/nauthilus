@@ -21,7 +21,7 @@ type Config struct {
 
 	// Password formatting
 	// PasswordFormat selects how {{ password }} is rendered into the LDIF entry.
-	// Supported: "ssha256", "ssha512", "argon2i", "argon2id".
+	// Supported: "sha", "ssha256", "ssha512", "argon2i", "argon2id".
 	PasswordFormat string
 	// SSHAEncoding selects payload encoding: "b64" or "hex". Default: b64.
 	SSHAEncoding string

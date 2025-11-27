@@ -23,7 +23,7 @@ func main() {
 	protos := flag.String("protocols", strings.Join(cfg.AllowedProtocols, ","), "Allowed protocols (comma-separated)")
 
 	// Password formatting flags
-	pwFmt := flag.String("pw-format", cfg.PasswordFormat, "Password format: ssha256|ssha512|argon2i|argon2id (default ssha512)")
+	pwFmt := flag.String("pw-format", cfg.PasswordFormat, "Password format: sha|ssha256|ssha512|argon2i|argon2id (default ssha512)")
 	pwEnc := flag.String("pw-ssha-encoding", cfg.SSHAEncoding, "SSHA payload encoding: b64|hex (default b64)")
 	pwSalt := flag.Int("pw-ssha-salt", 8, "SSHA salt length in bytes")
 	argonT := flag.Uint("argon-t", uint(cfg.ArgonTime), "Argon2 iterations (t)")
@@ -58,6 +58,8 @@ func main() {
 	// Select password encoder per config
 	var enc engine.PasswordEncoder
 	switch strings.ToLower(strings.TrimSpace(cfg.PasswordFormat)) {
+	case "sha", "sha1":
+		enc = &engine.SHAEncoder{Encoding: cfg.SSHAEncoding}
 	case "", "ssha512", "ssha256":
 		e := &engine.SSHAEncoder{Alg: cfg.PasswordFormat, Encoding: cfg.SSHAEncoding, SaltLength: *pwSalt}
 		enc = e

@@ -122,6 +122,9 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		MaxRetries:            redisCfg.GetMaxRetries(),
 	})
 
+	// Attach client-side batching hook if enabled
+	attachBatchingHookIfEnabled(redisHandle)
+
 	return
 }
 
@@ -130,7 +133,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 // The address is used to specify the network address of the Redis server.
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
 func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
-	return redis.NewClient(&redis.Options{
+	c := redis.NewClient(&redis.Options{
 		Addr:         address,
 		Username:     redisCfg.GetStandaloneMaster().GetUsername(),
 		Password:     redisCfg.GetStandaloneMaster().GetPassword(),
@@ -148,6 +151,11 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
 	})
+
+	// Attach client-side batching hook if enabled
+	attachBatchingHookIfEnabled(c)
+
+	return c
 }
 
 // newRedisClusterClient creates a new Redis cluster client using the specified cluster options.
@@ -195,7 +203,12 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		options.WriteTimeout = writeTimeout
 	}
 
-	return redis.NewClusterClient(options)
+	c := redis.NewClusterClient(options)
+
+	// Attach client-side batching hook if enabled
+	attachBatchingHookIfEnabled(c)
+
+	return c
 }
 
 // newRedisClusterClientReadOnly creates a new Redis cluster client optimized for read operations.
@@ -242,5 +255,10 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		options.WriteTimeout = writeTimeout
 	}
 
-	return redis.NewClusterClient(options)
+	c := redis.NewClusterClient(options)
+
+	// Attach client-side batching hook if enabled
+	attachBatchingHookIfEnabled(c)
+
+	return c
 }
