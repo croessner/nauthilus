@@ -30,11 +30,27 @@ server:
   redis:
     master:
       address: "127.0.0.1:6379"
+
     database_number: 0
     prefix: "nt:"
-    pool_size: 256
+    pool_size: 128
+    idle_pool_size: 16
     positive_cache_ttl: 3600
     negative_cache_ttl: 7200
+
+    batching:
+      enabled: true
+
+  # Middlewares: optional switches to disable specific HTTP middlewares.
+  # By default all are enabled; set to false to turn one off.
+  # middlewares:
+  #   logging: true
+  #   limit: true
+  #   recovery: true
+  #   trusted_proxies: true
+  #   request_decompression: true
+  #   response_compression: true
+  #   metrics: true
 
 brute_force:
 
