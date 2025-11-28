@@ -82,6 +82,10 @@ func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
 // OK implements the success response logic (unchanged behavior).
 func (DefaultResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a := view.auth
+	// On successful authentication, reset the internal fail counter to
+	// ensure future logging reflects fresh attempts. Brute-force storage
+	// remains authoritative for persistence.
+	a.ResetLoginAttemptsOnSuccess()
 	setCommonHeaders(ctx, a)
 
 	switch a.Service {

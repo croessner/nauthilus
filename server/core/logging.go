@@ -92,7 +92,8 @@ func (a *AuthState) LogLineTemplate(status string, endpoint string) []any {
 		definitions.LogKeyAuthMethod, util.WithNotAvailable(a.Method),
 		definitions.LogKeyUsername, util.WithNotAvailable(a.Username),
 		definitions.LogKeyUsedPassdbBackend, util.WithNotAvailable(a.UsedPassDBBackend.String()),
-		definitions.LogKeyLoginAttempts, a.LoginAttempts,
+		// current_password_retries should mean: number of failed attempts (FailCount semantics)
+		definitions.LogKeyLoginAttempts, a.GetFailCount(),
 		definitions.LogKeyPasswordsAccountSeen, a.PasswordsAccountSeen,
 		definitions.LogKeyPasswordsTotalSeen, a.PasswordsTotalSeen,
 		definitions.LogKeyUserAgent, util.WithNotAvailable(a.UserAgent),

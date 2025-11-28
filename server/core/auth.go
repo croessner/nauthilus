@@ -23,12 +23,10 @@ import (
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
-	"math"
 	"net"
 	"net/http"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -327,6 +325,10 @@ type AuthState struct {
 
 	// LoginAttempts is a counter incremented for each failed login request
 	LoginAttempts uint
+
+	// attempts holds the centralized LoginAttemptManager. It is kept private to
+	// ensure that mutations go through dedicated helpers and invariants stay intact.
+	attempts *defaultLoginAttemptManager
 
 	// StatusCodeOk is the HTTP status code that is set by SetStatusCodes.
 	StatusCodeOK int
@@ -748,6 +750,23 @@ func (a *AuthState) SetLoginAttempts(loginAttempts uint) {
 	a.LoginAttempts = loginAttempts
 }
 
+// GetFailCount returns the current number of failed login attempts using the
+// centralized manager if available. If the manager is not initialized, it
+// falls back to the legacy field. This method is used for logging
+// current_password_retries to ensure the value represents the number of
+// failures (0-based), not the 1-based attempt ordinal.
+func (a *AuthState) GetFailCount() uint {
+	if a == nil {
+		return 0
+	}
+
+	if lam := a.ensureLAM(); lam != nil {
+		return lam.FailCount()
+	}
+
+	return a.LoginAttempts
+}
+
 // SetMethod sets the authentication method for the AuthState instance by assigning it to the Method field.
 func (a *AuthState) SetMethod(method string) {
 	a.Method = method
@@ -1036,15 +1055,45 @@ func (a *AuthState) GetDisplayNameOk() (string, bool) {
 // it increments the number of login attempts by one.
 // The usage example of this method can be found in the AuthFail function.
 func (a *AuthState) increaseLoginAttempts() {
-	if a.LoginAttempts > math.MaxUint8 {
-		a.LoginAttempts = math.MaxUint8
+	lam := a.ensureLAM()
+	if lam == nil {
+		return
 	}
 
-	if a.Service == definitions.ServNginx {
-		if a.LoginAttempts < uint(config.GetEnvironment().GetMaxLoginAttempts()) {
-			a.LoginAttempts++
-		}
+	// Delegate to the centralized manager
+	lam.OnAuthFailure()
+
+	// Mirror back to legacy field (FailCount semantics)
+	a.LoginAttempts = lam.FailCount()
+}
+
+// SyncLoginAttemptsFromBucket updates the internal login attempt manager from a
+// brute-force bucket value and mirrors the FailCount to the legacy field.
+// The bucket is considered authoritative over header hints.
+func (a *AuthState) SyncLoginAttemptsFromBucket(counter uint) {
+	lam := a.ensureLAM()
+	if lam == nil {
+		a.LoginAttempts = counter
+
+		return
 	}
+
+	lam.InitFromBucket(counter)
+	a.LoginAttempts = lam.FailCount()
+}
+
+// ResetLoginAttemptsOnSuccess resets the internal fail counter after a
+// successful authentication. This affects only the in-process view; any
+// persistent brute-force storage remains managed by the brute-force subsystem.
+func (a *AuthState) ResetLoginAttemptsOnSuccess() {
+	lam := a.ensureLAM()
+	if lam == nil {
+		a.LoginAttempts = 0
+		return
+	}
+
+	lam.OnAuthSuccess()
+	a.LoginAttempts = lam.FailCount()
 }
 
 // setFailureHeaders sets the failure headers for the given authentication context.
@@ -2024,18 +2073,15 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		))
 	}
 
-	auth.SetLoginAttempts(func() uint {
-		loginAttempts, err := strconv.Atoi(ctx.GetHeader(config.GetFile().GetLoginAttempt()))
-		if err != nil {
-			return 0
+	// Initialize login attempts from header using the centralized manager.
+	if a, ok := auth.(*AuthState); ok {
+		lam := a.ensureLAM()
+		if lam != nil {
+			lam.InitFromHeader(ctx.GetHeader(config.GetFile().GetLoginAttempt()))
+			// Mirror for backward compatibility: store FailCount (number of failures)
+			a.LoginAttempts = lam.FailCount()
 		}
-
-		if loginAttempts < 0 {
-			loginAttempts = 0
-		}
-
-		return uint(loginAttempts)
-	}())
+	}
 
 	auth.WithClientInfo(ctx)
 	auth.WithLocalInfo(ctx)
