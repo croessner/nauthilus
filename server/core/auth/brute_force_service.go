@@ -58,7 +58,8 @@ func (DefaultBruteForceService) LoadHistories(ctx *gin.Context, auth *core.AuthS
 
 	bm.LoadAllPasswordHistories()
 
-	auth.LoginAttempts = bm.GetLoginAttempts()
+	// Synchronize with centralized login attempt manager; bucket authority overrides header hints.
+	auth.SyncLoginAttemptsFromBucket(bm.GetLoginAttempts())
 	auth.PasswordsAccountSeen = bm.GetPasswordsAccountSeen()
 	auth.PasswordsTotalSeen = bm.GetPasswordsTotalSeen()
 }

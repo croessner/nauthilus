@@ -284,7 +284,13 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
 		a.BruteForceCounter = bm.GetBruteForceCounter()
-		a.LoginAttempts = bm.GetLoginAttempts()
+		// Synchronize login attempts from bucket manager into centralized LAM (bucket has authority)
+		if lam := a.ensureLAM(); lam != nil {
+			lam.InitFromBucket(bm.GetLoginAttempts())
+			a.LoginAttempts = lam.FailCount()
+		} else {
+			a.LoginAttempts = bm.GetLoginAttempts()
+		}
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
 
