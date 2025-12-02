@@ -975,6 +975,14 @@ func (a *AuthState) GetClientIP() string {
 // GetAccount returns the account value from the AuthState object. If the account field is not set or the account
 // value is not found in the attributes, an empty string is returned
 func (a *AuthState) GetAccount() string {
+	// Prefer value stored in the Gin context for the current request
+	// to avoid redundant cache/Redis lookups within the same request.
+	if a != nil && a.HTTPClientContext != nil {
+		if v := a.HTTPClientContext.GetString(definitions.CtxAccountKey); v != "" {
+			return v
+		}
+	}
+
 	if account, okay := a.GetAttribute(a.AccountField); okay {
 		if value, assertOk := account[definitions.LDAPSingleValue].(string); assertOk {
 			return value
@@ -1317,6 +1325,68 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 	if passDBResult.AdditionalFeatures != nil && len(passDBResult.AdditionalFeatures) > 0 {
 		// Set AdditionalFeatures in the gin.Context
 		ctx.Set(definitions.CtxAdditionalFeaturesKey, passDBResult.AdditionalFeatures)
+	}
+
+	// After attributes were applied, derive the authoritative account directly from attributes
+	// and mirror it into the Gin context. Do not use GetAccount() here, because that could still
+	// prefer a preliminary context value set by earlier middleware. The attribute value must win.
+	if vals, ok := auth.GetAttribute(auth.AccountField); ok {
+		// We expect a single value string at LDAPSingleValue
+		if acc, ok2 := vals[definitions.LDAPSingleValue].(string); ok2 && acc != "" {
+			// Update the request-scoped context value and log source
+			prev := ctx.GetString(definitions.CtxAccountKey)
+			ctx.Set(definitions.CtxAccountKey, acc)
+
+			util.DebugModule(
+				definitions.DbgAccount,
+				definitions.LogKeyGUID, auth.GUID,
+				definitions.LogKeyUsername, auth.Username,
+				definitions.LogKeyMsg, "Set account from attributes",
+				"prev", prev,
+				"new", acc,
+				"source", "attribute",
+				"changed", prev != acc,
+			)
+
+			// Keep Redis nt:USER mapping in sync when attribute-derived account differs.
+			// Read the current mapping with a bounded read deadline.
+			dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(auth.Ctx())
+			current, err := backend.LookupUserAccountFromRedis(dReadCtx, auth.Username)
+			cancelRead()
+
+			if err != nil {
+				level.Error(log.Logger).Log(
+					definitions.LogKeyGUID, auth.GUID,
+					definitions.LogKeyMsg, "Failed to lookup user->account mapping in Redis",
+					definitions.LogKeyError, err,
+				)
+			} else if current == "" || current != acc {
+				// Update Redis mapping with a bounded write deadline.
+				defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+				key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+
+				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil)
+				werr := rediscli.GetClient().GetWriteHandle().HSet(dWriteCtx, key, auth.Username, acc).Err()
+				cancelWrite()
+
+				if werr != nil {
+					level.Error(log.Logger).Log(
+						definitions.LogKeyGUID, auth.GUID,
+						definitions.LogKeyMsg, "Failed to update user->account mapping in Redis",
+						definitions.LogKeyError, werr,
+					)
+				} else {
+					util.DebugModule(definitions.DbgAccount,
+						definitions.LogKeyGUID, auth.GUID,
+						definitions.LogKeyUsername, auth.Username,
+						definitions.LogKeyMsg, "Synchronized nt:USER mapping",
+						"account", acc,
+						"source", "redis-update",
+					)
+				}
+			}
+		}
 	}
 }
 
@@ -2501,18 +2571,8 @@ func (a *AuthState) generateLocalCacheKey() string {
 }
 
 // generateSingleflightKey builds a strict deduplication key for backchannel singleflight.
-// Fields: service, protocol, username, account, client_ip, local_ip, local_port, ssl_flag, [oidcCID], pw_short
+// Fields: service, protocol, username, client_ip, local_ip, local_port, ssl_flag, [oidcCID], pw_short
 func (a *AuthState) generateSingleflightKey() string {
-	var account string
-
-	// First check if account is already available via GetAccount()
-	account = a.GetAccount()
-
-	// Only if still empty, try refreshing from cache
-	if account == "" {
-		account = a.refreshUserAccount()
-	}
-
 	clientIP := a.ClientIP
 	if clientIP == "" {
 		clientIP = "0.0.0.0"
@@ -2527,7 +2587,7 @@ func (a *AuthState) generateSingleflightKey() string {
 	pwShort := util.GetHash(util.PreparePassword(a.Password))
 
 	sep := "\x00"
-	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + account + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
+	base := a.Service + sep + a.Protocol.Get() + sep + a.Username + sep + clientIP + sep + a.XLocalIP + sep + a.XPort + sep + sslFlag
 
 	if a.OIDCCID != "" {
 		base = base + sep + a.OIDCCID

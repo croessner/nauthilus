@@ -85,9 +85,13 @@ func (DefaultBootstrap) InitGinLogging() {
 type DefaultRouterComposer struct{}
 
 // ComposeEngine creates a fresh gin.Engine without any default middleware.
-// This mirrors the legacy code which constructed the engine explicitly.
+// This mirrors the legacy code which constructed the engine explicitly and
+// enables ContextWithFallback so gin.Context behaves consistently as a
+// context.Context with respect to Deadline/Done/Err/Value fallbacks.
 func (DefaultRouterComposer) ComposeEngine() *gin.Engine {
-	return gin.New()
+	return gin.New(func(e *gin.Engine) {
+		e.ContextWithFallback = true
+	})
 }
 
 // ApplyEarlyMiddlewares registers pprof (if enabled), the concurrency limiter,
@@ -108,6 +112,10 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	if mw.IsLoggingEnabled() {
 		r.Use(mdlog.LoggerMiddleware())
 	}
+
+	// Make the resolved account available as early as possible in the chain.
+	// This keeps account lookups consistent for all following middlewares/handlers.
+	r.Use(mdauth.AccountMiddleware())
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
@@ -483,6 +491,9 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 ) {
 	// Keep auth protect middleware as before
 	mdauth.SetProtectMiddleware(ProtectEndpointMiddleware)
+
+	// Register account resolution middleware factory
+	mdauth.SetAccountMiddleware(AccountMiddleware)
 
 	if err := a.Bootstrap.InitWebAuthn(); err != nil {
 		// The legacy code exits on error; keep that behavior

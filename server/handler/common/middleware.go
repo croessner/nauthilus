@@ -36,6 +36,7 @@ func CreateMiddlewareChain(sessionStore sessions.Store) []gin.HandlerFunc {
 		adapter.Wrap(nosurf.NewPure),
 		mdlua.LuaContextMiddleware(),
 		core.WithLanguageMiddleware(),
+		mdauth.AccountMiddleware(),
 		mdauth.ProtectEndpointMiddleware(),
 	}
 }

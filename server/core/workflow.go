@@ -147,7 +147,7 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 
 	reqCtx := ctx.Request.Context()
 
-	// Derive wait deadline from request context, with a safety cap if none
+	// Derive wait deadline from request context; if none, wait up to the singleflight work budget.
 	var timer *time.Timer
 	if dl, ok := reqCtx.Deadline(); ok {
 		d := time.Until(dl)
@@ -159,7 +159,9 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 
 		timer = time.NewTimer(d)
 	} else {
-		timer = time.NewTimer(definitions.SingleflightWaitCap)
+		// Couple follower wait to leader work budget instead of a short fixed cap.
+		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
+		timer = time.NewTimer(dWork)
 	}
 
 	defer timer.Stop()
@@ -255,21 +257,29 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 		})
 	case <-timer.C:
-		// Wait cap/deadline reached: stop waiting and attempt direct auth as fallback
-		backchanSF.Forget(key)
+		// Do NOT execute a fallback or send an error. Keep waiting for the leader result
+		// to avoid duplicate pipeline execution. This preserves dedup semantics.
+		r := <-ch
+		if r.Err != nil {
+			if idem != "" {
+				replayed := false
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
 
-		useCache, backendPos, passDBs := auth.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		// Not replayed in this fallback
-		if idem != "" {
-			replayed := false
-
-			setIdempotencyHeaders(ctx, idem, &replayed)
+			return definitions.AuthResultTempFail
 		}
 
-		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
-			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
+		if out, ok := r.Val.(SFOutcome); ok {
+			applyOutcome(auth, out)
+
+			if idem != "" {
+				replayed := r.Shared
+				setIdempotencyHeaders(ctx, idem, &replayed)
+			}
+
+			return out.Result
+		}
+
+		return definitions.AuthResultTempFail
 	}
 }
