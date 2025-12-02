@@ -280,6 +280,8 @@ func DebugModule(module definitions.DbgModule, keyvals ...any) {
 		moduleName = definitions.DbgAllName
 	case definitions.DbgAuth:
 		moduleName = definitions.DbgAuthName
+	case definitions.DbgAccount:
+		moduleName = definitions.DbgAccountName
 	case definitions.DbgHydra:
 		moduleName = definitions.DbgHydraName
 	case definitions.DbgWebAuthn:

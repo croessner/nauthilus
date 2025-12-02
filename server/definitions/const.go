@@ -649,6 +649,10 @@ const (
 
 	// CtxResponseWrittenKey marks that a Lua response has been written for this request.
 	CtxResponseWrittenKey = "response_written"
+
+	// CtxAccountKey stores the resolved account name for the current request in gin.Context.
+	// Keep this limited to the plain account string as agreed; additional fields are intentionally omitted.
+	CtxAccountKey = "account"
 )
 
 // LDAPSingleValue represents the index used to access the single value of an attribute in the LDAP response.
@@ -790,6 +794,10 @@ const (
 
 	// DbgHTTP represents the debug module for HTTP-related operations.
 	DbgHTTP
+
+	// DbgAccount represents the debug module for tracing how/where the
+	// per-request account value was determined and set.
+	DbgAccount
 )
 
 const (
@@ -846,6 +854,9 @@ const (
 
 	// DbgHTTPName is the debug identifier for HTTP
 	DbgHTTPName = "http"
+
+	// DbgAccountName is the debug identifier for account tracing
+	DbgAccountName = "account"
 )
 
 const (

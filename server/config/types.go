@@ -361,7 +361,8 @@ func (d *DbgModule) String() string {
 // Set updates the debug module based on the provided value.
 // It returns an error if the value is not valid.
 // Valid values for the debug module are "none", "all", "auth", "hydra", "webauthn",
-// "statistics", "whitelist", "ldap", "ldappool", "sql", "cache", "bf", "rbl", "action", "feature", and "lua".
+// "statistics", "whitelist", "ldap", "ldappool", "sql", "cache", "bf", "rbl",
+// "action", "feature", "lua", "filter", "tolerate", "jwt", "http", and "account".
 // If the value is valid, the module and name fields are updated accordingly.
 // An error of type ErrWrongDebugModule is returned if the value is not valid.
 func (d *DbgModule) Set(value string) error {
@@ -410,6 +411,8 @@ func (d *DbgModule) Set(value string) error {
 		d.module = definitions.DbgJWT
 	case definitions.DbgHTTPName:
 		d.module = definitions.DbgHTTP
+	case definitions.DbgAccountName:
+		d.module = definitions.DbgAccount
 	default:
 		return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 	}
