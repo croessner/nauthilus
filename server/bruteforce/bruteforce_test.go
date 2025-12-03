@@ -69,9 +69,9 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 		testNetwork := "192.168.0.0/16"
 
-		mock.ExpectHGet(
+		mock.ExpectHMGet(
 			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
-			testNetwork).SetVal("testbucket")
+			testNetwork).SetVal([]interface{}{"testbucket"})
 
 		network := &net.IPNet{}
 
@@ -92,9 +92,9 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 		testNetwork := "192.168.0.0/16"
 
-		mock.ExpectHGet(
+		mock.ExpectHMGet(
 			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
-			testNetwork).RedisNil()
+			testNetwork).SetVal([]interface{}{nil})
 
 		network := &net.IPNet{}
 
@@ -115,7 +115,7 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 
 		rule := config.GetFile().GetBruteForceRules()[0]
-		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("5")
+		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"5"})
 
 		network := &net.IPNet{}
 
@@ -136,7 +136,7 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 
 		rule := config.GetFile().GetBruteForceRules()[0]
-		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("15")
+		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"15"})
 
 		network := &net.IPNet{}
 
@@ -159,6 +159,8 @@ func TestBruteForceLogic(t *testing.T) {
 		const accountName = "testaccount"
 		const testIPAddress = "192.168.1.1"
 
+		// Arguments passed to Lua gate (must match production):
+		// ARGV[1]=hashedPW, ARGV[2]=ttlSec (neg cache TTL), ARGV[3]=maxFields
 		hashedPW := util.GetHash(util.PreparePassword(password))
 
 		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
@@ -201,7 +203,8 @@ func TestBruteForceLogic(t *testing.T) {
 				":%s", testIPAddress)).
 			SetVal(map[string]string{hashedPW: "101"})
 
-		mock.MatchExpectationsInOrder(true)
+		// Order of Lua gate executions is not semantically relevant; allow any order
+		mock.MatchExpectationsInOrder(false)
 
 		_, network, _ := net.ParseCIDR("192.168.0.0/16")
 		message := "test message"
@@ -381,42 +384,6 @@ func TestBruteForceLogic(t *testing.T) {
 				GetRedis().
 				GetPrefix()+definitions.RedisBruteForceHashKey, network.String(), rule.Name).
 			SetVal(1)
-
-		// Because ProcessBruteForce now increments counters for pre-blocked requests,
-		// expect SaveFailedPasswordCounterInRedis write path for both scopes.
-		// 1) Account-scoped key
-		mock.ExpectHLen(
-			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-		).SetVal(1)
-		mock.ExpectHIncrBy(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			hashedPW, 1).SetVal(101)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
-		mock.ExpectIncr(
-			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress)).
-			SetVal(101)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHistTotalKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
-
-		// 2) IP-only scope
-		mock.ExpectHLen(
-			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s", testIPAddress),
-		).SetVal(1)
-		mock.ExpectHIncrBy(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s", testIPAddress),
-			hashedPW, 1).SetVal(101)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s", testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
-		mock.ExpectIncr(
-			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s", testIPAddress)).
-			SetVal(101)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHistTotalKey+fmt.Sprintf(":%s", testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
 
 		// Bucket with account informtion - defer
 		mock.ExpectHGetAll(
@@ -649,10 +616,10 @@ func TestBruteForceFilters(t *testing.T) {
 
 		// Pre-result (cache) lookup uses BRUTEFORCE hash with the matching network key
 		_, network, _ := net.ParseCIDR("10.0.1.0/24")
-		mock.ExpectHGet(
+		mock.ExpectHMGet(
 			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisBruteForceHashKey,
 			network.String(),
-		).SetVal(rule.Name)
+		).SetVal([]interface{}{rule.Name})
 
 		var message string
 		var netPtr *net.IPNet
@@ -765,33 +732,29 @@ func TestSaveFailedPasswordCounterTotals(t *testing.T) {
 		const accountName = "testaccount"
 		const testIPAddress = "192.168.1.1"
 
-		hashedPW := util.GetHash(util.PreparePassword(password))
-
 		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)
 
-		// SaveFailedPasswordCounterInRedis will check HLEN limits first
-		mock.ExpectHLen(
+		// SaveFailedPasswordCounterInRedis uses Lua gate; upload script and assert subsequent EvalSha calls.
+		mock.ExpectScriptLoad(bruteforce.PwHistGateScript).SetVal("shaPwGate2")
+		// Expect account+IP scoped totals update
+		// Arguments passed to Lua gate (must match production):
+		// ARGV[1]=hashedPW, ARGV[2]=ttlSec (neg cache TTL), ARGV[3]=maxFields
+		hashedPwTotals := util.GetHash(util.PreparePassword(password))
+		mock.ExpectEvalSha("shaPwGate2", []string{
 			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-		).SetVal(1)
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress),
+		}, hashedPwTotals, int64(0), int64(definitions.MaxPasswordHistoryEntries)).SetVal(int64(1))
+		// Expect IP-only scoped totals update
+		mock.ExpectEvalSha("shaPwGate2", []string{
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s", testIPAddress),
+			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s", testIPAddress),
+		}, hashedPwTotals, int64(0), int64(definitions.MaxPasswordHistoryEntries)).SetVal(int64(1))
 
-		// Then it will increment account-specific scope and its total
-		mock.ExpectHIncrBy(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			hashedPW, 1).SetVal(4)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHashKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
-		mock.ExpectIncr(
-			config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, testIPAddress)).
-			SetVal(4)
-		mock.ExpectExpire(
-			config.GetFile().GetServer().GetRedis().GetPrefix()+definitions.RedisPwHistTotalKey+fmt.Sprintf(":%s:%s", accountName, testIPAddress),
-			config.GetFile().GetServer().Redis.NegCacheTTL).SetVal(true)
-
-		mock.MatchExpectationsInOrder(true)
+		// Order is not important here
+		mock.MatchExpectationsInOrder(false)
 
 		// Execute the write path directly
 		bm.SaveFailedPasswordCounterInRedis()

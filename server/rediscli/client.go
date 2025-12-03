@@ -16,6 +16,7 @@
 package rediscli
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"os"
@@ -99,7 +100,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 //
 //	client := newRedisFailoverClient(true)
 func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
-	redisHandle = redis.NewFailoverClient(&redis.FailoverOptions{
+	fo := &redis.FailoverOptions{
 		MasterName:       redisCfg.GetSentinel().GetMasterName(),
 		SentinelAddrs:    redisCfg.GetSentinel().GetAddresses(),
 		ReplicaOnly:      slavesOnly,
@@ -120,7 +121,18 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
-	})
+		// Explicitly prefer RESP3 to ensure push notifications for tracking
+		Protocol: 3,
+	}
+
+	// Enable CLIENT TRACKING if configured
+	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
+		fo.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+			return enableClientTracking(ctx, cn, ct)
+		}
+	}
+
+	redisHandle = redis.NewFailoverClient(fo)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(redisHandle)
@@ -133,7 +145,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 // The address is used to specify the network address of the Redis server.
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
 func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
-	c := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:         address,
 		Username:     redisCfg.GetStandaloneMaster().GetUsername(),
 		Password:     redisCfg.GetStandaloneMaster().GetPassword(),
@@ -150,7 +162,17 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
-	})
+		// Ensure RESP3 to support push notifications
+		Protocol: 3,
+	}
+
+	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
+		opts.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+			return enableClientTracking(ctx, cn, ct)
+		}
+	}
+
+	c := redis.NewClient(opts)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(c)
@@ -188,6 +210,8 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
+		// Ensure RESP3 to support push notifications for tracking
+		Protocol: 3,
 	}
 
 	// Set optional parameters only if they have non-zero values
@@ -201,6 +225,12 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 
 	if writeTimeout := clusterCfg.GetWriteTimeout(); writeTimeout > 0 {
 		options.WriteTimeout = writeTimeout
+	}
+
+	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
+		options.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+			return enableClientTracking(ctx, cn, ct)
+		}
 	}
 
 	c := redis.NewClusterClient(options)
@@ -240,6 +270,8 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       true, // Always use replicas for read operations
+		// Ensure RESP3 to support push notifications for tracking
+		Protocol: 3,
 	}
 
 	// Set optional parameters only if they have non-zero values
@@ -255,10 +287,72 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		options.WriteTimeout = writeTimeout
 	}
 
+	// Enable CLIENT TRACKING on connection if configured
+	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
+		options.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+			return enableClientTracking(ctx, cn, ct)
+		}
+	}
+
 	c := redis.NewClusterClient(options)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(c)
 
 	return c
+}
+
+// enableClientTracking sends a CLIENT TRACKING ON command with configured flags.
+// It requires a RESP3 connection; go-redis negotiates RESP3 by default when Protocol is 3.
+func enableClientTracking(ctx context.Context, cn *redis.Conn, ct *config.RedisClientTracking) error {
+	args := buildClientTrackingArgs(ct)
+
+	// Use the low-level Do to send the command
+	if err := cn.Do(ctx, args...).Err(); err != nil {
+		// Log error but don't fail the connection establishment
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "CLIENT TRACKING failed; continuing without tracking",
+			definitions.LogKeyError, err,
+		)
+
+		return nil
+	}
+
+	return nil
+}
+
+// buildClientTrackingArgs builds arguments slice for CLIENT TRACKING ON
+func buildClientTrackingArgs(ct *config.RedisClientTracking) []interface{} {
+	args := []any{"client", "tracking", "on"}
+
+	if ct == nil {
+		return args
+	}
+
+	if ct.IsBCast() {
+		args = append(args, "bcast")
+	}
+
+	if ct.IsNoLoop() {
+		args = append(args, "noloop")
+	}
+
+	if ct.IsOptIn() {
+		args = append(args, "optin")
+	}
+
+	if ct.IsOptOut() {
+		args = append(args, "optout")
+	}
+
+	prefixes := ct.GetPrefixes()
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+
+		args = append(args, "prefix", p)
+	}
+
+	return args
 }
