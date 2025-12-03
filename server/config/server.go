@@ -927,6 +927,12 @@ type Redis struct {
 
 	// Batching config: optional client-side command batching to reduce Redis round-trips
 	Batching RedisBatching `mapstructure:"batching" validate:"omitempty"`
+
+	// ClientTracking enables optional Redis client-side caching (RESP3 tracking).
+	// When enabled, the Redis client issues `CLIENT TRACKING ON` on each new
+	// connection with the configured flags. This can reduce read RTTs by
+	// serving cached values and receiving invalidation push messages from Redis.
+	ClientTracking RedisClientTracking `mapstructure:"client_tracking" validate:"omitempty"`
 }
 
 // RedisBatching controls optional client-side command batching.
@@ -964,6 +970,31 @@ type AccountLocalCache struct {
 	Shards   int           `mapstructure:"shards" validate:"omitempty,gte=1,lte=1024"`
 	CleanUp  time.Duration `mapstructure:"cleanup_interval" validate:"omitempty,min=0s,max=1h"`
 	MaxItems int           `mapstructure:"max_items" validate:"omitempty,gte=0"`
+}
+
+// RedisClientTracking config controls Redis client-side caching (CLIENT TRACKING)
+// Requires Redis 6+ and RESP3. Use with care in environments where push
+// notifications are allowed and network is stable.
+type RedisClientTracking struct {
+	// Enabled toggles client-side tracking.
+	Enabled bool `mapstructure:"enabled"`
+
+	// BCast enables broadcast mode (TRACKING BCAST) to receive invalidations
+	// for all keys that are touched by this connection without per-key tracking.
+	BCast bool `mapstructure:"bcast"`
+
+	// NoLoop prevents this client from receiving invalidations for writes that
+	// originated from the same connection.
+	NoLoop bool `mapstructure:"noloop"`
+
+	// OptIn requires explicit CACHING yes on commands to be tracked.
+	OptIn bool `mapstructure:"opt_in"`
+
+	// OptOut tracks all commands unless CACHING no is provided.
+	OptOut bool `mapstructure:"opt_out"`
+
+	// Prefixes restrict tracking to specific key prefixes. Empty means no restriction.
+	Prefixes []string `mapstructure:"prefixes" validate:"omitempty,dive,printascii"`
 }
 
 // GetDatabaseNumber retrieves the configured database number for the Redis instance.
@@ -1260,6 +1291,69 @@ func (a *AccountLocalCache) GetMaxItems() int {
 	}
 
 	return a.MaxItems
+}
+
+// GetClientTracking returns a pointer to the client tracking config; never nil.
+func (r *Redis) GetClientTracking() *RedisClientTracking {
+	if r == nil {
+		return &RedisClientTracking{}
+	}
+
+	return &r.ClientTracking
+}
+
+// IsEnabled returns true if client-side tracking is enabled.
+func (c *RedisClientTracking) IsEnabled() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.Enabled
+}
+
+// IsBCast returns true if broadcast mode should be used.
+func (c *RedisClientTracking) IsBCast() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.BCast
+}
+
+// IsNoLoop returns true if NOLOOP is enabled.
+func (c *RedisClientTracking) IsNoLoop() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.NoLoop
+}
+
+// IsOptIn returns true if OPTIN is enabled.
+func (c *RedisClientTracking) IsOptIn() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.OptIn
+}
+
+// IsOptOut returns true if OPTOUT is enabled.
+func (c *RedisClientTracking) IsOptOut() bool {
+	if c == nil {
+		return false
+	}
+
+	return c.OptOut
+}
+
+// GetPrefixes returns configured prefixes for CLIENT TRACKING PREFIX.
+func (c *RedisClientTracking) GetPrefixes() []string {
+	if c == nil {
+		return nil
+	}
+
+	return c.Prefixes
 }
 
 // GetStandaloneMaster returns a pointer to the Master configuration of the Redis instance.

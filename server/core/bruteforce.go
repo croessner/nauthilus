@@ -186,11 +186,19 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
+	// Existing generic timer
 	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
+
+	// E2E histogram for BF path
+	bfStart := time.Now()
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
+
+	defer func() {
+		bruteforce.BruteForceEvalSeconds.Observe(time.Since(bfStart).Seconds())
+	}()
 
 	// All rules
 	rules := config.GetFile().GetBruteForceRules()
@@ -261,6 +269,54 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
+	// Pre-filter rules by protocol and IP family
+	filterStart := time.Now()
+	activeRules := make([]config.BruteForceRule, 0, len(rules))
+
+	// Determine IP family once
+	ip := net.ParseIP(a.ClientIP)
+	isV4 := ip != nil && ip.To4() != nil
+	isV6 := ip != nil && !isV4 && ip.To16() != nil
+
+	for _, r := range rules {
+		// Protocol filter: if rule specifies protocols, require match
+		if len(r.GetFilterByProtocol()) > 0 {
+			matched := false
+			for _, p := range r.GetFilterByProtocol() {
+				if p == a.Protocol.Get() {
+					matched = true
+
+					break
+				}
+			}
+
+			if !matched {
+				continue
+			}
+		}
+
+		// IP family filter
+		if isV4 && !r.IPv4 {
+			continue
+		}
+
+		if isV6 && !r.IPv6 {
+			continue
+		}
+
+		activeRules = append(activeRules, r)
+	}
+
+	bruteforce.BruteForcePhaseSeconds.WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
+
+	// Use filtered rules from here on and precompute networks
+	rules = activeRules
+	netcalcStart := time.Now()
+
+	// Precompute network strings per CIDR for active rules (no behavior change)
+	bm.PrepareNetcalc(rules)
+	bruteforce.BruteForcePhaseSeconds.WithLabelValues("netcalc").Observe(time.Since(netcalcStart).Seconds())
+
 	network := &net.IPNet{}
 
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
@@ -279,6 +335,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if !alreadyTriggered && !ruleTriggered {
 		return false
 	}
+
+	// A rule matched either in pre-result or bucket evaluation
+	bruteforce.BruteForceRulesMatchedTotal.Inc()
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
