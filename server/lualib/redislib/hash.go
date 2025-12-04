@@ -35,7 +35,9 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
 
-		if L.GetTop() == 2 {
+		// Optional 4th argument selects the return type ("string", "number", "bool", "nil").
+		// Signature: redis_hget(pool, key, field[, type])
+		if L.GetTop() >= 4 {
 			valueType = L.CheckString(4)
 		}
 
