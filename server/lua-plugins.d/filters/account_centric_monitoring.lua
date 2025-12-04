@@ -19,6 +19,25 @@ local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_redis = require("nauthilus_redis")
 
+-- Module-scope configuration (read once)
+local windows = {3600, 86400, 604800} -- 1h, 24h, 7d
+
+local function getenv_num(name, def)
+    local v = tonumber(os.getenv(name) or "")
+    if v == nil then return def end
+    return v
+end
+
+local TH_UNIQ_1H = getenv_num("GPM_THRESH_UNIQ_1H", 12)
+local TH_UNIQ_24H = getenv_num("GPM_THRESH_UNIQ_24H", 25)
+local TH_UNIQ_7D = getenv_num("GPM_THRESH_UNIQ_7D", 60)
+local TH_FAIL_MIN_24H = getenv_num("GPM_MIN_FAILS_24H", 8)
+local TH_RATIO = getenv_num("GPM_THRESH_IP_TO_FAIL_RATIO", 1.2)
+local ATTACK_TTL_SEC = getenv_num("GPM_ATTACK_TTL_SEC", 12 * 3600)
+
+-- Gate the informational log to reduce overhead by default
+local ACM_INFO_LOG = nauthilus_util.toboolean(os.getenv("ACM_INFO_LOG") or "")
+
 -- Env thresholds (defaults conservative):
 --  - GPM_THRESH_UNIQ_1H default 12
 --  - GPM_THRESH_UNIQ_24H default 25
@@ -45,68 +64,51 @@ function nauthilus_call_filter(request)
 
     -- Track account-specific authentication attempts
     local timestamp = os.time()
-    local windows = {3600, 86400, 604800} -- 1h, 24h, 7d windows
     local username = request.username
 
     if not username or username == "" then
         return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
     end
 
-    -- Read tuning thresholds from environment (with safe defaults)
-    local function getenv_num(name, def)
-        local v = tonumber(os.getenv(name) or "")
-        if v == nil then return def end
-        return v
-    end
-    local TH_UNIQ_1H = getenv_num("GPM_THRESH_UNIQ_1H", 12)
-    local TH_UNIQ_24H = getenv_num("GPM_THRESH_UNIQ_24H", 25)
-    local TH_UNIQ_7D = getenv_num("GPM_THRESH_UNIQ_7D", 60)
-    local TH_FAIL_MIN_24H = getenv_num("GPM_MIN_FAILS_24H", 8)
-    local TH_RATIO = getenv_num("GPM_THRESH_IP_TO_FAIL_RATIO", 1.2)
-    local ATTACK_TTL_SEC = getenv_num("GPM_ATTACK_TTL_SEC", 12 * 3600)
-
     -- Hold per-window metrics explicitly
     local uniq_1h, uniq_24h, uniq_7d = 0, 0, 0
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
     local ratio_1h, ratio_24h = 0, 0
 
-    -- Batch: add IP/fail events across all windows in a single write pipeline
-    do
-        local write_cmds = {}
-        for _, window in ipairs(windows) do
-            local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-            table.insert(write_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
-
-            if not request.authenticated then
-                local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-                local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
-                table.insert(write_cmds, {"run_script", "ZAddRemExpire", {fail_key}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
-            end
-        end
-        if #write_cmds > 0 then
-            local _, perr = nauthilus_redis.redis_pipeline(custom_pool, "write", write_cmds)
-            nauthilus_util.if_error_raise(perr)
-        end
-    end
-
-    -- Batch: read unique_ips and failed_attempts across all windows in a single read pipeline
-    local read_cmds = {}
+    -- Single round-trip: write events and read counts together in one pipeline (write mode)
+    local pipeline_cmds = {}
+    local zpos = {}
     for _, window in ipairs(windows) do
         local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-        local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-        table.insert(read_cmds, {"zcount", ip_key, tostring(timestamp - window), tostring(timestamp)})
-        table.insert(read_cmds, {"zcount", fail_key, tostring(timestamp - window), tostring(timestamp)})
+        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
+
+        if not request.authenticated then
+            local fail_key_w = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+            local fail_id = request.request_id or (tostring(timestamp) .. "_" .. tostring(math.random(1000000)))
+            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {fail_key_w}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
+        end
+
+        -- queue reads after writes for the same window
+        local ip_key_read = ip_key
+        local fail_key_read = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+        local idx_ip = #pipeline_cmds + 1
+        table.insert(pipeline_cmds, {"zcount", ip_key_read, tostring(timestamp - window), tostring(timestamp)})
+        local idx_fail = #pipeline_cmds + 1
+        table.insert(pipeline_cmds, {"zcount", fail_key_read, tostring(timestamp - window), tostring(timestamp)})
+
+        zpos[window] = {ip = idx_ip, fail = idx_fail}
     end
-    local rres, rerr = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
+
+    local rres, rerr = nauthilus_redis.redis_pipeline(custom_pool, "write", pipeline_cmds)
     nauthilus_util.if_error_raise(rerr)
 
     -- Extract per-window values and compute ratios
     local vals = {}
     do
-        local i = 1
         for _, window in ipairs(windows) do
-            local ui = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
-            local fa = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
+            local p = zpos[window]
+            local ui = tonumber(rres[p.ip] and rres[p.ip].value or 0) or 0
+            local fa = tonumber(rres[p.fail] and rres[p.fail].value or 0) or 0
             local ratio = 0
             if fa > 0 then ratio = ui / fa end
             vals[window] = {unique_ips = ui, failed_attempts = fa, ratio = ratio}
@@ -203,23 +205,25 @@ function nauthilus_call_filter(request)
         nauthilus_builtin.custom_log_add(N .. "_ratio_24h", ratio_24h)
     end
 
-    -- Add log with per-window metrics
-    local logs = {}
-    logs.caller = N .. ".lua"
-    logs.level = "info"
-    logs.message = "Account metrics tracked"
-    logs.username = username
-    logs.uniq_ips_1h = uniq_1h
-    logs.uniq_ips_24h = uniq_24h
-    logs.uniq_ips_7d = uniq_7d
-    logs.failed_1h = fails_1h
-    logs.failed_24h = fails_24h
-    logs.failed_7d = fails_7d
-    logs.ratio_1h = ratio_1h
-    logs.ratio_24h = ratio_24h
-    logs.is_suspicious = is_suspicious
+    -- Add log with per-window metrics (optional)
+    if ACM_INFO_LOG then
+        local logs = {}
+        logs.caller = N .. ".lua"
+        logs.level = "info"
+        logs.message = "Account metrics tracked"
+        logs.username = username
+        logs.uniq_ips_1h = uniq_1h
+        logs.uniq_ips_24h = uniq_24h
+        logs.uniq_ips_7d = uniq_7d
+        logs.failed_1h = fails_1h
+        logs.failed_24h = fails_24h
+        logs.failed_7d = fails_7d
+        logs.ratio_1h = ratio_1h
+        logs.ratio_24h = ratio_24h
+        logs.is_suspicious = is_suspicious
 
-    nauthilus_util.print_result({ log_format = "json" }, logs)
+        nauthilus_util.print_result({ log_format = "json" }, logs)
+    end
 
     return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
 end
