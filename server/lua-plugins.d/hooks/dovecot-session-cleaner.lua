@@ -64,18 +64,20 @@ function nauthilus_run_hook(logging, session)
     end
 
     local function update_target_user_table(target)
-        local account, err_redis_hget = nauthilus_redis.redis_hget(custom_pool, "ntc:DS_ACCOUNT", target)
-        if err_redis_hget then
-            result.update_target_user_table_error = err_redis_hget
-
+        -- Pipeline HGET + HDEL to minimize roundtrips
+        local cmds = {
+            {"hget", "ntc:DS_ACCOUNT", target},
+            {"hdel", "ntc:DS_ACCOUNT", target},
+        }
+        local pres, perr = nauthilus_redis.redis_pipeline(custom_pool, "write", cmds)
+        if perr then
+            result.update_target_user_table_error = perr
             return
         end
 
-        local _, err_redis_hdel = nauthilus_redis.redis_hdel(custom_pool, "ntc:DS_ACCOUNT", target)
-        if err_redis_hdel then
-            result.update_target_user_table_error = err_redis_hdel
-
-            return
+        local account
+        if type(pres) == "table" and type(pres[1]) == "table" and pres[1].ok ~= false then
+            account = pres[1].value
         end
 
         return account

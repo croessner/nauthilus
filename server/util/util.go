@@ -26,6 +26,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -57,7 +58,14 @@ type RedisLogger struct{}
 
 // Printf implements the printf function from Redis.
 func (r *RedisLogger) Printf(_ context.Context, format string, values ...any) {
-	level.Info(log.Logger).Log("redis", fmt.Sprintf(format, values...))
+	// Downgrade all go-redis internal logs to DEBUG and avoid formatting cost
+	// when DEBUG is disabled.
+	if log.Logger == nil || !log.Logger.Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+
+	msg := fmt.Sprintf(format, values...)
+	level.Debug(log.Logger).Log(definitions.LogKeyMsg, msg, "source", "go-redis")
 }
 
 // FormatDurationMs formats a time.Duration as milliseconds with a fixed precision.

@@ -16,6 +16,7 @@
 local N = "dynamic_response"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
@@ -361,31 +362,45 @@ function nauthilus_call_action(request)
     local threat_level = 0.0
     local metrics = {}
 
-    -- Check if this account is under distributed attack
-    if username and username ~= "" then
-        local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-        local attack_score = nauthilus_redis.redis_zscore(custom_pool, attacked_accounts_key, username)
-        if attack_score then
-            threat_level = math.max(threat_level, 0.7) -- High threat level if account is under attack
-            metrics.targeted_accounts = {username}
-        end
-    end
-
-    -- Check global metrics for abnormal patterns
+    -- Prepare Redis keys
+    local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
 
-    -- Get global metrics
-    local attempts_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "attempts")
-    local attempts = tonumber(attempts_str) or 0
+    -- Batch: ZSCORE (attack_score) + HMGET (current metrics) in one read pipeline
+    local read_cmds = {}
+    if username and username ~= "" then
+        table.insert(read_cmds, {"zscore", attacked_accounts_key, username})
+    else
+        -- placeholder to keep indices simple; will be ignored later
+        table.insert(read_cmds, {"echo", "noop"})
+    end
+    table.insert(read_cmds, {"hmget", current_metrics_key, "attempts", "unique_ips", "unique_users", "ips_per_user"})
 
-    local unique_ips_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "unique_ips")
-    local unique_ips = tonumber(unique_ips_str) or 0
+    local res, rp_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
+    nauthilus_util.if_error_raise(rp_err)
 
-    local unique_users_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "unique_users")
-    local unique_users = tonumber(unique_users_str) or 0
+    local idx = 1
+    local attack_score
+    if username and username ~= "" then
+        if type(res) == "table" and type(res[idx]) == "table" and res[idx].ok ~= false then
+            attack_score = res[idx].value
+        end
+    end
+    idx = idx + 1
 
-    local ips_per_user_str = nauthilus_redis.redis_hget(custom_pool, current_metrics_key, "ips_per_user")
-    local ips_per_user = tonumber(ips_per_user_str) or 0
+    local attempts, unique_ips, unique_users, ips_per_user = 0, 0, 0, 0
+    if type(res) == "table" and type(res[idx]) == "table" and res[idx].ok ~= false and type(res[idx].value) == "table" then
+        local vals = res[idx].value
+        attempts = tonumber(vals[1] or 0) or 0
+        unique_ips = tonumber(vals[2] or 0) or 0
+        unique_users = tonumber(vals[3] or 0) or 0
+        ips_per_user = tonumber(vals[4] or 0) or 0
+    end
+
+    if attack_score then
+        threat_level = math.max(threat_level, 0.7) -- High threat level if account is under attack
+        metrics.targeted_accounts = {username}
+    end
 
     -- Store metrics for response
     metrics.attempts = attempts
@@ -401,15 +416,21 @@ function nauthilus_call_action(request)
         threat_level = math.max(threat_level, 0.6)
     end
 
-    -- Check historical patterns to detect sudden spikes
+    -- Check historical patterns to detect sudden spikes (HMGET in same style)
     local hour_key = os.date("%Y-%m-%d-%H", timestamp - 3600) -- Previous hour
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
 
-    local prev_attempts_str = nauthilus_redis.redis_hget(custom_pool, historical_metrics_key, "attempts")
-    local prev_attempts = tonumber(prev_attempts_str) or 0
+    local hist_res, hist_err = nauthilus_redis.redis_pipeline(custom_pool, "read", {
+        {"hmget", historical_metrics_key, "attempts", "unique_ips"},
+    })
+    nauthilus_util.if_error_raise(hist_err)
 
-    local prev_unique_ips_str = nauthilus_redis.redis_hget(custom_pool, historical_metrics_key, "unique_ips")
-    local prev_unique_ips = tonumber(prev_unique_ips_str) or 0
+    local prev_attempts, prev_unique_ips = 0, 0
+    if type(hist_res) == "table" and type(hist_res[1]) == "table" and hist_res[1].ok ~= false and type(hist_res[1].value) == "table" then
+        local v = hist_res[1].value
+        prev_attempts = tonumber(v[1] or 0) or 0
+        prev_unique_ips = tonumber(v[2] or 0) or 0
+    end
 
     -- Calculate rate of change
     local attempts_change = 0
@@ -514,7 +535,7 @@ function nauthilus_call_action(request)
     -- Per-account step-up hint: if a step-up flag exists for this username,
     -- add the account temporarily to captcha/step-up set to help HTTP/OIDC flows.
     if username and username ~= "" then
-        local stepup_key = "ntc:acct:" .. username .. ":stepup"
+        local stepup_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup"
         local required = nauthilus_redis.redis_hget(custom_pool, stepup_key, "required")
         if required == "true" then
             local args = {15 * 60} -- 15 minutes TTL

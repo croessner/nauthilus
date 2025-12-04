@@ -35,121 +35,59 @@ function nauthilus_call_feature(request)
         nauthilus_util.if_error_raise(err_redis_client)
     end
 
-    -- Track global authentication metrics in sliding windows
+    -- Track metrics via single server-side script
     local timestamp = os.time()
     local window_sizes = {60, 300, 900, 3600, 86400, 604800} -- 1min, 5min, 15min, 1hour, 24h, 7d
-    local request_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
-
-    -- Derive a robust username identifier (some protocols fill 'account')
+    -- Use request.session directly for a stable identifier
+    local request_id = tostring(request.session or "")
     local username_value = request.username or request.account or ""
 
-    -- Batch all per-window updates into one pipeline to reduce round trips
-    local pipeline_cmds = {}
-    for _, window in ipairs(window_sizes) do
-        local key = "ntc:multilayer:global:auth_attempts:" .. window
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {key}, {timestamp, request_id, 0, timestamp - window, window * 2}})
-
-        local ip_key = "ntc:multilayer:global:unique_ips:" .. window
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
-
-        local user_key = "ntc:multilayer:global:unique_users:" .. window
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {user_key}, {timestamp, username_value, 0, timestamp - window, window * 2}})
+    local keys = {}
+    for _, w in ipairs(window_sizes) do
+        table.insert(keys, "ntc:multilayer:global:auth_attempts:" .. w)
+        table.insert(keys, "ntc:multilayer:global:unique_ips:" .. w)
+        table.insert(keys, "ntc:multilayer:global:unique_users:" .. w)
     end
-    local _, pipe_err = nauthilus_redis.redis_pipeline(custom_pool, "write", pipeline_cmds)
-    nauthilus_util.if_error_raise(pipe_err)
-
-    -- Store metrics for this authentication attempt using atomic Redis Lua script
-    local metrics_key = "ntc:multilayer:global:metrics:" .. timestamp
-    local _, err_script = nauthilus_redis.redis_run_script(
-            custom_pool,
-        "", 
-        "HSetMultiExpire", 
-        {metrics_key}, 
-        {
-            3600, -- Keep for 1 hour
-            "client_ip", request.client_ip,
-            "username", request.username,
-            "timestamp", timestamp,
-            "success", tostring(request.authenticated or false)
-        }
-    )
-    nauthilus_util.if_error_raise(err_script)
-
-    -- Calculate and store current metrics for the 1-hour window
-    local window = 3600
-    local key = "ntc:multilayer:global:auth_attempts:" .. window
-    local ip_key = "ntc:multilayer:global:unique_ips:" .. window
-    local user_key = "ntc:multilayer:global:unique_users:" .. window
-
-    -- Fetch window counts in a single read pipeline
-    local read_cmds = {
-        {"zcount", key, tostring(timestamp - window), tostring(timestamp)},
-        {"zcount", ip_key, tostring(timestamp - window), tostring(timestamp)},
-        {"zcount", user_key, tostring(timestamp - window), tostring(timestamp)},
-    }
-    local res, read_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
-    nauthilus_util.if_error_raise(read_err)
-
-    -- Structured results
-    if type(res) ~= "table" then res = {} end
-    local function val(i)
-        local e = res[i]
-        if type(e) ~= "table" then return nil end
-        if e.ok == false then return nil end
-        return e.value
-    end
-
-    local attempts = tonumber(val(1) or "0") or 0
-    local unique_ips = tonumber(val(2) or "0") or 0
-    local unique_users = tonumber(val(3) or "0") or 0
-
-    -- Calculate metrics
-    local attempts_per_ip = attempts / math.max(unique_ips, 1)
-    local attempts_per_user = attempts / math.max(unique_users, 1)
-    local ips_per_user = unique_ips / math.max(unique_users, 1)
-
-    -- Store current metrics using atomic Redis Lua script
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
-    local _, err_script_current = nauthilus_redis.redis_run_script(
-            custom_pool,
-        "", 
-        "HSetMultiExpire", 
-        {current_metrics_key}, 
-        {
-            0, -- No expiration for current metrics
-            "attempts", attempts,
-            "unique_ips", unique_ips,
-            "unique_users", unique_users,
-            "attempts_per_ip", attempts_per_ip,
-            "attempts_per_user", attempts_per_user,
-            "ips_per_user", ips_per_user,
-            "last_updated", timestamp
-        }
-    )
-    nauthilus_util.if_error_raise(err_script_current)
-
-    -- Store historical metrics (one entry per hour)
     local hour_key = os.date("%Y-%m-%d-%H", timestamp)
     local historical_metrics_key = "ntc:multilayer:global:historical_metrics:" .. hour_key
+    table.insert(keys, current_metrics_key)
+    table.insert(keys, historical_metrics_key)
 
-    -- Only update once per hour to avoid overwriting using atomic Redis Lua script
-    local _, err_script_historical = nauthilus_redis.redis_run_script(
-            custom_pool,
-        "", 
-        "ExistsHSetMultiExpire", 
-        {historical_metrics_key}, 
-        {
-            7 * 24 * 3600, -- Keep for 7 days
-            "attempts", attempts,
-            "unique_ips", unique_ips,
-            "unique_users", unique_users,
-            "attempts_per_ip", attempts_per_ip,
-            "attempts_per_user", attempts_per_user,
-            "ips_per_user", ips_per_user,
-            "timestamp", timestamp
-        }
-    )
-    nauthilus_util.if_error_raise(err_script_historical)
+    local per_attempt_key = "ntc:multilayer:global:metrics:" .. timestamp
+    local per_attempt_ttl = 3600
+
+    local args = {
+        timestamp,
+        request_id,
+        request.client_ip or "",
+        username_value,
+        tostring(request.authenticated or false),
+        per_attempt_key,
+        per_attempt_ttl,
+        #window_sizes,
+    }
+    for _, w in ipairs(window_sizes) do table.insert(args, w) end
+    table.insert(args, 3600) -- hour_window
+
+    local gpm_res, gpm_err = nauthilus_redis.redis_run_script(custom_pool, "", "GPM_TrackAndCurrent", keys, args)
+    nauthilus_util.if_error_raise(gpm_err)
+
+    -- Parse results: {attempts, unique_ips, unique_users, attempts_per_ip, attempts_per_user, ips_per_user}
+    local attempts = 0
+    local unique_ips = 0
+    local unique_users = 0
+    local attempts_per_ip = 0
+    local attempts_per_user = 0
+    local ips_per_user = 0
+    if type(gpm_res) == "table" then
+        attempts = tonumber(gpm_res[1] or 0) or 0
+        unique_ips = tonumber(gpm_res[2] or 0) or 0
+        unique_users = tonumber(gpm_res[3] or 0) or 0
+        attempts_per_ip = tonumber(gpm_res[4] or 0) or 0
+        attempts_per_user = tonumber(gpm_res[5] or 0) or 0
+        ips_per_user = tonumber(gpm_res[6] or 0) or 0
+    end
 
     -- Add log
     local logs = {}

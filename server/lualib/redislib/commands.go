@@ -17,6 +17,7 @@ package redislib
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
@@ -25,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -59,7 +61,6 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 // RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
 func RedisSet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		expiration := time.Duration(0)
 		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
 		key := L.CheckString(2)
 
@@ -71,8 +72,83 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		if L.GetTop() == 4 {
-			expiration = time.Duration(L.CheckInt(4))
+		// Backward compatible: 4th arg can be numeric seconds expiration.
+		// New behavior: 4th arg can be a table of options supporting Redis SET options.
+		var (
+			useArgs bool
+			args    redis.SetArgs
+		)
+
+		if L.GetTop() >= 4 {
+			if tbl, ok := L.Get(4).(*lua.LTable); ok {
+				useArgs = true
+
+				// Options table:
+				// nx, xx, get, keepttl as booleans
+				// ex (seconds), px (milliseconds), exat (unix seconds), pxat (unix milliseconds)
+				if v := tbl.RawGetString("nx"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
+					args.Mode = "NX"
+				}
+
+				if v := tbl.RawGetString("xx"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
+					args.Mode = "XX"
+				}
+
+				if v := tbl.RawGetString("get"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
+					args.Get = true
+				}
+
+				if v := tbl.RawGetString("keepttl"); v.Type() == lua.LTBool && lua.LVAsBool(v) {
+					args.KeepTTL = true
+				}
+
+				// Expiration by absolute time has precedence if provided
+				if v := tbl.RawGetString("exat"); v.Type() == lua.LTNumber {
+					sec := int64(lua.LVAsNumber(v))
+					if sec > 0 {
+						args.ExpireAt = time.Unix(sec, 0)
+					}
+				}
+
+				if v := tbl.RawGetString("pxat"); v.Type() == lua.LTNumber {
+					ms := int64(lua.LVAsNumber(v))
+					if ms > 0 {
+						args.ExpireAt = time.Unix(0, ms*int64(time.Millisecond))
+					}
+				}
+
+				// Relative expiration
+				if v := tbl.RawGetString("ex"); v.Type() == lua.LTNumber {
+					sec := int64(lua.LVAsNumber(v))
+					if sec > 0 {
+						args.TTL = time.Duration(sec) * time.Second
+					}
+				}
+
+				if v := tbl.RawGetString("px"); v.Type() == lua.LTNumber {
+					ms := int64(lua.LVAsNumber(v))
+					if ms > 0 {
+						args.TTL = time.Duration(ms) * time.Millisecond
+					}
+				}
+			} else if L.Get(4).Type() == lua.LTNumber {
+				// Legacy seconds TTL
+				ttlSeconds := int64(L.CheckInt(4))
+				if ttlSeconds < 0 {
+					L.Push(lua.LNil)
+					L.Push(lua.LString("expiration seconds must be >= 0"))
+
+					return 2
+				}
+
+				useArgs = false
+
+				// We'll call plain Set with seconds TTL
+				// below in the execution path.
+				// Keep ttlSeconds in local for use
+				// by closing over variable.
+				// To keep scope simple, we re-read from stack later.
+			}
 		}
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -80,7 +156,36 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
 		defer cancel()
 
-		cmd := client.Set(dCtx, key, value, expiration*time.Second)
+		if useArgs {
+			cmd := client.SetArgs(dCtx, key, value, args)
+			if cmd.Err() != nil {
+				// Redis-conformant semantics for options-table path: redis.Nil means a legitimate nil reply
+				// e.g., NX/XX condition not met or GET with no previous value.
+				if errors.Is(cmd.Err(), redis.Nil) {
+					L.Push(lua.LNil)
+
+					return 1
+				}
+
+				L.Push(lua.LNil)
+				L.Push(lua.LString(cmd.Err().Error()))
+
+				return 2
+			}
+
+			// Return whatever server returned as string (typically "OK"; with GET, may be previous value)
+			L.Push(lua.LString(cmd.Val()))
+
+			return 1
+		}
+
+		// Legacy simple Set path
+		expiration := time.Duration(0)
+		if L.GetTop() == 4 && L.Get(4).Type() == lua.LTNumber {
+			expiration = time.Duration(L.CheckInt(4)) * time.Second
+		}
+
+		cmd := client.Set(dCtx, key, value, expiration)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

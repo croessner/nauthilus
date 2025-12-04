@@ -138,15 +138,18 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     -- Update global metrics
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
 
-    -- Get current metrics
-    local attempts = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "attempts") or "0"
-    attempts = tonumber(attempts) or 0
-
-    local unique_ips = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_ips") or "0"
-    unique_ips = tonumber(unique_ips) or 0
-
-    local unique_users = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_users") or "0"
-    unique_users = tonumber(unique_users) or 0
+    -- Get current metrics (bundle via HMGET)
+    local res, rerr = nauthilus_redis.redis_pipeline(redis_handle, "read", {
+        {"hmget", current_metrics_key, "attempts", "unique_ips", "unique_users"}
+    })
+    nauthilus_util.if_error_raise(rerr)
+    local attempts, unique_ips, unique_users = 0, 0, 0
+    if type(res) == "table" and type(res[1]) == "table" and res[1].ok ~= false and type(res[1].value) == "table" then
+        local v = res[1].value
+        attempts = tonumber(v[1] or 0) or 0
+        unique_ips = tonumber(v[2] or 0) or 0
+        unique_users = tonumber(v[3] or 0) or 0
+    end
 
     -- Update metrics
     attempts = attempts + num_ips

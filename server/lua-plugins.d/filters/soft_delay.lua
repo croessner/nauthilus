@@ -30,6 +30,8 @@
 local N = "soft_delay"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
+
 local nauthilus_redis = require("nauthilus_redis")
 
 local time = require("time")
@@ -73,7 +75,7 @@ function nauthilus_call_filter(request)
     local applied_delay_ms = 0
 
     -- Fast read snapshot produced by Phase 1 feature
-    local snap_key = "ntc:acct:" .. username .. ":longwindow"
+    local snap_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":longwindow"
     local uniq24 = tonumber(nauthilus_redis.redis_hget(client, snap_key, "uniq_ips_24h") or "0") or 0
     local uniq7d = tonumber(nauthilus_redis.redis_hget(client, snap_key, "uniq_ips_7d") or "0") or 0
     local fail24 = tonumber(nauthilus_redis.redis_hget(client, snap_key, "fails_24h") or "0") or 0

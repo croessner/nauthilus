@@ -135,16 +135,18 @@ function nauthilus_call_action(request)
         local cip = (request.client_ip ~= "" and request.client_ip) or ""
         if username ~= "" and cip ~= "" then
             local dedup_key = "ntc:clickhouse:authdedup:" .. tostring(username) .. ":" .. tostring(cip)
-            local n, rerr = nauthilus_redis.redis_incr("default", dedup_key)
-            if n then
-                if tonumber(n) == 1 then
-                    nauthilus_redis.redis_expire("default", dedup_key, 300)
-                else
-                    allowed = false
-                end
-            else
+            -- Use SET NX EX to reduce roundtrips (atomic gate)
+            local ok, rerr = nauthilus_redis.redis_set("default", dedup_key, "1", { nx = true, ex = 300 })
+            if rerr then
                 -- Fail-open on Redis errors to avoid losing data; log for visibility
-                log_line("error", "clickhouse: redis dedup failed", { key = dedup_key }, rerr and tostring(rerr) or nil)
+                log_line("error", "clickhouse: redis dedup failed", { key = dedup_key }, tostring(rerr))
+            else
+                if ok == nil then
+                    -- Key already exists within TTL → skip this write
+                    allowed = false
+                else
+                    allowed = true
+                end
             end
         end
     end

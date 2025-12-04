@@ -95,6 +95,17 @@ function nauthilus_call_action(request)
             end
         end
 
+        -- Redis gate to avoid repeated external requests for the same account+prefix in a short window
+        do
+            local gate_key = "ntc:HAVEIBEENPWND:GATE:" .. crypto.md5(request.account) .. ":" .. hash:sub(1, 5)
+            local ok_gate, gate_err = nauthilus_redis.redis_set(custom_pool, gate_key, "1", { nx = true, ex = 300 })
+            nauthilus_util.if_error_raise(gate_err)
+            if ok_gate == nil then
+                -- Another worker is or was recently fetching this prefix; skip HTTP
+                return nauthilus_builtin.ACTION_RESULT_OK
+            end
+        end
+
         nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
         local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "get" })

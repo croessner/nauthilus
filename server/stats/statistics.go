@@ -271,56 +271,76 @@ type Metrics interface {
 
 	// GetGenericConnections tracks the current number of established generic connections as a Prometheus GaugeVec, categorized by description, target, and direction.
 	GetGenericConnections() *prometheus.GaugeVec
+
+	// GetBruteForceEvalSeconds measures end-to-end latency of the brute-force evaluation path.
+	GetBruteForceEvalSeconds() prometheus.Histogram
+
+	// GetBruteForcePhaseSeconds measures sub-phase timings within the brute-force evaluation, labeled by phase.
+	GetBruteForcePhaseSeconds() *prometheus.HistogramVec
+
+	// GetBruteForceCacheHitsTotal counts in-process cache/burst gating hits within the brute-force path, labeled by kind.
+	GetBruteForceCacheHitsTotal() *prometheus.CounterVec
+
+	// GetBruteForceRulesMatchedTotal counts how often a brute-force rule matched (pre or final).
+	GetBruteForceRulesMatchedTotal() prometheus.Counter
+
+	// GetRedisRoundtripsTotal counts Redis roundtrips attributable to the brute-force path, labeled by kind.
+	GetRedisRoundtripsTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
-	instanceInfo             *prometheus.GaugeVec
-	currentRequests          prometheus.Gauge
-	httpRequestsTotal        *prometheus.CounterVec
-	httpResponseTimeSeconds  *prometheus.HistogramVec
-	loginsCounter            *prometheus.CounterVec
-	redisReadCounter         prometheus.Counter
-	redisWriteCounter        prometheus.Counter
-	functionDuration         *prometheus.HistogramVec
-	rblDuration              *prometheus.HistogramVec
-	cacheHits                prometheus.Counter
-	cacheMisses              prometheus.Counter
-	redisHits                *prometheus.CounterVec
-	redisMisses              *prometheus.CounterVec
-	redisTimeouts            *prometheus.CounterVec
-	redisTotalConns          *prometheus.GaugeVec
-	redisIdleConns           *prometheus.GaugeVec
-	redisStaleConns          *prometheus.GaugeVec
-	bruteForceRejected       *prometheus.CounterVec
-	bruteForceHits           *prometheus.CounterVec
-	rejectedProtocols        *prometheus.CounterVec
-	acceptedProtocols        *prometheus.CounterVec
-	backendServerStatus      *prometheus.GaugeVec
-	ldapPoolStatus           *prometheus.GaugeVec
-	ldapOpenConnections      *prometheus.GaugeVec
-	ldapStaleConnections     *prometheus.GaugeVec
-	ldapPoolSize             *prometheus.GaugeVec
-	ldapIdlePoolSize         *prometheus.GaugeVec
-	ldapQueueDepth           *prometheus.GaugeVec
-	ldapQueueWaitSeconds     *prometheus.HistogramVec
-	ldapQueueDroppedTotal    *prometheus.CounterVec
-	ldapBreakerState         *prometheus.GaugeVec
-	ldapTargetHealth         *prometheus.GaugeVec
-	ldapTargetInflight       *prometheus.GaugeVec
-	ldapCacheHitsTotal       *prometheus.CounterVec
-	ldapCacheMissesTotal     *prometheus.CounterVec
-	ldapCacheEntries         *prometheus.GaugeVec
-	ldapCacheEvictionsTotal  *prometheus.CounterVec
-	ldapErrorsTotal          *prometheus.CounterVec
-	ldapRetriesTotal         *prometheus.CounterVec
-	ldapAuthRateLimitedTotal *prometheus.CounterVec
-	luaQueueDepth            *prometheus.GaugeVec
-	luaQueueWaitSeconds      *prometheus.HistogramVec
-	luaQueueDroppedTotal     *prometheus.CounterVec
-	luaVMInUse               *prometheus.GaugeVec
-	luaVMReplacedTotal       *prometheus.CounterVec
-	rblRejected              *prometheus.CounterVec
-	genericConnections       *prometheus.GaugeVec
+	instanceInfo              *prometheus.GaugeVec
+	currentRequests           prometheus.Gauge
+	httpRequestsTotal         *prometheus.CounterVec
+	httpResponseTimeSeconds   *prometheus.HistogramVec
+	loginsCounter             *prometheus.CounterVec
+	redisReadCounter          prometheus.Counter
+	redisWriteCounter         prometheus.Counter
+	functionDuration          *prometheus.HistogramVec
+	rblDuration               *prometheus.HistogramVec
+	cacheHits                 prometheus.Counter
+	cacheMisses               prometheus.Counter
+	redisHits                 *prometheus.CounterVec
+	redisMisses               *prometheus.CounterVec
+	redisTimeouts             *prometheus.CounterVec
+	redisTotalConns           *prometheus.GaugeVec
+	redisIdleConns            *prometheus.GaugeVec
+	redisStaleConns           *prometheus.GaugeVec
+	bruteForceRejected        *prometheus.CounterVec
+	bruteForceHits            *prometheus.CounterVec
+	rejectedProtocols         *prometheus.CounterVec
+	acceptedProtocols         *prometheus.CounterVec
+	backendServerStatus       *prometheus.GaugeVec
+	ldapPoolStatus            *prometheus.GaugeVec
+	ldapOpenConnections       *prometheus.GaugeVec
+	ldapStaleConnections      *prometheus.GaugeVec
+	ldapPoolSize              *prometheus.GaugeVec
+	ldapIdlePoolSize          *prometheus.GaugeVec
+	ldapQueueDepth            *prometheus.GaugeVec
+	ldapQueueWaitSeconds      *prometheus.HistogramVec
+	ldapQueueDroppedTotal     *prometheus.CounterVec
+	ldapBreakerState          *prometheus.GaugeVec
+	ldapTargetHealth          *prometheus.GaugeVec
+	ldapTargetInflight        *prometheus.GaugeVec
+	ldapCacheHitsTotal        *prometheus.CounterVec
+	ldapCacheMissesTotal      *prometheus.CounterVec
+	ldapCacheEntries          *prometheus.GaugeVec
+	ldapCacheEvictionsTotal   *prometheus.CounterVec
+	ldapErrorsTotal           *prometheus.CounterVec
+	ldapRetriesTotal          *prometheus.CounterVec
+	ldapAuthRateLimitedTotal  *prometheus.CounterVec
+	luaQueueDepth             *prometheus.GaugeVec
+	luaQueueWaitSeconds       *prometheus.HistogramVec
+	luaQueueDroppedTotal      *prometheus.CounterVec
+	luaVMInUse                *prometheus.GaugeVec
+	luaVMReplacedTotal        *prometheus.CounterVec
+	rblRejected               *prometheus.CounterVec
+	genericConnections        *prometheus.GaugeVec
+	bruteForceEvalSeconds     prometheus.Histogram
+	bruteForcePhaseSeconds    *prometheus.HistogramVec
+	bruteForceCacheHitsTotal  *prometheus.CounterVec
+	bruteForceRulesMatchedTot prometheus.Counter
+	redisRoundtripsTotal      *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -481,6 +501,31 @@ func (m *metricsImpl) GetRblRejected() *prometheus.CounterVec {
 // GetGenericConnections returns the genericConnections field.
 func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
 	return m.genericConnections
+}
+
+// GetBruteForceEvalSeconds returns the bruteForceEvalSeconds field.
+func (m *metricsImpl) GetBruteForceEvalSeconds() prometheus.Histogram {
+	return m.bruteForceEvalSeconds
+}
+
+// GetBruteForcePhaseSeconds returns the bruteForcePhaseSeconds field.
+func (m *metricsImpl) GetBruteForcePhaseSeconds() *prometheus.HistogramVec {
+	return m.bruteForcePhaseSeconds
+}
+
+// GetBruteForceCacheHitsTotal returns the bruteForceCacheHitsTotal field.
+func (m *metricsImpl) GetBruteForceCacheHitsTotal() *prometheus.CounterVec {
+	return m.bruteForceCacheHitsTotal
+}
+
+// GetBruteForceRulesMatchedTotal returns the bruteForceRulesMatchedTot field.
+func (m *metricsImpl) GetBruteForceRulesMatchedTotal() prometheus.Counter {
+	return m.bruteForceRulesMatchedTot
+}
+
+// GetRedisRoundtripsTotal returns the redisRoundtripsTotal field.
+func (m *metricsImpl) GetRedisRoundtripsTotal() *prometheus.CounterVec {
+	return m.redisRoundtripsTotal
 }
 
 // GetLuaQueueDepth returns a Prometheus GaugeVec representing the depth of the Lua job queue.
@@ -847,6 +892,42 @@ func NewMetrics() Metrics {
 				Name: "lua_vm_replaced_total",
 				Help: "Total Lua VMs replaced due to errors or timeouts",
 			}, []string{"key"},
+		),
+		// Brute-force path metrics (centralized here)
+		bruteForceEvalSeconds: promauto.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "bruteforce_eval_seconds",
+				Help:    "End-to-end duration of brute-force evaluation",
+				Buckets: prometheus.ExponentialBuckets(0.001, 1.7, 15),
+			},
+		),
+		bruteForcePhaseSeconds: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "bruteforce_phase_seconds",
+				Help:    "Duration by phase in brute-force evaluation",
+				Buckets: prometheus.ExponentialBuckets(0.0005, 1.7, 16),
+			},
+			[]string{"phase"},
+		),
+		bruteForceCacheHitsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "bruteforce_cache_hits_total",
+				Help: "Total cache hits in brute-force path",
+			},
+			[]string{"kind"},
+		),
+		bruteForceRulesMatchedTot: promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "bruteforce_rules_matched_total",
+				Help: "Total number of matched brute-force rules",
+			},
+		),
+		redisRoundtripsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "bruteforce_redis_roundtrips_total",
+				Help: "Total Redis roundtrips by kind in brute-force path",
+			},
+			[]string{"kind"},
 		),
 	}
 }

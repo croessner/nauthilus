@@ -24,8 +24,6 @@ import (
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/svcctx"
-
-	_ "go.uber.org/automaxprocs"
 )
 
 var (

@@ -43,6 +43,18 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// containsString reports whether s is present in the slice.
+// Kept unexported and simple to avoid allocations and stay DRY for common membership checks.
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+
+	return false
+}
+
 // PwHistGateScript is a Lua script that atomically updates password history counters.
 // It enforces a maximum number of fields in the password-history hash to avoid
 // unbounded growth and reduces client/server round-trips to a single EVAL call.
@@ -156,9 +168,9 @@ type BucketManager interface {
 	// It returns whether processing should abort, if a rule is already triggered, and the index of the triggered rule.
 	CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int)
 
-	// CheckBucketOverLimit checks if any brute force rule is violated based on request data and network, updating the message if necessary.
+	// CheckBucketOverLimit checks if any brute force rule is violated based on request data, updating the message if necessary.
 	// It returns whether an error occurred, if a rule was triggered, and the rule number that was triggered (if any).
-	CheckBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int)
+	CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int)
 
 	// ProcessBruteForce processes and evaluates whether a brute force rule should trigger an action based on given parameters.
 	// It returns true if the brute force condition for the specified rule is met and properly handled, false otherwise.
@@ -444,7 +456,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 						bm.bruteForceName = md.Rule
 						*message = "Brute force attack detected (micro-cache)"
-						BruteForceCacheHitsTotal.WithLabelValues("micro").Inc()
+						stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("micro").Inc()
 
 						return false, true, i
 					}
@@ -536,7 +548,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 		// metrics
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-		RedisRoundtripsTotal.WithLabelValues("hmget_preresult").Inc()
+		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("hmget_preresult").Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
 		vals, errHM := rediscli.GetClient().GetReadHandle().HMGet(dCtx, key, fields...).Result()
@@ -590,7 +602,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 // CheckBucketOverLimit evaluates brute force rules for a given network to detect potential brute force attacks.
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
-func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
 
@@ -606,32 +618,14 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	for i := range rules {
 		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
 		if len(rules[i].FilterByProtocol) > 0 && bm.protocol != "" {
-			protocolMatched := false
-			for _, p := range rules[i].FilterByProtocol {
-				if p == bm.protocol {
-					protocolMatched = true
-
-					break
-				}
-			}
-
-			if !protocolMatched {
+			if !containsString(rules[i].FilterByProtocol, bm.protocol) {
 				continue
 			}
 		}
 
 		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
 		if len(rules[i].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
-			oidcCIDMatched := false
-			for _, cid := range rules[i].FilterByOIDCCID {
-				if cid == bm.oidcCID {
-					oidcCIDMatched = true
-
-					break
-				}
-			}
-
-			if !oidcCIDMatched {
+			if !containsString(rules[i].FilterByOIDCCID, bm.oidcCID) {
 				continue
 			}
 		}
@@ -670,7 +664,7 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		// Always use MGET, even for a single candidate
 		// metrics
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-		RedisRoundtripsTotal.WithLabelValues("mget_bucket_counter").Inc()
+		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("mget_bucket_counter").Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
 		vals, errM := rediscli.GetClient().GetReadHandle().MGet(dCtx, keys...).Result()
@@ -771,7 +765,7 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 		defer cancel()
 
 		// Redis LUA roundtrip for burst gate
-		RedisRoundtripsTotal.WithLabelValues("lua_increment_and_expire").Inc()
+		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("lua_increment_and_expire").Inc()
 
 		return rediscli.ExecuteScript(dCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
 	})
@@ -790,7 +784,7 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 	}
 
 	// Follower path; count as cache hit of kind burstLeader
-	BruteForceCacheHitsTotal.WithLabelValues("burstLeader").Inc()
+	stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("burstLeader").Inc()
 
 	return false
 }
@@ -2043,7 +2037,7 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Count Redis roundtrip for bucket counter GET
-	RedisRoundtripsTotal.WithLabelValues("get_bucket_counter").Inc()
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("get_bucket_counter").Inc()
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
 	defer cancel()

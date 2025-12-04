@@ -35,7 +35,9 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
 
-		if L.GetTop() == 2 {
+		// Optional 4th argument selects the return type ("string", "number", "bool", "nil").
+		// Signature: redis_hget(pool, key, field[, type])
+		if L.GetTop() >= 4 {
 			valueType = L.CheckString(4)
 		}
 
@@ -193,6 +195,62 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 		}
 
 		L.Push(table)
+
+		return 1
+	}
+}
+
+// RedisHMGet retrieves values for multiple fields within a Redis hash and returns them as a Lua table.
+// The function expects parameters: pool, key, field1, field2, ...
+// It returns a Lua table mapping field -> value (string), with missing fields set to nil. On error it returns (nil, err).
+func RedisHMGet(ctx context.Context) lua.LGFunction {
+	return func(L *lua.LState) int {
+		if L.GetTop() < 4 { // pool, key, at least one field
+			L.Push(lua.LNil)
+			L.Push(lua.LString("Invalid number of arguments"))
+
+			return 2
+		}
+
+		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		key := L.CheckString(2)
+
+		fields := make([]string, 0, L.GetTop()-2)
+		for i := 3; i <= L.GetTop(); i++ {
+			fields = append(fields, L.CheckString(i))
+		}
+
+		defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		defer cancel()
+
+		vals, err := client.HMGet(dCtx, key, fields...).Result()
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+
+			return 2
+		}
+
+		result := L.NewTable()
+		for i, v := range vals {
+			if v == nil {
+				result.RawSetString(fields[i], lua.LNil)
+
+				continue
+			}
+
+			// Redis returns bulk strings for HMGET items
+			if s, ok := v.(string); ok {
+				result.RawSetString(fields[i], lua.LString(s))
+			} else {
+				// Fallback: convert non-string via Lua string representation
+				result.RawSetString(fields[i], lua.LString(lua.LVAsString(convert.GoToLuaValue(L, v))))
+			}
+		}
+
+		L.Push(result)
 
 		return 1
 	}
