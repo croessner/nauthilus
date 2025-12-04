@@ -117,12 +117,10 @@ func TestBruteForceLogic(t *testing.T) {
 		rule := config.GetFile().GetBruteForceRules()[0]
 		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"5"})
 
-		network := &net.IPNet{}
-
 		var message string
 
 		withError, ruleTriggered, ruleNumber := bm.CheckBucketOverLimit(
-			config.GetFile().GetBruteForceRules(), &network, &message)
+			config.GetFile().GetBruteForceRules(), &message)
 
 		assert.False(t, withError, "No error should occur")
 		assert.False(t, ruleTriggered, "The rule should not be triggered")
@@ -138,12 +136,10 @@ func TestBruteForceLogic(t *testing.T) {
 		rule := config.GetFile().GetBruteForceRules()[0]
 		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"15"})
 
-		network := &net.IPNet{}
-
 		var message string
 
 		withError, ruleTriggered, ruleNumber := bm.CheckBucketOverLimit(
-			config.GetFile().GetBruteForceRules(), &network, &message)
+			config.GetFile().GetBruteForceRules(), &message)
 
 		assert.False(t, withError, "No error should occur")
 		assert.True(t, ruleTriggered, "The rule should be triggered")
@@ -684,8 +680,7 @@ func TestBruteForceFiltersNonMatching(t *testing.T) {
 		assert.Equal(t, expected, key)
 
 		var msg string
-		var netPtr *net.IPNet
-		withErr, triggered, rn := bm.CheckBucketOverLimit([]config.BruteForceRule{rule}, &netPtr, &msg)
+		withErr, triggered, rn := bm.CheckBucketOverLimit([]config.BruteForceRule{rule}, &msg)
 		assert.False(t, withErr)
 		assert.False(t, triggered)
 		assert.Equal(t, 0, rn) // iterated 0th rule but skipped, not triggered

@@ -197,7 +197,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	defer func() {
-		bruteforce.BruteForceEvalSeconds.Observe(time.Since(bfStart).Seconds())
+		stats.GetMetrics().GetBruteForceEvalSeconds().Observe(time.Since(bfStart).Seconds())
 	}()
 
 	// All rules
@@ -307,7 +307,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		activeRules = append(activeRules, r)
 	}
 
-	bruteforce.BruteForcePhaseSeconds.WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
+	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
 
 	// Use filtered rules from here on and precompute networks
 	rules = activeRules
@@ -315,7 +315,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Precompute network strings per CIDR for active rules (no behavior change)
 	bm.PrepareNetcalc(rules)
-	bruteforce.BruteForcePhaseSeconds.WithLabelValues("netcalc").Observe(time.Since(netcalcStart).Seconds())
+	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("netcalc").Observe(time.Since(netcalcStart).Seconds())
 
 	network := &net.IPNet{}
 
@@ -325,7 +325,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	if !alreadyTriggered {
-		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &network, &message)
+		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
 		if abort {
 			return false
 		}
@@ -337,7 +337,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// A rule matched either in pre-result or bucket evaluation
-	bruteforce.BruteForceRulesMatchedTotal.Inc()
+	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
