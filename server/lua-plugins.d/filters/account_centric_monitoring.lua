@@ -75,40 +75,47 @@ function nauthilus_call_filter(request)
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
     local ratio_1h, ratio_24h = 0, 0
 
-    -- Single round-trip: write events and read counts together in one pipeline (write mode)
-    local pipeline_cmds = {}
-    local zpos = {}
-    for _, window in ipairs(windows) do
-        local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
+    -- Stage 1: write events via master (ZAddRemExpire for IP and optionally FAIL)
+    do
+        local write_cmds = {}
+        for _, window in ipairs(windows) do
+            local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
+            table.insert(write_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
 
-        if not request.authenticated then
-            local fail_key_w = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-            local fail_id = request.request_id or (tostring(timestamp) .. "_" .. tostring(math.random(1000000)))
-            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {fail_key_w}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
+            if not request.authenticated then
+                local fail_key_w = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+                local fail_id = request.request_id or (tostring(timestamp) .. "_" .. tostring(math.random(1000000)))
+                table.insert(write_cmds, {"run_script", "ZAddRemExpire", {fail_key_w}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
+            end
         end
 
-        -- queue reads after writes for the same window
-        local ip_key_read = ip_key
-        local fail_key_read = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-        local idx_ip = #pipeline_cmds + 1
-        table.insert(pipeline_cmds, {"zcount", ip_key_read, tostring(timestamp - window), tostring(timestamp)})
-        local idx_fail = #pipeline_cmds + 1
-        table.insert(pipeline_cmds, {"zcount", fail_key_read, tostring(timestamp - window), tostring(timestamp)})
-
-        zpos[window] = {ip = idx_ip, fail = idx_fail}
+        if #write_cmds > 0 then
+            local _, perr = nauthilus_redis.redis_pipeline(custom_pool, "write", write_cmds)
+            nauthilus_util.if_error_raise(perr)
+        end
     end
 
-    local rres, rerr = nauthilus_redis.redis_pipeline(custom_pool, "write", pipeline_cmds)
+    -- Stage 2: read counts from replicas to offload master
+    local read_cmds = {}
+    for _, window in ipairs(windows) do
+        local min_str = tostring(timestamp - window)
+        local max_str = tostring(timestamp)
+        local ip_key_r = "ntc:multilayer:account:" .. username .. ":ips:" .. window
+        local fail_key_r = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+        table.insert(read_cmds, {"zcount", ip_key_r, min_str, max_str})
+        table.insert(read_cmds, {"zcount", fail_key_r, min_str, max_str})
+    end
+
+    local rres, rerr = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
     nauthilus_util.if_error_raise(rerr)
 
     -- Extract per-window values and compute ratios
     local vals = {}
     do
+        local i = 1
         for _, window in ipairs(windows) do
-            local p = zpos[window]
-            local ui = tonumber(rres[p.ip] and rres[p.ip].value or 0) or 0
-            local fa = tonumber(rres[p.fail] and rres[p.fail].value or 0) or 0
+            local ui = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
+            local fa = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
             local ratio = 0
             if fa > 0 then ratio = ui / fa end
             vals[window] = {unique_ips = ui, failed_attempts = fa, ratio = ratio}
