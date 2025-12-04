@@ -164,6 +164,35 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 				pipe.HGet(dCtx, hash, field)
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
+			case "hmget":
+				// HMGET hash field [field ...] | fields can also be provided as a Lua table at index 3
+				hash := rowTbl.RawGetInt(2).String()
+
+				var fields []string
+				if t, ok := rowTbl.RawGetInt(3).(*lua.LTable); ok {
+					// fields provided as table
+					t.ForEach(func(_ lua.LValue, v lua.LValue) { fields = append(fields, v.String()) })
+				} else {
+					// fields provided as varargs starting at index 3
+					j := 3
+					for {
+						v := rowTbl.RawGetInt(j)
+						if v == lua.LNil {
+							break
+						}
+
+						fields = append(fields, v.String())
+						j++
+					}
+				}
+
+				if len(fields) == 0 {
+					fields = []string{""}
+				}
+
+				pipe.HMGet(dCtx, hash, fields...)
+				stats.GetMetrics().GetRedisReadCounter().Inc()
+
 			case "hgetall":
 				hash := rowTbl.RawGetInt(2).String()
 

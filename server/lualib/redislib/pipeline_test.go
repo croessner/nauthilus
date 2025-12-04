@@ -238,3 +238,68 @@ func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 	// No pipeline Exec should have been triggered; ensure there are no expected calls
 	_ = mock.ExpectationsWereMet()
 }
+
+func TestRedisPipeline_HMGET(t *testing.T) {
+	L := lua.NewState()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	defer L.Close()
+
+	db, mock := redismock.NewClientMock()
+	if db == nil || mock == nil {
+		t.Fatalf("Failed to create Redis mock client.")
+	}
+	rediscli.NewTestClient(db)
+
+	// Expect HMGET returning mix of values and nil
+	mock.ExpectHMGet("hkey", "f1", "missing", "f3").SetVal([]interface{}{"v1", nil, "v3"})
+
+	// Build Lua pipeline with hmget (varargs form)
+	luaCode := `
+        local nauthilus_redis = require("nauthilus_redis")
+        local cmds = {
+            {"hmget", "hkey", "f1", "missing", "f3"},
+        }
+        result, err = nauthilus_redis.redis_pipeline("default", "read", cmds)
+    `
+
+	if err := L.DoString(luaCode); err != nil {
+		t.Fatalf("Running Lua code failed: %v", err)
+	}
+
+	gotErr := L.GetGlobal("err")
+	checkLuaError(t, gotErr, lua.LNil)
+
+	gotResult := L.GetGlobal("result")
+	if gotResult.Type() != lua.LTTable {
+		t.Fatalf("Expected result to be a table, got %v", gotResult.Type())
+	}
+
+	resTbl := gotResult.(*lua.LTable)
+	v := resTbl.RawGetInt(1)
+	if v.Type() != lua.LTTable {
+		t.Fatalf("Expected first entry to be table, got %v", v.Type())
+	}
+	entry := v.(*lua.LTable)
+	if entry.RawGetString("ok") != lua.LTrue {
+		t.Fatalf("expected ok=true, got %v", entry.RawGetString("ok"))
+	}
+	val := entry.RawGetString("value")
+	if val.Type() != lua.LTTable {
+		t.Fatalf("expected value to be table, got %v", val.Type())
+	}
+	arr := val.(*lua.LTable)
+	if arr.RawGetInt(1).String() != "v1" {
+		t.Errorf("value[1] = %v, want v1", arr.RawGetInt(1))
+	}
+	// Due to Lua table semantics, appending nil removes the slot; the next value will occupy index 2.
+	if arr.RawGetInt(2).String() != "v3" {
+		t.Errorf("value[2] = %v, want v3", arr.RawGetInt(2))
+	}
+	if arr.RawGetInt(3) != lua.LNil {
+		t.Errorf("value[3] = %v, want nil", arr.RawGetInt(3))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet redis expectations: %v", err)
+	}
+}
