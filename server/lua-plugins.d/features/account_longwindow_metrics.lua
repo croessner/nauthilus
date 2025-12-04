@@ -23,6 +23,7 @@
 local N = "account_longwindow_metrics"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_misc = require("nauthilus_misc")
@@ -53,6 +54,7 @@ function nauthilus_call_feature(request)
 
     -- Only collect per-account metrics if we have a username
     if username and username ~= "" then
+        local tag = nauthilus_keys.account_tag(username)
         -- 1) Unique IPs per account using HLL for 24h and 7d
         if client_ip and client_ip ~= "" then
             local scoped = nauthilus_misc.scoped_ip("lua_generic", client_ip)
@@ -61,7 +63,7 @@ function nauthilus_call_feature(request)
             -- Batch HLL updates and TTLs via pipeline
             local pipe_cmds = {}
             for _, w in ipairs(windows) do
-                local hll_key = "ntc:hll:acct:" .. username .. ":ips:" .. w
+                local hll_key = "ntc:hll:acct:" .. tag .. username .. ":ips:" .. w
                 table.insert(pipe_cmds, {"pfadd", hll_key, scoped})
                 table.insert(pipe_cmds, {"expire", hll_key, w * 2})
             end
@@ -73,7 +75,7 @@ function nauthilus_call_feature(request)
 
         -- 2) Per-account failures ZSET (keep max 7d)
         if not authenticated then
-            local zkey = "ntc:z:acct:" .. username .. ":fails"
+            local zkey = "ntc:z:acct:" .. tag .. username .. ":fails"
             -- Use request id to avoid duplicates as member
             local pipe_cmds = {
                 {"zadd", zkey, now, req_id},
@@ -121,12 +123,13 @@ function nauthilus_call_feature(request)
         local uniq7d = 0
         local fails_24h = 0
         local fails_7d = 0
-        local fail_key = "ntc:z:acct:" .. username .. ":fails"
+        local tag = nauthilus_keys.account_tag(username)
+        local fail_key = "ntc:z:acct:" .. tag .. username .. ":fails"
 
         -- Batch snapshot reads to minimize roundtrips
         local read_cmds = {
-            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:86400"},
-            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:604800"},
+            {"pfcount", "ntc:hll:acct:" .. tag .. username .. ":ips:86400"},
+            {"pfcount", "ntc:hll:acct:" .. tag .. username .. ":ips:604800"},
             {"zcount", fail_key, tostring(now - 86400), tostring(now)},
             {"zcount", fail_key, tostring(now - 604800), tostring(now)},
         }
@@ -145,7 +148,7 @@ function nauthilus_call_feature(request)
             client,
             "",
             "HSetMultiExpire",
-            {"ntc:acct:" .. username .. ":longwindow"},
+            {"ntc:acct:" .. tag .. username .. ":longwindow"},
             {
                 86400, -- keep 24h snapshot around a day
                 "uniq_ips_24h", uniq24,

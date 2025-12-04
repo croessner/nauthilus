@@ -32,6 +32,7 @@
 local N = "security_metrics"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local prom = require("nauthilus_prometheus")
 local nauthilus_redis = require("nauthilus_redis")
@@ -68,7 +69,8 @@ local function should_emit_per_user(client, username)
     end
 
     -- Always include protected accounts (check hash flag set by account_protection_mode)
-    local prot_hash_key = "ntc:acct:" .. username .. ":protection"
+    local nauthilus_keys = require("nauthilus_keys")
+    local prot_hash_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":protection"
     local prot_active = nauthilus_redis.redis_hget(client, prot_hash_key, "active")
     if prot_active == "true" then
         return true
@@ -116,14 +118,15 @@ function nauthilus_call_feature(request)
 
     -- Per-account gauges (guarded to avoid high cardinality)
     if username ~= "" and should_emit_per_user(client, username) then
+        local tag = nauthilus_keys.account_tag(username)
         -- Batch reads: PFCOUNT(24h,7d) + fallback ZCOUNTs + failure ZCOUNTs (1h,24h,7d)
         local cmds = {
-            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:86400"},
-            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:604800"},
-            {"zcount", "ntc:multilayer:account:" .. username .. ":ips:86400", tostring(now - 86400), tostring(now)},
-            {"zcount", "ntc:multilayer:account:" .. username .. ":ips:604800", tostring(now - 604800), tostring(now)},
+            {"pfcount", "ntc:hll:acct:" .. tag .. username .. ":ips:86400"},
+            {"pfcount", "ntc:hll:acct:" .. tag .. username .. ":ips:604800"},
+            {"zcount", "ntc:multilayer:account:" .. tag .. username .. ":ips:86400", tostring(now - 86400), tostring(now)},
+            {"zcount", "ntc:multilayer:account:" .. tag .. username .. ":ips:604800", tostring(now - 604800), tostring(now)},
         }
-        local zkey = "ntc:z:acct:" .. username .. ":fails"
+        local zkey = "ntc:z:acct:" .. tag .. username .. ":fails"
         table.insert(cmds, {"zcount", zkey, tostring(now - 3600), tostring(now)})   -- 5
         table.insert(cmds, {"zcount", zkey, tostring(now - 86400), tostring(now)})  -- 6
         table.insert(cmds, {"zcount", zkey, tostring(now - 604800), tostring(now)}) -- 7
@@ -149,21 +152,21 @@ function nauthilus_call_feature(request)
         -- Fallback to multilayer failures if zero
         if f1h == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                {"zcount", "ntc:multilayer:account:" .. username .. ":fails:3600", tostring(now - 3600), tostring(now)}
+                {"zcount", "ntc:multilayer:account:" .. tag .. username .. ":fails:3600", tostring(now - 3600), tostring(now)}
             })
             nauthilus_util.if_error_raise(e2)
             f1h = tonumber(r2[1] and r2[1].value or 0) or 0
         end
         if f24 == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                {"zcount", "ntc:multilayer:account:" .. username .. ":fails:86400", tostring(now - 86400), tostring(now)}
+                {"zcount", "ntc:multilayer:account:" .. tag .. username .. ":fails:86400", tostring(now - 86400), tostring(now)}
             })
             nauthilus_util.if_error_raise(e2)
             f24 = tonumber(r2[1] and r2[1].value or 0) or 0
         end
         if f7d == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                {"zcount", "ntc:multilayer:account:" .. username .. ":fails:604800", tostring(now - 604800), tostring(now)}
+                {"zcount", "ntc:multilayer:account:" .. tag .. username .. ":fails:604800", tostring(now - 604800), tostring(now)}
             })
             nauthilus_util.if_error_raise(e2)
             f7d = tonumber(r2[1] and r2[1].value or 0) or 0

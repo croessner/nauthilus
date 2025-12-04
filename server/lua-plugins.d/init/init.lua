@@ -214,6 +214,78 @@ function nauthilus_run_hook(logging)
     nauthilus_util.if_error_raise(incr_err)
     result["IncrementAndExpire"] = incr_sha1
 
+    -- 6) ACM_TrackAndAggregate: single server-side processing for account_centric_monitoring
+    --    Keys (order):
+    --      1..3: ips:{w} for w in {W1,W2,W3}
+    --      4..6: fails:{w} for w in {W1,W2,W3}
+    --      7..9: metrics:{w} for w in {W1,W2,W3}
+    --      10: attacked_accounts_key
+    --    ARGV: now_ts, client_ip, fail_id, is_authenticated (0|1), attack_ttl,
+    --          TH_UNIQ_1H, TH_UNIQ_24H, TH_UNIQ_7D, TH_FAIL_MIN_24H, TH_RATIO,
+    --          W1, W2, W3, username
+    local acm_script = [[
+        local now_ts = tonumber(ARGV[1])
+        local client_ip = ARGV[2]
+        local fail_id = ARGV[3]
+        local is_auth = tonumber(ARGV[4]) or 0
+        local attack_ttl = tonumber(ARGV[5]) or 43200
+        local TH_U1H = tonumber(ARGV[6]) or 12
+        local TH_U24H = tonumber(ARGV[7]) or 25
+        local TH_U7D = tonumber(ARGV[8]) or 60
+        local TH_F24H = tonumber(ARGV[9]) or 8
+        local TH_RATIO = tonumber(ARGV[10]) or 1.2
+        local W1 = tonumber(ARGV[11]) or 3600
+        local W2 = tonumber(ARGV[12]) or 86400
+        local W3 = tonumber(ARGV[13]) or 604800
+        local username = ARGV[14]
+
+        local wins = {W1, W2, W3}
+
+        local function process_window(i, z_ips, z_fails, h_metrics, win)
+            -- write ip
+            redis.call('ZADD', z_ips, now_ts, client_ip)
+            redis.call('ZREMRANGEBYSCORE', z_ips, '-inf', now_ts - win)
+            redis.call('EXPIRE', z_ips, win * 2)
+            -- write fail when unauthenticated
+            if is_auth == 0 and fail_id ~= nil and fail_id ~= '' then
+                redis.call('ZADD', z_fails, now_ts, fail_id)
+                redis.call('ZREMRANGEBYSCORE', z_fails, '-inf', now_ts - win)
+                redis.call('EXPIRE', z_fails, win * 2)
+            end
+            -- read counts
+            local ui = tonumber(redis.call('ZCOUNT', z_ips, now_ts - win, now_ts)) or 0
+            local fa = tonumber(redis.call('ZCOUNT', z_fails, now_ts - win, now_ts)) or 0
+            local ratio = 0
+            if fa > 0 then ratio = ui / fa end
+            -- persist metrics
+            redis.call('HSET', h_metrics, 'unique_ips', ui, 'failed_attempts', fa, 'ip_to_fail_ratio', ratio, 'last_updated', now_ts)
+            redis.call('EXPIRE', h_metrics, win * 2)
+            return ui, fa, ratio
+        end
+
+        local ui1, fa1, r1 = process_window(1, KEYS[1], KEYS[4], KEYS[7], wins[1])
+        local ui2, fa2, r2 = process_window(2, KEYS[2], KEYS[5], KEYS[8], wins[2])
+        local ui3, fa3, r3 = process_window(3, KEYS[3], KEYS[6], KEYS[9], wins[3])
+
+        -- suspicion logic
+        local ratio_ok = ((fa2 > 0 and r2 >= TH_RATIO) or (fa1 > 0 and r1 >= TH_RATIO))
+        local suspicious = 0
+        if ((ui1 >= TH_U1H or ui2 >= TH_U24H) and ui3 >= TH_U7D and fa2 >= TH_F24H and ratio_ok) then
+            suspicious = 1
+            -- add to attacked accounts
+            local attacked_key = KEYS[10]
+            redis.call('ZADD', attacked_key, now_ts, username)
+            redis.call('ZREMRANGEBYSCORE', attacked_key, '-inf', now_ts - attack_ttl)
+            redis.call('EXPIRE', attacked_key, attack_ttl * 2)
+        end
+
+        return {ui1, fa1, r1, ui2, fa2, r2, ui3, fa3, suspicious}
+    ]]
+
+    local acm_sha1, acm_err = nauthilus_redis.redis_upload_script(custom_pool, acm_script, "ACM_TrackAndAggregate")
+    nauthilus_util.if_error_raise(acm_err)
+    result["ACM_TrackAndAggregate"] = acm_sha1
+
     -- 6) AddToSetAndExpire: SADD member then EXPIRE ttl
     local addset_script = [[
         local key = KEYS[1]

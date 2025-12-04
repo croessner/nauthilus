@@ -39,6 +39,7 @@
 local N = "account_protection_mode"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_prometheus = require("nauthilus_prometheus")
@@ -96,7 +97,7 @@ local function compute_under_protection(client, username)
         return cached.under, cached.metrics
     end
 
-    local key = "ntc:acct:" .. username .. ":longwindow"
+    local key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":longwindow"
     -- Pipeline the related reads to minimize latency
     local cmds = {
         {"hget", key, "uniq_ips_24h"},
@@ -153,7 +154,7 @@ local function record_protection_state(client, username, reason, backoff_level, 
         client,
         "",
         "HSetMultiExpire",
-        {"ntc:acct:" .. username .. ":protection"},
+        {"ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":protection"},
         {
             ttl,
             "active", "true",
@@ -183,7 +184,7 @@ local function set_stepup_required(client, username, reason, ttl)
         client,
         "",
         "HSetMultiExpire",
-        {"ntc:acct:" .. username .. ":stepup"},
+        {"ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup"},
         {
             ttl,
             "required", "true",

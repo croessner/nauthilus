@@ -16,6 +16,7 @@
 local N = "dynamic_response"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
@@ -534,7 +535,7 @@ function nauthilus_call_action(request)
     -- Per-account step-up hint: if a step-up flag exists for this username,
     -- add the account temporarily to captcha/step-up set to help HTTP/OIDC flows.
     if username and username ~= "" then
-        local stepup_key = "ntc:acct:" .. username .. ":stepup"
+        local stepup_key = "ntc:acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup"
         local required = nauthilus_redis.redis_hget(custom_pool, stepup_key, "required")
         if required == "true" then
             local args = {15 * 60} -- 15 minutes TTL

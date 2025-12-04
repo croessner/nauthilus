@@ -16,6 +16,7 @@
 local N = "account_centric_monitoring"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_redis = require("nauthilus_redis")
 
@@ -75,15 +76,108 @@ function nauthilus_call_filter(request)
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
     local ratio_1h, ratio_24h = 0, 0
 
+    -- Fast path using server-side script (one RTT) when enabled
+    local use_script = os.getenv("ACM_USE_SCRIPT")
+    if use_script == nil or use_script == "" or nauthilus_util.toboolean(use_script) then
+        local tag = nauthilus_keys.account_tag(username)
+        local w1, w2, w3 = windows[1], windows[2], windows[3]
+
+        -- Keys: ips[w1..3], fails[w1..3], metrics[w1..3], attacked_accounts
+        local keys = {
+            "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w1,
+            "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w2,
+            "ntc:multilayer:account:" .. tag .. username .. ":ips:" .. w3,
+            "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w1,
+            "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w2,
+            "ntc:multilayer:account:" .. tag .. username .. ":fails:" .. w3,
+            "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w1,
+            "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w2,
+            "ntc:multilayer:account:" .. tag .. username .. ":metrics:" .. w3,
+            "ntc:multilayer:distributed_attack:accounts",
+        }
+
+        local fail_id
+        if not request.authenticated then
+            fail_id = request.request_id or tostring(timestamp)
+        else
+            fail_id = ""
+        end
+
+        local args = {
+            timestamp,
+            request.client_ip or "",
+            fail_id,
+            request.authenticated and 1 or 0,
+            ATTACK_TTL_SEC,
+            TH_UNIQ_1H, TH_UNIQ_24H, TH_UNIQ_7D, TH_FAIL_MIN_24H, TH_RATIO,
+            w1, w2, w3,
+            username,
+        }
+
+        local res, err_script = nauthilus_redis.redis_run_script(custom_pool, "", "ACM_TrackAndAggregate", keys, args)
+        nauthilus_util.if_error_raise(err_script)
+
+        -- Expect flat array: [ui1, fa1, r1, ui2, fa2, r2, ui3, fa3, suspicious]
+        if nauthilus_util.is_table(res) then
+            local ui1 = tonumber(res[1] or 0) or 0
+            local fa1 = tonumber(res[2] or 0) or 0
+            local r1 = tonumber(res[3] or 0) or 0
+            local ui2 = tonumber(res[4] or 0) or 0
+            local fa2 = tonumber(res[5] or 0) or 0
+            local r2 = tonumber(res[6] or 0) or 0
+            local ui3 = tonumber(res[7] or 0) or 0
+            local fa3 = tonumber(res[8] or 0) or 0
+            local suspicious = (tostring(res[9]) == "1" or res[9] == 1)
+
+            uniq_1h, fails_1h, ratio_1h = ui1, fa1, r1
+            uniq_24h, fails_24h, ratio_24h = ui2, fa2, r2
+            uniq_7d, fails_7d = ui3, fa3
+
+            if suspicious then
+                -- Add to custom log for monitoring (parity with pipeline path)
+                nauthilus_builtin.custom_log_add(N .. "_attack_detected", "true")
+                nauthilus_builtin.custom_log_add(N .. "_username", username)
+                nauthilus_builtin.custom_log_add(N .. "_uniq_ips_1h", uniq_1h)
+                nauthilus_builtin.custom_log_add(N .. "_uniq_ips_24h", uniq_24h)
+                nauthilus_builtin.custom_log_add(N .. "_uniq_ips_7d", uniq_7d)
+                nauthilus_builtin.custom_log_add(N .. "_failed_24h", fails_24h)
+                nauthilus_builtin.custom_log_add(N .. "_ratio_24h", ratio_24h)
+            end
+
+            -- Optional info log
+            if ACM_INFO_LOG then
+                local logs = {}
+                logs.caller = N .. ".lua"
+                logs.level = "info"
+                logs.message = "Account metrics tracked"
+                logs.username = username
+                logs.uniq_ips_1h = uniq_1h
+                logs.uniq_ips_24h = uniq_24h
+                logs.uniq_ips_7d = uniq_7d
+                logs.failed_1h = fails_1h
+                logs.failed_24h = fails_24h
+                logs.failed_7d = fails_7d
+                logs.ratio_1h = ratio_1h
+                logs.ratio_24h = ratio_24h
+                logs.is_suspicious = suspicious
+
+                nauthilus_util.print_result({ log_format = "json" }, logs)
+            end
+
+            return nauthilus_builtin.FILTER_ACCEPT, nauthilus_builtin.FILTER_RESULT_OK
+        end
+        -- If script result unexpected, fall through to pipeline path
+    end
+
     -- Stage 1: write events via master (ZAddRemExpire for IP and optionally FAIL)
     do
         local write_cmds = {}
         for _, window in ipairs(windows) do
-            local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
+            local ip_key = "ntc:multilayer:account:" .. nauthilus_keys.account_tag(username) .. username .. ":ips:" .. window
             table.insert(write_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
 
             if not request.authenticated then
-                local fail_key_w = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+                local fail_key_w = "ntc:multilayer:account:" .. nauthilus_keys.account_tag(username) .. username .. ":fails:" .. window
                 local fail_id = request.request_id or (tostring(timestamp) .. "_" .. tostring(math.random(1000000)))
                 table.insert(write_cmds, {"run_script", "ZAddRemExpire", {fail_key_w}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
             end
@@ -100,8 +194,8 @@ function nauthilus_call_filter(request)
     for _, window in ipairs(windows) do
         local min_str = tostring(timestamp - window)
         local max_str = tostring(timestamp)
-        local ip_key_r = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-        local fail_key_r = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+        local ip_key_r = "ntc:multilayer:account:" .. nauthilus_keys.account_tag(username) .. username .. ":ips:" .. window
+        local fail_key_r = "ntc:multilayer:account:" .. nauthilus_keys.account_tag(username) .. username .. ":fails:" .. window
         table.insert(read_cmds, {"zcount", ip_key_r, min_str, max_str})
         table.insert(read_cmds, {"zcount", fail_key_r, min_str, max_str})
     end
@@ -135,7 +229,7 @@ function nauthilus_call_filter(request)
         local wcmds = {}
         for _, window in ipairs(windows) do
             local v = vals[window]
-            local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics:" .. window
+            local account_metrics_key = "ntc:multilayer:account:" .. nauthilus_keys.account_tag(username) .. username .. ":metrics:" .. window
             table.insert(wcmds, {"run_script", "HSetMultiExpire", {account_metrics_key}, {
                 window * 2,
                 "unique_ips", v.unique_ips,
