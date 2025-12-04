@@ -36,6 +36,7 @@ func RedisHSetWithCtx(ctx context.Context) lua.LGFunction          { return Redi
 func RedisHDelWithCtx(ctx context.Context) lua.LGFunction          { return RedisHDel(ctx) }
 func RedisHLenWithCtx(ctx context.Context) lua.LGFunction          { return RedisHLen(ctx) }
 func RedisHGetAllWithCtx(ctx context.Context) lua.LGFunction       { return RedisHGetAll(ctx) }
+func RedisHMGetWithCtx(ctx context.Context) lua.LGFunction         { return RedisHMGet(ctx) }
 func RedisHIncrByWithCtx(ctx context.Context) lua.LGFunction       { return RedisHIncrBy(ctx) }
 func RedisHIncrByFloatWithCtx(ctx context.Context) lua.LGFunction  { return RedisHIncrByFloat(ctx) }
 func RedisHExistsWithCtx(ctx context.Context) lua.LGFunction       { return RedisHExists(ctx) }

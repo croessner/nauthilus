@@ -721,3 +721,116 @@ func TestRedisHExists(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisHMGet(t *testing.T) {
+	tests := []struct {
+		name             string
+		key              string
+		fields           []string
+		expectedResult   map[string]*string
+		expectedErr      lua.LValue
+		prepareMockRedis func(mock redismock.ClientMock)
+	}{
+		{
+			name:   "HMGetExistingFields",
+			key:    "hashKey",
+			fields: []string{"f1", "f2", "f3"},
+			expectedResult: map[string]*string{
+				"f1": ptr("v1"),
+				"f2": ptr("v2"),
+				"f3": ptr("v3"),
+			},
+			expectedErr: lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHMGet("hashKey", "f1", "f2", "f3").SetVal([]interface{}{"v1", "v2", "v3"})
+			},
+		},
+		{
+			name:   "HMGetMixedFields",
+			key:    "hashKey",
+			fields: []string{"f1", "missing", "f3"},
+			expectedResult: map[string]*string{
+				"f1":      ptr("v1"),
+				"missing": nil,
+				"f3":      ptr("v3"),
+			},
+			expectedErr: lua.LNil,
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHMGet("hashKey", "f1", "missing", "f3").SetVal([]interface{}{"v1", nil, "v3"})
+			},
+		},
+		{
+			name:           "HMGetWithError",
+			key:            "hashKey",
+			fields:         []string{"f1", "f2"},
+			expectedResult: nil,
+			expectedErr:    lua.LString("some error"),
+			prepareMockRedis: func(mock redismock.ClientMock) {
+				mock.ExpectHMGet("hashKey", "f1", "f2").SetErr(errors.New("some error"))
+			},
+		},
+	}
+
+	L := lua.NewState()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	defer L.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock := redismock.NewClientMock()
+			if db == nil || mock == nil {
+				t.Fatalf("Failed to create Redis mock client.")
+			}
+
+			tt.prepareMockRedis(mock)
+			rediscli.NewTestClient(db)
+
+			L.SetGlobal("key", lua.LString(tt.key))
+			// Prepare fields as Lua variables
+			luaCode := `local nauthilus_redis = require("nauthilus_redis"); result, err = nauthilus_redis.redis_hmget("default", key`
+			for i, f := range tt.fields {
+				varName := "f" + string(rune('0'+i))
+				L.SetGlobal(varName, lua.LString(f))
+				luaCode += ", " + varName
+			}
+			luaCode += ")"
+
+			if err := L.DoString(luaCode); err != nil {
+				t.Fatalf("Running Lua code failed: %v", err)
+			}
+
+			gotResult := L.GetGlobal("result")
+			gotErr := L.GetGlobal("err")
+
+			if tt.expectedErr == lua.LNil {
+				if gotResult.Type() != lua.LTTable {
+					t.Fatalf("expected table, got %v", gotResult.Type())
+				}
+				tbl := gotResult.(*lua.LTable)
+				for field, exp := range tt.expectedResult {
+					v := tbl.RawGetString(field)
+					if exp == nil {
+						if v.Type() != lua.LTNil {
+							t.Errorf("field %s expected nil, got %s", field, v.String())
+						}
+					} else {
+						if v.Type() != lua.LTString || v.String() != *exp {
+							t.Errorf("field %s expected %q, got %s", field, *exp, v.String())
+						}
+					}
+				}
+				checkLuaError(t, gotErr, lua.LNil)
+			} else {
+				if gotResult.Type() != lua.LTNil {
+					t.Errorf("expected result=nil on error, got %v", gotResult.Type())
+				}
+				checkLuaError(t, gotErr, tt.expectedErr)
+			}
+
+			mock.ClearExpect()
+		})
+	}
+}
+
+// ptr is a small helper for test expected values
+func ptr(s string) *string { return &s }

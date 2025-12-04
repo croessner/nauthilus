@@ -1109,6 +1109,9 @@ const (
 	// LuaFnRedisHGetAll represents the function name for "redis_hgetall" in Lua
 	LuaFnRedisHGetAll = "redis_hgetall"
 
+	// LuaFnRedisHMGet represents the function name for "redis_hmget" in Lua
+	LuaFnRedisHMGet = "redis_hmget"
+
 	// LuaFnRedisHIncrBy represents the function name for "redis_hincrby" in Lua.
 	LuaFnRedisHIncrBy = "redis_hincrby"
 

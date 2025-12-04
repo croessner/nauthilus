@@ -41,6 +41,7 @@ func LoaderModRedis(ctx context.Context) lua.LGFunction {
 			definitions.LuaFnRedisHDel:                 RedisHDelWithCtx(ctx),
 			definitions.LuaFnRedisHLen:                 RedisHLenWithCtx(ctx),
 			definitions.LuaFnRedisHGetAll:              RedisHGetAllWithCtx(ctx),
+			definitions.LuaFnRedisHMGet:                RedisHMGetWithCtx(ctx),
 			definitions.LuaFnRedisHIncrBy:              RedisHIncrByWithCtx(ctx),
 			definitions.LuaFnRedisHIncrByFloat:         RedisHIncrByFloatWithCtx(ctx),
 			definitions.LuaFnRedisHExists:              RedisHExistsWithCtx(ctx),
