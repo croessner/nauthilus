@@ -56,45 +56,44 @@ local function get_metrics(redis_handle)
     -- Make sure startup-related settings exist
     local settings = ensure_startup_settings(redis_handle)
 
-    -- Get current threat level
-    local threat_level = nauthilus_redis.redis_hget(redis_handle, "ntc:multilayer:global:settings", "threat_level") or "0.0"
-    metrics.threat_level = tonumber(threat_level) or 0.0
-
-    -- Get current global metrics
+    -- Keys
+    local settings_key = "ntc:multilayer:global:settings"
     local current_metrics_key = "ntc:multilayer:global:current_metrics"
-
-    -- Get global metrics
-    local attempts_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "attempts")
-    metrics.attempts = tonumber(attempts_str) or 0
-
-    local unique_ips_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_ips")
-    metrics.unique_ips = tonumber(unique_ips_str) or 0
-
-    local unique_users_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "unique_users")
-    metrics.unique_users = tonumber(unique_users_str) or 0
-
-    local ips_per_user_str = nauthilus_redis.redis_hget(redis_handle, current_metrics_key, "ips_per_user")
-    metrics.ips_per_user = tonumber(ips_per_user_str) or 0
-
-    -- Get accounts under attack
     local attacked_accounts_key = "ntc:multilayer:distributed_attack:accounts"
-    local attacked_accounts = nauthilus_redis.redis_zrange(redis_handle, attacked_accounts_key, 0, -1, "WITHSCORES")
-    metrics.attacked_accounts = attacked_accounts or {}
-
-    -- Get blocked regions
     local blocked_regions_key = "ntc:multilayer:global:blocked_regions"
-    local blocked_regions = nauthilus_redis.redis_smembers(redis_handle, blocked_regions_key)
-    metrics.blocked_regions = blocked_regions or {}
-
-    -- Get rate limited IPs
     local rate_limited_ips_key = "ntc:multilayer:global:rate_limited_ips"
-    local rate_limited_ips = nauthilus_redis.redis_smembers(redis_handle, rate_limited_ips_key)
-    metrics.rate_limited_ips = rate_limited_ips or {}
-
-    -- Get captcha accounts
     local captcha_accounts_key = "ntc:multilayer:global:captcha_accounts"
-    local captcha_accounts = nauthilus_redis.redis_smembers(redis_handle, captcha_accounts_key)
-    metrics.captcha_accounts = captcha_accounts or {}
+    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
+
+    -- Batch reads via pipeline: threat_level, current metrics, attacked accounts, blocked/rate/captcha sets, first_seen
+    local cmds = {
+        {"hget", settings_key, "threat_level"},
+        {"hmget", current_metrics_key, "attempts", "unique_ips", "unique_users", "ips_per_user"},
+        {"zrange", attacked_accounts_key, 0, -1, "WITHSCORES"},
+        {"smembers", blocked_regions_key},
+        {"smembers", rate_limited_ips_key},
+        {"smembers", captcha_accounts_key},
+        {"get", first_seen_key},
+    }
+    local res, rerr = nauthilus_redis.redis_pipeline(redis_handle, "read", cmds)
+    nauthilus_util.if_error_raise(rerr)
+
+    -- Extract
+    local threat_level_str = res[1] and res[1].value or "0.0"
+    metrics.threat_level = tonumber(threat_level_str) or 0.0
+
+    do
+        local v = (res[2] and res[2].value) or {}
+        metrics.attempts = tonumber(v[1] or 0) or 0
+        metrics.unique_ips = tonumber(v[2] or 0) or 0
+        metrics.unique_users = tonumber(v[3] or 0) or 0
+        metrics.ips_per_user = tonumber(v[4] or 0) or 0
+    end
+
+    metrics.attacked_accounts = (res[3] and res[3].value) or {}
+    metrics.blocked_regions = (res[4] and res[4].value) or {}
+    metrics.rate_limited_ips = (res[5] and res[5].value) or {}
+    metrics.captcha_accounts = (res[6] and res[6].value) or {}
 
     -- Compute warm-up diagnostics (aligned with dynamic_response.lua gating)
     local now = os.time()
@@ -102,8 +101,7 @@ local function get_metrics(redis_handle)
     local warmup_min_users = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_USERS") or "1000")
     local warmup_min_attempts = tonumber(os.getenv("DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS") or "10000")
 
-    local first_seen_key = "ntc:multilayer:bootstrap:first_seen_ts"
-    local first_seen_val = nauthilus_redis.redis_get(redis_handle, first_seen_key)
+    local first_seen_val = res[7] and res[7].value or nil
     local first_seen_ts = tonumber(first_seen_val or "0") or 0
     if first_seen_ts == 0 then
         -- Initialize on first call to provide immediate feedback to UI; best-effort with TTL 30d

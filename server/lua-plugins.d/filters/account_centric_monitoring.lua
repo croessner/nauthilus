@@ -70,75 +70,75 @@ function nauthilus_call_filter(request)
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
     local ratio_1h, ratio_24h = 0, 0
 
-    -- Track IPs that attempted to access this account using atomic Redis Lua script
+    -- Batch: add IP/fail events across all windows in a single write pipeline
+    do
+        local write_cmds = {}
+        for _, window in ipairs(windows) do
+            local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
+            table.insert(write_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, request.client_ip, 0, timestamp - window, window * 2}})
+
+            if not request.authenticated then
+                local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
+                local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
+                table.insert(write_cmds, {"run_script", "ZAddRemExpire", {fail_key}, {timestamp, fail_id, 0, timestamp - window, window * 2}})
+            end
+        end
+        if #write_cmds > 0 then
+            local _, perr = nauthilus_redis.redis_pipeline(custom_pool, "write", write_cmds)
+            nauthilus_util.if_error_raise(perr)
+        end
+    end
+
+    -- Batch: read unique_ips and failed_attempts across all windows in a single read pipeline
+    local read_cmds = {}
     for _, window in ipairs(windows) do
         local ip_key = "ntc:multilayer:account:" .. username .. ":ips:" .. window
-        local _, err_script = nauthilus_redis.redis_run_script(
-                custom_pool,
-            "", 
-            "ZAddRemExpire", 
-            {ip_key}, 
-            {timestamp, request.client_ip, 0, timestamp - window, window * 2}
-        )
-        nauthilus_util.if_error_raise(err_script)
-
-        -- Track failed attempts for this account using atomic Redis Lua script
-        if not request.authenticated then
-            local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-            local fail_id = request.request_id or tostring(timestamp) .. "_" .. tostring(math.random(1000000))
-             _, err_script = nauthilus_redis.redis_run_script(
-                custom_pool,
-                "", 
-                "ZAddRemExpire", 
-                {fail_key}, 
-                {timestamp, fail_id, 0, timestamp - window, window * 2}
-            )
-            nauthilus_util.if_error_raise(err_script)
-        end
-
-        -- Get unique IPs that attempted to access this account
-        local unique_ips = nauthilus_redis.redis_zcount(custom_pool, ip_key, timestamp - window, timestamp)
-
-        -- Get failed attempts for this account
         local fail_key = "ntc:multilayer:account:" .. username .. ":fails:" .. window
-        local failed_attempts = nauthilus_redis.redis_zcount(custom_pool, fail_key, timestamp - window, timestamp)
+        table.insert(read_cmds, {"zcount", ip_key, tostring(timestamp - window), tostring(timestamp)})
+        table.insert(read_cmds, {"zcount", fail_key, tostring(timestamp - window), tostring(timestamp)})
+    end
+    local rres, rerr = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
+    nauthilus_util.if_error_raise(rerr)
 
-        -- Calculate the ratio of unique IPs to failed attempts
-        local ip_to_fail_ratio = 0
-        if failed_attempts and failed_attempts > 0 then
-            ip_to_fail_ratio = (tonumber(unique_ips) or 0) / (tonumber(failed_attempts) or 1)
+    -- Extract per-window values and compute ratios
+    local vals = {}
+    do
+        local i = 1
+        for _, window in ipairs(windows) do
+            local ui = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
+            local fa = tonumber(rres[i] and rres[i].value or 0) or 0; i = i + 1
+            local ratio = 0
+            if fa > 0 then ratio = ui / fa end
+            vals[window] = {unique_ips = ui, failed_attempts = fa, ratio = ratio}
+
+            if window == 3600 then
+                uniq_1h, fails_1h, ratio_1h = ui, fa, ratio
+            elseif window == 86400 then
+                uniq_24h, fails_24h, ratio_24h = ui, fa, ratio
+            elseif window == 604800 then
+                uniq_7d, fails_7d = ui, fa
+            end
         end
+    end
 
-        -- Map to per-window holders
-        if window == 3600 then
-            uniq_1h = tonumber(unique_ips) or 0
-            fails_1h = tonumber(failed_attempts) or 0
-            ratio_1h = tonumber(ip_to_fail_ratio) or 0
-        elseif window == 86400 then
-            uniq_24h = tonumber(unique_ips) or 0
-            fails_24h = tonumber(failed_attempts) or 0
-            ratio_24h = tonumber(ip_to_fail_ratio) or 0
-        elseif window == 604800 then
-            uniq_7d = tonumber(unique_ips) or 0
-            fails_7d = tonumber(failed_attempts) or 0
-        end
-
-        -- Store account metrics using atomic Redis Lua script (window-specific)
-        local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics:" .. window
-        local _, err_script2 = nauthilus_redis.redis_run_script(
-                custom_pool,
-            "", 
-            "HSetMultiExpire", 
-            {account_metrics_key}, 
-            {
-                window * 2, -- Expire after window * 2
-                "unique_ips", unique_ips,
-                "failed_attempts", failed_attempts,
-                "ip_to_fail_ratio", ip_to_fail_ratio,
+    -- Batch: store per-window account metrics via HSetMultiExpire in a single write pipeline
+    do
+        local wcmds = {}
+        for _, window in ipairs(windows) do
+            local v = vals[window]
+            local account_metrics_key = "ntc:multilayer:account:" .. username .. ":metrics:" .. window
+            table.insert(wcmds, {"run_script", "HSetMultiExpire", {account_metrics_key}, {
+                window * 2,
+                "unique_ips", v.unique_ips,
+                "failed_attempts", v.failed_attempts,
+                "ip_to_fail_ratio", v.ratio,
                 "last_updated", timestamp
-            }
-        )
-        nauthilus_util.if_error_raise(err_script2)
+            }})
+        end
+        if #wcmds > 0 then
+            local _, perr2 = nauthilus_redis.redis_pipeline(custom_pool, "write", wcmds)
+            nauthilus_util.if_error_raise(perr2)
+        end
     end
 
     -- Suspicion logic (aims to reduce false positives due to carrier NAT/TOR)

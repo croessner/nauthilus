@@ -119,15 +119,26 @@ function nauthilus_call_feature(request)
     if username and username ~= "" then
         local uniq24 = 0
         local uniq7d = 0
-        if client_ip and client_ip ~= "" then
-            uniq24 = tonumber(nauthilus_redis.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:86400")) or 0
-            uniq7d = tonumber(nauthilus_redis.redis_pfcount(client, "ntc:hll:acct:" .. username .. ":ips:604800")) or 0
-        end
         local fails_24h = 0
         local fails_7d = 0
         local fail_key = "ntc:z:acct:" .. username .. ":fails"
-        fails_24h = tonumber(nauthilus_redis.redis_zcount(client, fail_key, now - 86400, now)) or 0
-        fails_7d = tonumber(nauthilus_redis.redis_zcount(client, fail_key, now - 604800, now)) or 0
+
+        -- Batch snapshot reads to minimize roundtrips
+        local read_cmds = {
+            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:86400"},
+            {"pfcount", "ntc:hll:acct:" .. username .. ":ips:604800"},
+            {"zcount", fail_key, tostring(now - 86400), tostring(now)},
+            {"zcount", fail_key, tostring(now - 604800), tostring(now)},
+        }
+        local res, rerr = nauthilus_redis.redis_pipeline(client, "read", read_cmds)
+        nauthilus_util.if_error_raise(rerr)
+
+        if type(res) == "table" then
+            if type(res[1]) == "table" and res[1].ok ~= false then uniq24 = tonumber(res[1].value or 0) or 0 end
+            if type(res[2]) == "table" and res[2].ok ~= false then uniq7d = tonumber(res[2].value or 0) or 0 end
+            if type(res[3]) == "table" and res[3].ok ~= false then fails_24h = tonumber(res[3].value or 0) or 0 end
+            if type(res[4]) == "table" and res[4].ok ~= false then fails_7d = tonumber(res[4].value or 0) or 0 end
+        end
 
         -- Save snapshot
         local _, err_script = nauthilus_redis.redis_run_script(
