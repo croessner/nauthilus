@@ -186,6 +186,31 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
+	if isLocalOrEmptyIP(a.ClientIP) {
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
+
+		return false
+	}
+
+	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
+
+			return false
+		}
+	}
+
+	if len(config.GetFile().GetBruteForce().GetIPWhitelist()) > 0 {
+		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
+
+			return false
+		}
+	}
+
 	// Existing generic timer
 	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
 
@@ -208,31 +233,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	logBruteForceDebug(a)
-
-	if isLocalOrEmptyIP(a.ClientIP) {
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
-
-		return false
-	}
-
-	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
-
-			return false
-		}
-	}
-
-	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
-
-			return false
-		}
-	}
 
 	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
