@@ -186,6 +186,31 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
+	if isLocalOrEmptyIP(a.ClientIP) {
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
+
+		return false
+	}
+
+	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
+
+			return false
+		}
+	}
+
+	if len(config.GetFile().GetBruteForce().GetIPWhitelist()) > 0 {
+		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
+			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
+
+			return false
+		}
+	}
+
 	// Existing generic timer
 	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
 
@@ -208,31 +233,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	logBruteForceDebug(a)
-
-	if isLocalOrEmptyIP(a.ClientIP) {
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
-
-		return false
-	}
-
-	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
-
-			return false
-		}
-	}
-
-	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
-			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
-
-			return false
-		}
-	}
 
 	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
@@ -319,13 +319,19 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	network := &net.IPNet{}
 
+	// Phase: pre_result (fast check using precomputed hashes/counters)
+	preResultStart := time.Now()
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
+	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("pre_result").Observe(time.Since(preResultStart).Seconds())
 	if abort {
 		return false
 	}
 
 	if !alreadyTriggered {
+		// Phase: bucket_eval (read current counters from Redis and evaluate limits)
+		bucketEvalStart := time.Now()
 		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
+		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("bucket_eval").Observe(time.Since(bucketEvalStart).Seconds())
 		if abort {
 			return false
 		}
@@ -339,6 +345,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	// A rule matched either in pre-result or bucket evaluation
 	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
 
+	// Phase: process (persist/update counters, set action context)
+	processStart := time.Now()
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
@@ -352,6 +360,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
+	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("process").Observe(time.Since(processStart).Seconds())
 
 	// Compute and store brute-force hints for the Post-Action.
 	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
@@ -371,7 +380,12 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result(); err == nil && exists {
+		// Phase: redis_hint_exists (single read to check if client_net has a history)
+		redisHintStart := time.Now()
+		exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
+		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("redis_hint_exists").Observe(time.Since(redisHintStart).Seconds())
+
+		if err == nil && exists {
 			bfRepeating = true
 		}
 	}
