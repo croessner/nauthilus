@@ -717,7 +717,7 @@ func NewMetrics() Metrics {
 		),
 		bruteForceHits: promauto.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "brutefore_hits_total",
+				Name: "bruteforce_hits_total",
 				Help: "The total number of brute force hits before rejection",
 			}, []string{"bucket"},
 		),
