@@ -2229,8 +2229,8 @@ func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 type Dedup struct {
 	// Deprecated: no longer used. Kept for backward compatibility with existing configs.
 	DistributedEnabled bool `mapstructure:"distributed_enabled"`
-	// Controls in-process singleflight dedup (within one instance). Default: true.
-	InProcessEnabled *bool `mapstructure:"in_process_enabled"`
+	// Deprecated: no longer used. Kept for backward compatibility with existing configs.
+	InProcessEnabled bool `mapstructure:"in_process_enabled"`
 }
 
 // GetDedup returns the Dedup configuration section. If ServerSection is nil,
@@ -2250,13 +2250,9 @@ func (d *Dedup) IsDistributedEnabled() bool {
 }
 
 // IsInProcessEnabled reports whether in-process singleflight deduplication is enabled.
-// Default is true unless explicitly configured.
+// Deprecated: In-process deduplication has been removed; this always returns false.
 func (d *Dedup) IsInProcessEnabled() bool {
-	if d == nil || d.InProcessEnabled == nil {
-		return true
-	}
-
-	return *d.InProcessEnabled
+	return false
 }
 
 // Timeouts groups operation-specific timeouts under server.timeouts in the config.

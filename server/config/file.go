@@ -2212,9 +2212,19 @@ func warnDeprecatedDedup(d *Dedup) {
 			"component", "config",
 			"location", "server.dedup",
 			"deprecated", "dedup.distributed_enabled",
-			"msg", "'server.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed; only in-process dedup remains",
+			"msg", "'server.dedup.distributed_enabled' is deprecated and ignored – distributed dedup has been removed",
 		)
 	}
+
+	if d.InProcessEnabled {
+		safeWarn(
+			"component", "config",
+			"location", "server.dedup",
+			"deprecated", "dedup.in_process_enabled",
+			"msg", "'server.dedup.in_process_enabled' is deprecated and ignored – in-process dedup has been removed",
+		)
+	}
+
 }
 
 func warnDeprecatedRBL(index int, r *RBL) {
