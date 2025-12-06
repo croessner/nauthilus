@@ -16,9 +16,6 @@
 package core
 
 import (
-	"time"
-
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 
 	"github.com/gin-gonic/gin"
@@ -96,48 +93,12 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 		return auth.handleLocalCache(ctx)
 	}
 
-	// In-process singleflight deduplication only
-	key := auth.generateSingleflightKey()
-
 	if idem != "" {
-		key = "idk:" + idem + "|" + key
-
 		// Echo the idempotency key for observability (no replay decision yet)
 		setIdempotencyHeaders(ctx, idem, nil)
 	}
 
-	reqCtx := ctx.Request.Context()
-
-	// Derive wait deadline from request context; if none, wait up to the singleflight work budget.
-	var timer *time.Timer
-	if dl, ok := reqCtx.Deadline(); ok {
-		d := time.Until(dl)
-		if d <= 0 {
-			backchanSF.Forget(key)
-
-			return definitions.AuthResultTempFail
-		}
-
-		timer = time.NewTimer(d)
-	} else {
-		// Couple follower wait to leader work budget instead of a short fixed cap.
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-		timer = time.NewTimer(dWork)
-	}
-
-	defer timer.Stop()
-
 	useCache, backendPos, passDBs := auth.handleBackendTypes()
-	dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
 
-	// No singleflight: if an idempotency key was provided, mark as not replayed.
-	if idem != "" {
-		replayed := false
-
-		setIdempotencyHeaders(ctx, idem, &replayed)
-	}
-
-	return auth.withWorkCtx(dWork, func() definitions.AuthResult {
-		return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
-	})
+	return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 }

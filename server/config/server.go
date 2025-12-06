@@ -2312,13 +2312,9 @@ func (t *Timeouts) GetLDAPModify() time.Duration {
 }
 
 // GetSingleflightWork returns timeout for the actual singleflight leader work.
-// Defaults to the larger of LDAP search/bind timeouts, or 3s if unset.
+// Deprecated: This method is no more used and will be removed in a future release.
 func (t *Timeouts) GetSingleflightWork() time.Duration {
-	if t == nil || t.SingleflightWork <= 0 {
-		return 3 * time.Second
-	}
-
-	return t.SingleflightWork
+	return 0 * time.Second
 }
 
 // GetLuaBackend returns timeout for Lua backend operations. Defaults to 5s if unset/invalid.

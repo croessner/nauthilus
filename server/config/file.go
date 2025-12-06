@@ -2069,8 +2069,10 @@ func (f *FileSettings) warnDeprecatedConfig() {
 		warnDeprecatedRedisReplica("server.redis.replica", &srv.Redis.Replica)
 		// Redis TLS
 		warnDeprecatedTLS("server.redis.tls", &srv.Redis.TLS)
-		// Dedup: distributed_enabled has been removed; warn if set
+		// Dedup: distributed_enabled and in_process_enabled have been removed; warn if set
 		warnDeprecatedDedup(&srv.Dedup)
+		// Timings: singleflight_work has been removed; warn if set
+		warnDeprecatedTimeout(&srv.Timeouts)
 	}
 
 	// RBL deprecations
@@ -2238,6 +2240,21 @@ func warnDeprecatedRBL(index int, r *RBL) {
 			"list_index", index,
 			"deprecated", "rbl.lists[].return_code",
 			"msg", "'return_code' is deprecated – please use 'return_codes'",
+		)
+	}
+}
+
+func warnDeprecatedTimeout(t *Timeouts) {
+	if t == nil {
+		return
+	}
+
+	if t.SingleflightWork != time.Duration(0) {
+		safeWarn(
+			"component", "config",
+			"location", "server.timeouts",
+			"deprecated", "timeouts.singleflight_work",
+			"msg", "'server.timeouts.singleflight_work' is deprecated and ignored – singleflight_work has been removed",
 		)
 	}
 }
