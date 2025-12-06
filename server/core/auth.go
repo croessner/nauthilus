@@ -1754,7 +1754,7 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
 	if useCache && a.isCacheInCorrectPosition(backendPos) {
 		if cs := getCacheService(); cs != nil {
-			if authenticated || (a.NoAuth && a.UserFound) {
+			if authenticated {
 				if err := cs.OnSuccess(a, accountName); err != nil {
 					return err
 				}
