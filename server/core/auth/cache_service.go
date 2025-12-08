@@ -37,6 +37,10 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 		return nil
 	}
 
+	if auth.NoAuth || auth.Password == "" {
+		return nil
+	}
+
 	usedBackend, err := auth.GetUsedCacheBackend()
 	if err != nil {
 		return err

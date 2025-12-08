@@ -2229,8 +2229,8 @@ func (k *KeepAlive) GetMaxIdleConnsPerHost() int {
 type Dedup struct {
 	// Deprecated: no longer used. Kept for backward compatibility with existing configs.
 	DistributedEnabled bool `mapstructure:"distributed_enabled"`
-	// Controls in-process singleflight dedup (within one instance). Default: true.
-	InProcessEnabled *bool `mapstructure:"in_process_enabled"`
+	// Deprecated: no longer used. Kept for backward compatibility with existing configs.
+	InProcessEnabled bool `mapstructure:"in_process_enabled"`
 }
 
 // GetDedup returns the Dedup configuration section. If ServerSection is nil,
@@ -2250,13 +2250,9 @@ func (d *Dedup) IsDistributedEnabled() bool {
 }
 
 // IsInProcessEnabled reports whether in-process singleflight deduplication is enabled.
-// Default is true unless explicitly configured.
+// Deprecated: In-process deduplication has been removed; this always returns false.
 func (d *Dedup) IsInProcessEnabled() bool {
-	if d == nil || d.InProcessEnabled == nil {
-		return true
-	}
-
-	return *d.InProcessEnabled
+	return false
 }
 
 // Timeouts groups operation-specific timeouts under server.timeouts in the config.
@@ -2316,13 +2312,9 @@ func (t *Timeouts) GetLDAPModify() time.Duration {
 }
 
 // GetSingleflightWork returns timeout for the actual singleflight leader work.
-// Defaults to the larger of LDAP search/bind timeouts, or 3s if unset.
+// Deprecated: This method is no more used and will be removed in a future release.
 func (t *Timeouts) GetSingleflightWork() time.Duration {
-	if t == nil || t.SingleflightWork <= 0 {
-		return 3 * time.Second
-	}
-
-	return t.SingleflightWork
+	return 0 * time.Second
 }
 
 // GetLuaBackend returns timeout for Lua backend operations. Defaults to 5s if unset/invalid.

@@ -13,32 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package cache
+package asyncjobs
 
 import (
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
+
 	"github.com/gin-gonic/gin"
 )
 
-// Handler exposes cache-related routes.
-// It mirrors the legacy behavior and delegates logic to core while honoring endpoint feature flags.
-type Handler struct {
-	cfg config.File
-}
+// Handler registers the async jobs status endpoint.
+type Handler struct{}
 
-func New(cfg config.File) *Handler {
-	return &Handler{cfg: cfg}
-}
+func New() *Handler { return &Handler{} }
 
 func (h *Handler) Register(router gin.IRouter) {
-	cg := router.Group("/" + definitions.CatCache)
-
-	cg.DELETE("/"+definitions.ServFlush, h.flush)
-	cg.DELETE("/"+definitions.ServFlush+"/async", core.HandleUserFlushAsync)
-}
-
-func (h *Handler) flush(ctx *gin.Context) {
-	core.HandleUserFlush(ctx)
+	ag := router.Group("/async")
+	ag.GET("/jobs/:jobId", core.HandleAsyncJobStatus)
 }

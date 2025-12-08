@@ -16,10 +16,6 @@
 package core
 
 import (
-	"time"
-
-	"github.com/croessner/nauthilus/server/backend/bktype"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 
 	"github.com/gin-gonic/gin"
@@ -66,44 +62,6 @@ type Authenticator struct {
 	Resp     ResponseWriter
 }
 
-// SFOutcome is the snapshot a singleflight leader publishes to waiting followers.
-// It contains the final auth view AFTER filters have run and PostActions have been dispatched.
-// Followers must not execute filters/post-actions again; they only apply this snapshot to
-// their own AuthState and return the final result.
-type SFOutcome struct {
-	Result              definitions.AuthResult
-	AccountField        string
-	Attributes          bktype.AttributeMapping
-	TOTPSecretField     string
-	UniqueUserIDField   string
-	DisplayNameField    string
-	SourcePassDBBackend definitions.Backend
-	UsedPassDBBackend   definitions.Backend
-	BackendName         string
-	UsedBackendIP       string
-	UsedBackendPort     int
-	Authenticated       bool
-	Authorized          bool
-	StatusMessage       string
-}
-
-func applyOutcome(dst *AuthState, o SFOutcome) {
-	dst.AccountField = o.AccountField
-	// Avoid aliasing maps across AuthState instances
-	dst.ReplaceAllAttributes(o.Attributes)
-	dst.TOTPSecretField = o.TOTPSecretField
-	dst.UniqueUserIDField = o.UniqueUserIDField
-	dst.DisplayNameField = o.DisplayNameField
-	dst.SourcePassDBBackend = o.SourcePassDBBackend
-	dst.UsedPassDBBackend = o.UsedPassDBBackend
-	dst.BackendName = o.BackendName
-	dst.UsedBackendIP = o.UsedBackendIP
-	dst.UsedBackendPort = o.UsedBackendPort
-	dst.Authenticated = o.Authenticated
-	dst.Authorized = o.Authorized
-	dst.StatusMessage = o.StatusMessage
-}
-
 var defaultAuthenticator = Authenticator{
 	Verifier: getPasswordVerifier(),
 	Cache:    getCacheService(),
@@ -135,151 +93,12 @@ func (aor Authenticator) Authenticate(ctx *gin.Context, auth *AuthState) (authRe
 		return auth.handleLocalCache(ctx)
 	}
 
-	// In-process singleflight deduplication only
-	key := auth.generateSingleflightKey()
-
 	if idem != "" {
-		key = "idk:" + idem + "|" + key
-
 		// Echo the idempotency key for observability (no replay decision yet)
 		setIdempotencyHeaders(ctx, idem, nil)
 	}
 
-	reqCtx := ctx.Request.Context()
+	useCache, backendPos, passDBs := auth.handleBackendTypes()
 
-	// Derive wait deadline from request context; if none, wait up to the singleflight work budget.
-	var timer *time.Timer
-	if dl, ok := reqCtx.Deadline(); ok {
-		d := time.Until(dl)
-		if d <= 0 {
-			backchanSF.Forget(key)
-
-			return definitions.AuthResultTempFail
-		}
-
-		timer = time.NewTimer(d)
-	} else {
-		// Couple follower wait to leader work budget instead of a short fixed cap.
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-		timer = time.NewTimer(dWork)
-	}
-
-	defer timer.Stop()
-
-	// Allow disabling in-process singleflight via config (default: enabled)
-	if !config.GetFile().GetServer().GetDedup().IsInProcessEnabled() {
-		useCache, backendPos, passDBs := auth.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		// No singleflight: if an idempotency key was provided, mark as not replayed.
-		if idem != "" {
-			replayed := false
-
-			setIdempotencyHeaders(ctx, idem, &replayed)
-		}
-
-		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
-			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-	}
-
-	ch := backchanSF.DoChan(key, func() (any, error) {
-		useCache, backendPos, passDBs := auth.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		res := auth.withWorkCtx(dWork, func() definitions.AuthResult {
-			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-
-		// Build snapshot outcome AFTER filters/post-actions have run inside authenticateUser
-		out := SFOutcome{
-			Result:              res,
-			AccountField:        auth.AccountField,
-			Attributes:          auth.Attributes,
-			TOTPSecretField:     auth.TOTPSecretField,
-			UniqueUserIDField:   auth.UniqueUserIDField,
-			DisplayNameField:    auth.DisplayNameField,
-			SourcePassDBBackend: auth.SourcePassDBBackend,
-			UsedPassDBBackend:   auth.UsedPassDBBackend,
-			BackendName:         auth.BackendName,
-			UsedBackendIP:       auth.UsedBackendIP,
-			UsedBackendPort:     auth.UsedBackendPort,
-			Authenticated:       auth.Authenticated,
-			Authorized:          auth.Authorized,
-			StatusMessage:       auth.StatusMessage,
-		}
-
-		return out, nil
-	})
-
-	select {
-	case r := <-ch:
-		if r.Err != nil {
-			// On error path, if an idempotency key was present, indicate not replayed
-			if idem != "" {
-				replayed := false
-
-				setIdempotencyHeaders(ctx, idem, &replayed)
-			}
-
-			return definitions.AuthResultTempFail
-		}
-
-		if out, ok := r.Val.(SFOutcome); ok {
-			applyOutcome(auth, out)
-
-			// Indicate whether this response was replayed from singleflight (shared)
-			if idem != "" {
-				replayed := r.Shared
-
-				setIdempotencyHeaders(ctx, idem, &replayed)
-			}
-
-			return out.Result
-		}
-
-		return definitions.AuthResultTempFail
-	case <-reqCtx.Done():
-		// Client disconnected or context canceled: stop waiting and attempt direct auth as fallback
-		backchanSF.Forget(key)
-
-		useCache, backendPos, passDBs := auth.handleBackendTypes()
-		dWork := config.GetFile().GetServer().GetTimeouts().GetSingleflightWork()
-
-		// Not replayed in this fallback
-		if idem != "" {
-			replayed := false
-
-			setIdempotencyHeaders(ctx, idem, &replayed)
-		}
-
-		return auth.withWorkCtx(dWork, func() definitions.AuthResult {
-			return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
-		})
-	case <-timer.C:
-		// Do NOT execute a fallback or send an error. Keep waiting for the leader result
-		// to avoid duplicate pipeline execution. This preserves dedup semantics.
-		r := <-ch
-		if r.Err != nil {
-			if idem != "" {
-				replayed := false
-				setIdempotencyHeaders(ctx, idem, &replayed)
-			}
-
-			return definitions.AuthResultTempFail
-		}
-
-		if out, ok := r.Val.(SFOutcome); ok {
-			applyOutcome(auth, out)
-
-			if idem != "" {
-				replayed := r.Shared
-				setIdempotencyHeaders(ctx, idem, &replayed)
-			}
-
-			return out.Result
-		}
-
-		return definitions.AuthResultTempFail
-	}
+	return auth.authenticateUser(ctx, useCache, backendPos, passDBs)
 }

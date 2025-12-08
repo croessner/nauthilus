@@ -18,6 +18,7 @@ package backchannel
 import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
 	"github.com/croessner/nauthilus/server/handler/bruteforce"
 	"github.com/croessner/nauthilus/server/handler/cache"
@@ -67,4 +68,5 @@ func Setup(router *gin.Engine) {
 	confighandler.New(cfg).Register(group)
 	custom.New().Register(group)
 	cache.New(cfg).Register(group)
+	asyncjobs.New().Register(group)
 }

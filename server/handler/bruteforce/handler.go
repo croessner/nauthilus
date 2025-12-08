@@ -34,4 +34,5 @@ func (h *Handler) Register(router gin.IRouter) {
 	bg.GET("/"+definitions.ServList, core.HanldeBruteForceList)
 	bg.POST("/"+definitions.ServList, core.HanldeBruteForceList)
 	bg.DELETE("/"+definitions.ServFlush, core.HandleBruteForceRuleFlush)
+	bg.DELETE("/"+definitions.ServFlush+"/async", core.HandleBruteForceRuleFlushAsync)
 }

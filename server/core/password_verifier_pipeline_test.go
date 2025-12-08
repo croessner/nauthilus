@@ -23,61 +23,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestVerifyPasswordPipeline_EarlyDecisiveHit(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(w)
-
-	a := &AuthState{GUID: "test-guid"}
-
-	undecided := &PassDBMap{
-		backend: definitions.BackendLDAP,
-		fn: func(a *AuthState) (*PassDBResult, error) {
-			res := GetPassDBResultFromPool()
-			res.Backend = definitions.BackendLDAP
-			res.BackendName = "ldap-1"
-			res.UserFound = true
-			res.Authenticated = false
-
-			return res, nil
-		},
-	}
-
-	decisive := &PassDBMap{
-		backend: definitions.BackendLua,
-		fn: func(a *AuthState) (*PassDBResult, error) {
-			res := GetPassDBResultFromPool()
-			res.Backend = definitions.BackendLua
-			res.BackendName = "lua-1"
-			res.UserFound = true
-			res.Authenticated = true
-
-			return res, nil
-		},
-	}
-
-	res, err := VerifyPasswordPipeline(ctx, a, []*PassDBMap{undecided, decisive})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if res == nil || !res.Authenticated {
-		t.Fatalf("expected authenticated result, got: %+v", res)
-	}
-
-	if !a.UserFound {
-		t.Fatalf("auth state should have UserFound=true")
-	}
-
-	if a.SourcePassDBBackend != definitions.BackendLua {
-		t.Fatalf("expected source backend=Lua, got %v", a.SourcePassDBBackend)
-	}
-
-	if a.UsedPassDBBackend != definitions.BackendLua {
-		t.Fatalf("expected used backend=Lua, got %v", a.UsedPassDBBackend)
-	}
-}
-
 func TestVerifyPasswordPipeline_AllConfigErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

@@ -33,9 +33,10 @@ type PasswordVerifier interface {
 	Verify(ctx *gin.Context, a *AuthState, passDBs []*PassDBMap) (*PassDBResult, error)
 }
 
-// VerifyPasswordPipeline is the exported, package-internal implementation of the
-// legacy password verification loop. It is used by the default implementation
-// provided from subpackage core/auth to avoid accessing unexported fields.
+// VerifyPasswordPipeline coordinates authentication processes across multiple password databases and backends.
+// It iterates through the provided PassDBMap, invoking their associated functions to authenticate a user or locate credentials.
+// Handles backend-specific configuration errors and logs failures while trying successive backends, as necessary.
+// Returns a successful PassDBResult upon user authentication or relevant errors if all attempts fail.
 func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDBMap) (*PassDBResult, error) {
 	if len(passDBs) == 0 {
 		return nil, errors.ErrAllBackendConfigError
@@ -92,6 +93,11 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		// correct behavior without sprinkling special cases here.
 		if res.Authenticated {
 			return res, nil
+		}
+
+		// No matter what, if the user was found, we're done.
+		if res.UserFound {
+			break
 		}
 	}
 

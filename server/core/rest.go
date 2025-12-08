@@ -17,11 +17,14 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	stderrors "errors"
 	"fmt"
 	"net"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
@@ -37,6 +40,7 @@ import (
 	restdto "github.com/croessner/nauthilus/server/model/rest"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -497,9 +501,9 @@ func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) 
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// Remove PW_HIST_SET from Redis
+	// Remove PW_HIST_SET from Redis (use UNLINK to avoid blocking)
 	key := bruteforce.GetPWHistIPsRedisKey(accountName)
-	if result, err = rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result(); err != nil {
+	if result, err = rediscli.GetClient().GetWriteHandle().Unlink(ctx, key).Result(); err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Error while flushing PW_HIST_SET",
@@ -659,8 +663,10 @@ func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userK
 
 		// Queue deletion of all user keys
 		for _, userKey := range keys {
-			pipe.Del(ctx, userKey)
+			// Use UNLINK to avoid blocking Redis on large keys
+			pipe.Unlink(ctx, userKey)
 		}
+
 		return nil
 	})
 
@@ -682,6 +688,7 @@ func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userK
 			if intCmd, ok := cmds[idx].(*redis.IntCmd); ok {
 				if val, cerr := intCmd.Result(); cerr == nil && val > 0 {
 					removedKeys = append(removedKeys, userKey)
+
 					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "keys", userKey, "status", "flushed")
 				}
 			} else {
@@ -776,30 +783,227 @@ func HandleBruteForceRuleFlush(ctx *gin.Context) {
 	})
 }
 
-// deleteKeyIfExists checks if a Redis key exists, deletes it if present, and returns the key or error if any occurs.
-func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, error) {
-	stats.GetMetrics().GetRedisReadCounter().Inc()
+// --- Async job infrastructure ---
 
-	// First check if the key exists
-	exists, err := rediscli.GetClient().GetReadHandle().Exists(ctx, key).Result()
-	if err != nil {
+const (
+	jobStatusQueued     = "QUEUED"
+	jobStatusInProgress = "INPROGRESS"
+	jobStatusDone       = "DONE"
+	jobStatusError      = "ERROR"
+)
+
+// Test seams for determinism and stubbing in unit tests.
+// They preserve default behavior in production builds but can be overridden in tests.
+var (
+	genJobID     = generateJobID
+	asyncStarter = startAsync
+	nowFunc      = time.Now
+)
+
+func asyncJobKey(jobID string) string {
+	return config.GetFile().GetServer().GetRedis().GetPrefix() + "async:job:" + jobID
+}
+
+// generateJobID creates a random URL-safe identifier.
+func generateJobID() string {
+	// Generate a 16-byte random ID encoded as hex with a time prefix for debugging order
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	}
+
+	return fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(b))
+}
+
+// createAsyncJob persists a new job with QUEUED status and TTL.
+func createAsyncJob(ctx context.Context, jobType string) (string, error) {
+	jobID := genJobID()
+	key := asyncJobKey(jobID)
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	// Use ordered field/values to make unit testing with redismock deterministic
+	if _, err := rediscli.GetClient().GetWriteHandle().HSet(
+		ctx,
+		key,
+		"status", jobStatusQueued,
+		"type", jobType,
+		"createdAt", nowFunc().UTC().Format(time.RFC3339Nano),
+		"resultCount", 0,
+	).Result(); err != nil {
 		return "", err
 	}
 
-	// If the key doesn't exist, return an empty string
-	if exists == 0 {
-		return "", nil
-	}
-
+	// Apply TTL (reuse NegCacheTTL if no dedicated TTL exists)
+	_, _ = rediscli.GetClient().GetWriteHandle().Expire(ctx, key, config.GetFile().GetServer().Redis.NegCacheTTL).Result()
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	// If the key exists, delete it
-	result, err := rediscli.GetClient().GetWriteHandle().Del(ctx, key).Result()
+	return jobID, nil
+}
+
+// startAsync runs fn in a background goroutine using the service root context.
+func startAsync(jobID string, guid string, fn func(context.Context) (int, []string, error)) {
+	go func() {
+		base := svcctx.Get()
+
+		key := asyncJobKey(jobID)
+
+		// Mark INPROGRESS
+		func() {
+			defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+			_, _ = rediscli.GetClient().GetWriteHandle().HSet(base, key, map[string]any{
+				"status":    jobStatusInProgress,
+				"startedAt": nowFunc().UTC().Format(time.RFC3339Nano),
+			}).Result()
+		}()
+
+		// Execute task
+		count, _, err := fn(base)
+
+		// Persist final state
+		updates := map[string]any{
+			"finishedAt":  nowFunc().UTC().Format(time.RFC3339Nano),
+			"resultCount": count,
+		}
+
+		if err != nil {
+			updates["status"] = jobStatusError
+			updates["error"] = err.Error()
+			level.Error(log.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "async job failed", definitions.LogKeyError, err)
+		} else {
+			updates["status"] = jobStatusDone
+		}
+
+		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		_, _ = rediscli.GetClient().GetWriteHandle().HSet(base, key, updates).Result()
+		_, _ = rediscli.GetClient().GetWriteHandle().Expire(base, key, config.GetFile().GetServer().Redis.NegCacheTTL).Result()
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
+	}()
+}
+
+// HandleAsyncJobStatus returns the current status for a specific job ID.
+func HandleAsyncJobStatus(ctx *gin.Context) {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+	jobID := ctx.Param("jobId")
+	key := asyncJobKey(jobID)
+
+	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	data, err := rediscli.GetClient().GetReadHandle().HGetAll(ctx.Request.Context(), key).Result()
+	if err != nil || len(data) == 0 {
+		ctx.AbortWithStatus(http.StatusNotFound)
+
+		return
+	}
+
+	ctx.JSON(http.StatusOK, &restdto.Result{
+		GUID:      guid,
+		Object:    "async",
+		Operation: "status",
+		Result: gin.H{
+			"jobId":       jobID,
+			"status":      data["status"],
+			"type":        data["type"],
+			"createdAt":   data["createdAt"],
+			"startedAt":   data["startedAt"],
+			"finishedAt":  data["finishedAt"],
+			"resultCount": data["resultCount"],
+			"error":       data["error"],
+		},
+	})
+}
+
+// HandleUserFlushAsync enqueues a user flush as a background job and returns 202 with jobId.
+func HandleUserFlushAsync(ctx *gin.Context) {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+	userCmd := &admin.FlushUserCmd{}
+
+	if err := ctx.ShouldBindJSON(userCmd); err != nil {
+		HandleJSONError(ctx, err)
+
+		return
+	}
+
+	jobID, err := createAsyncJob(ctx.Request.Context(), "CACHE_FLUSH")
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	asyncStarter(jobID, guid, func(base context.Context) (int, []string, error) {
+		// Reuse existing logic, but without relying on the HTTP request lifetime
+		// Create a fresh gin.Context-independent execution by calling helpers that accept context.Context where possible
+		// Here we reuse processFlushCache by constructing a lightweight adapter using a temporary gin.Context only for param flow
+		// However, the heavy work inside uses redis contexts derived from request ctx, which is fine since svcctx is long-lived
+		// To avoid tying to original ctx, we call the same pipeline but pass a dummy gin.Context wrapper with base as Request.Context
+		gctx := &gin.Context{}
+		// Gin context is needed by processFlushCache; create one with request context fallback from svcctx
+		gctx.Request = ctx.Request.Clone(base)
+		removedKeys, _ := processFlushCache(gctx, userCmd, guid)
+
+		return len(removedKeys), removedKeys, nil
+	})
+
+	ctx.JSON(http.StatusAccepted, &restdto.Result{
+		GUID:      guid,
+		Object:    definitions.CatCache,
+		Operation: definitions.ServFlush + "_async",
+		Result: gin.H{
+			"jobId":  jobID,
+			"status": jobStatusQueued,
+		},
+	})
+}
+
+// HandleBruteForceRuleFlushAsync enqueues a brute-force flush job and returns 202 with jobId.
+func HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+	ipCmd := &bf.FlushRuleCmd{}
+
+	if err := ctx.ShouldBindJSON(ipCmd); err != nil {
+		HandleJSONError(ctx, err)
+
+		return
+	}
+
+	jobID, err := createAsyncJob(ctx.Request.Context(), "BF_FLUSH")
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
+	asyncStarter(jobID, guid, func(base context.Context) (int, []string, error) {
+		gctx := &gin.Context{}
+		gctx.Request = ctx.Request.Clone(base)
+		_, removed, err := processBruteForceRules(gctx, ipCmd, guid)
+
+		return len(removed), removed, err
+	})
+
+	ctx.JSON(http.StatusAccepted, &restdto.Result{
+		GUID:      guid,
+		Object:    definitions.CatBruteForce,
+		Operation: definitions.ServFlush + "_async",
+		Result: gin.H{
+			"jobId":  jobID,
+			"status": jobStatusQueued,
+		},
+	})
+}
+
+// deleteKeyIfExists checks if a Redis key exists, deletes it if present, and returns the key or error if any occurs.
+func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, error) {
+	// Single roundtrip: prefer UNLINK to avoid blocking Redis server threads on large keys
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	result, err := rediscli.GetClient().GetWriteHandle().Unlink(ctx, key).Result()
 	if err != nil {
 		return "", err
 	}
 
-	// If the key was deleted, return the key
 	if result > 0 {
 		level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
 
@@ -807,6 +1011,44 @@ func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, er
 	}
 
 	return "", nil
+}
+
+// bulkUnlink removes all provided keys using a single write pipeline with UNLINK.
+// Returns the subset of keys that were actually removed.
+func bulkUnlink(ctx context.Context, guid string, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	// Count a single write operation for the whole pipeline
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	cmds, err := rediscli.ExecuteWritePipeline(ctx, func(pipe redis.Pipeliner) error {
+		for _, k := range keys {
+			pipe.Unlink(ctx, k)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	removed := make([]string, 0, len(keys))
+	for i, k := range keys {
+		if i < len(cmds) {
+			if intCmd, ok := cmds[i].(*redis.IntCmd); ok {
+				if n, _ := intCmd.Result(); n > 0 {
+					removed = append(removed, k)
+
+					level.Info(log.Logger).Log(definitions.LogKeyGUID, guid, "key", k, "status", "flushed")
+				}
+			}
+		}
+	}
+
+	return removed, nil
 }
 
 // createBucketManager creates a new bucket manager with the given parameters.
@@ -852,6 +1094,7 @@ func iterateCombinations(ctx *gin.Context, guid string, cmd *bf.FlushRuleCmd, ru
 
 		for _, cid := range oidcCids {
 			bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, proto, cid)
+
 			var err error
 			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
 				return removed, err
@@ -940,16 +1183,19 @@ func processBruteForceRules(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid string)
 		}
 	}
 
-	// Phase 4: always drop tolerate-bucket keys for the IP
+	// Phase 4: always drop tolerate-bucket keys for the IP using a single pipeline
 	base := config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + cmd.IPAddress
-	if removed, err = flushKey(ctx, base, guid, removed); err != nil {
-		return true, removed, err
-	}
+	keys := make([]string, 0, 1+len(trSuffixes))
+	keys = append(keys, base)
 
 	for _, s := range trSuffixes {
-		if removed, err = flushKey(ctx, base+s, guid, removed); err != nil {
-			return true, removed, err
-		}
+		keys = append(keys, base+s)
+	}
+
+	if removedTr, berr := bulkUnlink(ctx.Request.Context(), guid, keys); berr != nil {
+		return true, removed, berr
+	} else if len(removedTr) > 0 {
+		removed = append(removed, removedTr...)
 	}
 
 	return false, removed, nil

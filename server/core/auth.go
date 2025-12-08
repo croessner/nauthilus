@@ -483,11 +483,6 @@ type AuthState struct {
 	// HTTPClientRequest represents the underlying HTTP request to be sent by the client.
 	HTTPClientRequest *http.Request
 
-	// WorkCtx, if set, overrides the context returned by Ctx(). It is used to
-	// enforce per-operation timeouts (e.g., singleflight work budget) without
-	// relying on HTTP request context.
-	WorkCtx context.Context
-
 	// MonitoringFlags is a slice of definitions.Monitoring that is used to skip certain steps while processing an authentication request.
 	MonitoringFlags []definitions.Monitoring
 
@@ -1759,7 +1754,7 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
 	if useCache && a.isCacheInCorrectPosition(backendPos) {
 		if cs := getCacheService(); cs != nil {
-			if authenticated || (a.NoAuth && a.UserFound) {
+			if authenticated {
 				if err := cs.OnSuccess(a, accountName); err != nil {
 					return err
 				}
@@ -1976,11 +1971,6 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 // 3) svcctx.Get() as a safe, non-nil fallback
 func (a *AuthState) Ctx() context.Context {
 	if a != nil {
-		// Highest priority: explicit work context when set
-		if a.WorkCtx != nil {
-			return a.WorkCtx
-		}
-
 		if a.HTTPClientRequest != nil {
 			if rc := a.HTTPClientRequest.Context(); rc != nil {
 				// Avoid returning a canceled request context
@@ -2001,20 +1991,6 @@ func (a *AuthState) Ctx() context.Context {
 	}
 
 	return svcctx.Get()
-}
-
-// withWorkCtx runs fn within a temporary work context with timeout d.
-// It safely swaps a.WorkCtx for the duration of fn and ensures cancellation.
-func (a *AuthState) withWorkCtx(d time.Duration, fn func() definitions.AuthResult) definitions.AuthResult {
-	// Derive work context from service scope, not from request, to avoid premature cancelation
-	workCtx, workCancel := context.WithTimeout(svcctx.Get(), d)
-	defer workCancel()
-
-	prev := a.WorkCtx
-	a.WorkCtx = workCtx
-	defer func() { a.WorkCtx = prev }()
-
-	return fn()
 }
 
 // HasJWTRole checks if the user has the specified role in their JWT token.
