@@ -9,7 +9,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
-	"github.com/croessner/nauthilus/server/rediscli"
 
 	b3prop "go.opentelemetry.io/contrib/propagators/b3"
 	jaegerprop "go.opentelemetry.io/contrib/propagators/jaeger"
@@ -118,11 +117,16 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 			opts = append(opts, otlptracehttp.WithEndpoint(cfg.GetEndpoint()))
 		}
 
-		// Prefer dedicated TLS config if enabled; fall back to insecure flag
+		// Transport security selection:
+		// - If a dedicated TLS block is enabled, build a tls.Config and use HTTPS.
+		// - Otherwise, default to plain HTTP by explicitly setting WithInsecure().
 		if cfg.GetTLS().IsEnabled() {
-			if tlsConf := rediscli.RedisTLSOptions(cfg.GetTLS()); tlsConf != nil {
+			if tlsConf := cfg.GetTLS().ToTLSConfig(); tlsConf != nil {
 				opts = append(opts, otlptracehttp.WithTLSClientConfig(tlsConf))
 			}
+		} else {
+			// No TLS configured at all => default to HTTP to match expectations
+			opts = append(opts, otlptracehttp.WithInsecure())
 		}
 
 		exp, err = otlptracehttp.New(ctx, opts...)
@@ -138,6 +142,13 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 	}
 
 	if exp != nil {
+		// Optionally wrap exporter with a logging decorator that emits INFO on successful exports
+		if cfg.IsLogExportResultsEnabled() {
+			exp = newLoggingExporter(exp, true)
+		} else {
+			exp = newLoggingExporter(exp, false)
+		}
+
 		// WithBatcher wraps exporter with a BatchSpanProcessor
 		tpOpts = append(tpOpts, sdktrace.WithBatcher(exp))
 	}
@@ -152,6 +163,57 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 	t.started = true
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "OpenTelemetry tracing enabled", "service", svcName, "exporter", cfg.GetExporter())
+}
+
+// loggingExporter decorates a SpanExporter to log export outcomes.
+// When logSuccess is true, successful batch exports are logged at INFO level.
+// Failures are always logged at WARN to aid troubleshooting.
+type loggingExporter struct {
+	delegate   sdktrace.SpanExporter
+	logSuccess bool
+}
+
+func newLoggingExporter(delegate sdktrace.SpanExporter, logSuccess bool) sdktrace.SpanExporter {
+	return &loggingExporter{delegate: delegate, logSuccess: logSuccess}
+}
+
+// ExportSpans forwards to the underlying exporter and logs the result.
+func (l *loggingExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	err := l.delegate.ExportSpans(ctx, spans)
+	if err != nil {
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, "OpenTelemetry trace export failed",
+			definitions.LogKeyError, err,
+			"span_count", len(spans),
+		)
+
+		return err
+	}
+
+	if l.logSuccess {
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "OpenTelemetry traces exported",
+			"span_count", len(spans),
+		)
+	}
+
+	return nil
+}
+
+// Shutdown delegates shutdown and logs the outcome (INFO on success when enabled, WARN on error).
+func (l *loggingExporter) Shutdown(ctx context.Context) error {
+	err := l.delegate.Shutdown(ctx)
+	if err != nil {
+		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "OpenTelemetry exporter shutdown failed", definitions.LogKeyError, err)
+
+		return err
+	}
+
+	if l.logSuccess {
+		level.Info(log.Logger).Log(definitions.LogKeyMsg, "OpenTelemetry exporter shutdown complete")
+	}
+
+	return nil
 }
 
 // Shutdown flushes and closes the Telemetry provider.

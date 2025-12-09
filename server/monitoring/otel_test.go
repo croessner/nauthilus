@@ -34,7 +34,7 @@ func TestStartDisabledNoop(t *testing.T) {
 		tm := &Telemetry{}
 		tm.SetProvider(providerMock{
 			instanceName: "test-instance",
-			tracing:      &config.Tracing{Enable: false},
+			tracing:      &config.Tracing{Enabled: false},
 		})
 		tm.Start(context.Background(), "test-version")
 		if tm.started {
@@ -49,7 +49,7 @@ func TestStartEnabledSetsProviderAndPropagators(t *testing.T) {
 		tm.SetProvider(providerMock{
 			instanceName: "test-instance",
 			tracing: &config.Tracing{
-				Enable:       true,
+				Enabled:      true,
 				Exporter:     "none",
 				SamplerRatio: 0.2,
 				Propagators:  []string{"tracecontext", "baggage"},
@@ -77,7 +77,7 @@ func TestSamplerRatioClamp(t *testing.T) {
 		tm.SetProvider(providerMock{
 			instanceName: "test-instance",
 			tracing: &config.Tracing{
-				Enable:       true,
+				Enabled:      true,
 				Exporter:     "none",
 				SamplerRatio: 1.5, // should clamp to 1.0
 			},
@@ -96,13 +96,31 @@ func TestTLSConfigEnabledNoExporter(t *testing.T) {
 		tm.SetProvider(providerMock{
 			instanceName: "test-instance",
 			tracing: &config.Tracing{
-				Enable:   true,
+				Enabled:  true,
 				Exporter: "otlphttp",
 				Endpoint: "localhost:4318",
 				TLS:      config.TLS{Enabled: true},
 			},
 		})
 		// Ensure no panic
+		tm.Start(context.Background(), "v0.0.1")
+		tm.Shutdown(context.Background())
+	})
+}
+
+func TestStartEnabledNoTLSDefaultsToHTTP(t *testing.T) {
+	withGlobalOtelSaved(t, func() {
+		tm := &Telemetry{}
+		tm.SetProvider(providerMock{
+			instanceName: "test-instance",
+			tracing: &config.Tracing{
+				Enabled:  true,
+				Exporter: "otlphttp",
+				Endpoint: "localhost:4318",
+				// TLS block omitted -> should default to HTTP (insecure)
+			},
+		})
+		// Should not panic when starting without TLS; exporter should be created with Insecure.
 		tm.Start(context.Background(), "v0.0.1")
 		tm.Shutdown(context.Background())
 	})

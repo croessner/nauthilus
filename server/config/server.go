@@ -359,7 +359,6 @@ type Endpoint struct {
 	AuthJWT       bool `mapstructure:"auth_jwt"`
 	CustomHooks   bool `mapstructure:"custom_hooks"`
 	Configuration bool `mapstructure:"configuration"`
-	Tracing       bool `mapstructure:"tracing"`
 }
 
 // IsAuthHeaderDisabled checks if header-based authentication is enabled for the endpoint and returns the corresponding boolean value.
@@ -440,16 +439,6 @@ func (e *Endpoint) IsConfigurationDisabled() bool {
 	}
 
 	return e.Configuration
-}
-
-// IsTracingDisabled checks if tracing middleware should be disabled for HTTP endpoints.
-// Returns false if the Endpoint is nil.
-func (e *Endpoint) IsTracingDisabled() bool {
-	if e == nil {
-		return false
-	}
-
-	return e.Tracing
 }
 
 // TLS represents the configuration for enabling TLS and managing certificates.
@@ -878,7 +867,7 @@ func (i *Insights) IsMonitorConnectionsEnabled() bool {
 
 // Tracing holds OpenTelemetry tracing configuration options.
 type Tracing struct {
-	Enable       bool     `mapstructure:"enable"`
+	Enabled      bool     `mapstructure:"enabled"`
 	Exporter     string   `mapstructure:"exporter" validate:"omitempty,oneof=otlphttp none"`
 	Endpoint     string   `mapstructure:"endpoint" validate:"omitempty"`
 	SamplerRatio float64  `mapstructure:"sampler_ratio" validate:"omitempty,gte=0,lte=1"`
@@ -886,6 +875,10 @@ type Tracing struct {
 	Propagators  []string `mapstructure:"propagators" validate:"omitempty,dive,oneof=tracecontext baggage b3 b3multi jaeger"`
 	EnableRedis  bool     `mapstructure:"enable_redis"`
 	TLS          TLS      `mapstructure:"tls" validate:"omitempty"`
+	// LogExportResults toggles INFO-level logging for successful trace export batches.
+	// When true, the exporter logs an INFO message for each successful batch export.
+	// Default is false to avoid noisy logs.
+	LogExportResults bool `mapstructure:"log_export_results"`
 }
 
 // GetTracing returns the tracing configuration; returns an empty struct if Insights is nil.
@@ -903,7 +896,7 @@ func (i *Insights) IsTracingEnabled() bool {
 		return false
 	}
 
-	return i.Tracing.Enable
+	return i.Tracing.Enabled
 }
 
 // Tracing getters to ensure consistent access across the codebase
@@ -914,7 +907,7 @@ func (t *Tracing) IsEnabled() bool {
 		return false
 	}
 
-	return t.Enable
+	return t.Enabled
 }
 
 // GetExporter returns the configured tracing exporter as a string. Returns an empty string if the Tracing receiver is nil.
@@ -978,6 +971,16 @@ func (t *Tracing) GetTLS() *TLS {
 	}
 
 	return &t.TLS
+}
+
+// IsLogExportResultsEnabled returns true if successful trace export batches should be logged at INFO level.
+// Returns false if the Tracing receiver is nil.
+func (t *Tracing) IsLogExportResultsEnabled() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.LogExportResults
 }
 
 // DNS represents the Domain Name System configuration settings, including resolver, timeout, and client IP resolution options.
