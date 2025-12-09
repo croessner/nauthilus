@@ -25,7 +25,9 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // isLocalOrEmptyIP checks whether the provided IP is empty, an IPv4 localhost, or an IPv6 localhost.
@@ -203,6 +205,26 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
+	// Tracing: RBL lookup evaluation
+	tr := monittrace.New("nauthilus/rbl")
+	rctx, rsp := tr.Start(ctx.Request.Context(), "rbl.lookup",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.String("client_ip", a.ClientIP),
+		attribute.String("protocol", a.Protocol.Get()),
+		attribute.Int("providers", func() int {
+			if rbls != nil {
+				return len(rbls.GetLists())
+			}
+
+			return 0
+		}()),
+		attribute.Int("threshold", rbls.GetThreshold()),
+	)
+
+	// propagate context
+	ctx.Request = ctx.Request.WithContext(rctx)
+
 	stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.FeatureRBL)
 	if stopTimer != nil {
 		defer stopTimer()
@@ -211,14 +233,26 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 	if svc := GetRBLService(); svc != nil {
 		score, e := svc.Score(ctx, a.View())
 		if e != nil {
+			rsp.RecordError(e)
+			rsp.End()
+
 			return false, e
 		}
 
+		rsp.SetAttributes(
+			attribute.Int("score", score),
+			attribute.Bool("matched", score >= svc.Threshold()),
+		)
+
 		if score >= svc.Threshold() {
 			updateLuaContext(a.Context, definitions.FeatureRBL)
+			rsp.End()
+
 			return true, nil
 		}
 	}
+
+	rsp.End()
 
 	return false, nil
 }
@@ -376,31 +410,68 @@ func (a *AuthState) performAction(luaAction definitions.LuaAction, luaActionName
 // It checks for various features like TLS encryption, relay domains, RBL, and Lua scripting.
 // The method returns an appropriate authentication result based on the features that are triggered or aborted.
 func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
+	// Root span for features evaluation
+	tr := monittrace.New("nauthilus/features")
+	fctx, fsp := tr.Start(ctx.Request.Context(), "features.evaluate",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.String("protocol", a.Protocol.Get()),
+	)
+
+	// propagate context so any inner call attaches to this span
+	ctx.Request = ctx.Request.WithContext(fctx)
+
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
 		a.refreshUserAccount()
 	}
 
 	if triggered, abortFeatures, err := a.checkLuaFeature(ctx); err != nil {
+		fsp.RecordError(err)
+		fsp.SetAttributes(attribute.String("decision", "tempfail"))
+		fsp.End()
+
 		return definitions.AuthResultTempFail
 	} else if triggered {
+		fsp.SetAttributes(attribute.String("decision", "feature_lua"))
+		fsp.End()
+
 		return definitions.AuthResultFeatureLua
 	} else if abortFeatures {
+		fsp.SetAttributes(attribute.String("decision", "abort_features"))
+		fsp.End()
+
 		return definitions.AuthResultOK
 	}
 
 	if a.checkTLSEncryptionFeature(ctx) {
+		fsp.SetAttributes(attribute.String("decision", "feature_tls"))
+		fsp.End()
+
 		return definitions.AuthResultFeatureTLS
 	}
 
 	if a.checkRelayDomainsFeature(ctx) {
+		fsp.SetAttributes(attribute.String("decision", "feature_relay_domains"))
+		fsp.End()
+
 		return definitions.AuthResultFeatureRelayDomain
 	}
 
 	if triggered, err := a.checkRBLFeature(ctx); err != nil {
+		fsp.RecordError(err)
+		fsp.SetAttributes(attribute.String("decision", "tempfail"))
+		fsp.End()
+
 		return definitions.AuthResultTempFail
 	} else if triggered {
+		fsp.SetAttributes(attribute.String("decision", "feature_rbl"))
+		fsp.End()
+
 		return definitions.AuthResultFeatureRBL
 	}
+
+	fsp.SetAttributes(attribute.String("decision", "ok"))
+	fsp.End()
 
 	return definitions.AuthResultOK
 }

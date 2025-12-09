@@ -34,11 +34,25 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // handleBruteForceLuaAction handles the brute force Lua action based on the provided authentication state and rule config.
 func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet) {
+	tr := monittrace.New("nauthilus/auth")
+	bctx, bspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.lua_action",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.String("rule", rule.Name),
+		attribute.Bool("already_triggered", alreadyTriggered),
+	)
+
+	ctx.Request = ctx.Request.WithContext(bctx)
+
+	defer bspan.End()
+
 	if config.GetFile().HaveLuaActions() {
 		finished := make(chan action.Done)
 		accountName := a.GetAccount()
@@ -90,6 +104,11 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 				}
 			}
 		}
+
+		bspan.SetAttributes(
+			attribute.Bool("repeating", isRepeating),
+			attribute.Int("bf.count", int(a.BruteForceCounter[rule.Name])),
+		)
 
 		commonRequest.Repeating = isRepeating
 		commonRequest.UserFound = func() bool { return accountName != "" }()
@@ -172,6 +191,33 @@ func logBruteForceDebug(auth *AuthState) {
 // It evaluates conditions like authentication state, IP whitelisting, protocol enforcement, and bucket rate limits.
 // Returns true if brute force detection is triggered, and false otherwise.
 func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
+	tr := monittrace.New("nauthilus/auth")
+	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.check",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.String("client_ip", a.ClientIP),
+		attribute.String("protocol", a.Protocol.Get()),
+	)
+
+	ctx.Request = ctx.Request.WithContext(cctx)
+
+	defer cspan.End()
+
+	// Overall BF check timer
+	var stopOverall func()
+	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_overall_total"); s != nil {
+		stopOverall = s
+
+		defer stopOverall()
+	}
+
+	// Prechecks timer (covers early exits)
+	var stopPre func()
+	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_prechecks_total"); s != nil {
+		stopPre = s
+		// We'll stop this once we transition to rule filtering
+	}
+
 	var (
 		ruleTriggered bool
 		message       string
@@ -179,16 +225,37 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	)
 
 	if a.NoAuth || a.ListAccounts {
+		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "noauth_or_list"))
+
+		if stopPre != nil {
+			stopPre()
+			stopPre = nil
+		}
+
 		return false
 	}
 
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
+
+		if stopPre != nil {
+			stopPre()
+			stopPre = nil
+		}
+
 		return false
 	}
 
 	if isLocalOrEmptyIP(a.ClientIP) {
+		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "local_or_empty_ip"))
+
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
+
+		if stopPre != nil {
+			stopPre()
+			stopPre = nil
+		}
 
 		return false
 	}
@@ -198,6 +265,13 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
+
+			if stopPre != nil {
+				stopPre()
+				stopPre = nil
+			}
+
 			return false
 		}
 	}
@@ -206,6 +280,13 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
+
+			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
+
+			if stopPre != nil {
+				stopPre()
+				stopPre = nil
+			}
 
 			return false
 		}
@@ -220,6 +301,14 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if stopTimer != nil {
 		defer stopTimer()
 	}
+
+	// Defer to set final outcome
+	defer func() {
+		cspan.SetAttributes(
+			attribute.Bool("triggered", ruleTriggered),
+			attribute.String("bf.rule", a.BruteForceName),
+		)
+	}()
 
 	defer func() {
 		stats.GetMetrics().GetBruteForceEvalSeconds().Observe(time.Since(bfStart).Seconds())
@@ -250,6 +339,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
+		if stopPre != nil {
+			stopPre()
+			stopPre = nil
+		}
+
 		return false
 	}
 
@@ -269,7 +363,18 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
+	// End of prechecks; start rule filter phase
+	if stopPre != nil {
+		stopPre()
+		stopPre = nil
+	}
+
 	// Pre-filter rules by protocol and IP family
+	var stopFilter func()
+	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_rule_filter_total"); s != nil {
+		stopFilter = s
+	}
+
 	filterStart := time.Now()
 	activeRules := make([]config.BruteForceRule, 0, len(rules))
 
@@ -308,10 +413,16 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
+	if stopFilter != nil {
+		stopFilter()
+	}
 
 	// Use filtered rules from here on and precompute networks
 	rules = activeRules
 	netcalcStart := time.Now()
+	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_netcalc_total"); stop != nil {
+		defer stop()
+	}
 
 	// Precompute network strings per CIDR for active rules (no behavior change)
 	bm.PrepareNetcalc(rules)
@@ -321,8 +432,17 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Phase: pre_result (fast check using precomputed hashes/counters)
 	preResultStart := time.Now()
+	var stopPreRes func()
+	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_pre_result_total"); s != nil {
+		stopPreRes = s
+	}
+
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
 	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("pre_result").Observe(time.Since(preResultStart).Seconds())
+	if stopPreRes != nil {
+		stopPreRes()
+	}
+
 	if abort {
 		return false
 	}
@@ -330,8 +450,17 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if !alreadyTriggered {
 		// Phase: bucket_eval (read current counters from Redis and evaluate limits)
 		bucketEvalStart := time.Now()
+		var stopBucket func()
+		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_bucket_eval_total"); s != nil {
+			stopBucket = s
+		}
+
 		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
 		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("bucket_eval").Observe(time.Since(bucketEvalStart).Seconds())
+		if stopBucket != nil {
+			stopBucket()
+		}
+
 		if abort {
 			return false
 		}
@@ -347,6 +476,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Phase: process (persist/update counters, set action context)
 	processStart := time.Now()
+	var stopProcess func()
+	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_process_total"); s != nil {
+		stopProcess = s
+	}
+
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
 		a.BruteForceName = bm.GetBruteForceName()
@@ -361,6 +495,10 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
 	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("process").Observe(time.Since(processStart).Seconds())
+
+	if stopProcess != nil {
+		stopProcess()
+	}
 
 	// Compute and store brute-force hints for the Post-Action.
 	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
@@ -396,7 +534,16 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if triggered || alreadyTriggered {
 		updateLuaContext(a.Context, definitions.FeatureBruteForce)
+		// Time the Lua action execution
+		var stopLua func()
+		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
+			stopLua = s
+		}
+
 		a.handleBruteForceLuaAction(ctx, alreadyTriggered, &rules[ruleNumber], network)
+		if stopLua != nil {
+			stopLua()
+		}
 	}
 
 	return triggered
@@ -404,6 +551,24 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
 func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
+	tr := monittrace.New("nauthilus/auth")
+	uctx, uspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.update",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.String("client_ip", a.ClientIP),
+		attribute.String("protocol", a.Protocol.Get()),
+		attribute.String("bf.rule", a.BruteForceName),
+	)
+
+	ctx.Request = ctx.Request.WithContext(uctx)
+
+	defer uspan.End()
+
+	// Overall timer for updating BF buckets after an auth failure
+	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
+		defer stop()
+	}
+
 	var bm bruteforce.BucketManager
 
 	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
@@ -472,6 +637,11 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 		matchedPeriod = rule.Period.Round(time.Second)
 
+		uspan.SetAttributes(
+			attribute.String("bf.matched_rule", rule.Name),
+			attribute.String("bf.period", matchedPeriod.String()),
+		)
+
 		break
 	}
 
@@ -503,6 +673,12 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
 	for _, rule := range config.GetFile().GetBruteForceRules() {
+		// Per-rule iteration timer
+		var stopIter func()
+		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
+			stopIter = s
+		}
+
 		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
 		if len(rule.FilterByProtocol) > 0 && a.Protocol != nil && a.Protocol.Get() != "" {
 			protocolMatched := false
@@ -537,6 +713,10 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
 			bm.SaveBruteForceBucketCounterToRedis(&rule)
+		}
+
+		if stopIter != nil {
+			stopIter()
 		}
 	}
 }

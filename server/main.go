@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/svcctx"
 )
 
@@ -40,6 +41,10 @@ func main() {
 	if err := setupConfiguration(); err != nil {
 		stdlog.Fatalln("Unable to setup the environment. Error:", err)
 	}
+
+	// Initialize OpenTelemetry tracing early (no-op if disabled)
+	monitoring.GetTelemetry().Start(ctx, version)
+	defer monitoring.GetTelemetry().Shutdown(ctx)
 
 	initializeInstanceInfo()
 	debugLoadableConfig()

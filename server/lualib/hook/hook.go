@@ -39,9 +39,11 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var (
@@ -298,6 +300,20 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 // Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
 // Returns an error if the compilation fails or if the script cannot be managed properly.
 func PreCompileLuaScript(filePath string) (err error) {
+	tr := monittrace.New("nauthilus/hooks")
+	ctx, sp := tr.Start(context.Background(), "hooks.precompile_script",
+		attribute.String("file", filePath),
+	)
+
+	_ = ctx
+
+	defer func() {
+		if err != nil {
+			sp.RecordError(err)
+		}
+		sp.End()
+	}()
+
 	var luaScriptNew *PrecompiledLuaScript
 
 	mu.Lock()
@@ -344,6 +360,19 @@ func PreCompileLuaScript(filePath string) (err error) {
 // It also stores the roles associated with each hook for role-based access control.
 // Returns an error if the compilation or setup fails.
 func PreCompileLuaHooks() error {
+	tr := monittrace.New("nauthilus/hooks")
+	ctx, sp := tr.Start(context.Background(), "hooks.precompile_all",
+		attribute.Int("configured", func() int {
+			if config.GetFile().HaveLuaHooks() {
+				return len(config.GetFile().GetLua().Hooks)
+			}
+			return 0
+		}()),
+	)
+	_ = ctx
+
+	defer sp.End()
+
 	if config.GetFile().HaveLuaHooks() {
 		if customLocation == nil {
 			customLocation = NewCustomLocation()
@@ -359,6 +388,8 @@ func PreCompileLuaHooks() error {
 
 			script, err := NewLuaHook(hook.ScriptPath)
 			if err != nil {
+				sp.RecordError(err)
+
 				return err
 			}
 
@@ -396,6 +427,22 @@ func setupLogging(L *lua.LState) *lua.LTable {
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
 func runLuaCommonWrapper(ctx context.Context, hook string) error {
+	tr := monittrace.New("nauthilus/hooks")
+	cctx, csp := tr.Start(ctx, "hooks.execute_common",
+		attribute.String("hook", hook),
+	)
+
+	_ = cctx
+
+	defer func() {
+		if r := recover(); r != nil {
+			// do not record panic as error here; existing code handles replaceVM; but we still mark error
+			// leave as attribute to avoid double logging
+			csp.SetAttributes(attribute.String("panic", "true"))
+		}
+		csp.End()
+	}()
+
 	var (
 		found  bool
 		script *PrecompiledLuaScript
@@ -504,6 +551,9 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	logTable := setupLogging(L)
 
 	_, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, "")
+	if err != nil {
+		csp.RecordError(err)
+	}
 
 	return err
 }
@@ -511,6 +561,17 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
 // It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
 func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
+	tr := monittrace.New("nauthilus/hooks")
+	xctx, xsp := tr.Start(ctx.Request.Context(), "hooks.execute_custom",
+		attribute.String("path", ctx.Param("hook")),
+		attribute.String("method", ctx.Request.Method),
+	)
+
+	// propagate tracing context into request
+	ctx.Request = ctx.Request.WithContext(xctx)
+
+	defer xsp.End()
+
 	var script *PrecompiledLuaScript
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -660,6 +721,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 
 	result, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
 	if err != nil {
+		xsp.RecordError(err)
 		level.Error(log.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),

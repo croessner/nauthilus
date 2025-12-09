@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -134,6 +135,9 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 
 	redisHandle = redis.NewFailoverClient(fo)
 
+	// Attach OpenTelemetry Redis tracing if enabled
+	instrumentRedisIfEnabled(redisHandle)
+
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(redisHandle)
 
@@ -173,6 +177,9 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 	}
 
 	c := redis.NewClient(opts)
+
+	// Attach OpenTelemetry Redis tracing if enabled
+	instrumentRedisIfEnabled(c)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(c)
@@ -235,10 +242,22 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 
 	c := redis.NewClusterClient(options)
 
+	// Attach OpenTelemetry Redis tracing if enabled
+	instrumentRedisIfEnabled(c)
+
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(c)
 
 	return c
+}
+
+// instrumentRedisIfEnabled enables OpenTelemetry tracing for Redis clients when configured.
+func instrumentRedisIfEnabled(c redis.UniversalClient) {
+	tr := config.GetFile().GetServer().GetInsights().GetTracing()
+	if tr.IsEnabled() && tr.IsRedisEnabled() {
+		// Ignore error to avoid impacting runtime if instrumentation fails
+		_ = redisotel.InstrumentTracing(c)
+	}
 }
 
 // newRedisClusterClientReadOnly creates a new Redis cluster client optimized for read operations.

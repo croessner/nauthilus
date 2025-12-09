@@ -33,7 +33,9 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/go-ldap/ldap/v3"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
@@ -122,6 +124,18 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 
 // PassDB implements the LDAP password database backend.
 func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	lctx, lspan := tr.Start(auth.Ctx(), "ldap.passdb",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Service),
+		attribute.String("username", auth.Username),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = lctx
+
+	defer lspan.End()
+
 	var (
 		assertOk           bool
 		accountField       string
@@ -163,6 +177,11 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	}
 
 	username := handleMasterUserMode(auth)
+
+	lspan.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
 
 	// Derive a timeout context for LDAP search
 	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
@@ -207,6 +226,8 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	ldapReply = <-ldapReplyChan
 
 	if ldapReply.Err != nil {
+		lspan.RecordError(ldapReply.Err)
+
 		return passDBResult, ldapReply.Err
 	}
 
@@ -225,6 +246,8 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	passDBResult.UserFound = true
 	passDBResult.Backend = definitions.BackendLDAP
 	passDBResult.BackendName = lm.poolName
+
+	lspan.SetAttributes(attribute.Bool("user_found", true))
 
 	if _, okay := ldapReply.Result[accountField]; okay {
 		passDBResult.AccountField = accountField
@@ -294,16 +317,22 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 			if stderrors.As(err, &ldapError) {
 				if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
+					lspan.RecordError(ldapError)
+
 					return passDBResult, ldapError.Err
 				}
 			}
 
 			// AuthState failed!
+			lspan.SetAttributes(attribute.Bool("authenticated", false))
+
 			return
 		}
 	}
 
 	passDBResult.Authenticated = true
+
+	lspan.SetAttributes(attribute.Bool("authenticated", true))
 
 	// Update the authentication cache
 	localcache.AuthCache.Set(auth.Username, true)
@@ -322,6 +351,17 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 // AccountDB implements the list-account mode and returns all known users from an LDAP server.
 func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	actx, asp := tr.Start(auth.Ctx(), "ldap.accountdb",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Service),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = actx
+
+	defer asp.End()
+
 	var (
 		accountField string
 		filter       string
@@ -364,6 +404,11 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		return
 	}
 
+	asp.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
+
 	// Derive a timeout context for LDAP search (account list) using service-scoped context
 	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch()
 	defer cancelSearch()
@@ -397,8 +442,12 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		var ldapError *ldap.Error
 
 		if stderrors.As(err, &ldapError) {
+			asp.RecordError(ldapError)
+
 			return accounts, ldapError.Err
 		}
+
+		asp.RecordError(ldapReply.Err)
 
 		return accounts, ldapReply.Err
 	}
@@ -425,6 +474,17 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 // AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
 func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error) {
+	tr := monittrace.New("nauthilus/ldap")
+	mctx, msp := tr.Start(auth.Ctx(), "ldap.add_totp",
+		attribute.String("pool_name", lm.poolName),
+		attribute.String("service", auth.Service),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer msp.End()
+
 	var (
 		filter      string
 		baseDN      string
@@ -458,6 +518,11 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	if scope, err = protocol.GetScope(); err != nil {
 		return
 	}
+
+	msp.SetAttributes(
+		attribute.String("base_dn", baseDN),
+		attribute.String("scope", scope.String()),
+	)
 
 	configField = totp.GetLDAPTOTPSecret(protocol)
 	if configField == "" {
@@ -510,7 +575,13 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	ldapReply = <-ldapReplyChan
 
 	if stderrors.As(ldapReply.Err, &ldapError) {
+		msp.RecordError(ldapError)
+
 		return ldapError.Err
+	}
+
+	if ldapReply.Err != nil {
+		msp.RecordError(ldapReply.Err)
 	}
 
 	return ldapReply.Err

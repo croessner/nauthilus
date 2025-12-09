@@ -340,6 +340,15 @@ func (s *ServerSection) GetKeepAlive() *KeepAlive {
 	return &s.KeepAlive
 }
 
+// GetDisabledEndpoints returns the disabled endpoints configuration; never nil.
+func (s *ServerSection) GetDisabledEndpoints() *Endpoint {
+	if s == nil {
+		return &Endpoint{}
+	}
+
+	return &s.DisabledEndpoints
+}
+
 // Endpoint defines a structure for configuring various types of authentication and custom hooks.
 type Endpoint struct {
 	AuthHeader    bool `mapstructure:"auth_header"`
@@ -820,9 +829,10 @@ func (l *Log) IsAddSourceEnabled() bool {
 
 // Insights is a configuration structure for enabling profiling, block profiling, and connection monitoring capabilities.
 type Insights struct {
-	EnablePprof        bool `mapstructure:"enable_pprof"`
-	EnableBlockProfile bool `mapstructure:"enable_block_profile"`
-	MonitorConnections bool `mapstructure:"monitor_connections"`
+	EnablePprof        bool    `mapstructure:"enable_pprof"`
+	EnableBlockProfile bool    `mapstructure:"enable_block_profile"`
+	MonitorConnections bool    `mapstructure:"monitor_connections"`
+	Tracing            Tracing `mapstructure:"tracing" validate:"omitempty"`
 }
 
 // IsPprofEnabled checks if pprof profiling is enabled in the Insights configuration.
@@ -853,6 +863,124 @@ func (i *Insights) IsMonitorConnectionsEnabled() bool {
 	}
 
 	return i.MonitorConnections
+}
+
+// Tracing holds OpenTelemetry tracing configuration options.
+type Tracing struct {
+	Enabled      bool     `mapstructure:"enabled"`
+	Exporter     string   `mapstructure:"exporter" validate:"omitempty,oneof=otlphttp none"`
+	Endpoint     string   `mapstructure:"endpoint" validate:"omitempty"`
+	SamplerRatio float64  `mapstructure:"sampler_ratio" validate:"omitempty,gte=0,lte=1"`
+	ServiceName  string   `mapstructure:"service_name" validate:"omitempty,max=255,printascii"`
+	Propagators  []string `mapstructure:"propagators" validate:"omitempty,dive,oneof=tracecontext baggage b3 b3multi jaeger"`
+	EnableRedis  bool     `mapstructure:"enable_redis"`
+	TLS          TLS      `mapstructure:"tls" validate:"omitempty"`
+	// LogExportResults toggles INFO-level logging for successful trace export batches.
+	// When true, the exporter logs an INFO message for each successful batch export.
+	// Default is false to avoid noisy logs.
+	LogExportResults bool `mapstructure:"log_export_results"`
+}
+
+// GetTracing returns the tracing configuration; returns an empty struct if Insights is nil.
+func (i *Insights) GetTracing() *Tracing {
+	if i == nil {
+		return &Tracing{}
+	}
+
+	return &i.Tracing
+}
+
+// IsTracingEnabled returns true if tracing is enabled in the Insights configuration.
+func (i *Insights) IsTracingEnabled() bool {
+	if i == nil {
+		return false
+	}
+
+	return i.Tracing.Enabled
+}
+
+// Tracing getters to ensure consistent access across the codebase
+
+// IsEnabled returns true if tracing is enabled, otherwise false; returns false if the Tracing receiver is nil.
+func (t *Tracing) IsEnabled() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.Enabled
+}
+
+// GetExporter returns the configured tracing exporter as a string. Returns an empty string if the Tracing receiver is nil.
+func (t *Tracing) GetExporter() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Exporter
+}
+
+// GetEndpoint returns the tracing endpoint as a string. Returns an empty string if the Tracing instance is nil.
+func (t *Tracing) GetEndpoint() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.Endpoint
+}
+
+// GetSamplerRatio returns the configured sampler ratio for tracing as a float64. Defaults to 0 if the Tracing receiver is nil.
+func (t *Tracing) GetSamplerRatio() float64 {
+	if t == nil {
+		return 0
+	}
+
+	return t.SamplerRatio
+}
+
+// GetServiceName returns the configured service name for tracing as a string. Returns an empty string if the receiver is nil.
+func (t *Tracing) GetServiceName() string {
+	if t == nil {
+		return ""
+	}
+
+	return t.ServiceName
+}
+
+// GetPropagators returns the list of configured text map propagators for tracing. Returns nil if the receiver is nil.
+func (t *Tracing) GetPropagators() []string {
+	if t == nil {
+		return nil
+	}
+
+	return t.Propagators
+}
+
+// IsRedisEnabled returns true if Redis tracing is enabled; returns false if the Tracing receiver is nil.
+func (t *Tracing) IsRedisEnabled() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.EnableRedis
+}
+
+// GetTLS returns the TLS configuration pointer. If the Tracing receiver is nil, it returns a pointer to an empty TLS instance.
+func (t *Tracing) GetTLS() *TLS {
+	if t == nil {
+		return &TLS{}
+	}
+
+	return &t.TLS
+}
+
+// IsLogExportResultsEnabled returns true if successful trace export batches should be logged at INFO level.
+// Returns false if the Tracing receiver is nil.
+func (t *Tracing) IsLogExportResultsEnabled() bool {
+	if t == nil {
+		return false
+	}
+
+	return t.LogExportResults
 }
 
 // DNS represents the Domain Name System configuration settings, including resolver, timeout, and client IP resolution options.
@@ -1715,7 +1843,7 @@ func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.
 type PrometheusTimer struct {
 	Enabled bool     `mapstructure:"enabled"`
-	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns"`
+	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns auth"`
 }
 
 // IsEnabled indicates whether the Prometheus timer is enabled based on the Enabled property of PrometheusTimer.

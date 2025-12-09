@@ -1634,6 +1634,9 @@ const (
 
 	// PromDNS is a constant string representing the "dns" metric in a Prometheus monitoring system.
 	PromDNS = "dns"
+
+	// PromAuth is a constant string representing the authentication flow label for Prometheus timers.
+	PromAuth = "auth"
 )
 
 const (

@@ -37,8 +37,10 @@ import (
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var (
@@ -197,6 +199,42 @@ func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
 
 // handleRequest processes an HTTP request using Lua scripts and logs execution results for each script.
 func (aw *Worker) handleRequest(httpRequest *http.Request) {
+	// Root span for a full actions run
+	tr := monittrace.New("nauthilus/actions")
+	actx, asp := tr.Start(aw.ctx, "actions.run",
+		attribute.String("service", func() string {
+			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+				return aw.luaActionRequest.CommonRequest.Service
+			}
+
+			return ""
+		}()),
+
+		attribute.String("username", func() string {
+			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+				return aw.luaActionRequest.CommonRequest.Username
+			}
+
+			return ""
+		}()),
+
+		attribute.Bool("repeating", func() bool {
+			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+				return aw.luaActionRequest.CommonRequest.Repeating
+			}
+			return false
+		}()),
+
+		attribute.Int("scripts", len(aw.actionScripts)),
+	)
+
+	// propagate to any callee that might consult context
+	if httpRequest != nil {
+		httpRequest = httpRequest.WithContext(actx)
+	}
+
+	defer asp.End()
+
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -404,10 +442,36 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	var err error
 
 	scriptStartTime := time.Now()
+	// Child span per script
+	tr := monittrace.New("nauthilus/actions")
+	sctx, ssp := tr.Start(aw.ctx, "actions.script",
+		attribute.String("script", getTaskName(aw.actionScripts[index])),
+		attribute.String("action", getLuaActionName(aw.actionScripts[index])),
+		attribute.String("service", func() string {
+			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+				return aw.luaActionRequest.CommonRequest.Service
+			}
+
+			return ""
+		}()),
+
+		attribute.String("username", func() string {
+			if aw.luaActionRequest != nil && aw.luaActionRequest.CommonRequest != nil {
+				return aw.luaActionRequest.CommonRequest.Username
+			}
+
+			return ""
+		}()),
+	)
+
+	_ = sctx
+
 	defer func() {
 		scriptLatency := time.Since(scriptStartTime)
 		scriptName := getTaskName(aw.actionScripts[index])
 		logs.Set(fmt.Sprintf("latency_%s", scriptName), util.FormatDurationMs(scriptLatency))
+		ssp.SetAttributes(attribute.Int("result", result))
+		ssp.End()
 	}()
 
 	stopTimer := stats.PrometheusTimer(definitions.PromAction, getTaskName(aw.actionScripts[index]))
@@ -424,6 +488,8 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 
 	if err = aw.executeScript(L, index, request); err != nil {
 		aw.logScriptFailure(index, err, logs)
+		ssp.RecordError(err)
+
 		luaCancel()
 
 		return

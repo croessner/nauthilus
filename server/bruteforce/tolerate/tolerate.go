@@ -29,10 +29,13 @@ import (
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -153,6 +156,22 @@ type tolerateImpl struct {
 
 // SetCustomTolerations sets the custom toleration configurations in a thread-safe manner. It replaces existing values.
 func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
+	// Trace configuration update (service-scoped)
+	tr := monittrace.New("nauthilus/tolerate")
+	ctx, sp := tr.Start(svcctx.Get(), "tolerate.set_custom",
+		attribute.Int("count", func() int {
+			if tolerations == nil {
+				return 0
+			}
+
+			return len(tolerations)
+		}()),
+	)
+
+	_ = ctx
+
+	defer sp.End()
+
 	if tolerations == nil {
 		return
 	}
@@ -166,6 +185,17 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 
 // SetCustomToleration updates toleration settings for a specific IP address with provided percentage and TTL in a thread-safe manner.
 func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration) {
+	tr := monittrace.New("nauthilus/tolerate")
+	ctx, sp := tr.Start(svcctx.Get(), "tolerate.set_one",
+		attribute.String("ip_address", ipAddress),
+		attribute.Int("tolerated_pct", int(pctTolerated)),
+		attribute.String("ttl", tolerateTTL.String()),
+	)
+
+	_ = ctx
+
+	defer sp.End()
+
 	if strings.TrimSpace(ipAddress) == "" {
 		return
 	}
@@ -204,6 +234,15 @@ func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8,
 
 // DeleteCustomToleration removes a toleration entry for a given IP address from the custom tolerations in a thread-safe manner.
 func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
+	tr := monittrace.New("nauthilus/tolerate")
+	ctx, sp := tr.Start(svcctx.Get(), "tolerate.delete",
+		attribute.String("ip_address", ipAddress),
+	)
+
+	_ = ctx
+
+	defer sp.End()
+
 	if strings.TrimSpace(ipAddress) == "" {
 		return
 	}
@@ -227,6 +266,12 @@ func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
 
 // GetCustomTolerations retrieves the current list of custom toleration configurations in a thread-safe manner.
 func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
+	tr := monittrace.New("nauthilus/tolerate")
+	ctx, sp := tr.Start(svcctx.Get(), "tolerate.get_all")
+	_ = ctx
+
+	defer sp.End()
+
 	t.mu.Lock()
 
 	defer t.mu.Unlock()
@@ -236,7 +281,16 @@ func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
 
 // SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
 // It sets a TTL for the hash key to manage the expiration of the tolerance data.
-func (t *tolerateImpl) SetIPAddress(_ context.Context, ipAddress string, username string, authenticated bool) {
+func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool) {
+	tr := monittrace.New("nauthilus/tolerate")
+	sctx, sp := tr.Start(ctx, "tolerate.set_ip",
+		attribute.String("ip_address", ipAddress),
+		attribute.String("username", username),
+		attribute.Bool("authenticated", authenticated),
+	)
+
+	defer sp.End()
+
 	if strings.TrimSpace(ipAddress) == "" {
 		return
 	}
@@ -275,7 +329,8 @@ func (t *tolerateImpl) SetIPAddress(_ context.Context, ipAddress string, usernam
 	// Use Lua script to add to sorted set, count elements, and set expirations atomically
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(nil)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(sctx)
+
 	result, err := rediscli.ExecuteScript(
 		dCtx,
 		"ZAddCountAndExpire",
@@ -286,6 +341,7 @@ func (t *tolerateImpl) SetIPAddress(_ context.Context, ipAddress string, usernam
 		label,
 		int(tolerateTTL.Seconds()),
 	)
+
 	cancel()
 
 	if err != nil {
@@ -305,6 +361,13 @@ func (t *tolerateImpl) SetIPAddress(_ context.Context, ipAddress string, usernam
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
 func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
+	tr := monittrace.New("nauthilus/tolerate")
+	tctx, tsp := tr.Start(ctx, "tolerate.is_tolerated",
+		attribute.String("ip_address", ipAddress),
+	)
+
+	defer tsp.End()
+
 	var (
 		okay     bool
 		positive int64
@@ -432,7 +495,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 	}
 
 	// Fall back to standard calculation if adaptive is disabled or script failed
-	ipMap := t.GetTolerateMap(ctx, ipAddress)
+	ipMap := t.GetTolerateMap(tctx, ipAddress)
 
 	if positive, okay = ipMap["positive"]; !okay {
 		positive = 0
@@ -462,6 +525,11 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 
 // StartHouseKeeping initiates a periodic cleanup process to remove expired tolerance data for IP addresses from Redis.
 func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
+	tr := monittrace.New("nauthilus/tolerate")
+	_, hsp := tr.Start(ctx, "tolerate.housekeeping")
+
+	defer hsp.End()
+
 	t.houseKeeperContext = ctx
 
 	var err error
@@ -530,6 +598,13 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 
 // GetTolerateMap retrieves a map of toleration data from Redis for the specified IP address.
 func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64 {
+	tr := monittrace.New("nauthilus/tolerate")
+	gctx, gsp := tr.Start(ctx, "tolerate.get_map",
+		attribute.String("ip_address", ipAddress),
+	)
+
+	defer gsp.End()
+
 	var (
 		counter int64
 		err     error
@@ -540,8 +615,10 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 
 	ipMap := make(map[string]int64)
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(gctx)
+
 	result, err = rediscli.GetClient().GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
+
 	cancel()
 
 	if err != nil {

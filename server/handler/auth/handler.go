@@ -21,6 +21,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 )
 
@@ -61,6 +62,14 @@ func (h *Handler) basic(ctx *gin.Context) {
 		return
 	}
 
+	// Minimal custom span analogous to JSON handler
+	tr := monittrace.New("nauthilus/rest")
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_basic")
+	defer sp.End()
+
+	// Propagate tracing context
+	ctx.Request = ctx.Request.WithContext(spanCtx)
+
 	h.process(ctx)
 }
 
@@ -70,6 +79,17 @@ func (h *Handler) json(ctx *gin.Context) {
 
 		return
 	}
+
+	// Minimal custom span to verify end-to-end tracing for the JSON auth path.
+	// This span appears as a child of the otelgin server span when tracing is enabled.
+	tr := monittrace.New("nauthilus/rest")
+
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_json")
+	defer sp.End()
+
+	// Propagate the new context down the call chain so child operations
+	// (e.g., Redis, outbound HTTP) attach under this span when possible.
+	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	h.process(ctx)
 }
@@ -81,6 +101,14 @@ func (h *Handler) header(ctx *gin.Context) {
 		return
 	}
 
+	// Minimal custom span analogous to JSON handler
+	tr := monittrace.New("nauthilus/rest")
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_header")
+	defer sp.End()
+
+	// Propagate tracing context
+	ctx.Request = ctx.Request.WithContext(spanCtx)
+
 	h.process(ctx)
 }
 
@@ -91,6 +119,14 @@ func (h *Handler) nginx(ctx *gin.Context) {
 		return
 	}
 
+	// Minimal custom span analogous to JSON handler
+	tr := monittrace.New("nauthilus/rest")
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_nginx")
+	defer sp.End()
+
+	// Propagate tracing context
+	ctx.Request = ctx.Request.WithContext(spanCtx)
+
 	h.process(ctx)
 }
 
@@ -100,6 +136,14 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 
 		return
 	}
+
+	// Minimal custom span for SASL/Authd path
+	tr := monittrace.New("nauthilus/rest")
+	spanCtx, sp := tr.Start(ctx.Request.Context(), "rest.auth_saslauthd")
+	defer sp.End()
+
+	// Propagate tracing context
+	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	// Same pre-processing flow but use the specific SASL handler
 	auth := core.NewAuthStateWithSetup(ctx)
