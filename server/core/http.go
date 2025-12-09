@@ -46,6 +46,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/net/http2"
 )
 
@@ -123,7 +124,28 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 			}
 		}
 
-		r.Use(otelgin.Middleware(service))
+		// Attach OpenTelemetry Gin middleware with explicit provider/propagators and a
+		// stable span name formatter (METHOD + route pattern) to simplify querying.
+		r.Use(otelgin.Middleware(
+			service,
+			otelgin.WithTracerProvider(otel.GetTracerProvider()),
+			otelgin.WithPropagators(otel.GetTextMapPropagator()),
+			otelgin.WithSpanNameFormatter(func(c *gin.Context) string {
+				path := c.FullPath()
+				if path == "" {
+					path = c.Request.URL.Path
+				}
+
+				return c.Request.Method + " " + path
+			}),
+		))
+
+		// Log explicitly that the Gin OpenTelemetry middleware has been attached.
+		// This helps diagnose situations where server spans are not visible in the backend.
+		level.Info(log.Logger).Log(
+			definitions.LogKeyMsg, "Gin OpenTelemetry tracing middleware attached",
+			"service", service,
+		)
 	}
 
 	if mw.IsLoggingEnabled() {
