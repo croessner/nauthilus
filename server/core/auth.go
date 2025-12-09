@@ -1521,6 +1521,10 @@ func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 // After that, the PostLuaAction is executed on the passDBResult.
 // Finally, it returns the authResult of type definitions.AuthResult.
 func (a *AuthState) handleLocalCache(ctx *gin.Context) definitions.AuthResult {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_local_cache_path_total"); stop != nil {
+		defer stop()
+	}
+
 	a.SetOperationMode(ctx)
 
 	passDBResult := a.initializePassDBResult()
@@ -1615,6 +1619,10 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
 func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_verify_password_total"); stop != nil {
+		defer stop()
+	}
+
 	passDBResult, err := a.verifyPassword(ctx, passDBs)
 	if err != nil {
 		var detailedError *errors.DetailedError
@@ -1647,6 +1655,10 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 // processUserFound handles the processing when a user is found in the database, updates user account in Redis, and processes password history.
 // It returns the account name and any error encountered during the process.
 func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName string, err error) {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_user_found_total"); stop != nil {
+		defer stop()
+	}
+
 	var bm bruteforce.BucketManager
 
 	if a.UserFound {
@@ -1752,6 +1764,10 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_process_cache_total"); stop != nil {
+		defer stop()
+	}
+
 	if useCache && a.isCacheInCorrectPosition(backendPos) {
 		if cs := getCacheService(); cs != nil {
 			if authenticated {
@@ -1779,6 +1795,10 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
 // Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_authenticate_user_total"); stop != nil {
+		defer stop()
+	}
+
 	// Protect against re-entrancy: if a prior pass in this request already authenticated, do not degrade
 	if a.Authenticated {
 		return definitions.AuthResultOK
@@ -1837,6 +1857,10 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_filter_lua_total"); stop != nil {
+		defer stop()
+	}
+
 	if lf := getLuaFilter(); lf != nil {
 		return lf.Filter(ctx, a.View(), passDBResult)
 	}
@@ -2021,6 +2045,10 @@ func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
 //	  auth.setOperationMode(ctx)
 //	}
 func (a *AuthState) SetOperationMode(ctx *gin.Context) {
+	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_set_operation_mode_total"); stop != nil {
+		defer stop()
+	}
+
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// We reset flags, because they might have been cached in the in-memory cahce.
@@ -2086,6 +2114,10 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 // If it is set to "list-accounts", it sets the ListAccounts field of the authentication object to true.
 // It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods on the authentication object to set additional fields based on the context.
 func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
+	if stop := stats.PrometheusTimer(definitions.PromRequest, "request_headers_parse_total"); stop != nil {
+		defer stop()
+	}
+
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	username := ctx.GetHeader(config.GetFile().GetUsername())
 	password := ctx.GetHeader(config.GetFile().GetPassword())
@@ -2140,6 +2172,10 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 // If the realm field is not empty, it appends "@" + realm to the username field in the AuthState object.
 // It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
 func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
+	if stop := stats.PrometheusTimer(definitions.PromRequest, "request_form_decode_total"); stop != nil {
+		defer stop()
+	}
+
 	// Build username incorporating optional realm suffix
 	username := ctx.PostForm("username")
 	realm := ctx.PostForm("realm")
@@ -2178,6 +2214,10 @@ func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
 // Otherwise, it calls the setAuthenticationFields function with the AuthState object and the JSONRequest object,
 // and sets additional fields in the AuthState object using the XSSL method.
 func processApplicationJSON(ctx *gin.Context, auth State) {
+	if stop := stats.PrometheusTimer(definitions.PromRequest, "request_json_decode_total"); stop != nil {
+		defer stop()
+	}
+
 	var jsonRequest authdto.Request
 
 	if err := ctx.ShouldBindJSON(&jsonRequest); err != nil {
@@ -2337,6 +2377,10 @@ func (a *AuthState) InitMethodAndUserAgent() State {
 //	ctx.SetParam("service", "nginx")
 //	setupAuth(&ctx, auth)
 func setupAuth(ctx *gin.Context, auth State) {
+	if stop := stats.PrometheusTimer(definitions.PromRequest, "request_setup_total"); stop != nil {
+		defer stop()
+	}
+
 	auth.SetProtocol(&config.Protocol{})
 
 	svc := ctx.GetString(definitions.CtxServiceKey)

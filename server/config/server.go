@@ -1715,7 +1715,7 @@ func hostnameRFC1123WithOptionalTrailingDot(fl validator.FieldLevel) bool {
 // PrometheusTimer is a configuration structure for enabling and setting labels for Prometheus metrics timers.
 type PrometheusTimer struct {
 	Enabled bool     `mapstructure:"enabled"`
-	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns"`
+	Labels  []string `mapstructure:"labels" validate:"omitempty,dive,oneof=action account backend brute_force feature filter post_action request store_totp dns auth"`
 }
 
 // IsEnabled indicates whether the Prometheus timer is enabled based on the Enabled property of PrometheusTimer.
