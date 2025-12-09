@@ -27,8 +27,10 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // luaManagerImpl provides an implementation for managing Lua connections and operations using a specific connection backend.
@@ -39,6 +41,19 @@ type luaManagerImpl struct {
 
 // PassDB implements the Lua password database backend.
 func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+	// Tracing: Lua backend password DB
+	tr := monittrace.New("nauthilus/lua_backend")
+	lctx, lsp := tr.Start(auth.Ctx(), "lua.passdb",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Service),
+		attribute.String("username", auth.Username),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = lctx
+
+	defer lsp.End()
+
 	var (
 		luaBackendResult *lualib.LuaBackendResult
 		protocol         *config.LuaSearchProtocol
@@ -51,6 +66,10 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	}
 
 	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+		if err != nil {
+			lsp.RecordError(err)
+		}
+
 		return
 	}
 
@@ -153,6 +172,8 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
 
+		lsp.RecordError(err)
+
 		return
 	}
 
@@ -212,6 +233,12 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		}
 	}
 
+	// Outcome attributes
+	lsp.SetAttributes(
+		attribute.Bool("user_found", luaBackendResult.UserFound),
+		attribute.Bool("authenticated", luaBackendResult.Authenticated),
+	)
+
 	// Return the CommonRequest to the pool
 	lualib.PutCommonRequest(commonRequest)
 
@@ -220,6 +247,18 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 
 // AccountDB implements the list-account mode and returns all known users from a Lua backend logic.
 func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err error) {
+	// Tracing: Lua backend account listing
+	tr := monittrace.New("nauthilus/lua_backend")
+	actx, asp := tr.Start(auth.Ctx(), "lua.accountdb",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Service),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = actx
+
+	defer asp.End()
+
 	var (
 		luaBackendResult *lualib.LuaBackendResult
 		protocol         *config.LuaSearchProtocol
@@ -232,6 +271,10 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	}
 
 	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+		if err != nil {
+			asp.RecordError(err)
+		}
+
 		return
 	}
 
@@ -271,6 +314,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 
 	if luaBackendResult.Err != nil {
 		err = luaBackendResult.Err
+		asp.RecordError(err)
 
 		return
 	}
@@ -297,11 +341,31 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		)
 	}
 
+	asp.SetAttributes(attribute.Int("accounts", len(accounts)))
+
 	return accounts, nil
 }
 
 // AddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
 func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (err error) {
+	// Tracing: Lua backend add TOTP
+	tr := monittrace.New("nauthilus/lua_backend")
+	mctx, msp := tr.Start(auth.Ctx(), "lua.add_totp",
+		attribute.String("backend_name", lm.backendName),
+		attribute.String("service", auth.Service),
+		attribute.String("protocol", auth.Protocol.Get()),
+	)
+
+	_ = mctx
+
+	defer func() {
+		if err != nil {
+			msp.RecordError(err)
+		}
+
+		msp.End()
+	}()
+
 	var (
 		luaBackendResult *lualib.LuaBackendResult
 		protocol         *config.LuaSearchProtocol

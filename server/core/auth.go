@@ -53,6 +53,9 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/singleflight"
+
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var backchanSF singleflight.Group
@@ -1451,6 +1454,29 @@ func (a *AuthState) GetAccountField() string {
 
 // PostLuaAction sends a Lua action to be executed asynchronously.
 func (a *AuthState) PostLuaAction(passDBResult *PassDBResult) {
+	tr := monittrace.New("nauthilus/auth")
+	ctx := a.Ctx()
+	lctx, lspan := tr.Start(ctx, "auth.lua.post_action",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	_ = lctx
+	if passDBResult != nil {
+		lspan.SetAttributes(
+			attribute.Bool("authenticated", passDBResult.Authenticated),
+			attribute.Bool("user_found", passDBResult.UserFound),
+		)
+
+		if passDBResult.BackendName != "" {
+			lspan.SetAttributes(attribute.String("backend", passDBResult.BackendName))
+		} else {
+			lspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
+		}
+	}
+
+	defer lspan.End()
+
 	if act := getPostAction(); act != nil {
 		act.Run(PostActionInput{View: a.View(), Result: passDBResult})
 	}
@@ -1619,11 +1645,38 @@ func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.
 // processVerifyPassword verifies the user's password against multiple databases.
 // It logs detailed information in case of errors and returns the result of the password verification process.
 func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*PassDBResult, error) {
+	tr := monittrace.New("nauthilus/auth")
+	vctx, vspan := tr.Start(ctx.Request.Context(), "auth.verify",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	// ensure downstream uses the same context
+	ctx.Request = ctx.Request.WithContext(vctx)
+	defer vspan.End()
+
 	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_verify_password_total"); stop != nil {
 		defer stop()
 	}
 
 	passDBResult, err := a.verifyPassword(ctx, passDBs)
+	if passDBResult != nil {
+		vspan.SetAttributes(
+			attribute.Bool("authenticated", passDBResult.Authenticated),
+			attribute.Bool("user_found", passDBResult.UserFound),
+		)
+
+		if passDBResult.BackendName != "" {
+			vspan.SetAttributes(attribute.String("backend", passDBResult.BackendName))
+		} else {
+			vspan.SetAttributes(attribute.String("backend", passDBResult.Backend.String()))
+		}
+	}
+
+	if err != nil {
+		vspan.RecordError(err)
+	}
+
 	if err != nil {
 		var detailedError *errors.DetailedError
 
@@ -1764,6 +1817,18 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 
 // processCache updates the relevant user cache entries based on authentication results from password databases.
 func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountName string, useCache bool, backendPos map[definitions.Backend]int) error {
+	tr := monittrace.New("nauthilus/auth")
+	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.cache.process",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.Bool("authenticated", authenticated),
+		attribute.Bool("use_cache", useCache),
+	)
+
+	_ = cctx
+
+	defer cspan.End()
+
 	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_process_cache_total"); stop != nil {
 		defer stop()
 	}
@@ -1795,6 +1860,17 @@ func (a *AuthState) processCache(ctx *gin.Context, authenticated bool, accountNa
 // It also checks if the user is found during password verification, if true, it sets a new username to the user.
 // Afterward, it applies a Lua filter to the result and calls the post Lua action, and finally, it returns the authentication result.
 func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) definitions.AuthResult {
+	tr := monittrace.New("nauthilus/auth")
+	actx, aspan := tr.Start(ctx.Request.Context(), "auth.authenticate",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+		attribute.Bool("use_cache", useCache),
+	)
+
+	ctx.Request = ctx.Request.WithContext(actx)
+
+	defer aspan.End()
+
 	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_authenticate_user_total"); stop != nil {
 		defer stop()
 	}
@@ -1848,6 +1924,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if !(a.Protocol.Get() == definitions.ProtoOryHydra) {
 		authResult = a.FilterLua(passDBResult, ctx)
+		aspan.SetAttributes(attribute.String("lua.result", string(authResult)))
 
 		a.PostLuaAction(passDBResult)
 	}
@@ -1857,12 +1934,25 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 // FilterLua calls Lua filters which can change the backend result.
 func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) definitions.AuthResult {
+	tr := monittrace.New("nauthilus/auth")
+	lctx, lspan := tr.Start(ctx.Request.Context(), "auth.lua.filter",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(lctx)
+
+	defer lspan.End()
+
 	if stop := stats.PrometheusTimer(definitions.PromAuth, "auth_filter_lua_total"); stop != nil {
 		defer stop()
 	}
 
 	if lf := getLuaFilter(); lf != nil {
-		return lf.Filter(ctx, a.View(), passDBResult)
+		res := lf.Filter(ctx, a.View(), passDBResult)
+		lspan.SetAttributes(attribute.String("result", string(res)))
+
+		return res
 	}
 
 	level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
@@ -2411,6 +2501,18 @@ func setupAuth(ctx *gin.Context, auth State) {
 // Otherwise, it calls the setupAuth function to setup the AuthState struct based on the service parameter from the gin.Context object.
 // Finally, it returns the created AuthState struct.
 func NewAuthStateWithSetup(ctx *gin.Context) State {
+	// Setup stage tracing
+	tr := monittrace.New("nauthilus/auth")
+	tctx, tsp := tr.Start(ctx.Request.Context(), "auth.setup",
+		attribute.String("service", ctx.GetString(definitions.CtxServiceKey)),
+		attribute.String("method", ctx.Request.Method),
+	)
+
+	defer tsp.End()
+
+	// Propagate tracing context downwards for any callee that reads request context
+	ctx.Request = ctx.Request.WithContext(tctx)
+
 	auth := NewAuthStateFromContext(ctx)
 
 	svc := ctx.GetString(definitions.CtxServiceKey)
@@ -2624,7 +2726,19 @@ func (a *AuthState) generateSingleflightKey() string {
 // It sets the a.UsedPassDBBackend field to BackendLocalCache to indicate that the cache was used.
 // Finally, it sets the "local_cache_auth" key to true in the gin.Context using ctx.Set() and returns true if the object is found in the cache; otherwise, it returns false.
 func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
+	tr := monittrace.New("nauthilus/auth")
+	lcCtx, lcSpan := tr.Start(a.Ctx(), "auth.local_cache",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	_ = lcCtx
+
+	defer lcSpan.End()
+
 	if a.HaveMonitoringFlag(definitions.MonInMemory) {
+		lcSpan.SetAttributes(attribute.Bool("skipped", true))
+
 		return false
 	}
 
@@ -2643,8 +2757,15 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
 
+		lcSpan.SetAttributes(
+			attribute.Bool("hit", true),
+			attribute.String("backend", definitions.BackendLocalCache.String()),
+		)
+
 		return found
 	} else {
+		lcSpan.SetAttributes(attribute.Bool("hit", false))
+
 		return false
 	}
 }
@@ -2654,21 +2775,40 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 // It then performs a post Lua action and triggers a failed authentication response.
 // If a brute force attack is detected, it returns true, otherwise false.
 func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
+	tr := monittrace.New("nauthilus/auth")
+	pctx, pspan := tr.Start(ctx.Request.Context(), "auth.features",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	// propagate for any nested calls
+	ctx.Request = ctx.Request.WithContext(pctx)
+
+	var cacheHit bool
 	if found := a.GetFromLocalCache(ctx); !found {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		if a.CheckBruteForce(ctx) {
+			pspan.SetAttributes(attribute.Bool("bruteforce.blocked", true))
 			a.UpdateBruteForceBucketsCounter(ctx)
 			result := GetPassDBResultFromPool()
 			a.PostLuaAction(result)
 			PutPassDBResultToPool(result)
 			a.AuthFail(ctx)
 
+			pspan.SetAttributes(attribute.Bool("reject", true))
+			pspan.End()
+
 			return true
 		}
 	} else {
 		stats.GetMetrics().GetCacheHits().Inc()
+
+		cacheHit = true
 	}
+
+	pspan.SetAttributes(attribute.Bool("cache.hit", cacheHit))
+	pspan.End()
 
 	return false
 }

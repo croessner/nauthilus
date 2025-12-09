@@ -36,12 +36,14 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/monitoring"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -70,6 +72,20 @@ func LoaderModBackend(request *Request, backendResult **lualib.LuaBackendResult,
 // Returns an error if pre-compilation fails or configuration is missing.
 // Initializes or resets the global LuaFilters container, adding compiled Lua filters sequentially.
 func PreCompileLuaFilters() (err error) {
+	tr := monittrace.New("nauthilus/filters")
+	ctx, sp := tr.Start(context.Background(), "filters.precompile_all",
+		attribute.Int("configured", func() int {
+			if config.GetFile().HaveLuaFilters() {
+				return len(config.GetFile().GetLua().GetFilters())
+			}
+			return 0
+		}()),
+	)
+
+	_ = ctx
+
+	defer sp.End()
+
 	if config.GetFile().HaveLuaFilters() {
 		if LuaFilters == nil {
 			LuaFilters = &PreCompiledLuaFilters{}
@@ -84,6 +100,8 @@ func PreCompileLuaFilters() (err error) {
 
 			luaFilter, err = NewLuaFilter(cfg.Name, cfg.ScriptPath)
 			if err != nil {
+				sp.RecordError(err)
+
 				return err
 			}
 
@@ -397,7 +415,46 @@ func mergeMaps(m1, m2 map[any]any) map[any]any {
 // CallFilterLua executes Lua filter scripts in parallel. It merges backend results and remove-attributes
 // from all filters, returns action=true if any filter requested action, and returns the first error if any.
 func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *lualib.LuaBackendResult, removeAttributes []string, err error) {
+	tr := monittrace.New("nauthilus/filters")
+	fctx, fsp := tr.Start(ctx.Request.Context(), "filters.call",
+		attribute.String("service", func() string {
+			if r != nil && r.CommonRequest != nil {
+				return r.CommonRequest.Service
+			}
+			return ""
+		}()),
+		attribute.String("username", func() string {
+			if r != nil && r.CommonRequest != nil {
+				return r.CommonRequest.Username
+			}
+			return ""
+		}()),
+		attribute.Int("filters", func() int {
+			if LuaFilters != nil {
+				return len(LuaFilters.LuaScripts)
+			}
+			return 0
+		}()),
+	)
+
+	// propagate context for downstream
+	ctx.Request = ctx.Request.WithContext(fctx)
+
+	defer func() {
+		fsp.SetAttributes(
+			attribute.Bool("result", action),
+			attribute.Int("removed_attrs", len(removeAttributes)),
+		)
+
+		if err != nil {
+			fsp.RecordError(err)
+		}
+
+		fsp.End()
+	}()
+
 	startTime := time.Now()
+
 	defer func() {
 		latency := time.Since(startTime)
 		if r.Logs == nil {
