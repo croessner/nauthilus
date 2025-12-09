@@ -45,6 +45,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"golang.org/x/net/http2"
 )
 
@@ -107,6 +108,23 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		limitCounter := mdlimit.NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
 
 		r.Use(limitCounter.Middleware())
+	}
+
+	// Tracing middleware (OpenTelemetry) – enabled if insights.tracing.enable is true
+	// and not disabled via server.disabled_endpoints.tracing
+	if config.GetFile().GetServer().GetInsights().IsTracingEnabled() &&
+		!config.GetFile().GetServer().GetDisabledEndpoints().IsTracingDisabled() {
+		tr := config.GetFile().GetServer().GetInsights().GetTracing()
+
+		service := tr.GetServiceName()
+		if service == "" {
+			service = config.GetFile().GetServer().GetInstanceName()
+			if service == "" {
+				service = "nauthilus-server"
+			}
+		}
+
+		r.Use(otelgin.Middleware(service))
 	}
 
 	if mw.IsLoggingEnabled() {

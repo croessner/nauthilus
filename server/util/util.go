@@ -48,6 +48,8 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". The "*" might be used as master separator.
@@ -618,18 +620,25 @@ func NewHTTPClient() *http.Client {
 		proxyFunc = http.ProxyFromEnvironment
 	}
 
-	httpClient := &http.Client{
-		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			Proxy:               proxyFunc,
-			MaxConnsPerHost:     config.GetFile().GetServer().GetHTTPClient().GetMaxConnsPerHost(),
-			MaxIdleConns:        config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConns(),
-			MaxIdleConnsPerHost: config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
-			IdleConnTimeout:     config.GetFile().GetServer().GetHTTPClient().GetIdleConnTimeout(),
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetHTTPClientSkipVerify() || config.GetFile().GetServer().GetHTTPClient().GetTLS().GetSkipVerify(),
-			},
+	baseTransport := &http.Transport{
+		Proxy:               proxyFunc,
+		MaxConnsPerHost:     config.GetFile().GetServer().GetHTTPClient().GetMaxConnsPerHost(),
+		MaxIdleConns:        config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConns(),
+		MaxIdleConnsPerHost: config.GetFile().GetServer().GetHTTPClient().GetMaxIdleConnsPerHost(),
+		IdleConnTimeout:     config.GetFile().GetServer().GetHTTPClient().GetIdleConnTimeout(),
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetHTTPClientSkipVerify() || config.GetFile().GetServer().GetHTTPClient().GetTLS().GetSkipVerify(),
 		},
+	}
+
+	var transport http.RoundTripper = baseTransport
+	if config.GetFile().GetServer().GetInsights().IsTracingEnabled() {
+		transport = otelhttp.NewTransport(baseTransport)
+	}
+
+	httpClient := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: transport,
 	}
 
 	return httpClient
