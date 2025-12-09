@@ -421,18 +421,21 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			if r != nil && r.CommonRequest != nil {
 				return r.CommonRequest.Service
 			}
+
 			return ""
 		}()),
 		attribute.String("username", func() string {
 			if r != nil && r.CommonRequest != nil {
 				return r.CommonRequest.Username
 			}
+
 			return ""
 		}()),
 		attribute.Int("filters", func() int {
 			if LuaFilters != nil {
 				return len(LuaFilters.LuaScripts)
 			}
+
 			return 0
 		}()),
 	)
@@ -475,6 +478,10 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	mode := "unauthenticated"
 	scripts := make([]*LuaFilter, 0)
 
+	// Trace selection of applicable filters for the current mode
+	sctx, selSpan := tr.Start(fctx, "filters.select_applicable")
+	_ = sctx
+
 	if r.CommonRequest != nil && r.CommonRequest.NoAuth {
 		mode = "no_auth"
 
@@ -491,6 +498,13 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				scripts = append(scripts, s)
 			}
 		}
+
+		selSpan.SetAttributes(
+			attribute.String("mode", mode),
+			attribute.Int("configured_total", len(LuaFilters.LuaScripts)),
+			attribute.Int("runnable", len(scripts)),
+		)
+		selSpan.End()
 	} else {
 		mode = "unauthenticated"
 
@@ -535,12 +549,26 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 
 	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaFilterVMPoolSize()})
 
+	// Span to cover goroutine setup
+	pstartCtx, pstart := tr.Start(fctx, "filters.parallel.start", attribute.Int("runnable", len(scripts)))
+	_ = pstartCtx
+
 	for _, script := range scripts {
 		sc := script
 		g.Go(func() error {
+			// Per-script span
+			sCtx, sSpan := tr.Start(fctx, "filters.script",
+				attribute.String("name", sc.Name),
+				attribute.String("mode", mode),
+			)
+			_ = sCtx
+
 			// Per-filter state from bounded vmpool
 			Llocal, acqErr := pool.Acquire(egCtx)
 			if acqErr != nil {
+				sSpan.RecordError(acqErr)
+				sSpan.End()
+
 				return acqErr
 			}
 
@@ -555,6 +583,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				} else {
 					pool.Release(Llocal)
 				}
+
+				sSpan.End()
 			}()
 
 			// Local log and status to avoid races on r.Logs / r.StatusMessage
@@ -564,6 +594,12 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			// Local backend result and remove-attributes that this filter may set
 			localBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
 			localRemoveAttrs := make([]string, 0)
+
+			// Environment preparation span
+			envCtx, envSpan := tr.Start(fctx, "filters.env.prepare",
+				attribute.String("name", sc.Name),
+			)
+			_ = envCtx
 
 			lualib.RegisterBackendResultType(Llocal, definitions.LuaBackendResultAttributes)
 
@@ -701,17 +737,28 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				}
 			}
 
+			envSpan.End()
+
 			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}
 
 			// Execute script
+			execCtx, execSpan := tr.Start(fctx, "filters.execute",
+				attribute.String("name", sc.Name),
+			)
+			_ = execCtx
+
 			if e := lualib.PackagePath(Llocal); e != nil {
 				r.handleError(luaCancel, e, sc.Name, stopTimer)
+				execSpan.RecordError(e)
+				execSpan.End()
 
 				return e
 			}
 
 			if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
 				r.handleError(luaCancel, e, sc.Name, stopTimer)
+				execSpan.RecordError(e)
+				execSpan.End()
 
 				return e
 			}
@@ -731,6 +778,8 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 			if filterFunc.Type() == lua.LTFunction {
 				if e := Llocal.CallByParam(lua.P{Fn: filterFunc, NRet: 2, Protect: true}, request); e != nil {
 					r.handleError(luaCancel, e, sc.Name, stopTimer)
+					execSpan.RecordError(e)
+					execSpan.End()
 
 					return e
 				}
@@ -741,7 +790,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 				Llocal.Pop(1)
 				fr.ret = ret
 				fr.action = takeAction
+
+				execSpan.SetAttributes(
+					attribute.Int("result", ret),
+					attribute.Bool("action", takeAction),
+				)
 			}
+
+			execSpan.End()
 
 			// Snapshot local logs and remove-attrs for aggregation
 			fr.logs = *localLogs
@@ -778,11 +834,27 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 		})
 	}
 
+	// End parallel start span after scheduling all goroutines
+	pstart.End()
+
+	// Wait span to cover synchronization
+	wctx, wspan := tr.Start(fctx, "filters.parallel.wait")
+	_ = wctx
+
 	if e := g.Wait(); e != nil {
+		wspan.RecordError(e)
+		wspan.End()
+
 		return false, nil, nil, e
 	}
 
+	wspan.SetAttributes(attribute.Int("completed", len(results)))
+	wspan.End()
+
 	// Aggregate results
+	mctx, mspan := tr.Start(fctx, "filters.merge")
+	_ = mctx
+
 	mergedBackendResult := &lualib.LuaBackendResult{Attributes: make(map[any]any)}
 	mergedRemoveAttributes := config.NewStringSet()
 
@@ -838,6 +910,14 @@ func (r *Request) CallFilterLua(ctx *gin.Context) (action bool, backendResult *l
 	if len(resultPairs) > 0 {
 		r.Logs.Set(definitions.LogKeyFilterResults, strings.Join(resultPairs, ","))
 	}
+
+	// Finalize merge span with sizes
+	mspan.SetAttributes(
+		attribute.Int("merged_attrs", len(mergedBackendResult.Attributes)),
+		attribute.Int("removed_attrs_unique", len(mergedRemoveAttributes.GetStringSlice())),
+		attribute.Int("rejected_count", len(rejectedFilters)),
+	)
+	mspan.End()
 
 	backendResult = mergedBackendResult
 	removeAttributes = mergedRemoveAttributes.GetStringSlice()

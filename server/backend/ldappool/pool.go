@@ -32,10 +32,12 @@ import (
 	"github.com/croessner/nauthilus/server/localcache"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/go-ldap/ldap/v3"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -904,6 +906,49 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 
 	conf := l.conf[index]
 
+	// Tracing: low-level LDAP search execution
+	{
+		tr := monittrace.New("nauthilus/ldap_ops")
+		sctx, ssp := tr.Start(ldapRequest.HTTPClientContext, "ldap.search",
+			attribute.String("pool_name", l.name),
+			attribute.String("base_dn", ldapRequest.BaseDN),
+			attribute.String("scope", ldapRequest.Scope.String()),
+			attribute.String("filter", ldapRequest.Filter),
+			attribute.Int("attrs_count", func() int {
+				if ldapRequest.SearchAttributes == nil {
+					return 0
+				}
+
+				return len(ldapRequest.SearchAttributes)
+			}()),
+			attribute.Int("timeout_ms", func() int {
+				if conf.GetSearchTimeout() > 0 {
+					return int(conf.GetSearchTimeout().Milliseconds())
+				}
+
+				return 0
+			}()),
+		)
+
+		// Replace request context for downstream (if any LDAP client consults context)
+		ldapRequest.HTTPClientContext = sctx
+
+		defer func() {
+			if err != nil {
+				ssp.RecordError(err)
+			}
+
+			// On success or failure, set entries_count if available
+			if rawResult != nil {
+				ssp.SetAttributes(attribute.Int("entries_count", len(rawResult)))
+			} else if result != nil {
+				ssp.SetAttributes(attribute.Int("entries_count", len(result)))
+			}
+
+			ssp.End()
+		}()
+	}
+
 	// Obtain per-pool negative cache engine (LRU per pool or shared TTL)
 	cache := getNegCache(l.name, conf)
 
@@ -1028,6 +1073,34 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 // processLookupModifyRequest handles the Modify LDAP operation for the specified connection index.
 // It executes the Modify command and updates the LDAPReply's error field if an error occurs.
 func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
+	// Tracing: low-level LDAP modify execution
+	tr := monittrace.New("nauthilus/ldap_ops")
+	mctx, msp := tr.Start(ldapRequest.HTTPClientContext, "ldap.modify",
+		attribute.String("pool_name", l.name),
+		attribute.String("base_dn", ldapRequest.BaseDN),
+		attribute.String("filter", ldapRequest.Filter),
+		attribute.String("subcommand", func() string { return fmt.Sprintf("%d", ldapRequest.SubCommand) }()),
+		attribute.Int("mod_count", func() int {
+			if ldapRequest.ModifyAttributes == nil {
+				return 0
+			}
+
+			return len(ldapRequest.ModifyAttributes)
+		}()),
+		attribute.Int("timeout_ms", func() int {
+			if l.conf[index].GetModifyTimeout() > 0 {
+				return int(l.conf[index].GetModifyTimeout().Milliseconds())
+			}
+
+			return 0
+		}()),
+	)
+
+	// propagate for downstream
+	ldapRequest.HTTPClientContext = mctx
+
+	defer msp.End()
+
 	// Set per-op timeout if configured
 	if to := l.conf[index].GetModifyTimeout(); to > 0 {
 		l.conn[index].GetConn().SetTimeout(to)
@@ -1038,6 +1111,7 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 
 		// error metric
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "modify", ldapErrorCode(err)).Inc()
+		msp.RecordError(err)
 	}
 }
 
@@ -1075,6 +1149,25 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 // It attempts to bind to the LDAP server using the credentials provided in the LDAPAuthRequest.
 // If the bind operation or the HTTP client context encounters an error, it populates the LDAPReply with the error.
 func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
+	// Tracing: low-level LDAP bind execution
+	tr := monittrace.New("nauthilus/ldap_ops")
+	bctx, bsp := tr.Start(ldapAuthRequest.HTTPClientContext, "ldap.bind",
+		attribute.String("pool_name", l.name),
+		attribute.String("dn", ldapAuthRequest.BindDN),
+		attribute.Int("timeout_ms", func() int {
+			if l.conf[index].GetBindTimeout() > 0 {
+				return int(l.conf[index].GetBindTimeout().Milliseconds())
+			}
+
+			return 0
+		}()),
+	)
+
+	// propagate context for downstream
+	ldapAuthRequest.HTTPClientContext = bctx
+
+	defer bsp.End()
+
 	// Apply per-op bind timeout if configured
 	if to := l.conf[index].GetBindTimeout(); to > 0 {
 		l.conn[index].GetConn().SetTimeout(to)
@@ -1085,6 +1178,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 		ldapReply.Err = err
 
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
+		bsp.RecordError(err)
 	}
 
 	/*
