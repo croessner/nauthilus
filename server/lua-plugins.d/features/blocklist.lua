@@ -19,6 +19,7 @@ local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_prometheus = require("nauthilus_prometheus")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local http = require("glua_http")
 local json = require("json")
@@ -46,15 +47,48 @@ function nauthilus_call_feature(request)
     nauthilus_prometheus.increment_gauge(HCCR, { service = N })
 
     local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
-    local result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
-        timeout = "10s",
-        headers = {
-            Accept = "*/*",
-            ["User-Agent"] = "Nauthilus",
-            ["Content-Type"] = "application/json",
-        },
-        body = payload,
-    })
+    local result, request_err
+
+    if nauthilus_otel and nauthilus_otel.is_enabled() then
+        local url = os.getenv("BLOCKLIST_URL")
+        local tr = nauthilus_otel.tracer("nauthilus/lua/blocklist")
+        tr:with_span("blocklist.http", function(span)
+            span:set_attributes(nauthilus_otel.semconv.peer_service("http"))
+            span:set_attributes(nauthilus_otel.semconv.http_client_attrs({ method = "POST", url = url }))
+
+            result, request_err = http.post(url, {
+                timeout = "10s",
+                headers = {
+                    Accept = "*/*",
+                    ["User-Agent"] = "Nauthilus",
+                    ["Content-Type"] = "application/json",
+                },
+                body = payload,
+            })
+
+            if request_err then
+                span:record_error(tostring(request_err))
+            end
+
+            if result and result.status_code then
+                span:set_attributes({ ["http.status_code"] = result.status_code })
+                if result.status_code ~= 200 then
+                    span:record_error("status " .. tostring(result.status_code))
+                end
+            end
+        end, { kind = "client" })
+    else
+        result, request_err = http.post(os.getenv("BLOCKLIST_URL"), {
+            timeout = "10s",
+            headers = {
+                Accept = "*/*",
+                ["User-Agent"] = "Nauthilus",
+                ["Content-Type"] = "application/json",
+            },
+            body = payload,
+        })
+    end
+
     nauthilus_prometheus.stop_timer(timer)
     nauthilus_prometheus.decrement_gauge(HCCR, { service = N })
     nauthilus_util.if_error_raise(request_err)
@@ -79,6 +113,17 @@ function nauthilus_call_feature(request)
 
         nauthilus_builtin.custom_log_add(N .. "_ip", request.client_ip)
         nauthilus_builtin.status_message_set("IP address blocked")
+
+        if nauthilus_otel and nauthilus_otel.is_enabled() then
+            local tr = nauthilus_otel.tracer("nauthilus/lua/blocklist")
+            tr:with_span("blocklist.evaluate", function(span)
+                span:set_attributes({
+                    ["peer.service"] = "blocklist",
+                    ip = request.client_ip or "",
+                })
+                span:add_event("match", { rule = "ip" })
+            end)
+        end
 
         return nauthilus_builtin.FEATURE_TRIGGER_YES, nauthilus_builtin.FEATURES_ABORT_YES, nauthilus_builtin.FEATURE_RESULT_OK
     end

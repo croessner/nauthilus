@@ -287,6 +287,26 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 		}
 	}
 
+	// 6.1) nauthilus_opentelemetry (OTel helpers for Lua)
+	{
+		var loader lua.LGFunction
+		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx)
+		} else {
+			loader = lualib.LoaderOTELStateless()
+		}
+
+		if loader != nil {
+			_ = loader(L)
+			if mod, ok := L.Get(-1).(*lua.LTable); ok {
+				L.Pop(1)
+				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
+			} else {
+				L.Pop(1)
+			}
+		}
+	}
+
 	// 7) nauthilus_brute_force (toleration and blocking helpers)
 	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
 		_ = loader(L)

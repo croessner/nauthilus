@@ -114,6 +114,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	// Trace DNS lookup for RBL
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
 		attribute.String("dns.question.name", query),
 		attribute.String("dns.question.type", func() string {

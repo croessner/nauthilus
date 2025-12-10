@@ -1027,6 +1027,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	{
 		tr := monittrace.New("nauthilus/ldap_ops")
 		sctx, ssp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.search",
+			attribute.String("rpc.system", "ldap"),
 			semconv.PeerService("ldap"),
 			attribute.String("pool_name", l.name),
 			attribute.String("base_dn", ldapRequest.BaseDN),
@@ -1194,6 +1195,7 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 	// Tracing: low-level LDAP modify execution
 	tr := monittrace.New("nauthilus/ldap_ops")
 	mctx, msp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.modify",
+		attribute.String("rpc.system", "ldap"),
 		semconv.PeerService("ldap"),
 		attribute.String("pool_name", l.name),
 		attribute.String("base_dn", ldapRequest.BaseDN),
@@ -1271,6 +1273,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 	// Tracing: low-level LDAP bind execution
 	tr := monittrace.New("nauthilus/ldap_ops")
 	bctx, bsp := tr.StartClient(ldapAuthRequest.HTTPClientContext, "ldap.bind",
+		attribute.String("rpc.system", "ldap"),
 		semconv.PeerService("ldap"),
 		attribute.String("pool_name", l.name),
 		attribute.String("dn", ldapAuthRequest.BindDN),

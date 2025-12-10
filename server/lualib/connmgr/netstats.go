@@ -162,6 +162,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", host),
 			attribute.String("dns.question.type", "A|AAAA"),
@@ -216,6 +217,7 @@ func (m *ConnectionManager) Register(ctx context.Context, target, direction stri
 
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
 		attribute.String("dns.question.name", host),
 		attribute.String("dns.question.type", "A|AAAA"),

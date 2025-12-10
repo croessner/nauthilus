@@ -66,6 +66,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "A", "AAAA":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", kind),
@@ -93,6 +94,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "MX":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", "MX"),
@@ -122,6 +124,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "NS":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", "NS"),
@@ -148,6 +151,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "TXT":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", "TXT"),
@@ -174,6 +178,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "CNAME":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", "CNAME"),
@@ -200,6 +205,7 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 	case "PTR":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
 			semconv.PeerService("dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", "PTR"),

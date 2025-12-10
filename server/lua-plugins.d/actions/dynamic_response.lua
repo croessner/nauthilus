@@ -21,6 +21,7 @@ local nauthilus_keys = require("nauthilus_keys")
 local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local template = require("template")
 
@@ -207,21 +208,59 @@ local function notify_administrators(subject, metrics)
 
     local email_body = mustache:render(admin_email_template, tmpl_data)
 
-    -- Send email to administrators
-    local err_smtp = nauthilus_mail.send_mail({
-        lmtp = nauthilus_util.toboolean(smtp_use_lmtp),
-        server = smtp_server,
-        port = tonumber(smtp_port),
-        helo_name = smtp_helo_name,
-        username = smtp_username,
-        password = smtp_password,
-        tls = nauthilus_util.toboolean(smtp_tls),
-        starttls = nauthilus_util.toboolean(smtp_starttls),
-        from = smtp_mail_from,
-        to = admin_emails,
-        subject = "[NAUTHILUS ALERT] " .. subject,
-        body = email_body
-    })
+    -- Send email to administrators (instrumented)
+    local err_smtp
+    if nauthilus_otel and nauthilus_otel.is_enabled() then
+        local tr = nauthilus_otel.tracer("nauthilus/lua/dynamic_response")
+        tr:with_span("smtp.send", function(span)
+            -- client span semantics
+            span:set_attributes({
+                ["peer.service"] = "smtp",
+                ["rpc.system"] = "smtp",
+                ["server.address"] = tostring(smtp_server or ""),
+                ["server.port"] = tonumber(smtp_port) or 0,
+                from = tostring(smtp_mail_from or ""),
+                recipients = #admin_emails,
+                lmtp = nauthilus_util.toboolean(smtp_use_lmtp) and true or false,
+                starttls = nauthilus_util.toboolean(smtp_starttls) and true or false,
+                tls = nauthilus_util.toboolean(smtp_tls) and true or false,
+            })
+
+            err_smtp = nauthilus_mail.send_mail({
+                lmtp = nauthilus_util.toboolean(smtp_use_lmtp),
+                server = smtp_server,
+                port = tonumber(smtp_port),
+                helo_name = smtp_helo_name,
+                username = smtp_username,
+                password = smtp_password,
+                tls = nauthilus_util.toboolean(smtp_tls),
+                starttls = nauthilus_util.toboolean(smtp_starttls),
+                from = smtp_mail_from,
+                to = admin_emails,
+                subject = "[NAUTHILUS ALERT] " .. subject,
+                body = email_body
+            })
+
+            if err_smtp then
+                span:record_error(tostring(err_smtp))
+            end
+        end, { kind = "client" })
+    else
+        err_smtp = nauthilus_mail.send_mail({
+            lmtp = nauthilus_util.toboolean(smtp_use_lmtp),
+            server = smtp_server,
+            port = tonumber(smtp_port),
+            helo_name = smtp_helo_name,
+            username = smtp_username,
+            password = smtp_password,
+            tls = nauthilus_util.toboolean(smtp_tls),
+            starttls = nauthilus_util.toboolean(smtp_starttls),
+            from = smtp_mail_from,
+            to = admin_emails,
+            subject = "[NAUTHILUS ALERT] " .. subject,
+            body = email_body
+        })
+    end
 
     if err_smtp then
         local error_logs = {}

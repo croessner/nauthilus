@@ -19,6 +19,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 -- Module-scope configuration (read once)
 local windows = {3600, 86400, 604800} -- 1h, 24h, 7d
@@ -135,6 +136,30 @@ function nauthilus_call_filter(request)
             nauthilus_builtin.custom_log_add(N .. "_uniq_ips_7d", uniq_7d)
             nauthilus_builtin.custom_log_add(N .. "_failed_24h", fails_24h)
             nauthilus_builtin.custom_log_add(N .. "_ratio_24h", ratio_24h)
+        end
+
+        -- Telemetry: evaluation span with metrics
+        if nauthilus_otel and nauthilus_otel.is_enabled() then
+            local tr = nauthilus_otel.tracer("nauthilus/lua/acm")
+            tr:with_span("acm.evaluate", function(span)
+                span:set_attributes({
+                    ["peer.service"] = "acm",
+                    username = username or "",
+                    uniq_ips_1h = uniq_1h,
+                    uniq_ips_24h = uniq_24h,
+                    uniq_ips_7d = uniq_7d,
+                    fails_1h = fails_1h,
+                    fails_24h = fails_24h,
+                    fails_7d = fails_7d,
+                    ratio_1h = ratio_1h,
+                    ratio_24h = ratio_24h,
+                    suspicious = suspicious,
+                })
+
+                if suspicious then
+                    span:add_event("flagged", { reason = "thresholds" })
+                end
+            end)
         end
 
         if ACM_INFO_LOG then

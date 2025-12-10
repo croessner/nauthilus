@@ -26,6 +26,7 @@ local nauthilus_util = require("nauthilus_util")
 
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_http_response = require("nauthilus_http_response")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local N = "http-head-get-demo"
 
@@ -42,6 +43,19 @@ function nauthilus_run_hook(logging, session)
 
     local method = nauthilus_http_request.get_http_method()
     local path = nauthilus_http_request.get_http_path()
+
+    -- Telemetry: one span per hook invocation (internal)
+    if nauthilus_otel and nauthilus_otel.is_enabled() then
+        local tr = nauthilus_otel.tracer("nauthilus/lua/hooks")
+        tr:with_span("hook.http_head_get_demo", function(span)
+            span:set_attributes({
+                ["peer.service"] = "hook",
+                http_method = method or "",
+                http_path = path or "",
+                hook = N,
+            })
+        end)
+    end
 
     -- Demo content for GET
     local body = "Demo GET response from Nauthilus Lua hook\n"

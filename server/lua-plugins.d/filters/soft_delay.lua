@@ -33,6 +33,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
 
 local nauthilus_redis = require("nauthilus_redis")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local time = require("time")
 
@@ -107,6 +108,31 @@ function nauthilus_call_filter(request)
 
         -- Apply delay; time.sleep uses seconds (float)
         time.sleep(applied_delay_ms / 1000.0)
+    end
+
+    -- Telemetry: record evaluation and any applied delay
+    if nauthilus_otel and nauthilus_otel.is_enabled() then
+        local tr = nauthilus_otel.tracer("nauthilus/lua/soft_delay")
+        tr:with_span("soft_delay.evaluate", function(span)
+            span:set_attributes({
+                ["peer.service"] = "soft_delay",
+                username = username or "",
+                client_ip = client_ip or "",
+                uniq_ips_24h = uniq24,
+                uniq_ips_7d = uniq7d,
+                fails_24h = fail24,
+                fails_7d = fail7d,
+                attacked = (attack_score ~= nil),
+                applied_delay_ms = applied_delay_ms,
+                threshold_uniq24 = threshold_uniq24,
+                threshold_uniq7d = threshold_uniq7d,
+                threshold_fail24 = threshold_fail24,
+                threshold_fail7d = threshold_fail7d,
+            })
+            if applied_delay_ms > 0 then
+                span:add_event("sleep", { duration_ms = applied_delay_ms })
+            end
+        end)
     end
 
     -- Log decision
