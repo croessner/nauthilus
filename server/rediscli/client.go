@@ -122,6 +122,9 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
+		// Some Redis deployments (older Redis, proxies like KeyDB/Dragonfly, or ACL-restricted setups)
+		// do not support CLIENT SETINFO. Disable identity to avoid ERR unknown subcommand 'setinfo'.
+		DisableIdentity: true,
 		// Explicitly prefer RESP3 to ensure push notifications for tracking
 		Protocol: 3,
 	}
@@ -166,6 +169,8 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
+		// Avoid sending CLIENT SETINFO on connect; prevents errors on servers without the subcommand.
+		DisableIdentity: true,
 		// Ensure RESP3 to support push notifications
 		Protocol: 3,
 	}
@@ -217,6 +222,8 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
+		// Prevent CLIENT SETINFO on connect across cluster nodes.
+		DisableIdentity: true,
 		// Ensure RESP3 to support push notifications for tracking
 		Protocol: 3,
 	}
@@ -289,6 +296,8 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       true, // Always use replicas for read operations
+		// Prevent CLIENT SETINFO on connect across cluster nodes.
+		DisableIdentity: true,
 		// Ensure RESP3 to support push notifications for tracking
 		Protocol: 3,
 	}
