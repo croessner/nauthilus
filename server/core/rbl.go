@@ -29,12 +29,15 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 // RBLIsListed is a small wrapper exposing the internal isListed logic to subpackages
@@ -108,7 +111,28 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	resolver := util.NewDNSResolver()
 
-	results, err = resolver.LookupIP(ctxTimeut, "ip4", query)
+	// Trace DNS lookup for RBL
+	tr := monittrace.New("nauthilus/dns")
+	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		semconv.PeerService("dns"),
+		attribute.String("dns.question.name", query),
+		attribute.String("dns.question.type", func() string {
+			if strings.Contains(a.ClientIP, ":") {
+				return "AAAA"
+			}
+
+			return "A"
+		}()),
+	)
+
+	results, err = resolver.LookupIP(tctx, "ip4", query)
+	if err != nil {
+		tsp.RecordError(err)
+	}
+
+	tsp.SetAttributes(attribute.Int("dns.answer.count", len(results)))
+	tsp.End()
+
 	if err != nil {
 		return false, "", err
 	}

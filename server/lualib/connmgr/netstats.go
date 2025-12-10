@@ -28,10 +28,13 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 
 	psnet "github.com/shirou/gopsutil/v4/net"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 // GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.
@@ -157,9 +160,18 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 		ctxTimeout, cancel := createDeadlineContext(ctx)
 		resolver := util.NewDNSResolver()
 
-		ips, err := resolver.LookupHost(ctxTimeout, host)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", host),
+			attribute.String("dns.question.type", "A|AAAA"),
+		)
+
+		ips, err := resolver.LookupHost(tctx, host)
 		if err != nil {
+			tsp.RecordError(err)
 			cancel()
+			tsp.End()
 
 			continue
 		}
@@ -169,6 +181,9 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 
 			level.Debug(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Updated IPs for target '%s': %v\n", target, ips))
 		}
+
+		tsp.SetAttributes(attribute.Int("dns.answer.count", len(ips)))
+		tsp.End()
 
 		cancel()
 	}
@@ -199,15 +214,26 @@ func (m *ConnectionManager) Register(ctx context.Context, target, direction stri
 
 	resolver := util.NewDNSResolver()
 
-	ips, err := resolver.LookupHost(ctxTimeut, host)
+	tr := monittrace.New("nauthilus/dns")
+	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+		semconv.PeerService("dns"),
+		attribute.String("dns.question.name", host),
+		attribute.String("dns.question.type", "A|AAAA"),
+	)
+
+	ips, err := resolver.LookupHost(tctx, host)
 	if err != nil {
+		tsp.RecordError(err)
 		logError(fmt.Sprintf("Unable to resolve DNS name '%s'", host), err)
+		tsp.End()
 
 		return
 	}
 
 	// Store IP addresses for the DNS name
 	m.ipTargets[target] = ips
+	tsp.SetAttributes(attribute.Int("dns.answer.count", len(ips)))
+	tsp.End()
 
 	m.targets[target] = TargetInfo{
 		Description: description,
