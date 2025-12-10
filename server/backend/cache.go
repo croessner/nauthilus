@@ -249,35 +249,57 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	return
 }
 
+// cacheNamer is a minimal interface implemented by protocol configs that expose a cache name.
+// Both LDAPSearchProtocol and LuaSearchProtocol provide GetCacheName().
+type cacheNamer interface {
+	GetCacheName() (string, error)
+}
+
+// collectCacheNames iterates over provided names, resolves protocol via get(),
+// and, if a non-empty cache name is available, adds it to out.
+func collectCacheNames(
+	names []string,
+	requestedProtocol string,
+	get func(requested, name string) (cacheNamer, error),
+	out config.StringSet,
+) {
+	for _, name := range names {
+		proto, _ := get(requestedProtocol, name)
+		if proto == nil {
+			continue
+		}
+
+		if cacheName, _ := proto.GetCacheName(); cacheName != "" {
+			out.Set(cacheName)
+		}
+	}
+}
+
 // GetCacheNames retrieves cache names for the specified protocol from either LDAP, Lua, or both backends as per the input.
 // If no cache names are found, a default cache name "__default__" is returned.
 func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
-	var (
-		cacheName    string
-		protocolLDAP *config.LDAPSearchProtocol
-		protocolLua  *config.LuaSearchProtocol
-	)
-
 	cacheNames = config.NewStringSet()
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
-		for _, poolName := range GetChannel().GetLdapChannel().GetPoolNames() {
-			if protocolLDAP, _ = config.GetFile().GetLDAPSearchProtocol(requestedProtocol, poolName); protocolLDAP != nil {
-				if cacheName, _ = protocolLDAP.GetCacheName(); cacheName != "" {
-					cacheNames.Set(cacheName)
-				}
-			}
-		}
+		collectCacheNames(
+			GetChannel().GetLdapChannel().GetPoolNames(),
+			requestedProtocol,
+			func(req, pool string) (cacheNamer, error) {
+				return config.GetFile().GetLDAPSearchProtocol(req, pool)
+			},
+			cacheNames,
+		)
 	}
 
 	if backends == definitions.CacheAll || backends == definitions.CacheLua {
-		for _, backendName := range GetChannel().GetLuaChannel().GetBackendNames() {
-			if protocolLua, _ = config.GetFile().GetLuaSearchProtocol(requestedProtocol, backendName); protocolLua != nil {
-				if cacheName, _ = protocolLua.GetCacheName(); cacheName != "" {
-					cacheNames.Set(cacheName)
-				}
-			}
-		}
+		collectCacheNames(
+			GetChannel().GetLuaChannel().GetBackendNames(),
+			requestedProtocol,
+			func(req, backend string) (cacheNamer, error) {
+				return config.GetFile().GetLuaSearchProtocol(req, backend)
+			},
+			cacheNames,
+		)
 	}
 
 	if len(cacheNames) == 0 {
