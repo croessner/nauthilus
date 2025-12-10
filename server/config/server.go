@@ -1061,6 +1061,14 @@ type Redis struct {
 	// connection with the configured flags. This can reduce read RTTs by
 	// serving cached values and receiving invalidation push messages from Redis.
 	ClientTracking RedisClientTracking `mapstructure:"client_tracking" validate:"omitempty"`
+
+	// IdentityEnabled toggles whether the client should issue CLIENT SETINFO on connect.
+	// Defaults to false for maximum compatibility with older Redis or proxies.
+	IdentityEnabled bool `mapstructure:"identity_enabled"`
+
+	// MaintNotificationsEnabled toggles CLIENT MAINT_NOTIFICATIONS support (RESP3 push based).
+	// Only applicable to standalone and cluster clients. Defaults to false for compatibility.
+	MaintNotificationsEnabled bool `mapstructure:"maint_notifications_enabled"`
 }
 
 // RedisBatching controls optional client-side command batching.
@@ -1167,6 +1175,26 @@ func (r *Redis) GetPoolSize() int {
 	}
 
 	return r.PoolSize
+}
+
+// IsIdentityEnabled returns true if CLIENT SETINFO should be sent on connect.
+// Defaults to false when Redis config is nil.
+func (r *Redis) IsIdentityEnabled() bool {
+	if r == nil {
+		return false
+	}
+
+	return r.IdentityEnabled
+}
+
+// IsMaintNotificationsEnabled returns true if CLIENT MAINT_NOTIFICATIONS should be enabled (where supported).
+// Defaults to false when Redis config is nil.
+func (r *Redis) IsMaintNotificationsEnabled() bool {
+	if r == nil {
+		return false
+	}
+
+	return r.MaintNotificationsEnabled
 }
 
 // GetBatching returns a pointer to the RedisBatching config; never nil.
