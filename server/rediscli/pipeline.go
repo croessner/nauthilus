@@ -18,7 +18,9 @@ package rediscli
 import (
 	"context"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // PipelineFunc is a function that executes Redis commands on a pipeline.
@@ -29,12 +31,35 @@ type PipelineFunc func(pipe redis.Pipeliner) error
 // The function should add commands to the pipeline but not execute them.
 // Returns the command results and any error that occurred.
 func ExecuteWritePipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, error) {
+	// Tracing: cover the lifecycle of a write pipeline execution
+	tr := monittrace.New("nauthilus/redis_batch")
+	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
+		attribute.String("mode", "write"),
+	)
+
+	// Use pctx for Exec so any downstream hooks attach to this span
+	_ = pctx
+
+	defer sp.End()
+
 	pipe := GetClient().GetWritePipeline()
 	if err := fn(pipe); err != nil {
+		sp.RecordError(err)
+
 		return nil, err
 	}
 
-	return pipe.Exec(ctx)
+	// best effort op count before exec
+	if l, ok := any(pipe).(interface{ Len() int }); ok {
+		sp.SetAttributes(attribute.Int("op_count", l.Len()))
+	}
+
+	cmds, err := pipe.Exec(pctx)
+	if err != nil {
+		sp.RecordError(err)
+	}
+
+	return cmds, err
 }
 
 // ExecuteReadPipeline executes multiple Redis read commands in a pipeline to reduce network round trips.
@@ -42,10 +67,33 @@ func ExecuteWritePipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, 
 // The function should add commands to the pipeline but not execute them.
 // Returns the command results and any error that occurred.
 func ExecuteReadPipeline(ctx context.Context, fn PipelineFunc) ([]redis.Cmder, error) {
+	// Tracing: cover the lifecycle of a read pipeline execution
+	tr := monittrace.New("nauthilus/redis_batch")
+	pctx, sp := tr.Start(ctx, "redis.pipeline.exec",
+		attribute.String("mode", "read"),
+	)
+
+	// Use pctx for Exec so any downstream hooks attach to this span
+	_ = pctx
+
+	defer sp.End()
+
 	pipe := GetClient().GetReadPipeline()
 	if err := fn(pipe); err != nil {
+		sp.RecordError(err)
+
 		return nil, err
 	}
 
-	return pipe.Exec(ctx)
+	// best effort op count before exec
+	if l, ok := any(pipe).(interface{ Len() int }); ok {
+		sp.SetAttributes(attribute.Int("op_count", l.Len()))
+	}
+
+	cmds, err := pipe.Exec(pctx)
+	if err != nil {
+		sp.RecordError(err)
+	}
+
+	return cmds, err
 }

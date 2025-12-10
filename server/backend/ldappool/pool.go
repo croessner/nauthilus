@@ -110,10 +110,35 @@ func (l *ldapPoolImpl) StartHouseKeeper() {
 
 			return
 		case <-timer.C:
+			// Tracing one housekeeping iteration
+			tr := monittrace.New("nauthilus/ldap_pool")
+			hctx, hsp := tr.Start(l.ctx, "ldap.pool.housekeeping",
+				attribute.String("pool_name", l.name),
+			)
+			_ = hctx
+
+			// Observe state before and after to compute how many we closed
+			openBefore := l.determineOpenConnections()
 			openConnections := l.updateConnectionsStatus()
 			stats.GetMetrics().GetLdapOpenConnections().WithLabelValues(l.name).Set(float64(openConnections))
 
 			l.closeIdleConnections(openConnections)
+			openAfter := l.determineOpenConnections()
+
+			closed := openBefore - openAfter
+			if closed < 0 {
+				closed = 0
+			}
+
+			// needClosing based on current policy
+			needClosing := max(openConnections-l.idlePoolSize, 0)
+			hsp.SetAttributes(
+				attribute.Int("checked", openConnections),
+				attribute.Int("closed", closed),
+				attribute.Int("need_closing", needClosing),
+				attribute.Int("idle_target", l.idlePoolSize),
+			)
+			hsp.End()
 			l.updateStatsPoolSize()
 		}
 	}
@@ -594,6 +619,39 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error {
 	var err error
 
+	// Trace connection (re)open + optional bind
+	tr := monittrace.New("nauthilus/ldap_pool")
+	ctx, sp := tr.Start(l.ctx, "ldap.pool.open_conn",
+		attribute.String("pool_name", l.name),
+		attribute.Int("index", index),
+		attribute.String("server_uri", func() string {
+			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
+				uris := l.conf[index].GetServerURIs()
+				if len(uris) > 0 {
+					return uris[0]
+				}
+			}
+
+			return ""
+		}()),
+		attribute.Bool("starttls", func() bool {
+			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
+				return l.conf[index].IsStartTLS()
+			}
+
+			return false
+		}()),
+		attribute.Bool("tls_skip_verify", func() bool {
+			if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
+				return l.conf[index].IsTLSSkipVerify()
+			}
+
+			return false
+		}()),
+	)
+
+	_ = ctx
+
 	l.conn[index].GetMutex().Lock()
 
 	defer l.conn[index].GetMutex().Unlock()
@@ -602,11 +660,13 @@ func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error 
 		err = l.conn[index].Connect(guid, l.conf[index])
 		if err != nil {
 			l.logConnectionError(guid, err)
+			sp.RecordError(err)
 		} else {
 			if bind {
 				err = l.conn[index].Bind(guid, l.conf[index])
 				if err != nil {
 					l.logConnectionError(guid, err)
+					sp.RecordError(err)
 				} else {
 					l.conn[index].SetState(definitions.LDAPStateFree)
 				}
@@ -615,6 +675,12 @@ func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error 
 			}
 		}
 	}
+
+	if err == nil {
+		sp.SetAttributes(attribute.Bool("ok", true))
+	}
+
+	sp.End()
 
 	return err
 }
@@ -652,6 +718,17 @@ func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 		ctx = l.ctx
 	}
 
+	// Trace token acquisition including wait time
+	tr := monittrace.New("nauthilus/ldap_pool")
+	tctx, tsp := tr.Start(ctx, "ldap.pool.acquire_token",
+		attribute.String("pool_name", l.name),
+		attribute.Int("pool_size", l.poolSize),
+		attribute.Int("idle_pool_size", l.idlePoolSize),
+		attribute.Int("tokens_capacity", cap(l.tokens)),
+	)
+	_ = tctx
+	start := time.Now()
+
 	// Ensure we never wait longer than connectAbortTimeout
 	var cancel func()
 
@@ -674,8 +751,15 @@ func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		tsp.SetAttributes(attribute.Int("waited_ms", int(time.Since(start).Milliseconds())))
+		tsp.RecordError(fmt.Errorf("context timeout while waiting for LDAP token"))
+		tsp.End()
+
 		return fmt.Errorf("context timeout while waiting for LDAP token")
 	case <-l.tokens:
+		tsp.SetAttributes(attribute.Int("waited_ms", int(time.Since(start).Milliseconds())))
+		tsp.End()
+
 		return nil
 	}
 }
@@ -726,10 +810,23 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 		defer cancel()
 	}
 
+	borrowStart := time.Now()
+
 	for {
 		for index := 0; index < len(l.conn); index++ {
 			connNumber = l.processConnection(index, guid)
 			if connNumber != definitions.LDAPPoolExhausted {
+				// Trace successful borrow under request context
+				tr := monittrace.New("nauthilus/ldap_pool")
+				bctx, bsp := tr.Start(ctx, "ldap.pool.borrow_conn",
+					attribute.String("pool_name", l.name),
+					attribute.Int("index", connNumber),
+					attribute.Int("waited_ms", int(time.Since(borrowStart).Milliseconds())),
+				)
+				_ = bctx
+
+				bsp.End()
+
 				return connNumber, nil
 			}
 		}
@@ -882,6 +979,25 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 
 	// Release capacity token back to the pool
 	ldapPool.releaseToken()
+
+	// 1.5) Trace release under the request context if available
+	var rctx context.Context
+	switch v := any(request).(type) {
+	case *bktype.LDAPRequest:
+		rctx = v.HTTPClientContext
+	case *bktype.LDAPAuthRequest:
+		rctx = v.HTTPClientContext
+	default:
+		rctx = ldapPool.ctx
+	}
+
+	tr := monittrace.New("nauthilus/ldap_pool")
+	xctx, xsp := tr.Start(rctx, "ldap.pool.release_conn",
+		attribute.String("pool_name", ldapPool.name),
+		attribute.Int("index", index),
+	)
+	_ = xctx
+	xsp.End()
 
 	// 2) Deliver reply without risking a permanent block
 	select {

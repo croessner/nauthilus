@@ -28,7 +28,9 @@ import (
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/svcctx"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // BatchingHook implements redis.Hook and batches individual Process calls
@@ -165,8 +167,18 @@ func (h *BatchingHook) run() {
 		// Execute the batch via pipelined; do not propagate a single error to all cmds,
 		// since each command tracks its own error/value.
 		// We purposely use Background context to rely on client timeouts for stability.
-		ctx := svcctx.Get()
-		dCtx, cancel := context.WithTimeout(ctx, config.GetFile().GetServer().GetRedis().GetBatching().GetPipelineTimeout())
+
+		// Tracing for a single flush cycle
+		tr := monittrace.New("nauthilus/redis_batch")
+		base := svcctx.Get()
+		fctx, fsp := tr.Start(base, "redis.uc.flush",
+			attribute.Int("batch_size", len(batch)),
+			attribute.Int("max_batch", h.maxBatch),
+			attribute.Int("max_wait_ms", int(config.GetFile().GetServer().GetRedis().GetBatching().GetMaxWait().Milliseconds())),
+		)
+
+		// Derive a timeout context from the span context
+		dCtx, cancel := context.WithTimeout(fctx, config.GetFile().GetServer().GetRedis().GetBatching().GetPipelineTimeout())
 
 		_, execErr := h.client.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
 			for _, it := range batch {
@@ -194,7 +206,11 @@ func (h *BatchingHook) run() {
 				definitions.LogKeyMsg, "Redis batching pipeline returned error",
 				definitions.LogKeyError, execErr,
 			)
+
+			fsp.RecordError(execErr)
 		}
+
+		fsp.End()
 
 		// Notify waiters with their individual command error
 		for _, it := range batch {
@@ -223,14 +239,26 @@ func (h *BatchingHook) DialHook(next redis.DialHook) redis.DialHook {
 func (h *BatchingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		name := strings.ToLower(cmd.Name())
+
+		// Tracing for enqueue path
+		tr := monittrace.New("nauthilus/redis_batch")
+		ectx, esp := tr.Start(ctx, "redis.uc.enqueue",
+			attribute.String("cmd", name),
+			attribute.Int("max_batch", h.maxBatch),
+		)
+
 		if _, found := h.skip[name]; found || h.maxBatch <= 1 {
 			// Bypass batching
+			esp.SetAttributes(attribute.Bool("bypass", true))
+			defer esp.End()
+
 			return next(ctx, cmd)
 		}
 
 		h.ensureStarted()
 
-		item := &batchItem{ctx: ctx, cmd: cmd, done: make(chan error, 1)}
+		// Propagate span context so the worker sees it if needed
+		item := &batchItem{ctx: ectx, cmd: cmd, done: make(chan error, 1)}
 
 		// Non-blocking enqueue; on overflow, fallback to direct execution
 		select {
@@ -238,12 +266,24 @@ func (h *BatchingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 			// wait for completion or context
 			select {
 			case err := <-item.done:
+				if err != nil {
+					esp.RecordError(err)
+				}
+
+				esp.End()
+
 				return err
 			case <-ctx.Done():
+				esp.RecordError(ctx.Err())
+				esp.End()
+
 				return ctx.Err()
 			}
 		default:
 			// Queue saturated – fallback to direct execution
+			esp.SetAttributes(attribute.Bool("fallback_direct", true))
+			defer esp.End()
+
 			return next(ctx, cmd)
 		}
 	}

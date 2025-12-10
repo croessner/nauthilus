@@ -30,7 +30,9 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var (
@@ -181,6 +183,18 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 // In Redis Cluster mode, this function ensures that all keys hash to the same slot by adding
 // a common hash tag if needed.
 func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys []string, args ...interface{}) (interface{}, error) {
+	// Tracing: cover a Redis Lua script execution including retries
+	tr := monittrace.New("nauthilus/redis_batch")
+	sctx, sp := tr.Start(ctx, "redis.script",
+		attribute.String("script", scriptName),
+		attribute.Int("keys_count", len(keys)),
+		attribute.Int("args_count", len(args)),
+	)
+
+	// Attach context for downstream EvalSha/Upload
+	_ = sctx
+	defer sp.End()
+
 	// Get the SHA1 hash for the script
 	scriptsMutex.RLock()
 	sha1, exists := scripts[scriptName]
@@ -194,8 +208,11 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 
 		// Script not found, upload it
 		var err error
-		sha1, err = UploadScript(ctx, scriptName, scriptContent)
+
+		sha1, err = UploadScript(sctx, scriptName, scriptContent)
 		if err != nil {
+			sp.RecordError(err)
+
 			return nil, err
 		}
 	}
@@ -211,7 +228,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 	// Execute the script
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	result, err := client.EvalSha(ctx, sha1, keys, args...).Result()
+	result, err := client.EvalSha(sctx, sha1, keys, args...).Result()
 	if err != nil {
 		// Check if the error is NOSCRIPT
 		if err.Error() == "NOSCRIPT No matching script. Please use EVAL." {
@@ -219,21 +236,27 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 				definitions.LogKeyMsg, fmt.Sprintf("Script '%s' not found on Redis server, re-uploading. If this happens frequently, Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
 			)
 
+			sp.SetAttributes(attribute.String("retry_reason", "noscript"))
+
 			// Re-upload the script
-			sha1, err = UploadScript(ctx, scriptName, scriptContent)
+			sha1, err = UploadScript(sctx, scriptName, scriptContent)
 			if err != nil {
+				sp.RecordError(err)
+
 				return nil, err
 			}
 
 			// Try executing again
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
+			result, err = client.EvalSha(sctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
 					definitions.LogKeyError, err,
 				)
+
+				sp.RecordError(err)
 
 				return nil, err
 			}
@@ -244,19 +267,23 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 				"caller", "scripts.go:ExecuteScript",
 			)
 
+			sp.SetAttributes(attribute.String("retry_reason", "crossslot"))
+
 			// Force keys to use the same hash tag
 			keys = ensureKeysInSameSlot(keys)
 
 			// Try executing again with modified keys
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.EvalSha(ctx, sha1, keys, args...).Result()
+			result, err = client.EvalSha(sctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys", scriptName),
 					definitions.LogKeyError, err,
 					"keys", fmt.Sprintf("%v", keys),
 				)
+
+				sp.RecordError(err)
 
 				return nil, err
 			}
@@ -266,9 +293,14 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 				definitions.LogKeyError, err,
 			)
 
+			sp.RecordError(err)
+
 			return nil, err
 		}
 	}
+
+	// Attach basic result hints
+	sp.SetAttributes(attribute.Bool("ok", true))
 
 	return result, nil
 }
