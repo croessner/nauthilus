@@ -191,7 +191,7 @@ func (l *loggingExporter) ExportSpans(ctx context.Context, spans []sdktrace.Read
 	}
 
 	if l.logSuccess {
-		level.Info(log.Logger).Log(
+		level.Debug(log.Logger).Log(
 			definitions.LogKeyMsg, "OpenTelemetry traces exported",
 			"span_count", len(spans),
 		)

@@ -20,6 +20,10 @@ import (
 // In tests, this interface can be replaced with a lightweight fake if needed.
 type Tracer interface {
 	Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span)
+	// StartClient begins a span explicitly marked as SpanKindClient to represent
+	// an outgoing client operation (e.g., LDAP, HTTP client, Redis, etc.).
+	// Optional attributes can be supplied and will be set on the span.
+	StartClient(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span)
 }
 
 type tracer struct {
@@ -35,6 +39,17 @@ func New(scope string) Tracer {
 // The span must be ended by the caller.
 func (tr *tracer) Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
 	ctx, sp := tr.t.Start(ctx, name)
+	if len(attrs) > 0 {
+		sp.SetAttributes(attrs...)
+	}
+
+	return ctx, sp
+}
+
+// StartClient begins a client span (SpanKindClient) and attaches optional attributes.
+// The span must be ended by the caller.
+func (tr *tracer) StartClient(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	ctx, sp := tr.t.Start(ctx, name, trace.WithSpanKind(trace.SpanKindClient))
 	if len(attrs) > 0 {
 		sp.SetAttributes(attrs...)
 	}

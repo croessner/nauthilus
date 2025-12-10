@@ -23,9 +23,12 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/util"
 
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
@@ -61,8 +64,18 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 
 	switch kind {
 	case "A", "AAAA":
-		ips, err := resolver.LookupIP(ctxTimeut, "ip", domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", kind),
+		)
+
+		ips, err := resolver.LookupIP(tctx, "ip", domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
 			return nil, err
 		}
 
@@ -74,10 +87,24 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 			}
 		}
 
+		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
+		tsp.End()
+
 		return tbl, nil
 	case "MX":
-		mxs, err := resolver.LookupMX(ctxTimeut, domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", "MX"),
+		)
+
+		mxs, err := resolver.LookupMX(tctx, domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
+
 			return nil, err
 		}
 
@@ -90,10 +117,24 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 			tbl.Append(rec)
 		}
 
+		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
+		tsp.End()
+
 		return tbl, nil
 	case "NS":
-		nss, err := resolver.LookupNS(ctxTimeut, domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", "NS"),
+		)
+
+		nss, err := resolver.LookupNS(tctx, domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
+
 			return nil, err
 		}
 
@@ -103,10 +144,24 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 			tbl.Append(lua.LString(ns.Host))
 		}
 
+		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
+		tsp.End()
+
 		return tbl, nil
 	case "TXT":
-		txts, err := resolver.LookupTXT(ctxTimeut, domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", "TXT"),
+		)
+
+		txts, err := resolver.LookupTXT(tctx, domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
+
 			return nil, err
 		}
 
@@ -116,17 +171,51 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 			tbl.Append(lua.LString(txt))
 		}
 
+		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
+		tsp.End()
+
 		return tbl, nil
 	case "CNAME":
-		cname, err := resolver.LookupCNAME(ctxTimeut, domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", "CNAME"),
+		)
+
+		cname, err := resolver.LookupCNAME(tctx, domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
+
 			return nil, err
 		}
 
+		tsp.SetAttributes(attribute.Int("dns.answer.count", func() int {
+			if cname != "" {
+				return 1
+			}
+
+			return 0
+		}()))
+		tsp.End()
+
 		return lua.LString(cname), nil
 	case "PTR":
-		ptrs, err := resolver.LookupAddr(ctxTimeut, domain)
+		tr := monittrace.New("nauthilus/dns")
+		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
+			attribute.String("rpc.system", "dns"),
+			semconv.PeerService("dns"),
+			attribute.String("dns.question.name", domain),
+			attribute.String("dns.question.type", "PTR"),
+		)
+
+		ptrs, err := resolver.LookupAddr(tctx, domain)
 		if err != nil {
+			tsp.RecordError(err)
+			tsp.End()
+
 			return nil, err
 		}
 
@@ -135,6 +224,9 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 		for _, ptr := range ptrs {
 			tbl.Append(lua.LString(ptr))
 		}
+
+		tsp.SetAttributes(attribute.Int("dns.answer.count", tbl.Len()))
+		tsp.End()
 
 		return tbl, nil
 	default:

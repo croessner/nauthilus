@@ -537,6 +537,26 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 		}
 	}
 
+	// 5.1) nauthilus_opentelemetry (OTel helpers for Lua)
+	{
+		var loader lua.LGFunction
+		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx)
+		} else {
+			loader = lualib.LoaderOTELStateless()
+		}
+
+		if loader != nil {
+			_ = loader(L)
+			if mod, ok := L.Get(-1).(*lua.LTable); ok {
+				L.Pop(1)
+				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
+			} else {
+				L.Pop(1)
+			}
+		}
+	}
+
 	// 6) nauthilus_brute_force (toleration and blocking helpers)
 	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
 		_ = loader(L)
@@ -703,6 +723,26 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 			luapool.BindModuleIntoReq(L, definitions.LuaModDNS, mod)
 		} else {
 			L.Pop(1)
+		}
+	}
+
+	// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
+	{
+		var loader lua.LGFunction
+		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx)
+		} else {
+			loader = lualib.LoaderOTELStateless()
+		}
+
+		if loader != nil {
+			_ = loader(L)
+			if mod, ok := L.Get(-1).(*lua.LTable); ok {
+				L.Pop(1)
+				luapool.BindModuleIntoReq(L, definitions.LuaModOpenTelemetry, mod)
+			} else {
+				L.Pop(1)
+			}
 		}
 	}
 

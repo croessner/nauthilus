@@ -20,6 +20,7 @@ local nauthilus_util = require("nauthilus_util")
 local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_context = require("nauthilus_context")
 local nauthilus_cache = require("nauthilus_cache")
+local nauthilus_otel = require("nauthilus_opentelemetry")
 
 local http = require("glua_http")
 local json = require("json")
@@ -84,11 +85,39 @@ local function http_geoip_request(url, payload)
     nauthilus_prometheus.increment_gauge(HCCR, { service = N })
     local timer = nauthilus_prometheus.start_histogram_timer(N .. "_duration_seconds", { http = "post" })
 
-    local result, request_err = http.post(url, {
-        timeout = "10s",
-        headers = { Accept = "*/*", ["User-Agent"] = "Nauthilus", ["Content-Type"] = "application/json" },
-        body = payload,
-    })
+    local result, request_err
+
+    if nauthilus_otel and nauthilus_otel.is_enabled() then
+        local tr = nauthilus_otel.tracer("nauthilus/lua/geoip")
+        tr:with_span("geoip.http", function(span)
+            -- SemConv-like attributes
+            span:set_attributes(nauthilus_otel.semconv.peer_service("http"))
+            span:set_attributes(nauthilus_otel.semconv.http_client_attrs({ method = "POST", url = url }))
+
+            result, request_err = http.post(url, {
+                timeout = "10s",
+                headers = { Accept = "*/*", ["User-Agent"] = "Nauthilus", ["Content-Type"] = "application/json" },
+                body = payload,
+            })
+
+            if request_err then
+                span:record_error(tostring(request_err))
+            end
+
+            if result and result.status_code then
+                span:set_attributes({ ["http.status_code"] = result.status_code })
+                if result.status_code ~= 202 then
+                    span:record_error("status " .. tostring(result.status_code))
+                end
+            end
+        end, { kind = "client" })
+    else
+        result, request_err = http.post(url, {
+            timeout = "10s",
+            headers = { Accept = "*/*", ["User-Agent"] = "Nauthilus", ["Content-Type"] = "application/json" },
+            body = payload,
+        })
+    end
 
     nauthilus_prometheus.stop_timer(timer)
     nauthilus_prometheus.decrement_gauge(HCCR, { service = N })

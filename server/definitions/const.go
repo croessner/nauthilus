@@ -998,6 +998,15 @@ const (
 	// LuaModPsnet is a constant representing the module name "nauthilus_psnet".
 	LuaModPsnet = "nauthilus_psnet"
 
+	// LuaModOpenTelemetry is the module name exposed to Lua for OpenTelemetry helpers.
+	LuaModOpenTelemetry = "nauthilus_opentelemetry"
+
+	// LuaUDTracer is the userdata type name for an OpenTelemetry Tracer in Lua.
+	LuaUDTracer = "nauthilus_otel_tracer_ud"
+
+	// LuaUDSpan is the userdata type name for an OpenTelemetry Span in Lua.
+	LuaUDSpan = "nauthilus_otel_span_ud"
+
 	// LuaFnCallFeature represents the function name for "nauthilus_call_feature" in Lua
 	LuaFnCallFeature = "nauthilus_call_feature"
 

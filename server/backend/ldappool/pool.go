@@ -38,6 +38,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1025,7 +1026,9 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	// Tracing: low-level LDAP search execution
 	{
 		tr := monittrace.New("nauthilus/ldap_ops")
-		sctx, ssp := tr.Start(ldapRequest.HTTPClientContext, "ldap.search",
+		sctx, ssp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.search",
+			attribute.String("rpc.system", "ldap"),
+			semconv.PeerService("ldap"),
 			attribute.String("pool_name", l.name),
 			attribute.String("base_dn", ldapRequest.BaseDN),
 			attribute.String("scope", ldapRequest.Scope.String()),
@@ -1191,7 +1194,9 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
 	// Tracing: low-level LDAP modify execution
 	tr := monittrace.New("nauthilus/ldap_ops")
-	mctx, msp := tr.Start(ldapRequest.HTTPClientContext, "ldap.modify",
+	mctx, msp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.modify",
+		attribute.String("rpc.system", "ldap"),
+		semconv.PeerService("ldap"),
 		attribute.String("pool_name", l.name),
 		attribute.String("base_dn", ldapRequest.BaseDN),
 		attribute.String("filter", ldapRequest.Filter),
@@ -1267,7 +1272,9 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
 	// Tracing: low-level LDAP bind execution
 	tr := monittrace.New("nauthilus/ldap_ops")
-	bctx, bsp := tr.Start(ldapAuthRequest.HTTPClientContext, "ldap.bind",
+	bctx, bsp := tr.StartClient(ldapAuthRequest.HTTPClientContext, "ldap.bind",
+		attribute.String("rpc.system", "ldap"),
+		semconv.PeerService("ldap"),
 		attribute.String("pool_name", l.name),
 		attribute.String("dn", ldapAuthRequest.BindDN),
 		attribute.Int("timeout_ms", func() int {

@@ -50,6 +50,8 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". The "*" might be used as master separator.
@@ -633,7 +635,11 @@ func NewHTTPClient() *http.Client {
 
 	var transport http.RoundTripper = baseTransport
 	if config.GetFile().GetServer().GetInsights().IsTracingEnabled() {
-		transport = otelhttp.NewTransport(baseTransport)
+		// Use otelhttp transport (client-kind spans) and add peer.service="http"
+		transport = otelhttp.NewTransport(
+			baseTransport,
+			otelhttp.WithSpanOptions(trace.WithAttributes(semconv.PeerService("http"))),
+		)
 	}
 
 	httpClient := &http.Client{
