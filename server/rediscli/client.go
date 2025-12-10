@@ -28,6 +28,7 @@ import (
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	maintnotifications "github.com/redis/go-redis/v9/maintnotifications"
 )
 
 // RedisTLSOptions checks if Redis TLS is enabled in the configuration.
@@ -122,6 +123,8 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
+		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
+		DisableIdentity: !redisCfg.IsIdentityEnabled(),
 		// Explicitly prefer RESP3 to ensure push notifications for tracking
 		Protocol: 3,
 	}
@@ -166,8 +169,17 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		PoolFIFO:              redisCfg.GetPoolFIFO(),
 		ConnMaxIdleTime:       redisCfg.GetConnMaxIdleTime(),
 		MaxRetries:            redisCfg.GetMaxRetries(),
+		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
+		DisableIdentity: !redisCfg.IsIdentityEnabled(),
 		// Ensure RESP3 to support push notifications
 		Protocol: 3,
+	}
+
+	// Maintenance Notifications: only enable if configured. Standalone supports MaintNotificationsConfig.
+	if redisCfg.IsMaintNotificationsEnabled() {
+		opts.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
+	} else {
+		opts.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
 	}
 
 	if ct := redisCfg.GetClientTracking(); ct.IsEnabled() {
@@ -217,8 +229,17 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
+		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
+		DisableIdentity: !redisCfg.IsIdentityEnabled(),
 		// Ensure RESP3 to support push notifications for tracking
 		Protocol: 3,
+	}
+
+	// Maintenance Notifications for cluster: configurable. Apply to options to propagate to nodes.
+	if redisCfg.IsMaintNotificationsEnabled() {
+		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
+	} else {
+		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
 	}
 
 	// Set optional parameters only if they have non-zero values
@@ -289,8 +310,17 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		RouteByLatency: clusterCfg.GetRouteByLatency(),
 		RouteRandomly:  clusterCfg.GetRouteRandomly(),
 		ReadOnly:       true, // Always use replicas for read operations
+		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
+		DisableIdentity: !redisCfg.IsIdentityEnabled(),
 		// Ensure RESP3 to support push notifications for tracking
 		Protocol: 3,
+	}
+
+	// Maintenance Notifications for cluster read-only client: mirror primary setting.
+	if redisCfg.IsMaintNotificationsEnabled() {
+		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeAuto}
+	} else {
+		options.MaintNotificationsConfig = &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}
 	}
 
 	// Set optional parameters only if they have non-zero values
