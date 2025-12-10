@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -35,25 +36,41 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
 func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
+	// Tracing span for a user account lookup in the generic backend layer
+	tr := monittrace.New("nauthilus/backend")
+	sctx, sp := tr.Start(ctx, "backend.lookup_user_account",
+		attribute.String("username", username),
+	)
+
+	defer sp.End()
+
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	// Use span context for Redis read deadline
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(sctx)
 	defer cancel()
 
 	accountName, err = rediscli.GetClient().GetReadHandle().HGet(dCtx, key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
+			// Record real Redis errors (not a miss)
+			sp.RecordError(err)
+
 			return
 		}
 
 		err = nil
 	}
+
+	// Annotate whether a value was found
+	sp.SetAttributes(attribute.Bool("found", accountName != ""))
 
 	return
 }
