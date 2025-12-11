@@ -261,10 +261,10 @@ func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
 		// semantic hints for Tempo service graph
 		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
+		semconv.ServerAddress(srvHost),
+		semconv.ServerPort(srvPort),
 		attribute.String("dns.question.name", address),
 		attribute.String("dns.question.type", "PTR"),
-		attribute.String("server.address", srvHost),
-		attribute.Int("server.port", srvPort),
 	)
 
 	if hostNames, err := resolver.LookupAddr(tctx, address); err == nil {
