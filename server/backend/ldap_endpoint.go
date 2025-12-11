@@ -32,8 +32,9 @@ func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep sig
 	return func(L *lua.LState) int {
 		poolName := definitions.DefaultBackendName
 		if L.GetTop() >= 1 {
-			if s, ok := L.Get(1).(lua.LString); ok && s != "" {
-				poolName = string(s)
+			poolNameArg := L.CheckString(1)
+			if poolNameArg != "" && poolNameArg != "default" {
+				poolName = poolNameArg
 			}
 		}
 
