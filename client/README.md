@@ -65,6 +65,12 @@ go build -o nauthilus-testclient
 - When `--json-ok=false`, success is determined by HTTP status matching `--ok-status` (default: `200`).
 - Parallelization knobs: `--max-parallel` (max parallel requests per item, 1=off) and `--parallel-prob` (probability 0..1 to parallelize an item).
 
+NoAuth testing:
+
+- `--random-no-auth` together with `--random-no-auth-prob=0..1` will randomly append the query `mode=no-auth` for
+  requests whose CSV row has `expected_ok=true`. This allows mixing NoAuth requests into a normal run without changing
+  the CSV. The flag will not override an explicit `mode` already present in the URL.
+
 Rate limiting and pacing:
 - `--rps` sets a global target rate. With `--duration`, items are paced across time while looping over the CSV.
 - `--duration` runs continuously until the time elapses; `--loops` runs a fixed number of passes over the CSV.
