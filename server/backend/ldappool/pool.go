@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -706,6 +708,44 @@ func (l *ldapPoolImpl) logConnectionError(guid string, err error) {
 	)
 }
 
+// serverAddrPort derives server.address and server.port from the pool configuration
+// for the given connection index. If the URI does not include an explicit port,
+// the default is inferred from the scheme: 389 for ldap, 636 for ldaps.
+func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
+	var srvAddr string
+	var srvPort int
+
+	if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
+		uris := l.conf[index].GetServerURIs()
+		if len(uris) > 0 {
+			if u, err := url.Parse(uris[0]); err == nil {
+				host := u.Host
+
+				if h, p, e := net.SplitHostPort(host); e == nil {
+					srvAddr = h
+
+					if p != "" {
+						if v, convErr := strconv.Atoi(p); convErr == nil {
+							srvPort = v
+						}
+					}
+				} else {
+					// No explicit port provided; infer by scheme
+					srvAddr = host
+
+					if u.Scheme == "ldaps" {
+						srvPort = 636
+					} else {
+						srvPort = 389
+					}
+				}
+			}
+		}
+	}
+
+	return srvAddr, srvPort
+}
+
 // acquireTokenWithTimeout tries to acquire a capacity token from the pool within the configured timeout.
 // It respects the provided context deadline and caps the wait by the configured connect_abort_timeout.
 func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
@@ -1026,9 +1066,15 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	// Tracing: low-level LDAP search execution
 	{
 		tr := monittrace.New("nauthilus/ldap_ops")
+
+		// Derive server.address/port from pool config for this index
+		srvAddr, srvPort := l.serverAddrPort(index)
+
 		sctx, ssp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.search",
 			attribute.String("rpc.system", "ldap"),
 			semconv.PeerService("ldap"),
+			attribute.String("server.address", srvAddr),
+			attribute.Int("server.port", srvPort),
 			attribute.String("pool_name", l.name),
 			attribute.String("base_dn", ldapRequest.BaseDN),
 			attribute.String("scope", ldapRequest.Scope.String()),
@@ -1194,9 +1240,15 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) {
 	// Tracing: low-level LDAP modify execution
 	tr := monittrace.New("nauthilus/ldap_ops")
+
+	// derive server.address/port
+	srvAddr, srvPort := l.serverAddrPort(index)
+
 	mctx, msp := tr.StartClient(ldapRequest.HTTPClientContext, "ldap.modify",
 		attribute.String("rpc.system", "ldap"),
 		semconv.PeerService("ldap"),
+		attribute.String("server.address", srvAddr),
+		attribute.Int("server.port", srvPort),
 		attribute.String("pool_name", l.name),
 		attribute.String("base_dn", ldapRequest.BaseDN),
 		attribute.String("filter", ldapRequest.Filter),
@@ -1272,9 +1324,15 @@ func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAP
 func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest, ldapReply *bktype.LDAPReply) {
 	// Tracing: low-level LDAP bind execution
 	tr := monittrace.New("nauthilus/ldap_ops")
+
+	// derive server.address/port
+	srvAddr, srvPort := l.serverAddrPort(index)
+
 	bctx, bsp := tr.StartClient(ldapAuthRequest.HTTPClientContext, "ldap.bind",
 		attribute.String("rpc.system", "ldap"),
 		semconv.PeerService("ldap"),
+		attribute.String("server.address", srvAddr),
+		attribute.Int("server.port", srvPort),
 		attribute.String("pool_name", l.name),
 		attribute.String("dn", ldapAuthRequest.BindDN),
 		attribute.Int("timeout_ms", func() int {

@@ -56,15 +56,25 @@ function nauthilus_call_feature(request)
             span:set_attributes(nauthilus_otel.semconv.peer_service("http"))
             span:set_attributes(nauthilus_otel.semconv.http_client_attrs({ method = "POST", url = url }))
 
-            result, request_err = http.post(url, {
-                timeout = "10s",
-                headers = {
-                    Accept = "*/*",
-                    ["User-Agent"] = "Nauthilus",
-                    ["Content-Type"] = "application/json",
-                },
-                body = payload,
+            -- Add missing standard attributes for Tempo Service Graph
+            -- rpc.system + destination identity (server.address/server.port)
+            local host, p = url:match("^https?://([^/:]+):?(%d*)")
+            local port = tonumber(p) or (url:match("^https://") and 443 or 80)
+            span:set_attributes({
+                ["rpc.system"] = "http",
+                ["server.address"] = host or "",
+                ["server.port"] = port,
             })
+
+            -- Propagate trace headers to the downstream service
+            local headers = {
+                Accept = "*/*",
+                ["User-Agent"] = "Nauthilus",
+                ["Content-Type"] = "application/json",
+            }
+            nauthilus_otel.inject_headers(headers)
+
+            result, request_err = http.post(url, { timeout = "10s", headers = headers, body = payload })
 
             if request_err then
                 span:record_error(tostring(request_err))

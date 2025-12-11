@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -244,14 +247,72 @@ func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
 
 	resolver := NewDNSResolver()
 
-	if hostNames, err := resolver.LookupAddr(ctxTimeout, address); err == nil {
+	// Trace reverse DNS (PTR) lookup
+	tr := monittrace.New("nauthilus/dns")
+
+	// Resolve target DNS server attributes if a custom resolver is configured
+	var srvHost string
+	var srvPort int
+	if r := config.GetFile().GetServer().GetDNS().GetResolver(); r != "" {
+		srvHost, srvPort, _ = netSplitHostPortDefault(r, 53)
+	}
+
+	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup_ptr",
+		// semantic hints for Tempo service graph
+		attribute.String("rpc.system", "dns"),
+		semconv.PeerService("dns"),
+		attribute.String("dns.question.name", address),
+		attribute.String("dns.question.type", "PTR"),
+		attribute.String("server.address", srvHost),
+		attribute.Int("server.port", srvPort),
+	)
+
+	if hostNames, err := resolver.LookupAddr(tctx, address); err == nil {
 		if len(hostNames) > 0 {
 			hostname = hostNames[0]
 			hostname = strings.TrimSuffix(hostname, ".")
 		}
+
+		tsp.SetAttributes(attribute.Int("dns.answer.count", len(hostNames)))
+	} else {
+		tsp.RecordError(err)
 	}
 
+	tsp.End()
+
 	return hostname
+}
+
+// netSplitHostPortDefault splits host:port and returns a default port when absent.
+// It tolerates inputs without scheme (e.g., "1.2.3.4:5353" or "dns.local").
+func netSplitHostPortDefault(addr string, defPort int) (host string, port int, err error) {
+	// If a scheme is present, strip it via url.Parse to normalize
+	if strings.Contains(addr, "://") {
+		if u, perr := url.Parse(addr); perr == nil {
+			addr = u.Host
+		}
+	}
+
+	h, p, e := net.SplitHostPort(addr)
+	if e != nil {
+		// No port – return default
+		return addr, defPort, nil
+	}
+
+	// Try to parse port
+	var pn int
+	if p == "" {
+		pn = defPort
+	} else {
+		// ignore parse error; fall back to default
+		if v, convErr := strconv.Atoi(p); convErr == nil {
+			pn = v
+		} else {
+			pn = defPort
+		}
+	}
+
+	return h, pn, nil
 }
 
 func ProtoErrToFields(err error) (fields []zap.Field) {
