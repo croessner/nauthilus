@@ -1248,6 +1248,9 @@ const (
 	// LuaFnLDAPModify is a constant representing the Lua function for modifying LDAP entries.
 	LuaFnLDAPModify = "ldap_modify"
 
+	// LuaFnLDAPEndpoint represents the Lua function name for configuring or retrieving the LDAP endpoint details.
+	LuaFnLDAPEndpoint = "ldap_endpoint"
+
 	// LuaFnSendMail represents the name of the Lua function used to send e simple text email.
 	LuaFnSendMail = "send_mail"
 

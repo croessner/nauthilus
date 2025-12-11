@@ -26,3 +26,6 @@ func LDAPSearchWithCtx(ctx context.Context) lua.LGFunction { return LuaLDAPSearc
 
 // LDAPModifyWithCtx is a WithCtx-factory alias returning the same function as LuaLDAPModify(ctx).
 func LDAPModifyWithCtx(ctx context.Context) lua.LGFunction { return LuaLDAPModify(ctx) }
+
+// LDAPEndpointWithCtx is a WithCtx-factory alias returning the same function as LuaLDAPEndpoint(ctx).
+func LDAPEndpointWithCtx(ctx context.Context) lua.LGFunction { return LuaLDAPEndpoint(ctx) }
