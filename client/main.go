@@ -1788,6 +1788,11 @@ func main() {
 		autoPlateauTrackThreshold = flag.Float64("auto-plateau-track-threshold", 0.9, "Tracking threshold rps/trps (0..1). Below this over N windows is considered a plateau")
 		autoPlateauTrackWindows   = flag.Int("auto-plateau-track-windows", 0, "Windows for tracking plateau (0=use --auto-plateau-windows)")
 		autoPlateauTrackAction    = flag.String("auto-plateau-track-action", "freeze", "Action on tracking plateau: freeze|backoff|shift (shift: pause RPS increases, raise concurrency)")
+
+		// Optional: randomly enable server no-auth mode for requests that are expected to succeed.
+		// We add flags here instead of in the large block above to keep related options close.
+		randomNoAuth     = flag.Bool("random-no-auth", false, "Randomly set mode=no-auth on requests that have expected_ok=true")
+		randomNoAuthProb = flag.Float64("random-no-auth-prob", 0.0, "Probability (0..1) to enable no-auth for an expected_ok request")
 	)
 
 	flag.Parse()
@@ -2565,7 +2570,32 @@ func main() {
 				abortTimer = time.AfterFunc(d, reqCancel)
 			}
 
-			req, _ := http.NewRequestWithContext(reqCtx, *method, *endpoint, bytes.NewReader(bb))
+			// Optionally enable no-auth mode via query string on a per-request basis.
+			// Only apply when the row is expected_ok and the random check passes.
+			reqURL := *endpoint
+			if *randomNoAuth && expectedOKs[idx] {
+				p := *randomNoAuthProb
+				if p < 0 {
+					p = 0
+				}
+
+				if p > 1 {
+					p = 1
+				}
+
+				if p > 0 && rand.Float64() < p {
+					if u, err := url.Parse(reqURL); err == nil {
+						q := u.Query()
+						if q.Get("mode") == "" { // do not overwrite if user already set it
+							q.Set("mode", "no-auth")
+							u.RawQuery = q.Encode()
+							reqURL = u.String()
+						}
+					}
+				}
+			}
+
+			req, _ := http.NewRequestWithContext(reqCtx, *method, reqURL, bytes.NewReader(bb))
 
 			// copy base headers into a fresh map to avoid data races without Clone() churn
 			req.Header = make(http.Header, len(baseHeader))
