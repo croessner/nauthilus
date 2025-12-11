@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	lua "github.com/yuin/gopher-lua"
@@ -28,7 +27,7 @@ import (
 
 // LuaLDAPEndpoint exposes nauthilus_ldap.ldap_endpoint(pool_name?) → (server, port, err)
 // It resolves the first configured server URI of the given pool and returns host and port.
-// The function fails if the pool is not active (no workers registered) or if configuration is missing.
+// The function validates configuration only (no runtime "active" checks).
 func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep signature consistent with other loaders
 	return func(L *lua.LState) int {
 		poolName := definitions.DefaultBackendName
@@ -36,24 +35,6 @@ func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep sig
 			if s, ok := L.Get(1).(lua.LString); ok && s != "" {
 				poolName = string(s)
 			}
-		}
-
-		// Check whether the pool is active (registered in request queue)
-		active := false
-		for _, n := range priorityqueue.LDAPQueue.GetPoolNames() {
-			if n == poolName {
-				active = true
-
-				break
-			}
-		}
-
-		if !active {
-			L.Push(lua.LNil)
-			L.Push(lua.LNil)
-			L.Push(lua.LString("ldap pool not active: " + poolName))
-
-			return 3
 		}
 
 		// Load configuration for the pool
