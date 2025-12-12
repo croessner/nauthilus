@@ -29,6 +29,8 @@ import (
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PostActionArgs bundles all necessary inputs for the Lua post-action dispatch.
@@ -45,6 +47,7 @@ import (
 type PostActionArgs struct {
 	Context       *lualib.Context
 	HTTPRequest   *http.Request
+	ParentSpan    trace.SpanContext
 	StatusMessage string
 	Request       lualib.CommonRequest
 }
@@ -87,12 +90,13 @@ func RunLuaPostAction(args PostActionArgs) {
 	cr.StatusMessage = &args.StatusMessage
 
 	action.RequestChan <- &action.Action{
-		LuaAction:     definitions.LuaActionPost,
-		Context:       args.Context,
-		FinishedChan:  finished,
-		HTTPRequest:   args.HTTPRequest,
-		HTTPContext:   nil,
-		CommonRequest: cr,
+		LuaAction:             definitions.LuaActionPost,
+		Context:               args.Context,
+		FinishedChan:          finished,
+		HTTPRequest:           args.HTTPRequest,
+		HTTPContext:           nil,
+		OTelParentSpanContext: args.ParentSpan,
+		CommonRequest:         cr,
 	}
 
 	<-finished
