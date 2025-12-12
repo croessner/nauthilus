@@ -66,7 +66,35 @@ func LuaLDAPEndpoint(_ any) lua.LGFunction { // ctx currently not used, keep sig
 		ustr := strings.TrimSpace(uris[0])
 
 		u, err := url.Parse(ustr)
-		if err != nil || u.Host == "" {
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LNil)
+			L.Push(lua.LString("invalid LDAP server_uri: " + ustr))
+
+			return 3
+		}
+
+		// Support ldapi:///absolute/path (UNIX domain socket). For ldapi there is no host/port.
+		if strings.EqualFold(u.Scheme, "ldapi") {
+			// Accept only the non-escaped form with absolute path
+			if u.Path != "" && strings.HasPrefix(u.Path, "/") {
+				L.Push(lua.LString(u.Path))
+				L.Push(lua.LNumber(0))
+				L.Push(lua.LNil)
+
+				return 3
+			}
+
+			// Unsupported ldapi form → return empty values without logging here
+			L.Push(lua.LString(""))
+			L.Push(lua.LNumber(0))
+			L.Push(lua.LNil)
+
+			return 3
+		}
+
+		// Standard ldap/ldaps handling with host/port
+		if u.Host == "" {
 			L.Push(lua.LNil)
 			L.Push(lua.LNil)
 			L.Push(lua.LString("invalid LDAP server_uri: " + ustr))

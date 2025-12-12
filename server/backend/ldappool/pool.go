@@ -718,7 +718,18 @@ func (l *ldapPoolImpl) serverAddrPort(index int) (string, int) {
 	if l.conf != nil && index < len(l.conf) && l.conf[index] != nil {
 		uris := l.conf[index].GetServerURIs()
 		if len(uris) > 0 {
-			if u, err := url.Parse(uris[0]); err == nil {
+			raw := uris[0]
+
+			if u, err := url.Parse(raw); err == nil {
+				if strings.EqualFold(u.Scheme, "ldapi") {
+					if u.Path != "" && strings.HasPrefix(u.Path, "/") {
+						return u.Path, 0
+					}
+
+					return "", 0
+				}
+
+				// Standardfälle: ldap/ldaps mit Host/Port
 				host := u.Host
 
 				if h, p, e := net.SplitHostPort(host); e == nil {
