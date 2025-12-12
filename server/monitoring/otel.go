@@ -77,14 +77,7 @@ func (t *Telemetry) Start(ctx context.Context, appVersion string) {
 		return
 	}
 
-	svcName := cfg.GetServiceName()
-	if strings.TrimSpace(svcName) == "" {
-		// Prefer instance name from config if present
-		svcName = prov.GetInstanceName()
-		if strings.TrimSpace(svcName) == "" {
-			svcName = "nauthilus-server"
-		}
-	}
+	svcName := ResolveServiceName(cfg.GetServiceName(), prov.GetInstanceName(), "nauthilus-server")
 
 	res, _ := resource.Merge(resource.Default(), resource.NewWithAttributes(
 		semconv.SchemaURL,

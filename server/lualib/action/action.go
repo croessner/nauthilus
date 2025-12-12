@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 
@@ -41,6 +42,7 @@ import (
 	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -83,6 +85,11 @@ type Action struct {
 
 	// HTTPContext is a pointer to a gin.Context, representing the HTTP request context and managing request-specific data.
 	HTTPContext *gin.Context
+
+	// OTelParentSpanContext optionally carries the OpenTelemetry parent span context.
+	// When set, the Lua worker will build a request-scoped context from it so that
+	// spans created from Lua remain attached to the originating HTTP request trace.
+	OTelParentSpanContext trace.SpanContext
 
 	*lualib.CommonRequest
 }
@@ -276,6 +283,32 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}()
 
+	// Build a request-scoped context for this action.
+	// By default, we use the worker context. If the action carries an OpenTelemetry
+	// parent span context (e.g., originating HTTP request span), we build a fresh
+	// context from it so that Lua-created spans remain attached even after the HTTP
+	// request context is canceled.
+	baseCtx := aw.ctx
+	if aw.luaActionRequest != nil && aw.luaActionRequest.OTelParentSpanContext.IsValid() {
+		baseCtx = trace.ContextWithSpanContext(svcctx.Get(), aw.luaActionRequest.OTelParentSpanContext)
+	}
+
+	// Grouping span for all post/async actions belonging to the originating request.
+	// This gives you a stable, queryable node like "post_actions" under "POST /...".
+	// All Lua spans (HTTP/Redis/LDAP/etc.) become children of this span.
+	postActionName := "post_actions"
+	if httpRequest != nil {
+		postActionName = fmt.Sprintf("post_actions: %s %s", httpRequest.Method, httpRequest.URL.Path)
+	}
+
+	reqCtx, postSp := tr.Start(baseCtx, postActionName,
+		attribute.String("component", "lua"),
+		attribute.String("action", aw.luaActionRequest.LuaAction.String()),
+		attribute.Int("action_id", int(aw.luaActionRequest.LuaAction)),
+	)
+
+	defer postSp.End()
+
 	// Prepare per-request environment: ensures request-local globals and module bindings
 	luapool.PrepareRequestEnv(L)
 
@@ -315,8 +348,8 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		}
 	}
 
-	// 4) nauthilus_redis (use worker context for deadlines)
-	if loader := redislib.LoaderModRedis(aw.ctx); loader != nil {
+	// 4) nauthilus_redis
+	if loader := redislib.LoaderModRedis(reqCtx); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -328,7 +361,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	// 5) nauthilus_ldap (if enabled)
 	if config.GetFile().HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(aw.ctx)
+		loader := backend.LoaderModLDAP(reqCtx)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -339,7 +372,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(aw.ctx); loader != nil {
+	if loader := connmgr.LoaderModPsnet(reqCtx); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -350,7 +383,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(aw.ctx); loader != nil {
+	if loader := lualib.LoaderModDNS(reqCtx); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -364,7 +397,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	{
 		var loader lua.LGFunction
 		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(aw.ctx)
+			loader = lualib.LoaderModOTEL(reqCtx)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -381,7 +414,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 8) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(aw.ctx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(reqCtx); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)

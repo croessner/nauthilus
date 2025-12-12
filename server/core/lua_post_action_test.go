@@ -1,12 +1,14 @@
 package core_test
 
 import (
+	"context"
 	"testing"
 
 	corepkg "github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
@@ -51,6 +53,7 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	args := corepkg.PostActionArgs{
 		Context:       &lualib.Context{},
 		HTTPRequest:   nil,
+		ParentSpan:    trace.SpanContextFromContext(context.Background()),
 		StatusMessage: "status-1",
 		Request: lualib.CommonRequest{
 			Session:   "guid-123",

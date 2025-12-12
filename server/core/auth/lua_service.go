@@ -32,6 +32,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DefaultLuaFilter mirrors the previous AuthState.FilterLua behavior.
@@ -232,6 +233,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	args := core.PostActionArgs{
 		Context:       auth.Context,
 		HTTPRequest:   auth.HTTPClientRequest,
+		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: statusMessageCopy,
 		Request: lualib.CommonRequest{
 			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,

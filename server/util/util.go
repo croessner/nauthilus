@@ -250,22 +250,22 @@ func ResolveIPAddress(ctx context.Context, address string) (hostname string) {
 	// Trace reverse DNS (PTR) lookup
 	tr := monittrace.New("nauthilus/dns")
 
-	// Resolve target DNS server attributes if a custom resolver is configured
-	var srvHost string
-	var srvPort int
-	if r := config.GetFile().GetServer().GetDNS().GetResolver(); r != "" {
-		srvHost, srvPort, _ = netSplitHostPortDefault(r, 53)
-	}
-
-	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup_ptr",
+	attrs := []attribute.KeyValue{
 		// semantic hints for Tempo service graph
 		attribute.String("rpc.system", "dns"),
 		semconv.PeerService("dns"),
-		semconv.ServerAddress(srvHost),
-		semconv.ServerPort(srvPort),
 		attribute.String("dns.question.name", address),
 		attribute.String("dns.question.type", "PTR"),
-	)
+	}
+
+	if srvHost, srvPort, ok := DNSResolverPeer(); ok {
+		attrs = append(attrs,
+			semconv.ServerAddress(srvHost),
+			semconv.ServerPort(srvPort),
+		)
+	}
+
+	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup_ptr", attrs...)
 
 	if hostNames, err := resolver.LookupAddr(tctx, address); err == nil {
 		if len(hostNames) > 0 {

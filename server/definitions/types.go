@@ -56,6 +56,27 @@ type DbgModule uint8
 // LuaAction represents a numeric identifier for a Lua action.
 type LuaAction uint8
 
+func (a LuaAction) String() string {
+	switch a {
+	case LuaActionNone:
+		return ""
+	case LuaActionBruteForce:
+		return LuaActionBruteForceName
+	case LuaActionRBL:
+		return LuaActionRBLName
+	case LuaActionTLS:
+		return LuaActionTLSName
+	case LuaActionRelayDomains:
+		return LuaActionRelayDomainsName
+	case LuaActionLua:
+		return LuaActionLuaName
+	case LuaActionPost:
+		return LuaActionPostName
+	default:
+		return ""
+	}
+}
+
 // LuaCommand is a numeric identifier for a Lua command.
 type LuaCommand uint8
 

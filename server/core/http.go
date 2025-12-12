@@ -35,6 +35,7 @@ import (
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
+	"github.com/croessner/nauthilus/server/monitoring"
 	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-contrib/pprof"
@@ -116,13 +117,7 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	if config.GetFile().GetServer().GetInsights().IsTracingEnabled() {
 		tr := config.GetFile().GetServer().GetInsights().GetTracing()
 
-		service := tr.GetServiceName()
-		if service == "" {
-			service = config.GetFile().GetServer().GetInstanceName()
-			if service == "" {
-				service = "nauthilus-server"
-			}
-		}
+		service := monitoring.ResolveServiceName(tr.GetServiceName(), config.GetFile().GetServer().GetInstanceName(), "nauthilus-server")
 
 		// Attach OpenTelemetry Gin middleware with explicit provider/propagators and a
 		// stable span name formatter (METHOD + route pattern) to simplify querying.
