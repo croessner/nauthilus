@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
-	"unsafe"
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
@@ -42,29 +41,33 @@ import (
 
 // The configuration file is briefly documented in the markdown file Configuration-FileSettings.md.
 
-// LoadableConfig is a variable of type *FileSettings that represents the configuration file that can be loaded.
-var file File
+// file holds the currently active configuration.
+//
+// It is stored in an atomic container to allow safe concurrent readers while the configuration
+// is being reloaded.
+var file atomic.Value // stores File
 
 // ConfigFilePath stores the path to the configuration file specified via the -config flag
 var ConfigFilePath string
 
 // GetFile returns the loaded FileSettings configuration instance.
 func GetFile() File {
-	if file == nil {
+	v := file.Load()
+	if v == nil {
 		panic("FileSettings not loaded")
 	}
 
-	return file
+	return v.(File)
 }
 
 // IsFileLoaded reports whether a FileSettings configuration has been loaded.
 func IsFileLoaded() bool {
-	return file != nil
+	return file.Load() != nil
 }
 
 // SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
 func SetTestFile(testFile File) {
-	file = testFile
+	file.Store(testFile)
 }
 
 // GetterHandler is an interface that provides methods to retrieve configuration and protocol information.
@@ -2620,7 +2623,7 @@ func NewFile() (newCfg File, err error) {
 
 	err = newCfg.HandleFile()
 
-	file = newCfg
+	file.Store(newCfg)
 
 	return newCfg, err
 }
@@ -2641,7 +2644,7 @@ func ReloadConfigFile() (err error) {
 	}
 
 	// Replace existing configuration
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&file)), unsafe.Pointer(newCfgReload))
+	file.Store(newCfgReload)
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Reloading configuration file finished")
 
