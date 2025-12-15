@@ -324,6 +324,22 @@ func (m *ConnectionManager) StartTicker(interval time.Duration) {
 	}
 }
 
+// StartTickerWithContext launches a ticker that triggers the update of connection counts at the specified interval.
+// The ticker is stopped and the function returns when ctx is canceled.
+func (m *ConnectionManager) StartTickerWithContext(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.UpdateCounts()
+		}
+	}
+}
+
 // luaCountOpenConnections returns the number of open connections for a given target. If the target is not registered,
 // it returns nil and an error message.
 func (m *ConnectionManager) luaCountOpenConnections(L *lua.LState) int {

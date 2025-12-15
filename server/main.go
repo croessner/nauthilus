@@ -20,9 +20,9 @@ import (
 	stdlog "log"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/core"
 	_ "github.com/croessner/nauthilus/server/core/auth"
-	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/svcctx"
 
@@ -55,7 +55,15 @@ func main() {
 	fApp := fx.New(
 		fx.NopLogger,
 		rootContextOption(ctx, cancel),
-		fx.Invoke(func(lc fx.Lifecycle, ctx context.Context, cancel context.CancelFunc) {
+		loopsfx.Module(),
+		fx.Invoke(func(
+			lc fx.Lifecycle,
+			ctx context.Context,
+			cancel context.CancelFunc,
+			statsSvc *loopsfx.StatsService,
+			monitoringSvc *loopsfx.BackendMonitoringService,
+			connMgrSvc *loopsfx.ConnMgrService,
+		) {
 			lc.Append(fx.Hook{
 				OnStart: func(context.Context) error {
 					if err := setupConfiguration(); err != nil {
@@ -73,9 +81,6 @@ func main() {
 					}
 
 					enableBlockProfile()
-
-					statsTicker := time.NewTicker(definitions.StatsDelay * time.Second)
-					monitoringTicker := time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
 					store := newContextStore()
 
 					store.action = newContextTuple(ctx)
@@ -86,24 +91,40 @@ func main() {
 					initializeHTTPClients()
 					core.InitPassDBResultPool()
 					setupWorkers(ctx, store, actionWorkers)
-					handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
+					handleSignals(ctx, cancel, store, monitoringSvc, actionWorkers)
 					setupRedis(ctx)
 
 					runLuaInitScript(ctx)
 					core.LoadStatsFromRedis(ctx)
 					startHTTPServer(ctx, store)
-					runConnectionManager(ctx)
 
-					// Backend server monitoring feature
-					go runBackendServerMonitoring(ctx, store, monitoringTicker)
+					if err := connMgrSvc.Start(ctx); err != nil {
+						return err
+					}
 
-					go func() {
-						_ = startStatsLoop(ctx, statsTicker)
-					}()
+					if err := monitoringSvc.Start(ctx); err != nil {
+						return err
+					}
+
+					if err := statsSvc.Start(ctx); err != nil {
+						return err
+					}
 
 					return nil
 				},
 				OnStop: func(stopCtx context.Context) error {
+					if err := statsSvc.Stop(stopCtx); err != nil {
+						stdlog.Printf("Unable to stop stats service. Error: %v", err)
+					}
+
+					if err := monitoringSvc.Stop(stopCtx); err != nil {
+						stdlog.Printf("Unable to stop backend monitoring service. Error: %v", err)
+					}
+
+					if err := connMgrSvc.Stop(stopCtx); err != nil {
+						stdlog.Printf("Unable to stop connection manager service. Error: %v", err)
+					}
+
 					cancel()
 					monitoring.GetTelemetry().Shutdown(stopCtx)
 

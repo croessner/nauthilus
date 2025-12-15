@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
@@ -276,15 +277,15 @@ func PreCompileHooks() error {
 
 // handleSignals sets up concurrent signal handlers for termination, reload, and user-defined signals.
 // It receives a context, cancel function, context store, statistics ticker, monitoring ticker, and action workers as parameters.
-func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
-	go handleTerminateSignal(ctx, cancel, store, statsTicker, *ngxMonitoringTicker, actionWorkers)
+func handleSignals(ctx context.Context, cancel context.CancelFunc, store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker) {
+	go handleTerminateSignal(ctx, cancel, store, actionWorkers)
 	go handleUsr1Signal(ctx, store)
-	go handleReloadSignal(ctx, store, ngxMonitoringTicker, actionWorkers)
+	go handleReloadSignal(ctx, store, monitoringSvc, actionWorkers)
 }
 
 // handleTerminateSignal handles termination signals like SIGINT and SIGTERM for gracefully shutting down the application.
 // It cancels context, stops tickers, waits for HTTP servers and action workers to conclude, and saves stats to Redis.
-func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, store *contextStore, statsTicker *time.Ticker, ngxMonitoringTicker *time.Ticker, actionWorkers []*action.Worker) {
+func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, store *contextStore, actionWorkers []*action.Worker) {
 	sigsTerminate := make(chan os.Signal, 1)
 
 	signal.Notify(sigsTerminate, syscall.SIGINT, syscall.SIGTERM)
@@ -317,9 +318,6 @@ func handleTerminateSignal(ctx context.Context, cancel context.CancelFunc, store
 
 	// Stop background janitors and process-wide resources
 	lualib.StopGlobalCache()
-
-	statsTicker.Stop()
-	ngxMonitoringTicker.Stop()
 }
 
 // handleUsr1Signal listens for SIGUSR1 signals to trigger server restarts for updating or refreshing server processes.
@@ -340,7 +338,7 @@ func handleUsr1Signal(ctx context.Context, store *contextStore) {
 
 // handleReloadSignal listens for SIGHUP signals to initiate configuration reloads for various services in the application.
 // It operates within a context, responding to cancellation or signal-triggered reloads as appropriate.
-func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
+func handleReloadSignal(ctx context.Context, store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker) {
 	sigsReload := make(chan os.Signal, 1)
 
 	signal.Notify(sigsReload, syscall.SIGHUP)
@@ -350,7 +348,7 @@ func handleReloadSignal(ctx context.Context, store *contextStore, ngxMonitoringT
 		case <-ctx.Done():
 			return
 		case sig := <-sigsReload:
-			handleReload(ctx, store, sig, ngxMonitoringTicker, actionWorkers)
+			handleReload(ctx, store, sig, monitoringSvc, actionWorkers)
 		}
 	}
 }
@@ -496,7 +494,7 @@ func handleServerRestart(ctx context.Context, store *contextStore, sig os.Signal
 }
 
 // handleReload reloads the server configurations, restarts backend workers, and applies the new settings dynamically.
-func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMonitoringTicker **time.Ticker, actionWorkers []*action.Worker) {
+func handleReload(ctx context.Context, store *contextStore, sig os.Signal, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker) {
 	var (
 		ldapStopped bool
 		ldapStarted bool
@@ -585,7 +583,14 @@ func handleReload(ctx context.Context, store *contextStore, sig os.Signal, ngxMo
 		}
 	}
 
-	restartNgxMonitoring(ctx, store, ngxMonitoringTicker)
+	if monitoringSvc != nil {
+		if err := monitoringSvc.Restart(ctx); err != nil {
+			level.Error(log.Logger).Log(
+				definitions.LogKeyMsg, "Unable to restart backend monitoring",
+				definitions.LogKeyError, err,
+			)
+		}
+	}
 
 	stats.GetReloader().Reload()
 

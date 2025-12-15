@@ -1090,3 +1090,20 @@ func UpdateGenericConnections() {
 		GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
 	}
 }
+
+// UpdateGenericConnectionsWithContext reads from GenericConnectionChan and updates the GenericConnections metric.
+// It exits when ctx is canceled.
+func UpdateGenericConnectionsWithContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case conn, openConn := <-connmgr.GenericConnectionChan:
+			if !openConn {
+				return
+			}
+
+			GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+		}
+	}
+}
