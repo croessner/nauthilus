@@ -26,79 +26,75 @@ import (
 )
 
 var (
-	mu   sync.Mutex
-	once sync.Once
+	mu sync.Mutex
 
 	// Logger is used for all messages that are printed to stdout
 	Logger *slog.Logger
 )
 
 // SetupLogging initializes the global "Logger" object.
-// It is idempotent and configures the logger only on the first call.
+// It is safe to call multiple times; subsequent calls reconfigure the logger.
 func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
-	// Ensure only a single initialization across the whole process.
-	once.Do(func() {
-		mu.Lock()
-		defer mu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
-		// Map configLogLevel to slog level
-		var minLevel slog.Level
+	// Map configLogLevel to slog level
+	var minLevel slog.Level
 
-		switch configLogLevel {
-		case definitions.LogLevelNone:
-			// Level value is irrelevant when output is discarded; keep a sane default
-			minLevel = slog.LevelInfo
-		case definitions.LogLevelError:
-			minLevel = slog.LevelError
-		case definitions.LogLevelWarn:
-			minLevel = slog.LevelWarn
-		case definitions.LogLevelNotice:
-			// Custom NOTICE sits between info and warn
-			minLevel = slog.LevelInfo + definitions.SlogNoticeLevelOffset
-		case definitions.LogLevelInfo:
-			minLevel = slog.LevelInfo
-		case definitions.LogLevelDebug:
-			minLevel = slog.LevelDebug
-		default:
-			minLevel = slog.LevelInfo
-		}
+	switch configLogLevel {
+	case definitions.LogLevelNone:
+		// Level value is irrelevant when output is discarded; keep a sane default
+		minLevel = slog.LevelInfo
+	case definitions.LogLevelError:
+		minLevel = slog.LevelError
+	case definitions.LogLevelWarn:
+		minLevel = slog.LevelWarn
+	case definitions.LogLevelNotice:
+		// Custom NOTICE sits between info and warn
+		minLevel = slog.LevelInfo + definitions.SlogNoticeLevelOffset
+	case definitions.LogLevelInfo:
+		minLevel = slog.LevelInfo
+	case definitions.LogLevelDebug:
+		minLevel = slog.LevelDebug
+	default:
+		minLevel = slog.LevelInfo
+	}
 
-		// ReplaceAttr maps custom level values to well-known names (e.g., NOTICE instead of INFO+2).
-		replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.LevelKey {
-				if lv, ok := a.Value.Any().(slog.Level); ok {
-					if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
-						a.Value = slog.StringValue("NOTICE")
-					}
+	// ReplaceAttr maps custom level values to well-known names (e.g., NOTICE instead of INFO+2).
+	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
+		if a.Key == slog.LevelKey {
+			if lv, ok := a.Value.Any().(slog.Level); ok {
+				if lv == slog.LevelInfo+definitions.SlogNoticeLevelOffset {
+					a.Value = slog.StringValue("NOTICE")
 				}
 			}
-
-			return a
 		}
 
-		handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource, ReplaceAttr: replaceAttr}
+		return a
+	}
 
-		// Choose output target: for LogLevelNone, discard everything using io.Discard
-		var out io.Writer = os.Stdout
-		if configLogLevel == definitions.LogLevelNone {
-			out = io.Discard
-		}
+	handlerOpts := &slog.HandlerOptions{Level: minLevel, AddSource: addSource, ReplaceAttr: replaceAttr}
 
-		var handler slog.Handler
+	// Choose output target: for LogLevelNone, discard everything using io.Discard
+	var out io.Writer = os.Stdout
+	if configLogLevel == definitions.LogLevelNone {
+		out = io.Discard
+	}
 
-		termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
+	var handler slog.Handler
 
-		if formatJSON {
-			// JSON output should never be colored
-			handler = slog.NewJSONHandler(out, handlerOpts)
-		} else if useColor && configLogLevel != definitions.LogLevelNone {
-			// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
-			colors := logcolor.ThemeColorMap(termTheme)
-			handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
-		} else {
-			handler = slog.NewTextHandler(out, handlerOpts)
-		}
+	termTheme := os.Getenv("NAUTHILUS_TERM_THEME")
 
-		Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
-	})
+	if formatJSON {
+		// JSON output should never be colored
+		handler = slog.NewJSONHandler(out, handlerOpts)
+	} else if useColor && configLogLevel != definitions.LogLevelNone {
+		// Use wrapper to preserve TextHandler format while coloring full line; theme-aware colors
+		colors := logcolor.ThemeColorMap(termTheme)
+		handler = logcolor.NewLineWrapper(out, handlerOpts, colors)
+	} else {
+		handler = slog.NewTextHandler(out, handlerOpts)
+	}
+
+	Logger = slog.New(handler).With(slog.String(definitions.LogKeyInstance, instance))
 }
