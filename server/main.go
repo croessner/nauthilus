@@ -16,8 +16,8 @@
 package main
 
 import (
+	"context"
 	stdlog "log"
-	"os"
 	"time"
 
 	"github.com/croessner/nauthilus/server/core"
@@ -25,6 +25,8 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/svcctx"
+
+	"go.uber.org/fx"
 )
 
 var (
@@ -32,53 +34,95 @@ var (
 	buildTime = ""
 )
 
+func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option {
+	return fx.Provide(
+		func() context.Context {
+			return ctx
+		},
+		func() context.CancelFunc {
+			return cancel
+		},
+	)
+}
+
 // main is the entry point of the application. It initializes the environment, workers, monitoring, and starts the HTTP server.
 func main() {
 	parseFlagsAndPrintVersion()
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
+	stopTimeout := 10 * time.Second
 
-	if err := setupConfiguration(); err != nil {
-		stdlog.Fatalln("Unable to setup the environment. Error:", err)
+	fApp := fx.New(
+		fx.NopLogger,
+		rootContextOption(ctx, cancel),
+		fx.Invoke(func(lc fx.Lifecycle, ctx context.Context, cancel context.CancelFunc) {
+			lc.Append(fx.Hook{
+				OnStart: func(context.Context) error {
+					if err := setupConfiguration(); err != nil {
+						stdlog.Fatalln("Unable to setup the environment. Error:", err)
+					}
+
+					// Initialize OpenTelemetry tracing early (no-op if disabled)
+					monitoring.GetTelemetry().Start(ctx, version)
+
+					initializeInstanceInfo()
+					debugLoadableConfig()
+
+					if err := setupLuaScripts(); err != nil {
+						stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
+					}
+
+					enableBlockProfile()
+
+					statsTicker := time.NewTicker(definitions.StatsDelay * time.Second)
+					monitoringTicker := time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
+					store := newContextStore()
+
+					store.action = newContextTuple(ctx)
+
+					actionWorkers := initializeActionWorkers()
+
+					inititalizeBruteForceTolerate(ctx)
+					initializeHTTPClients()
+					core.InitPassDBResultPool()
+					setupWorkers(ctx, store, actionWorkers)
+					handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
+					setupRedis(ctx)
+
+					runLuaInitScript(ctx)
+					core.LoadStatsFromRedis(ctx)
+					startHTTPServer(ctx, store)
+					runConnectionManager(ctx)
+
+					// Backend server monitoring feature
+					go runBackendServerMonitoring(ctx, store, monitoringTicker)
+
+					go func() {
+						_ = startStatsLoop(ctx, statsTicker)
+					}()
+
+					return nil
+				},
+				OnStop: func(stopCtx context.Context) error {
+					cancel()
+					monitoring.GetTelemetry().Shutdown(stopCtx)
+
+					return nil
+				},
+			})
+		}),
+	)
+
+	if err := fApp.Start(context.Background()); err != nil {
+		stdlog.Fatalln("Unable to start fx app. Error:", err)
 	}
 
-	// Initialize OpenTelemetry tracing early (no-op if disabled)
-	monitoring.GetTelemetry().Start(ctx, version)
-	defer monitoring.GetTelemetry().Shutdown(ctx)
+	<-ctx.Done()
 
-	initializeInstanceInfo()
-	debugLoadableConfig()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopTimeout)
+	defer stopCancel()
 
-	if err := setupLuaScripts(); err != nil {
-		stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
+	if err := fApp.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop fx app. Error: %v", err)
 	}
-
-	enableBlockProfile()
-
-	statsTicker := time.NewTicker(definitions.StatsDelay * time.Second)
-	monitoringTicker := time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
-	store := newContextStore()
-
-	store.action = newContextTuple(ctx)
-
-	actionWorkers := initializeActionWorkers()
-
-	inititalizeBruteForceTolerate(ctx)
-	initializeHTTPClients()
-	core.InitPassDBResultPool()
-	setupWorkers(ctx, store, actionWorkers)
-	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
-	setupRedis(ctx)
-
-	runLuaInitScript(ctx)
-	core.LoadStatsFromRedis(ctx)
-	startHTTPServer(ctx, store)
-	runConnectionManager(ctx)
-
-	// Backend server monitoring feature
-	go runBackendServerMonitoring(ctx, store, monitoringTicker)
-
-	startStatsLoop(ctx, statsTicker)
-
-	os.Exit(0)
 }
