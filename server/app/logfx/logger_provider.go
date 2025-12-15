@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package logfx
 
 import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
+	"context"
+	stdlog "log"
+	"log/slog"
 
 	"go.uber.org/fx"
+
+	"github.com/croessner/nauthilus/server/log"
 )
 
-// Module will become the fx wiring home for the server.
-func Module() fx.Option {
-	return fx.Options(
-		configfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
-	)
+// NewLogger provides the process logger.
+func NewLogger() *slog.Logger {
+	return log.Logger
+}
+
+// BridgeStdLog wires the standard library log package to the provided slog logger.
+//
+// This is executed in an fx lifecycle hook to ensure the logger is available.
+func BridgeStdLog(lc fx.Lifecycle, logger *slog.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if logger == nil {
+				return nil
+			}
+
+			stdlog.SetOutput(&slogStdWriter{logger: logger})
+
+			return nil
+		},
+	})
 }

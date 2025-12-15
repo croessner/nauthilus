@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package redifx
 
-import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
+import "github.com/croessner/nauthilus/server/rediscli"
 
-	"go.uber.org/fx"
-)
+// Client is the Redis facade type used for DI.
+type Client = rediscli.Client
 
-// Module will become the fx wiring home for the server.
-func Module() fx.Option {
-	return fx.Options(
-		configfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
-	)
+// NewClient provides a Redis client facade.
+func NewClient() Client {
+	return rediscli.GetClient()
 }

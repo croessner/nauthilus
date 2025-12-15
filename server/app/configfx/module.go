@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package configfx
 
-import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
+import "go.uber.org/fx"
 
-	"go.uber.org/fx"
-)
-
-// Module will become the fx wiring home for the server.
+// Module provides the config snapshot provider.
+//
+// It is intended to be wired after the legacy config has been loaded.
 func Module() fx.Option {
 	return fx.Options(
-		configfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
+		fx.Provide(NewProvider),
 	)
 }

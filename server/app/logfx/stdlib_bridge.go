@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package logfx
 
 import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
-
-	"go.uber.org/fx"
+	"context"
+	"log/slog"
 )
 
-// Module will become the fx wiring home for the server.
-func Module() fx.Option {
-	return fx.Options(
-		configfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
-	)
+type slogStdWriter struct {
+	logger *slog.Logger
+}
+
+func (w *slogStdWriter) Write(p []byte) (n int, err error) {
+	if w == nil || w.logger == nil {
+		return len(p), nil
+	}
+
+	// stdlib log includes a trailing newline, keep the message intact.
+	w.logger.InfoContext(context.Background(), string(p))
+
+	return len(p), nil
 }

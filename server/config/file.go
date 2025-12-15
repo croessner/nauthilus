@@ -47,11 +47,20 @@ import (
 // is being reloaded.
 var file atomic.Value // stores File
 
+// fileLoaded indicates whether a configuration has been loaded.
+//
+// We cannot store a nil interface value in atomic.Value, so we track the loaded state separately.
+var fileLoaded atomic.Bool
+
 // ConfigFilePath stores the path to the configuration file specified via the -config flag
 var ConfigFilePath string
 
 // GetFile returns the loaded FileSettings configuration instance.
 func GetFile() File {
+	if !fileLoaded.Load() {
+		panic("FileSettings not loaded")
+	}
+
 	v := file.Load()
 	if v == nil {
 		panic("FileSettings not loaded")
@@ -62,12 +71,19 @@ func GetFile() File {
 
 // IsFileLoaded reports whether a FileSettings configuration has been loaded.
 func IsFileLoaded() bool {
-	return file.Load() != nil
+	return fileLoaded.Load()
 }
 
 // SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
 func SetTestFile(testFile File) {
+	if testFile == nil {
+		fileLoaded.Store(false)
+
+		return
+	}
+
 	file.Store(testFile)
+	fileLoaded.Store(true)
 }
 
 // GetterHandler is an interface that provides methods to retrieve configuration and protocol information.
@@ -2651,6 +2667,7 @@ func NewFile() (newCfg File, err error) {
 	err = newCfg.HandleFile()
 
 	file.Store(newCfg)
+	fileLoaded.Store(true)
 
 	return newCfg, err
 }
@@ -2672,6 +2689,7 @@ func ReloadConfigFile() (err error) {
 
 	// Replace existing configuration
 	file.Store(newCfgReload)
+	fileLoaded.Store(true)
 
 	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Reloading configuration file finished")
 

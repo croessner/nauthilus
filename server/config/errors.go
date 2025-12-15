@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Christian Rößner
+// Copyright (C) 2025 Christian Rößner
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,21 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package config
 
-import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
+// ErrConfigNotLoaded is returned when a component requires the configuration
+// to be loaded but it is not available.
+type ErrConfigNotLoaded struct{}
 
-	"go.uber.org/fx"
-)
-
-// Module will become the fx wiring home for the server.
-func Module() fx.Option {
-	return fx.Options(
-		configfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
-	)
+func (ErrConfigNotLoaded) Error() string {
+	return "config not loaded"
 }

@@ -29,7 +29,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
+	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
@@ -91,9 +93,7 @@ type backendServersAlive struct {
 	mu      sync.Mutex
 }
 
-// contextStore is a custom structure in which instances of contextTuple are stored for various functionalities.
-// The structure contains the following fields: ldapLookup, ldapAuth, lua, action, backendServerMonitoring and server.
-// Each field is a pointer to an instance of contextTuple type. This structure allows for efficient context storage for different processes.
+// contextStore is a struct containing context tuples and injected dependencies for managing application processes.
 type contextStore struct {
 	ldapLookup              *contextTuple
 	ldapAuth                *contextTuple
@@ -101,6 +101,16 @@ type contextStore struct {
 	action                  *contextTuple
 	backendServerMonitoring *contextTuple
 	server                  *contextTuple
+
+	// cfgProvider provides the current config snapshot for newly migrated code paths.
+	cfgProvider configfx.Provider
+
+	// logger is the injected process logger for newly migrated code paths.
+	logger *slog.Logger
+
+	// redisClient is the injected Redis facade for newly migrated code paths.
+	redisClient redifx.Client
+
 	// signals holds server lifecycle channels via the interface (no globals)
 	signals core.ServerSignals
 }
@@ -718,7 +728,20 @@ func setupRedis(ctx context.Context) {
 
 // startHTTPServer starts the HTTP server by initializing the context, setting up channels, and launching the HTTP application.
 func startHTTPServer(ctx context.Context, store *contextStore) {
-	level.Info(log.Logger).Log(
+	logger := log.Logger
+	if store != nil && store.logger != nil {
+		logger = store.logger
+	}
+
+	cfg := config.GetFile()
+	if store != nil && store.cfgProvider != nil {
+		snap := store.cfgProvider.Current()
+		if snap.File != nil {
+			cfg = snap.File
+		}
+	}
+
+	level.Info(logger).Log(
 		definitions.LogKeyMsg, "Starting Nauthilus HTTP server",
 		"license", "GPL-3.0",
 		"author", "Christian Rößner",
@@ -730,7 +753,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 
 	store.server = newContextTuple(ctx)
 
-	enableHTTP3 := config.GetFile().GetServer().IsHTTP3Enabled()
+	enableHTTP3 := cfg.GetServer().IsHTTP3Enabled()
 	signals := core.NewDefaultServerSignals(enableHTTP3)
 
 	// Store signals on the contextStore for consumption by signal handlers
@@ -753,9 +776,9 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 	}
 
 	// Frontend handlers only if enabled (keeps logic parity)
-	if config.GetFile().GetServer().Frontend.Enabled {
+	if cfg.GetServer().Frontend.Enabled {
 		sessStore := core.DefaultBootstrap{}.InitSessionStore()
-		deps := &handlerdeps.Deps{Cfg: config.GetFile(), Logger: log.Logger, Svc: handlerdeps.NewDefaultServices()}
+		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger, Svc: handlerdeps.NewDefaultServices()}
 
 		if tags.HydraEnabled {
 			setupHydra = func(e *gin.Engine) {

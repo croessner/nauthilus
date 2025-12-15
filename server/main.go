@@ -18,9 +18,13 @@ package main
 import (
 	"context"
 	stdlog "log"
+	"log/slog"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
+	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/core"
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/monitoring"
@@ -33,6 +37,16 @@ var (
 	version   = "dev"
 	buildTime = ""
 )
+
+type bootstrapped struct{}
+
+func newBootstrapped() (*bootstrapped, error) {
+	if err := setupConfiguration(); err != nil {
+		return nil, err
+	}
+
+	return &bootstrapped{}, nil
+}
 
 func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option {
 	return fx.Provide(
@@ -55,21 +69,51 @@ func main() {
 	fApp := fx.New(
 		fx.NopLogger,
 		rootContextOption(ctx, cancel),
+		fx.Provide(newBootstrapped),
+		fx.Provide(func(_ *bootstrapped) (struct {
+			fx.Out
+			Provider configfx.Provider
+			Reloader configfx.Reloader
+		}, error) {
+			r, err := configfx.NewProvider()
+			if err != nil {
+				return struct {
+					fx.Out
+					Provider configfx.Provider
+					Reloader configfx.Reloader
+				}{}, err
+			}
+
+			return struct {
+				fx.Out
+				Provider configfx.Provider
+				Reloader configfx.Reloader
+			}{
+				Provider: r,
+				Reloader: r,
+			}, nil
+		}),
+		fx.Provide(func(_ *bootstrapped) *slog.Logger {
+			return logfx.NewLogger()
+		}),
+		fx.Provide(func(_ *bootstrapped) redifx.Client {
+			return redifx.NewClient()
+		}),
 		loopsfx.Module(),
 		fx.Invoke(func(
 			lc fx.Lifecycle,
 			ctx context.Context,
 			cancel context.CancelFunc,
+			_ *bootstrapped,
+			cfgProvider configfx.Provider,
+			logger *slog.Logger,
+			redisClient redifx.Client,
 			statsSvc *loopsfx.StatsService,
 			monitoringSvc *loopsfx.BackendMonitoringService,
 			connMgrSvc *loopsfx.ConnMgrService,
 		) {
 			lc.Append(fx.Hook{
 				OnStart: func(context.Context) error {
-					if err := setupConfiguration(); err != nil {
-						stdlog.Fatalln("Unable to setup the environment. Error:", err)
-					}
-
 					// Initialize OpenTelemetry tracing early (no-op if disabled)
 					monitoring.GetTelemetry().Start(ctx, version)
 
@@ -82,6 +126,9 @@ func main() {
 
 					enableBlockProfile()
 					store := newContextStore()
+					store.cfgProvider = cfgProvider
+					store.logger = logger
+					store.redisClient = redisClient
 
 					store.action = newContextTuple(ctx)
 
