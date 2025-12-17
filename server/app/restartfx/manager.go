@@ -72,16 +72,30 @@ func NewManager(in managerIn) *Manager {
 //   - returns an aggregated error (via errors.Join) if one or more components fail
 func (m *Manager) Restart(ctx context.Context) error {
 	return m.gate.WithLock(func() error {
+		if m.logger != nil {
+			m.logger.Info("in-process restart requested", slog.Int("restartables", len(m.restartables)))
+		}
+
 		var errs []error
 		for _, r := range m.restartables {
 			if r == nil {
 				continue
 			}
 
+			if m.logger != nil {
+				m.logger.Debug("restarting component", slog.String("component", r.Name()), slog.Int("order", r.Order()))
+			}
+
 			if err := r.Restart(ctx); err != nil {
 				wrapped := fmt.Errorf("restartable %s restart failed: %w", r.Name(), err)
 				errs = append(errs, wrapped)
 				m.logger.Error("restart failed", slog.String("component", r.Name()), slog.Any("error", err))
+
+				continue
+			}
+
+			if m.logger != nil {
+				m.logger.Debug("restart succeeded", slog.String("component", r.Name()))
 			}
 		}
 

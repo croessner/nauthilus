@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
@@ -303,6 +304,7 @@ func (r *httpRestart) Restart(ctx context.Context) error {
 			return opCtx.Err()
 		}
 	}
+
 	if r.store.signals != nil && r.store.signals.HTTP3Done() != nil {
 		select {
 		case <-r.store.signals.HTTP3Done():
@@ -351,9 +353,16 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	logger := getLogger(r.store)
 	level.Info(logger).Log(definitions.LogKeyMsg, "Restarting Nauthilus", "signal", "SIGUSR1")
+	start := time.Now()
+	step := "init"
+
+	defer func() {
+		level.Debug(logger).Log(definitions.LogKeyMsg, "Restart finished", "step", step, "elapsed", time.Since(start))
+	}()
 
 	var restartErr error
 	stoppedHTTP := false
+
 	defer func() {
 		if !stoppedHTTP {
 			return
@@ -366,13 +375,17 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// Stop HTTP first to avoid serving requests with a partially restarted dependency graph.
 	if r.store != nil && r.store.server != nil {
+		step = "stop_http"
 		stopContext(r.store.server)
 		stoppedHTTP = true
+
 		if r.store.signals != nil && r.store.signals.HTTPDone() != nil {
 			select {
 			case <-r.store.signals.HTTPDone():
 			case <-opCtx.Done():
+				step = "wait_http_done"
 				restartErr = opCtx.Err()
+
 				return restartErr
 			}
 		}
@@ -381,100 +394,118 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 			select {
 			case <-r.store.signals.HTTP3Done():
 			case <-opCtx.Done():
+				step = "wait_http3_done"
 				restartErr = opCtx.Err()
+
 				return restartErr
 			}
 		}
 	}
 
-	// Stop loops early to reduce load while dependencies restart.
-	if r.statsSvc != nil {
-		if err := r.statsSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop stats service", definitions.LogKeyError, err)
+	/*
+		// Stop loops early to reduce load while dependencies restart.
+		if r.statsSvc != nil {
+			step = "stop_stats"
+			if err := r.statsSvc.Stop(opCtx); err != nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop stats service", definitions.LogKeyError, err)
+			}
 		}
-	}
 
-	if r.monitoringSvc != nil {
-		if err := r.monitoringSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop backend monitoring service", definitions.LogKeyError, err)
+		if r.monitoringSvc != nil {
+			step = "stop_backend_monitoring"
+			if err := r.monitoringSvc.Stop(opCtx); err != nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop backend monitoring service", definitions.LogKeyError, err)
+			}
 		}
-	}
 
-	if r.connMgrSvc != nil {
-		if err := r.connMgrSvc.Stop(opCtx); err != nil {
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop connection manager service", definitions.LogKeyError, err)
+		if r.connMgrSvc != nil {
+			step = "stop_connmgr"
+			if err := r.connMgrSvc.Stop(opCtx); err != nil {
+				level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to stop connection manager service", definitions.LogKeyError, err)
+			}
 		}
-	}
 
-	reloader := &reloadOrchestrator{store: r.store, actionWorkers: r.actionWorkers}
+		reloader := &reloadOrchestrator{store: r.store, actionWorkers: r.actionWorkers}
 
-	// Stop workers (LDAP/Lua) and action workers before rebuilding Redis.
-	reloader.stopWorkersForConfig(opCtx, config.GetFile())
+		// Stop workers (LDAP/Lua) and action workers before rebuilding Redis.
+		step = "stop_workers"
+		reloader.stopWorkersForConfig(opCtx, config.GetFile())
 
-	if r.store != nil && r.store.action != nil {
-		stopContext(r.store.action)
-		for i := 0; i < len(r.actionWorkers); i++ {
-			select {
-			case <-r.actionWorkers[i].DoneChan:
-			case <-opCtx.Done():
-				restartErr = opCtx.Err()
+		if r.store != nil && r.store.action != nil {
+			step = "stop_action_workers"
+			stopContext(r.store.action)
+			for i := 0; i < len(r.actionWorkers); i++ {
+				select {
+				case <-r.actionWorkers[i].DoneChan:
+				case <-opCtx.Done():
+					step = "wait_action_workers_done"
+					restartErr = opCtx.Err()
+					return restartErr
+				}
+			}
+		}
+
+		step = "rebuild_redis_client"
+		rediscli.RebuildClient()
+
+		redisReadyCtx, redisReadyCancel := context.WithTimeout(opCtx, definitions.RestartRedisReadyTimeout)
+		defer redisReadyCancel()
+
+		step = "setup_redis"
+		if err := setupRedis(redisReadyCtx, r.ctx); err != nil {
+			// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
+			restartErr = err
+		}
+
+		// Start workers (LDAP/Lua) and action workers after Redis is ready.
+		step = "start_workers"
+		reloader.startWorkersForConfig(r.ctx, config.GetFile())
+
+		if r.store != nil && r.store.action != nil {
+			step = "start_action_workers"
+			r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
+			for i := 0; i < len(r.actionWorkers); i++ {
+				go r.actionWorkers[i].Work(r.store.action.ctx)
+			}
+		}
+
+		if r.connMgrSvc != nil {
+			step = "start_connmgr"
+			if err := r.connMgrSvc.Start(r.ctx); err != nil {
+				level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start connection manager service", definitions.LogKeyError, err)
+
+				restartErr = err
+
 				return restartErr
 			}
 		}
-	}
 
-	rediscli.RebuildClient()
+		if r.monitoringSvc != nil {
+			step = "start_backend_monitoring"
+			if err := r.monitoringSvc.Start(r.ctx); err != nil {
+				level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start backend monitoring service", definitions.LogKeyError, err)
 
-	redisReadyCtx, redisReadyCancel := context.WithTimeout(opCtx, definitions.RestartRedisReadyTimeout)
-	defer redisReadyCancel()
+				restartErr = err
 
-	if err := setupRedis(redisReadyCtx, r.ctx); err != nil {
-		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
-		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
-		restartErr = err
-	}
-
-	// Start workers (LDAP/Lua) and action workers after Redis is ready.
-	reloader.startWorkersForConfig(r.ctx, config.GetFile())
-
-	if r.store != nil && r.store.action != nil {
-		r.store.action.ctx, r.store.action.cancel = context.WithCancel(r.ctx)
-		for i := 0; i < len(r.actionWorkers); i++ {
-			go r.actionWorkers[i].Work(r.store.action.ctx)
+				return restartErr
+			}
 		}
-	}
 
-	if r.connMgrSvc != nil {
-		if err := r.connMgrSvc.Start(r.ctx); err != nil {
-			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start connection manager service", definitions.LogKeyError, err)
+		if r.statsSvc != nil {
+			step = "start_stats"
+			if err := r.statsSvc.Start(r.ctx); err != nil {
+				level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start stats service", definitions.LogKeyError, err)
 
-			restartErr = err
+				restartErr = err
 
-			return restartErr
+				return restartErr
+			}
 		}
-	}
-
-	if r.monitoringSvc != nil {
-		if err := r.monitoringSvc.Start(r.ctx); err != nil {
-			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start backend monitoring service", definitions.LogKeyError, err)
-
-			restartErr = err
-
-			return restartErr
-		}
-	}
-
-	if r.statsSvc != nil {
-		if err := r.statsSvc.Start(r.ctx); err != nil {
-			level.Error(logger).Log(definitions.LogKeyMsg, "Unable to start stats service", definitions.LogKeyError, err)
-
-			restartErr = err
-
-			return restartErr
-		}
-	}
+	*/
 
 	// If HTTP was stopped, it will be started in the deferred cleanup above.
+	step = "done"
 	return restartErr
 }
 
