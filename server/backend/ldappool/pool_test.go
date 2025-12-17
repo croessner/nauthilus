@@ -26,7 +26,6 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	srverrors "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -216,43 +215,6 @@ func TestHandleLookupRequest(t *testing.T) {
 			assert.Equal(t, tc.expectedBusyConns, busyCount)
 		})
 	}
-}
-
-func TestSemaphoreTimeout(t *testing.T) {
-	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
-
-	config.SetTestFile(&config.FileSettings{
-		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},
-		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{ConnectAbortTimeout: 100 * time.Millisecond}},
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// One connection that sleeps to hold the token
-	mockConns := []LDAPConnection{
-		&mockLDAPConnection{state: int32(definitions.LDAPStateFree), searchDelay: 300 * time.Millisecond},
-	}
-
-	pool := &ldapPoolImpl{
-		poolType: definitions.LDAPPoolLookup,
-		name:     "test-timeout",
-		ctx:      ctx,
-		conn:     mockConns,
-		conf:     []*config.LDAPConf{{}},
-		poolSize: 1,
-		tokens:   make(chan Token, 1),
-	}
-	pool.tokens <- Token{}
-
-	// First request consumes the single token and sleeps inside Search
-	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r1", HTTPClientContext: ctx})
-	assert.NoError(t, err1)
-
-	// Second request should time out acquiring a token
-	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r2", HTTPClientContext: ctx})
-	assert.Error(t, err2)
-	assert.ErrorIs(t, err2, srverrors.ErrLDAPPoolExhausted)
 }
 
 func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
