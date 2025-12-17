@@ -43,12 +43,22 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 	}
 
 	configErrors := make(map[definitions.Backend]error)
+	// Track temporary failures (e.g., pool exhaustion) to avoid mapping
+	// technical issues to "user not found" later in the pipeline.
+	var tempfailErr error
 
 	var finalRes *PassDBResult
 
 	for i, passDB := range passDBs {
 		res, err := passDB.fn(auth)
 		if err != nil {
+			// Prefer treating pool exhaustion as a tempfail over negative results
+			// from other backends (e.g., cache). We remember it and may return it
+			// at the end if no definitive success/user-found result exists.
+			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) {
+				tempfailErr = err
+			}
+
 			if e := HandleBackendErrors(i, passDBs, passDB, err, auth, configErrors); e != nil {
 				if stderrors.Is(e, errors.ErrAllBackendConfigError) {
 					return nil, e
@@ -102,7 +112,18 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 	}
 
 	if finalRes == nil {
+		if tempfailErr != nil {
+			return nil, tempfailErr
+		}
+
 		return nil, errors.ErrNoPassDBResult
+	}
+
+	// If no backend authenticated or found the user, but we encountered a
+	// pool exhaustion earlier, surface it as a temporary failure instead of
+	// silently degrading to "not found".
+	if !finalRes.Authenticated && !finalRes.UserFound && tempfailErr != nil {
+		return nil, tempfailErr
 	}
 
 	return finalRes, nil
