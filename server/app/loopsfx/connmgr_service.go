@@ -97,7 +97,10 @@ func (s *ConnMgrService) Start(parent context.Context) error {
 	return nil
 }
 
-func (s *ConnMgrService) Stop(_ context.Context) error {
+// Stop terminates the connection monitoring service.
+//
+// It attempts to stop within the provided context deadline.
+func (s *ConnMgrService) Stop(stopCtx context.Context) error {
 	s.mu.Lock()
 	if !s.running {
 		s.mu.Unlock()
@@ -116,7 +119,16 @@ func (s *ConnMgrService) Stop(_ context.Context) error {
 		cancel()
 	}
 
-	s.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
 
-	return nil
+	select {
+	case <-done:
+		return nil
+	case <-stopCtx.Done():
+		return stopCtx.Err()
+	}
 }

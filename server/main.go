@@ -18,16 +18,14 @@ package main
 import (
 	"context"
 	stdlog "log"
-	"log/slog"
-	"time"
 
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
-	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/app/opsfx"
+	"github.com/croessner/nauthilus/server/app/reloadfx"
+	"github.com/croessner/nauthilus/server/app/restartfx"
+	"github.com/croessner/nauthilus/server/app/signalsfx"
 	_ "github.com/croessner/nauthilus/server/core/auth"
-	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/svcctx"
 
 	"go.uber.org/fx"
@@ -40,6 +38,8 @@ var (
 
 type bootstrapped struct{}
 
+// newBootstrapped runs the legacy configuration bootstrap and returns a token
+// that enforces ordering for fx providers that depend on configuration being loaded.
 func newBootstrapped() (*bootstrapped, error) {
 	if err := setupConfiguration(); err != nil {
 		return nil, err
@@ -48,6 +48,10 @@ func newBootstrapped() (*bootstrapped, error) {
 	return &bootstrapped{}, nil
 }
 
+// rootContextOption provides the root context and cancellation function as interface types.
+//
+// This avoids the pitfall of fx.Supply(ctx) registering the concrete implementation type
+// instead of the context.Context interface.
 func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option {
 	return fx.Provide(
 		func() context.Context {
@@ -59,126 +63,30 @@ func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option
 	)
 }
 
-// main is the entry point of the application. It initializes the environment, workers, monitoring, and starts the HTTP server.
+// main is the entry point of the application.
 func main() {
 	parseFlagsAndPrintVersion()
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
-	stopTimeout := 10 * time.Second
+	stopTimeout := definitions.FxStopTimeout
 
 	fApp := fx.New(
 		fx.NopLogger,
 		rootContextOption(ctx, cancel),
 		fx.Provide(newBootstrapped),
-		fx.Provide(func(_ *bootstrapped) (struct {
-			fx.Out
-			Provider configfx.Provider
-			Reloader configfx.Reloader
-		}, error) {
-			r, err := configfx.NewProvider()
-			if err != nil {
-				return struct {
-					fx.Out
-					Provider configfx.Provider
-					Reloader configfx.Reloader
-				}{}, err
-			}
-
-			return struct {
-				fx.Out
-				Provider configfx.Provider
-				Reloader configfx.Reloader
-			}{
-				Provider: r,
-				Reloader: r,
-			}, nil
-		}),
-		fx.Provide(func(_ *bootstrapped) *slog.Logger {
-			return logfx.NewLogger()
-		}),
-		fx.Provide(func(_ *bootstrapped) redifx.Client {
-			return redifx.NewClient()
-		}),
+		fx.Provide(newConfigDeps),
+		fx.Provide(newLogger),
+		fx.Provide(newRedisClient),
 		loopsfx.Module(),
-		fx.Invoke(func(
-			lc fx.Lifecycle,
-			ctx context.Context,
-			cancel context.CancelFunc,
-			_ *bootstrapped,
-			cfgProvider configfx.Provider,
-			logger *slog.Logger,
-			redisClient redifx.Client,
-			statsSvc *loopsfx.StatsService,
-			monitoringSvc *loopsfx.BackendMonitoringService,
-			connMgrSvc *loopsfx.ConnMgrService,
-		) {
-			lc.Append(fx.Hook{
-				OnStart: func(context.Context) error {
-					// Initialize OpenTelemetry tracing early (no-op if disabled)
-					monitoring.GetTelemetry().Start(ctx, version)
-
-					initializeInstanceInfo()
-					debugLoadableConfig()
-
-					if err := setupLuaScripts(); err != nil {
-						stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
-					}
-
-					enableBlockProfile()
-					store := newContextStore()
-					store.cfgProvider = cfgProvider
-					store.logger = logger
-					store.redisClient = redisClient
-
-					store.action = newContextTuple(ctx)
-
-					actionWorkers := initializeActionWorkers()
-
-					inititalizeBruteForceTolerate(ctx)
-					initializeHTTPClients()
-					core.InitPassDBResultPool()
-					setupWorkers(ctx, store, actionWorkers)
-					handleSignals(ctx, cancel, store, monitoringSvc, actionWorkers)
-					setupRedis(ctx)
-
-					runLuaInitScript(ctx)
-					core.LoadStatsFromRedis(ctx)
-					startHTTPServer(ctx, store)
-
-					if err := connMgrSvc.Start(ctx); err != nil {
-						return err
-					}
-
-					if err := monitoringSvc.Start(ctx); err != nil {
-						return err
-					}
-
-					if err := statsSvc.Start(ctx); err != nil {
-						return err
-					}
-
-					return nil
-				},
-				OnStop: func(stopCtx context.Context) error {
-					if err := statsSvc.Stop(stopCtx); err != nil {
-						stdlog.Printf("Unable to stop stats service. Error: %v", err)
-					}
-
-					if err := monitoringSvc.Stop(stopCtx); err != nil {
-						stdlog.Printf("Unable to stop backend monitoring service. Error: %v", err)
-					}
-
-					if err := connMgrSvc.Stop(stopCtx); err != nil {
-						stdlog.Printf("Unable to stop connection manager service. Error: %v", err)
-					}
-
-					cancel()
-					monitoring.GetTelemetry().Shutdown(stopCtx)
-
-					return nil
-				},
-			})
-		}),
+		opsfx.Module(),
+		reloadfx.Module(),
+		restartfx.Module(),
+		fx.Provide(newActionWorkers),
+		fx.Provide(newContextStoreForRuntime),
+		fx.Provide(newReloadOrchestrator),
+		fx.Provide(newRestartOrchestrator),
+		fx.Invoke(registerRuntimeLifecycle),
+		signalsfx.Module(),
 	)
 
 	if err := fApp.Start(context.Background()); err != nil {

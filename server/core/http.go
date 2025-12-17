@@ -378,10 +378,12 @@ type DefaultServerSignals struct {
 // NewDefaultServerSignals creates a ServerSignals implementation. If enableHTTP3
 // is true, the HTTP/3 done channel will be created as well.
 func NewDefaultServerSignals(enableHTTP3 bool) *DefaultServerSignals {
-	s := &DefaultServerSignals{httpDone: make(chan Done)}
+	// Buffered channels avoid shutdown goroutines blocking indefinitely if no receiver
+	// is currently waiting for the signal (e.g. restart timeouts or reordered stop hooks).
+	s := &DefaultServerSignals{httpDone: make(chan Done, 1)}
 
 	if enableHTTP3 {
-		s.http3Done = make(chan Done)
+		s.http3Done = make(chan Done, 1)
 	}
 
 	return s
@@ -410,13 +412,18 @@ func (DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certF
 	go func() {
 		<-ctx.Done()
 
-		waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
+		// Do not derive the shutdown context from ctx: ctx is already canceled here and would
+		// make the shutdown deadline immediately expire, preventing the listener from closing.
+		waitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		_ = srv.Shutdown(waitCtx)
 
 		if signals != nil && signals.HTTPDone() != nil {
-			signals.HTTPDone() <- Done{}
+			select {
+			case signals.HTTPDone() <- Done{}:
+			default:
+			}
 		}
 	}()
 
@@ -437,7 +444,10 @@ func (DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certF
 			_ = h3.Close()
 
 			if signals != nil && signals.HTTP3Done() != nil {
-				signals.HTTP3Done() <- Done{}
+				select {
+				case signals.HTTP3Done() <- Done{}:
+				default:
+				}
 			}
 		}()
 

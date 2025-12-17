@@ -22,6 +22,43 @@ import "time"
 // It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.
 const SingleflightWaitCap = 800 * time.Millisecond
 
+// FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
+const FxStopTimeout = 10 * time.Second
+
+// FxShutdownWaitTimeout defines the best-effort budget for shutdown waits in `registerRuntimeLifecycle`.
+//
+// It is intentionally shorter than FxStopTimeout to avoid consuming the full shutdown budget.
+const FxShutdownWaitTimeout = 3 * time.Second
+
+// FxShutdownStatsFlushTimeout defines the best-effort time budget for `core.SaveStatsToRedis(...)` during shutdown.
+const FxShutdownStatsFlushTimeout = 2 * time.Second
+
+// FxShutdownTelemetryTimeout defines the best-effort time budget for telemetry shutdown.
+const FxShutdownTelemetryTimeout = 2 * time.Second
+
+// ReloadOperationTimeout defines the maximum time budget for one reload operation.
+const ReloadOperationTimeout = 30 * time.Second
+
+// RestartOperationTimeout defines the maximum time budget for one restart operation.
+const RestartOperationTimeout = 30 * time.Second
+
+// RestartRedisReadyTimeout defines the best-effort time budget for Redis readiness during an in-process restart.
+//
+// It is intentionally shorter than RestartOperationTimeout to avoid keeping HTTP down for the full restart budget
+// when Redis is temporarily unavailable.
+const RestartRedisReadyTimeout = 10 * time.Second
+
+// BackendMonitoringReloadTimeout defines the maximum time budget for restarting backend monitoring during reload.
+//
+// It is intentionally short because backend monitoring is best-effort and should not block the overall reload.
+const BackendMonitoringReloadTimeout = 2 * time.Second
+
+// LuaLDAPReplyTimeout caps the time a Lua-initiated LDAP call may wait for an LDAP reply.
+//
+// This prevents HTTP requests from hanging indefinitely when Lua filters perform LDAP calls
+// and the underlying LDAP workers are unavailable or stuck.
+const LuaLDAPReplyTimeout = 5 * time.Second
+
 // StatusClientClosedRequest is a non-standard HTTP status used by some proxies (e.g. Nginx) to indicate
 // the client closed the connection before the server could send a response.
 // Useful for logging/metrics when ctx.Request.Context() is canceled.

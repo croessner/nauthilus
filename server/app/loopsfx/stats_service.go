@@ -106,32 +106,9 @@ func (s *StatsService) Start(parent context.Context) error {
 	return nil
 }
 
-func (s *StatsService) Stop(_ context.Context) error {
-	s.mu.Lock()
-	if !s.running {
-		s.mu.Unlock()
-
-		return nil
-	}
-
-	cancel := s.cancel
-	ticker := s.ticker
-	s.running = false
-	s.cancel = nil
-	s.ctx = nil
-	s.ticker = nil
-
-	s.mu.Unlock()
-
-	if ticker != nil {
-		ticker.Stop()
-	}
-
-	if cancel != nil {
-		cancel()
-	}
-
-	s.wg.Wait()
-
-	return nil
+// Stop terminates the stats service.
+//
+// It attempts to stop within the provided context deadline.
+func (s *StatsService) Stop(stopCtx context.Context) error {
+	return stopLoop(&s.mu, &s.running, &s.cancel, &s.ticker, &s.ctx, &s.wg, stopCtx)
 }

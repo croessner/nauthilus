@@ -107,7 +107,7 @@ function nauthilus_call_feature(request)
     local logs = {
         caller = N .. ".lua",
         level = "info",
-        message = "Phase1 metrics updated",
+        message = "Mmetrics updated",
         username = username,
         client_ip = client_ip,
         authenticated = authenticated,

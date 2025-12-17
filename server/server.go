@@ -431,7 +431,7 @@ func stopAndRestartActionWorker(actionWorkers []*action.Worker, act *contextTupl
 func stopAndRestartRedis(ctx context.Context) {
 	rediscli.GetClient().Close()
 
-	setupRedis(ctx)
+	_ = setupRedis(ctx, ctx)
 }
 
 // waitForActionWorkers waits for the completion of all action workers.
@@ -462,11 +462,20 @@ func startLDAPWorkers(store *contextStore) {
 			continue
 		}
 
-		backend.GetChannel().GetLdapChannel().AddChannel(ldapBackend.GetName())
-		backend.LDAPMainWorker(store.ldapLookup.ctx, ldapBackend.GetName())
+		poolName := ldapBackend.GetName()
+		if poolName == "" {
+			poolName = definitions.DefaultBackendName
+		}
 
-		if !config.GetFile().LDAPHavePoolOnly(ldapBackend.GetName()) {
-			backend.LDAPAuthWorker(store.ldapAuth.ctx, ldapBackend.GetName())
+		// The default pool is already present in the channel registry.
+		if poolName != definitions.DefaultBackendName {
+			backend.GetChannel().GetLdapChannel().AddChannel(poolName)
+		}
+
+		backend.LDAPMainWorker(store.ldapLookup.ctx, poolName)
+
+		if !config.GetFile().LDAPHavePoolOnly(poolName) {
+			backend.LDAPAuthWorker(store.ldapAuth.ctx, poolName)
 		}
 	}
 }
@@ -478,8 +487,17 @@ func startLuaWorkers(store *contextStore) {
 			continue
 		}
 
-		backend.GetChannel().GetLuaChannel().AddChannel(luaBackend.GetName())
-		backend.LuaMainWorker(store.lua.ctx, luaBackend.GetName())
+		backendName := luaBackend.GetName()
+		if backendName == "" {
+			backendName = definitions.DefaultBackendName
+		}
+
+		// The default backend is already present in the channel registry.
+		if backendName != definitions.DefaultBackendName {
+			backend.GetChannel().GetLuaChannel().AddChannel(backendName)
+		}
+
+		backend.LuaMainWorker(store.lua.ctx, backendName)
 	}
 }
 
@@ -690,8 +708,11 @@ func checkRedisConnections(ctx context.Context) bool {
 	return true
 }
 
-// setupRedis sets up the Redis client and its replicas. It ensures connections are valid with a retry mechanism on failure.
-func setupRedis(ctx context.Context) {
+// setupRedis sets up the Redis client and its replicas.
+//
+// readinessCtx is used for the connectivity check loop.
+// runCtx is used for background goroutines (metrics, scripts) and should be the process/root context.
+func setupRedis(readinessCtx context.Context, runCtx context.Context) error {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
@@ -700,30 +721,46 @@ func setupRedis(ctx context.Context) {
 	retryInterval := 5 * time.Second
 
 	for retries := 0; retries < maxRetries; retries++ {
-		if checkRedisConnections(ctx) {
+		if readinessCtx != nil {
+			if err := readinessCtx.Err(); err != nil {
+				return err
+			}
+		}
+
+		if checkRedisConnections(readinessCtx) {
 			go core.UpdateRedisPoolStats()
-			go rediscli.UpdateRedisServerMetrics(ctx)
+			go rediscli.UpdateRedisServerMetrics(runCtx)
 
 			// Upload all Lua scripts to Redis at startup
-			go func() {
-				err := rediscli.UploadAllScripts(ctx)
+			go func(uploadCtx context.Context) {
+				err := rediscli.UploadAllScripts(uploadCtx)
 				if err != nil {
 					level.Warn(log.Logger).Log(
 						definitions.LogKeyMsg, "Failed to upload all Redis Lua scripts at startup",
 						"error", err,
 					)
 				}
-			}()
+			}(runCtx)
 
-			return
+			return nil
 		}
 
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
 
-		time.Sleep(retryInterval)
+		if readinessCtx == nil {
+			time.Sleep(retryInterval)
+
+			continue
+		}
+
+		select {
+		case <-time.After(retryInterval):
+		case <-readinessCtx.Done():
+			return readinessCtx.Err()
+		}
 	}
 
-	panic("Failed to establish Redis connections after max retries")
+	return fmt.Errorf("failed to establish Redis connections after max retries")
 }
 
 // startHTTPServer starts the HTTP server by initializing the context, setting up channels, and launching the HTTP application.

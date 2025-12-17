@@ -30,24 +30,38 @@ import (
 
 var (
 	// RedisClients provides an interface to interact with Redis, supporting methods for initialization and handle management.
-	client     Client
-	initClient sync.Once
+	client   Client
+	clientMu sync.Mutex
 )
 
 func GetClient() Client {
-	// If a client (e.g., a test client) has already been set, return it directly
-	// to avoid initializing a real client that depends on global configuration.
-	if client != nil {
-		return client
+	clientMu.Lock()
+	defer clientMu.Unlock()
+
+	if client == nil {
+		client = NewClient()
 	}
 
-	initClient.Do(func() {
-		if client == nil {
-			client = NewClient()
-		}
-	})
-
 	return client
+}
+
+// RebuildClient closes the currently configured global client (if any) and
+// replaces it with a freshly constructed client.
+//
+// This is intended for in-process restart/reload operations where Redis
+// configuration may have changed. Callers should treat this as best-effort and
+// handle downstream readiness checks separately.
+func RebuildClient() {
+	clientMu.Lock()
+	old := client
+	client = nil
+	clientMu.Unlock()
+
+	if old != nil {
+		old.Close()
+	}
+
+	_ = GetClient()
 }
 
 // Client defines an interface for interacting with a Redis client with methods for initialization and handle retrieval.
@@ -286,7 +300,9 @@ var _ Client = (*testClient)(nil)
 
 // NewTestClient initializes and returns a new testClient instance, implementing the Client interface using the provided Redis client.
 func NewTestClient(db *redis.Client) Client {
+	clientMu.Lock()
 	client = &testClient{client: db}
+	clientMu.Unlock()
 
 	return client
 }

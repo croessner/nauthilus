@@ -134,7 +134,9 @@ func (aw *Worker) Work(ctx context.Context) {
 		return
 	}
 
-	aw.DoneChan = make(chan Done)
+	// DoneChan is buffered to ensure shutdown does not deadlock if a receiver
+	// waits later than the worker's cancellation path.
+	aw.DoneChan = make(chan Done, 1)
 
 	defer close(aw.DoneChan)
 
@@ -143,7 +145,10 @@ func (aw *Worker) Work(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			aw.DoneChan <- Done{}
+			select {
+			case aw.DoneChan <- Done{}:
+			default:
+			}
 
 			return
 		case aw.luaActionRequest = <-RequestChan:

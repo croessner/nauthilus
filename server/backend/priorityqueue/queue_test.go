@@ -137,3 +137,36 @@ func TestLuaQueueRouting(t *testing.T) {
 		t.Fatal("timeout waiting for custom lua pop")
 	}
 }
+
+func TestLDAPQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLDAPRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
+	}
+}
+
+func TestLDAPAuthQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLDAPAuthRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
+	}
+}
+
+func TestLuaQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
+	q := NewLuaRequestQueue()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := q.PopWithContext(ctx, "default"); got != nil {
+		t.Fatalf("expected nil request, got %#v", got)
+	}
+}

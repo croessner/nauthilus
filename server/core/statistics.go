@@ -115,6 +115,14 @@ func LoadStatsFromRedis(ctx context.Context) {
 
 // SaveStatsToRedis saves the prometheus statistics to a Redis server.
 func SaveStatsToRedis(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+
+	if err := ctx.Err(); err != nil {
+		return
+	}
+
 	util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{

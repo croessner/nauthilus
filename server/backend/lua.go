@@ -152,11 +152,15 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 				case <-ctx.Done():
 					return
 				default:
-					// Get the next request from the priority queue
-					luaRequest := priorityqueue.LuaQueue.Pop(backendName)
-
-					handleLuaRequest(ctx, luaRequest, compiledScript, vmPool)
 				}
+
+				// Get the next request from the priority queue.
+				luaRequest := priorityqueue.LuaQueue.PopWithContext(ctx, backendName)
+				if luaRequest == nil {
+					return
+				}
+
+				handleLuaRequest(ctx, luaRequest, compiledScript, vmPool)
 			}
 		}()
 	}
