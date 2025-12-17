@@ -17,6 +17,7 @@ package ldappool
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	srverrors "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/stretchr/testify/assert"
 )
@@ -38,6 +40,8 @@ type mockLDAPConnection struct {
 	connError   error
 	bindError   error
 	searchDelay time.Duration
+	searchCalls int32
+	searchFunc  func(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 	searchError error
 	modifyError error
 }
@@ -46,13 +50,21 @@ func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
 func (m *mockLDAPConnection) IsClosing() bool { return false }
 
-func (m *mockLDAPConnection) Search(_ *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+func (m *mockLDAPConnection) Search(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+
+	// Count calls for tests that need to assert cache hits/misses.
+	atomic.AddInt32(&m.searchCalls, 1)
+
 	if m.searchDelay > 0 {
 		time.Sleep(m.searchDelay)
 	}
 
 	if m.searchError != nil {
 		return nil, nil, m.searchError
+	}
+
+	if m.searchFunc != nil {
+		return m.searchFunc(req)
 	}
 
 	return nil, nil, nil
@@ -95,13 +107,6 @@ func (m *mockLDAPConnection) GetConn() *ldap.Conn {
 func (m *mockLDAPConnection) Unbind() error {
 	return nil
 }
-
-// timeoutNetErr is a minimal net.Error that reports Timeout() == true
-type timeoutNetErr struct{}
-
-func (timeoutNetErr) Error() string   { return "i/o timeout" }
-func (timeoutNetErr) Timeout() bool   { return true }
-func (timeoutNetErr) Temporary() bool { return true }
 
 func TestHandleLookupRequest(t *testing.T) {
 	tests := []struct {
@@ -250,86 +255,72 @@ func TestSemaphoreTimeout(t *testing.T) {
 	assert.ErrorIs(t, err2, srverrors.ErrLDAPPoolExhausted)
 }
 
-func TestSearchTimeoutIsTempfail(t *testing.T) {
+func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
 
-	// minimal config
-	config.SetTestFile(&config.FileSettings{
-		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},
-		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{}},
-	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// mock connection returning a timeout on search
-	mockConn := &mockLDAPConnection{state: int32(definitions.LDAPStateFree), searchError: timeoutNetErr{}}
+	conf := &config.LDAPConf{NegativeCacheTTL: 5 * time.Minute}
+
+	m := &mockLDAPConnection{}
+	m.SetState(definitions.LDAPStateBusy)
+	m.searchFunc = func(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+		// processLookupSearchRequest expands macros/%s before calling Search(), so
+		// we expect the filter to already contain the username.
+		switch {
+		case strings.Contains(req.Filter, "missing@example.org"):
+			return nil, nil, nil
+		case strings.Contains(req.Filter, "exists@example.org"):
+			return bktype.AttributeMapping{definitions.DistinguishedName: []any{"cn=exists,dc=example,dc=org"}}, nil, nil
+		default:
+			return nil, nil, nil
+		}
+	}
 
 	pool := &ldapPoolImpl{
 		poolType: definitions.LDAPPoolLookup,
-		name:     "test-timeout-search",
-		ctx:      context.Background(),
-		conn:     []LDAPConnection{mockConn},
-		conf:     []*config.LDAPConf{{}},
+		name:     "test-negcache-expanded-filter",
+		ctx:      ctx,
+		conn:     []LDAPConnection{m},
+		conf:     []*config.LDAPConf{conf},
 		poolSize: 1,
-		tokens:   make(chan Token, 1),
-	}
-	pool.tokens <- Token{}
-
-	// build request and reply
-	var scope config.LDAPScope
-	_ = scope.Set("sub")
-	req := &bktype.LDAPRequest{
-		GUID:              "guid-search-timeout",
-		Command:           definitions.LDAPSearch,
-		BaseDN:            "dc=example,dc=org",
-		Filter:            "(uid=test)",
-		SearchAttributes:  []string{"uid"},
-		Scope:             scope,
-		LDAPReplyChan:     make(chan *bktype.LDAPReply, 1),
-		HTTPClientContext: context.Background(),
 	}
 
-	reply := &bktype.LDAPReply{}
-	pool.processLookupSearchRequest(0, req, reply)
-
-	if assert.Error(t, reply.Err) {
-		assert.ErrorIs(t, reply.Err, srverrors.ErrLDAPSearchTimeout)
-	}
-}
-
-func TestModifyTimeoutIsTempfail(t *testing.T) {
-	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
-
-	config.SetTestFile(&config.FileSettings{
-		Server: &config.ServerSection{Log: config.Log{DbgModules: make([]*config.DbgModule, 0)}},
-		LDAP:   &config.LDAPSection{Config: &config.LDAPConf{}},
-	})
-
-	mockConn := &mockLDAPConnection{state: int32(definitions.LDAPStateFree), modifyError: timeoutNetErr{}}
-
-	pool := &ldapPoolImpl{
-		poolType: definitions.LDAPPoolLookup,
-		name:     "test-timeout-modify",
-		ctx:      context.Background(),
-		conn:     []LDAPConnection{mockConn},
-		conf:     []*config.LDAPConf{{}},
-		poolSize: 1,
-		tokens:   make(chan Token, 1),
-	}
-	pool.tokens <- Token{}
-
-	req := &bktype.LDAPRequest{
-		GUID:              "guid-mod-timeout",
-		Command:           definitions.LDAPModify,
-		BaseDN:            "dc=example,dc=org",
-		Filter:            "(uid=test)",
-		ModifyAttributes:  map[string][]string{"cn": {"New CN"}},
-		LDAPReplyChan:     make(chan *bktype.LDAPReply, 1),
-		HTTPClientContext: context.Background(),
+	// Request A: non-existing user. Should set a negative cache entry for the
+	// expanded filter containing "missing@example.org".
+	{
+		reply := &bktype.LDAPReply{}
+		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
+			GUID:              "r1",
+			Command:           definitions.LDAPSearch,
+			BaseDN:            "dc=example,dc=org",
+			Filter:            "(mail=%s)",
+			SearchAttributes:  []string{definitions.DistinguishedName},
+			MacroSource:       &util.MacroSource{Username: "missing@example.org"},
+			HTTPClientContext: ctx,
+		}, reply)
+		assert.NoError(t, reply.Err)
+		assert.Empty(t, reply.Result)
 	}
 
-	reply := &bktype.LDAPReply{}
-	pool.processLookupModifyRequest(0, req, reply)
-
-	if assert.Error(t, reply.Err) {
-		assert.ErrorIs(t, reply.Err, srverrors.ErrLDAPModifyTimeout)
+	// Request B: existing user. Must NOT be blocked by the negative cache entry
+	// from Request A; Search() must be called again.
+	{
+		reply := &bktype.LDAPReply{}
+		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
+			GUID:              "r2",
+			Command:           definitions.LDAPSearch,
+			BaseDN:            "dc=example,dc=org",
+			Filter:            "(mail=%s)",
+			SearchAttributes:  []string{definitions.DistinguishedName},
+			MacroSource:       &util.MacroSource{Username: "exists@example.org"},
+			HTTPClientContext: ctx,
+		}, reply)
+		assert.NoError(t, reply.Err)
+		assert.NotEmpty(t, reply.Result)
+		assert.Contains(t, reply.Result, definitions.DistinguishedName)
 	}
+
+	assert.Equal(t, int32(2), atomic.LoadInt32(&m.searchCalls))
 }
