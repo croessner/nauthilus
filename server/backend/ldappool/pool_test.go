@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	srverrors "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/go-ldap/ldap/v3"
@@ -226,4 +227,5 @@ func TestSemaphoreTimeout(t *testing.T) {
 	// Second request should time out acquiring a token
 	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r2", HTTPClientContext: ctx})
 	assert.Error(t, err2)
+	assert.ErrorIs(t, err2, srverrors.ErrLDAPPoolExhausted)
 }
