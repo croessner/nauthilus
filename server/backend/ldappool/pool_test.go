@@ -17,6 +17,7 @@ package ldappool
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	srverrors "github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/stats"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/stretchr/testify/assert"
 )
@@ -38,20 +40,43 @@ type mockLDAPConnection struct {
 	connError   error
 	bindError   error
 	searchDelay time.Duration
+	searchCalls int32
+	searchFunc  func(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
+	searchError error
+	modifyError error
 }
 
 func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
 func (m *mockLDAPConnection) IsClosing() bool { return false }
 
-func (m *mockLDAPConnection) Search(_ *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+func (m *mockLDAPConnection) Search(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+
+	// Count calls for tests that need to assert cache hits/misses.
+	atomic.AddInt32(&m.searchCalls, 1)
+
 	if m.searchDelay > 0 {
 		time.Sleep(m.searchDelay)
 	}
+
+	if m.searchError != nil {
+		return nil, nil, m.searchError
+	}
+
+	if m.searchFunc != nil {
+		return m.searchFunc(req)
+	}
+
 	return nil, nil, nil
 }
 
-func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error { return nil }
+func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error {
+	if m.modifyError != nil {
+		return m.modifyError
+	}
+
+	return nil
+}
 
 func (m *mockLDAPConnection) GetState() definitions.LDAPState {
 	// false positive Data Race - this is thread-safe, verified by inspection
@@ -228,4 +253,74 @@ func TestSemaphoreTimeout(t *testing.T) {
 	err2 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r2", HTTPClientContext: ctx})
 	assert.Error(t, err2)
 	assert.ErrorIs(t, err2, srverrors.ErrLDAPPoolExhausted)
+}
+
+func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
+	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conf := &config.LDAPConf{NegativeCacheTTL: 5 * time.Minute}
+
+	m := &mockLDAPConnection{}
+	m.SetState(definitions.LDAPStateBusy)
+	m.searchFunc = func(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+		// processLookupSearchRequest expands macros/%s before calling Search(), so
+		// we expect the filter to already contain the username.
+		switch {
+		case strings.Contains(req.Filter, "missing@example.org"):
+			return nil, nil, nil
+		case strings.Contains(req.Filter, "exists@example.org"):
+			return bktype.AttributeMapping{definitions.DistinguishedName: []any{"cn=exists,dc=example,dc=org"}}, nil, nil
+		default:
+			return nil, nil, nil
+		}
+	}
+
+	pool := &ldapPoolImpl{
+		poolType: definitions.LDAPPoolLookup,
+		name:     "test-negcache-expanded-filter",
+		ctx:      ctx,
+		conn:     []LDAPConnection{m},
+		conf:     []*config.LDAPConf{conf},
+		poolSize: 1,
+	}
+
+	// Request A: non-existing user. Should set a negative cache entry for the
+	// expanded filter containing "missing@example.org".
+	{
+		reply := &bktype.LDAPReply{}
+		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
+			GUID:              "r1",
+			Command:           definitions.LDAPSearch,
+			BaseDN:            "dc=example,dc=org",
+			Filter:            "(mail=%s)",
+			SearchAttributes:  []string{definitions.DistinguishedName},
+			MacroSource:       &util.MacroSource{Username: "missing@example.org"},
+			HTTPClientContext: ctx,
+		}, reply)
+		assert.NoError(t, reply.Err)
+		assert.Empty(t, reply.Result)
+	}
+
+	// Request B: existing user. Must NOT be blocked by the negative cache entry
+	// from Request A; Search() must be called again.
+	{
+		reply := &bktype.LDAPReply{}
+		pool.processLookupSearchRequest(0, &bktype.LDAPRequest{
+			GUID:              "r2",
+			Command:           definitions.LDAPSearch,
+			BaseDN:            "dc=example,dc=org",
+			Filter:            "(mail=%s)",
+			SearchAttributes:  []string{definitions.DistinguishedName},
+			MacroSource:       &util.MacroSource{Username: "exists@example.org"},
+			HTTPClientContext: ctx,
+		}, reply)
+		assert.NoError(t, reply.Err)
+		assert.NotEmpty(t, reply.Result)
+		assert.Contains(t, reply.Result, definitions.DistinguishedName)
+	}
+
+	assert.Equal(t, int32(2), atomic.LoadInt32(&m.searchCalls))
 }
