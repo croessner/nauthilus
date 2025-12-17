@@ -18,6 +18,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -145,8 +146,12 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	// Create per-backend VM pool with MaxVMs equal to number of workers
 	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey("backend:"+backendName), vmpool.PoolOptions{MaxVMs: numberOfWorkers})
 
+	var wg sync.WaitGroup
 	for i := 0; i < numberOfWorkers; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -164,6 +169,11 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		trySignalDone(GetChannel().GetLuaChannel().GetLookupEndChan(backendName))
+	}()
 
 	return
 }

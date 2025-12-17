@@ -24,6 +24,17 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 )
 
+func trySignalDone(ch chan bktype.Done) {
+	if ch == nil {
+		return
+	}
+
+	select {
+	case ch <- bktype.Done{}:
+	default:
+	}
+}
+
 var (
 	channel     Channel
 	initChannel sync.Once

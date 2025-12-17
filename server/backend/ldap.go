@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/ldappool"
@@ -66,8 +67,12 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 
 	priorityqueue.LDAPQueue.SetMaxQueueLength(poolName, lookupLimit)
 
+	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -98,6 +103,11 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		trySignalDone(GetChannel().GetLdapChannel().GetLookupEndChan(poolName))
+	}()
 }
 
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
@@ -134,8 +144,12 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 
 	priorityqueue.LDAPAuthQueue.SetMaxQueueLength(poolName, authLimit)
 
+	var wg sync.WaitGroup
 	for i := 0; i < ldapPool.GetNumberOfWorkers(); i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -166,6 +180,11 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		trySignalDone(GetChannel().GetLdapChannel().GetAuthEndChan(poolName))
+	}()
 }
 
 // convertScopeStringToLDAP converts an LDAP scope string into an LDAPScope object.
