@@ -94,7 +94,7 @@ type ldapPoolImpl struct {
 	conf []*config.LDAPConf
 
 	// tokens is a counting semaphore limiting concurrent usage to poolSize.
-	tokens chan struct{}
+	tokens chan Token
 }
 
 // StartHouseKeeper is a background task responsible for managing and cleaning up idle LDAP connections in the pool.
@@ -446,7 +446,7 @@ func NewPool(ctx context.Context, poolType int, poolName string) LDAPPool {
 	}
 
 	// Initialize semaphore with poolSize tokens
-	lp.tokens = make(chan struct{}, poolSize)
+	lp.tokens = make(chan Token, poolSize)
 	for i := 0; i < poolSize; i++ {
 		lp.tokens <- Token{}
 	}
@@ -559,7 +559,10 @@ func (l *ldapPoolImpl) closeSingleIdleConnection(index int) bool {
 		return false
 	}
 
-	l.conn[index].GetConn().Close()
+	if c := l.conn[index].GetConn(); c != nil {
+		c.Close()
+	}
+
 	l.conn[index].SetState(definitions.LDAPStateClosed)
 
 	util.DebugModule(
@@ -1232,11 +1235,9 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		ldapReply.RawResult = rawResult
 	}
 
-	// Also cache negatives when result is empty without LDAP error
-	if err == nil {
-		if len(result) == 0 {
-			negTTL := conf.GetNegativeCacheTTL()
-
+	// Also cache negatives when result is empty without LDAP error, but only if TTL > 0
+	if err == nil && len(result) == 0 {
+		if negTTL := conf.GetNegativeCacheTTL(); negTTL > 0 {
 			cache.Set(negKey, true, negTTL)
 			stats.GetMetrics().GetLdapCacheEntries().WithLabelValues(l.name, "neg").Set(float64(cache.Len()))
 		}

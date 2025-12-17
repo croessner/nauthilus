@@ -158,12 +158,12 @@ func TestHandleLookupRequest(t *testing.T) {
 				conn:     mockConns,
 				conf:     dummyLDAPConf,
 				poolSize: len(mockConns),
-				tokens:   make(chan struct{}, len(mockConns)),
+				tokens:   make(chan Token, len(mockConns)),
 			}
 
 			// Prefill tokens to simulate available capacity equal to poolSize
 			for i := 0; i < len(mockConns); i++ {
-				pool.tokens <- struct{}{}
+				pool.tokens <- Token{}
 			}
 
 			// Reset metrics (you may skip if not using real stats library)
@@ -215,9 +215,9 @@ func TestSemaphoreTimeout(t *testing.T) {
 		conn:     mockConns,
 		conf:     []*config.LDAPConf{{}},
 		poolSize: 1,
-		tokens:   make(chan struct{}, 1),
+		tokens:   make(chan Token, 1),
 	}
-	pool.tokens <- struct{}{}
+	pool.tokens <- Token{}
 
 	// First request consumes the single token and sleeps inside Search
 	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r1", HTTPClientContext: ctx})
