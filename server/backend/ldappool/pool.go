@@ -1204,7 +1204,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		if stderrors.As(err, &ldapError) {
 			if !(ldapError.ResultCode == uint16(ldap.LDAPResultNoSuchObject)) {
 				doLog = true
-				ldapReply.Err = ldapError.Err
+				if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
+					ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
+				} else {
+					ldapReply.Err = ldapError.Err
+				}
 			} else {
 				// Negative result: cache it
 				negTTL := conf.GetNegativeCacheTTL()
@@ -1217,7 +1221,11 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 			}
 		} else {
 			doLog = true
-			ldapReply.Err = err
+			if isTimeoutErr(err) {
+				ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
+			} else {
+				ldapReply.Err = err
+			}
 		}
 
 		if doLog {
@@ -1294,7 +1302,11 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 	}
 
 	if err := l.conn[index].Modify(ldapRequest); err != nil {
-		ldapReply.Err = err
+		if isTimeoutErr(err) || isLDAPTimeLimitExceeded(err) {
+			ldapReply.Err = errors.ErrLDAPModifyTimeout.WithDetail(err.Error())
+		} else {
+			ldapReply.Err = err
+		}
 
 		// error metric
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "modify", ldapErrorCode(err)).Inc()
@@ -1371,7 +1383,11 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
-		ldapReply.Err = err
+		if isTimeoutErr(err) || isLDAPTimeLimitExceeded(err) {
+			ldapReply.Err = errors.ErrLDAPBindTimeout.WithDetail(err.Error())
+		} else {
+			ldapReply.Err = err
+		}
 
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
 		bsp.RecordError(err)
@@ -1432,6 +1448,61 @@ func ldapErrorCode(err error) string {
 }
 
 // --- Helpers for transient error detection and jittered backoff ---
+// isTimeoutErr determines whether the given error represents a timeout
+// condition (client-side context deadline exceeded or net timeout). It also
+// unwraps common LDAP error wrappers.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// context deadline exceeded
+	if stderrors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// net.Error with Timeout() == true
+	var ne net.Error
+	if stderrors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+
+	// LDAP error may wrap an underlying timeout
+	var le *ldap.Error
+	if stderrors.As(err, &le) {
+		if le != nil && le.Err != nil {
+			if isTimeoutErr(le.Err) {
+				return true
+			}
+		}
+	}
+
+	// Fallback by message
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded") {
+		return true
+	}
+
+	return false
+}
+
+// isLDAPTimeLimitExceeded checks if the error corresponds to the server-side
+// time limit exceeded condition for LDAP operations.
+func isLDAPTimeLimitExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var le *ldap.Error
+	if stderrors.As(err, &le) {
+		if le.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func isTransientNetworkError(err error) bool {
 	if err == nil {
 		return false

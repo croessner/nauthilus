@@ -52,10 +52,13 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 	for i, passDB := range passDBs {
 		res, err := passDB.fn(auth)
 		if err != nil {
-			// Prefer treating pool exhaustion as a tempfail over negative results
-			// from other backends (e.g., cache). We remember it and may return it
-			// at the end if no definitive success/user-found result exists.
-			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) {
+			// Prefer treating pool exhaustion and operation timeouts as tempfail over
+			// negative results from other backends (e.g., cache). We remember it and may
+			// return it at the end if no definitive success/user-found result exists.
+			if stderrors.Is(err, errors.ErrLDAPPoolExhausted) ||
+				stderrors.Is(err, errors.ErrLDAPSearchTimeout) ||
+				stderrors.Is(err, errors.ErrLDAPBindTimeout) ||
+				stderrors.Is(err, errors.ErrLDAPModifyTimeout) {
 				tempfailErr = err
 			}
 
