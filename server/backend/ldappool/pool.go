@@ -900,6 +900,21 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		rawResult []*ldap.Entry
 	)
 
+	// IMPORTANT: Expand macros/username placeholders before we interact with the
+	// negative cache. Otherwise a template filter like "(mail=%s)" would produce
+	// the same cache key for all users and could poison lookups.
+	if ldapRequest.MacroSource != nil {
+		escaped := util.EscapeLDAPFilter(ldapRequest.MacroSource.Username)
+		ldapRequest.Filter = strings.ReplaceAll(ldapRequest.Filter, "%s", escaped)
+		ldapRequest.Filter = ldapRequest.MacroSource.ReplaceMacros(ldapRequest.Filter)
+
+		// Prevent double-expansion in LDAPConnectionImpl.Search(). After this point
+		// ldapRequest.Filter is already final.
+		ldapRequest.MacroSource = nil
+	}
+
+	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
+
 	conf := l.conf[index]
 
 	// Obtain per-pool negative cache engine (LRU per pool or shared TTL)
@@ -911,6 +926,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 	}
 
 	// Negative cache check by (pool|baseDN|filter)
+	// Filter is already expanded (macros/%s) at this point.
 	negKey := l.name + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
 	if v, ok := cache.Get(negKey); ok {
 		// Cache hit (negative)
