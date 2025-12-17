@@ -114,6 +114,11 @@ var (
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
 	ErrLDAPModify         = NewDetailedError("ldap_modify_error")
+	// ErrLDAPPoolExhausted indicates that the LDAP pool could not serve the request
+	// within the allotted time (capacity token acquisition or waiting for a free
+	// connection timed out). Callers should treat this as a temporary failure and
+	// avoid mapping it to "user not found".
+	ErrLDAPPoolExhausted = NewDetailedError("ldap_pool_exhausted")
 )
 
 // lua.

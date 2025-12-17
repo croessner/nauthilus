@@ -790,7 +790,7 @@ func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return fmt.Errorf("context timeout while waiting for LDAP token")
+			return errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for LDAP token")
 		}
 
 		if remaining > connectAbortTimeout {
@@ -810,7 +810,7 @@ func (l *ldapPoolImpl) acquireTokenWithTimeout(reqCtx context.Context) error {
 		tsp.RecordError(fmt.Errorf("context timeout while waiting for LDAP token"))
 		tsp.End()
 
-		return fmt.Errorf("context timeout while waiting for LDAP token")
+		return errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for LDAP token")
 	case <-l.tokens:
 		tsp.SetAttributes(attribute.Int("waited_ms", int(time.Since(start).Milliseconds())))
 		tsp.End()
@@ -830,7 +830,7 @@ func (l *ldapPoolImpl) releaseToken() {
 func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connNumber int, err error) {
 	// Acquire capacity token with timeout
 	if err := l.acquireTokenWithTimeout(reqCtx); err != nil {
-		return definitions.LDAPPoolExhausted, fmt.Errorf("timeout exceeded: %w", err)
+		return definitions.LDAPPoolExhausted, err
 	}
 
 	// Also bound the search for a free connection by the same timeout to avoid infinite wait when all are busy.
@@ -851,7 +851,7 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 		if remaining <= 0 {
 			l.releaseToken()
 
-			return definitions.LDAPPoolExhausted, fmt.Errorf("context timeout while waiting for free LDAP connection")
+			return definitions.LDAPPoolExhausted, errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for free LDAP connection")
 		}
 
 		if remaining > connectAbortTimeout {
@@ -892,7 +892,7 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 			// Release the token since we are aborting without acquiring a connection
 			l.releaseToken()
 
-			return definitions.LDAPPoolExhausted, fmt.Errorf("context timeout while waiting for free LDAP connection")
+			return definitions.LDAPPoolExhausted, errors.ErrLDAPPoolExhausted.WithDetail("context timeout while waiting for free LDAP connection")
 		default:
 			// Short backoff; token guarantees capacity, a subsequent scan should find a free/connected slot soon.
 			time.Sleep(1 * time.Millisecond)
