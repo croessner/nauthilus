@@ -89,6 +89,8 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 
 	if err := setupLuaScripts(); err != nil {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to setup Lua scripts", definitions.LogKeyError, err)
+	} else {
+		runLuaInitScript(ctx)
 	}
 
 	enableBlockProfile()
