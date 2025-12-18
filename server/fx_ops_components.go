@@ -271,56 +271,6 @@ func (r *reloadOrchestrator) restartMonitoring(ctx context.Context) {
 	}
 }
 
-type httpRestart struct {
-	store *contextStore
-}
-
-func (r *httpRestart) Name() string {
-	return "httpRestart"
-}
-
-func (r *httpRestart) Order() int {
-	return 100
-}
-
-func (r *httpRestart) Restart(ctx context.Context) error {
-	// Use a time-bounded context for the restart coordination (waiting for HTTP shutdown).
-	// The restarted HTTP server itself must be started with the long-lived process context
-	// to avoid being tied to the restart operation timeout.
-	opCtx, cancel := context.WithTimeout(ctx, restartTimeout)
-	defer cancel()
-
-	if r.store == nil || r.store.server == nil {
-		return nil
-	}
-
-	logger := getLogger(r.store)
-	level.Info(logger).Log(definitions.LogKeyMsg, "Restarting Nauthilus", "signal", "SIGUSR1")
-
-	stopContext(r.store.server)
-
-	if r.store.signals != nil && r.store.signals.HTTPDone() != nil {
-		select {
-		case <-r.store.signals.HTTPDone():
-		case <-opCtx.Done():
-			return opCtx.Err()
-		}
-	}
-
-	if r.store.signals != nil && r.store.signals.HTTP3Done() != nil {
-		select {
-		case <-r.store.signals.HTTP3Done():
-		case <-opCtx.Done():
-			return opCtx.Err()
-		}
-	}
-
-	// Start HTTP with the process context (ctx), not the operation timeout (opCtx).
-	startHTTPServer(ctx, r.store)
-
-	return nil
-}
-
 // restartOrchestrator is a Restartable implementation that performs an in-process restart.
 //
 // The restart is intentionally more disruptive than a reload:
@@ -526,26 +476,6 @@ func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMo
 		Reloadable reloadfx.Reloadable `group:"reloadables"`
 	}{
 		Reloadable: &reloadOrchestrator{store: store, actionWorkers: actionWorkers, monitoringSvc: monitoringSvc},
-	}, nil
-}
-
-// newHTTPRestart registers the HTTP restart implementation as a grouped restartable.
-func newHTTPRestart(store *contextStore) (struct {
-	fx.Out
-	Restartable restartfx.Restartable `group:"restartables"`
-}, error) {
-	if store == nil {
-		return struct {
-			fx.Out
-			Restartable restartfx.Restartable `group:"restartables"`
-		}{}, fmt.Errorf("context store is nil")
-	}
-
-	return struct {
-		fx.Out
-		Restartable restartfx.Restartable `group:"restartables"`
-	}{
-		Restartable: &httpRestart{store: store},
 	}, nil
 }
 
