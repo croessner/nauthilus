@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
 func TestStatsServiceStartStop(t *testing.T) {
@@ -54,7 +55,52 @@ func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
+	if svc.running {
+		t.Fatalf("service should not be running when %q is disabled", definitions.FeatureBackendServersMonitoring)
+	}
+
+	if svc.ticker != nil {
+		t.Fatalf("ticker should be nil when %q is disabled", definitions.FeatureBackendServersMonitoring)
+	}
+
 	if err := svc.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
+	f := &config.Feature{}
+	_ = f.Set(definitions.FeatureBackendServersMonitoring)
+
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{Features: []*config.Feature{f}}})
+
+	svc := NewBackendMonitoringService(10 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := svc.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	if !svc.running {
+		t.Fatalf("service should be running when %q is enabled", definitions.FeatureBackendServersMonitoring)
+	}
+
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer stopCancel()
+
+	if err := svc.Restart(stopCtx); err != nil {
+		t.Fatalf("Restart failed: %v", err)
+	}
+
+	if svc.running {
+		t.Fatalf("service should not be running after disabling %q", definitions.FeatureBackendServersMonitoring)
+	}
+
+	if svc.ticker != nil {
+		t.Fatalf("ticker should be nil after disabling %q", definitions.FeatureBackendServersMonitoring)
 	}
 }

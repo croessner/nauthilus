@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/backendmonitoring"
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 )
 
@@ -37,6 +38,10 @@ type BackendMonitoringService struct {
 	running bool
 }
 
+func (s *BackendMonitoringService) enabled() bool {
+	return config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring)
+}
+
 // NewDefaultBackendMonitoringService creates a BackendMonitoringService with a default delay for backend monitoring.
 func NewDefaultBackendMonitoringService() *BackendMonitoringService {
 	return NewBackendMonitoringService(definitions.BackendServerMonitoringDelay * time.Second)
@@ -49,6 +54,10 @@ func NewBackendMonitoringService(interval time.Duration) *BackendMonitoringServi
 
 // Start begins backend monitoring by initializing context, ticker, and spawning monitoring goroutine.
 func (s *BackendMonitoringService) Start(parent context.Context) error {
+	if !s.enabled() {
+		return nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -82,6 +91,10 @@ func (s *BackendMonitoringService) Stop(stopCtx context.Context) error {
 
 // Restart restarts the backend monitoring service by stopping and then starting its monitoring loop.
 func (s *BackendMonitoringService) Restart(ctx context.Context) error {
+	if !s.enabled() {
+		return s.Stop(ctx)
+	}
+
 	if err := s.Stop(ctx); err != nil {
 		return err
 	}
