@@ -19,6 +19,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -65,10 +67,15 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 	db, mock := redismock.NewClientMock()
 	rediscli.NewTestClient(db)
 
+	deps := HTTPDeps{
+		Cfg:    config.GetFile(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
 	// router
-	composer := DefaultRouterComposer{}
+	composer := NewDefaultRouterComposer(deps)
 	r := composer.ComposeEngine()
-	DefaultBootstrap{}.InitGinLogging()
+	NewDefaultBootstrap(deps).InitGinLogging()
 
 	// Minimal route setup to avoid import cycle with handler/backchannel
 	group := r.Group("/api/v1")

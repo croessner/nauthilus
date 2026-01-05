@@ -337,7 +337,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
-		sessStore := core.DefaultBootstrap{}.InitSessionStore()
+		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{Cfg: cfg, Logger: logger}).InitSessionStore()
 		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger, Svc: handlerdeps.NewDefaultServices()}
 
 		if tags.HydraEnabled {
@@ -359,7 +359,7 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 	// Backchannel API
 	setupBackchannel = handlerbackchannel.Setup
 
-	app := core.NewDefaultHTTPApp()
+	app := core.NewDefaultHTTPApp(core.HTTPDeps{Cfg: cfg, Logger: logger})
 
 	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
 }
