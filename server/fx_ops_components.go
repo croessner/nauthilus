@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
@@ -85,15 +86,15 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 	_ = opCtx
 	r.reloadLogging(snap.File)
 
-	debugLoadableConfig()
+	bootfx.DebugLoadableConfig()
 
-	if err := setupLuaScripts(); err != nil {
+	if err := bootfx.SetupLuaScripts(); err != nil {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to setup Lua scripts", definitions.LogKeyError, err)
 	} else {
-		runLuaInitScript(ctx)
+		bootfx.RunLuaInitScript(ctx)
 	}
 
-	enableBlockProfile()
+	bootfx.EnableBlockProfile()
 	r.restartMonitoring(ctx)
 	stats.GetReloader().Reload()
 

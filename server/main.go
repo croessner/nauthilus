@@ -19,6 +19,7 @@ import (
 	"context"
 	stdlog "log"
 
+	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
@@ -41,7 +42,7 @@ type bootstrapped struct{}
 // newBootstrapped runs the legacy configuration bootstrap and returns a token
 // that enforces ordering for fx providers that depend on configuration being loaded.
 func newBootstrapped() (*bootstrapped, error) {
-	if err := setupConfiguration(); err != nil {
+	if err := bootfx.SetupConfiguration(); err != nil {
 		return nil, err
 	}
 
@@ -65,7 +66,7 @@ func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option
 
 // main is the entry point of the application.
 func main() {
-	parseFlagsAndPrintVersion()
+	bootfx.ParseFlagsAndPrintVersion(version)
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
 	stopTimeout := definitions.FxStopTimeout

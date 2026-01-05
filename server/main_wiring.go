@@ -20,6 +20,7 @@ import (
 	stdlog "log"
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
@@ -115,23 +116,23 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			// Initialize OpenTelemetry tracing early (no-op if disabled)
 			monitoring.GetTelemetry().Start(p.Ctx, version)
 
-			initializeInstanceInfo()
-			debugLoadableConfig()
+			bootfx.InitializeInstanceInfo(version)
+			bootfx.DebugLoadableConfig()
 
-			if err := setupLuaScripts(); err != nil {
+			if err := bootfx.SetupLuaScripts(); err != nil {
 				stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
 			}
 
-			enableBlockProfile()
-			inititalizeBruteForceTolerate(p.Ctx)
-			initializeHTTPClients()
+			bootfx.EnableBlockProfile()
+			bootfx.InitializeBruteForceTolerate(p.Ctx)
+			bootfx.InitializeHTTPClients()
 			core.InitPassDBResultPool()
 			setupWorkers(p.Ctx, p.Store, p.ActionWorkers)
 			if err := setupRedis(p.Ctx, p.Ctx); err != nil {
 				return err
 			}
 
-			runLuaInitScript(p.Ctx)
+			bootfx.RunLuaInitScript(p.Ctx)
 			core.LoadStatsFromRedis(p.Ctx)
 			startHTTPServer(p.Ctx, p.Store)
 
