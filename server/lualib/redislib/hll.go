@@ -19,7 +19,6 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -31,7 +30,7 @@ import (
 // Usage from Lua: nauthilus_redis.redis_pfadd(client_or_"default", key, element1, element2, ...)
 func RedisPFAdd(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		values := make([]any, 0, max(0, L.GetTop()-2))
@@ -71,7 +70,7 @@ func RedisPFAdd(ctx context.Context) lua.LGFunction {
 // Usage from Lua: nauthilus_redis.redis_pfcount(client_or_"default", key1, [key2, ...])
 func RedisPFCount(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		if L.GetTop() < 2 {
 			L.Push(lua.LNil)
@@ -109,7 +108,7 @@ func RedisPFCount(ctx context.Context) lua.LGFunction {
 // Usage from Lua: nauthilus_redis.redis_pfmerge(client_or_"default", destKey, sourceKey1, [sourceKey2, ...])
 func RedisPFMerge(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		dest := L.CheckString(2)
 		if L.GetTop() < 3 {

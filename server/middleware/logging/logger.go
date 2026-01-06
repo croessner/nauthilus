@@ -33,6 +33,14 @@ import (
 // LoggerMiddleware creates a middleware for logging HTTP requests and responses, including latency and client details.
 // It assigns a unique identifier (GUID) to each request and logs authentication methods, TLS info, and status codes.
 func LoggerMiddleware() gin.HandlerFunc {
+	return LoggerMiddlewareWithLogger(log.Logger)
+}
+
+// LoggerMiddlewareWithLogger is a deps-based variant of LoggerMiddleware.
+//
+// HTTP stack should not rely on `log.Logger` globals.
+// Call sites that are already DI-based should pass an injected `*slog.Logger`.
+func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			logWrapper func(logger *slog.Logger) level.Logger
@@ -83,7 +91,12 @@ func LoggerMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		logWrapper(log.Logger).Log(
+		// Fall back to legacy global logger if caller passed nil.
+		if logger == nil {
+			logger = log.Logger
+		}
+
+		logWrapper(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
 			definitions.LogKeyMethod, ctx.Request.Method,

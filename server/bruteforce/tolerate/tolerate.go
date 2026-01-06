@@ -561,7 +561,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
 				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext)
-				keysExists := rediscli.GetClient().GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
+				keysExists := getDefaultClient().GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
 				cancelRead()
 
 				if keysExists == 0 {
@@ -574,7 +574,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 				dCtxWrite, cancelWrite := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext)
-				removed, err = rediscli.GetClient().GetWriteHandle().ZRemRangeByScore(
+				removed, err = getDefaultClient().GetWriteHandle().ZRemRangeByScore(
 					dCtxWrite,
 					redisKey+flag,
 					"-inf",
@@ -617,7 +617,7 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(gctx)
 
-	result, err = rediscli.GetClient().GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
+	result, err = getDefaultClient().GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
 
 	cancel()
 

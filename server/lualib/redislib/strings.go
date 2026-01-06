@@ -19,7 +19,6 @@ import (
 	"context"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -29,7 +28,7 @@ import (
 // RedisMGet retrieves the values of multiple keys from Redis.
 func RedisMGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		keys := make([]string, L.GetTop()-1)
 
 		for i := 2; i <= L.GetTop(); i++ {
@@ -74,7 +73,7 @@ func RedisMSet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		kvpairs := make([]any, L.GetTop()-1)
 
 		for i := 2; i <= L.GetTop(); i++ {
@@ -111,7 +110,7 @@ func RedisMSet(ctx context.Context) lua.LGFunction {
 // RedisKeys returns all keys matching a pattern.
 func RedisKeys(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		pattern := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -141,7 +140,7 @@ func RedisKeys(ctx context.Context) lua.LGFunction {
 // RedisScan incrementally iterates over keys in Redis.
 func RedisScan(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		cursor := uint64(L.CheckNumber(2))
 		match := L.OptString(3, "*")
 		count := int64(L.OptNumber(4, 10))

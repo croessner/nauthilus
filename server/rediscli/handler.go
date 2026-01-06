@@ -17,6 +17,7 @@ package rediscli
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"sync"
 
@@ -96,10 +97,29 @@ var _ Client = (*redisClient)(nil)
 
 // NewClient creates and returns a new instance of a Redis client that implements the Client interface.
 func NewClient() Client {
+	return NewClientWithDeps(config.GetFile(), log.Logger)
+}
+
+// NewClientWithDeps creates and returns a new instance of a Redis client that implements the Client interface
+// using injected dependencies.
+//
+// This is the DI-owned construction path. It must not call
+// `config.GetFile()` or use `log.Logger` internally.
+func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 	newClient := &redisClient{}
 
-	newClient.newRedisClient()
-	newClient.newRedisReplicaClient()
+	if cfg == nil {
+		// Preserve legacy behavior (panic) for misconfigured startups.
+		cfg = config.GetFile()
+	}
+
+	if logger == nil {
+		logger = log.Logger
+	}
+
+	redisCfg := cfg.GetServer().GetRedis()
+	newClient.newRedisClient(redisCfg)
+	newClient.newRedisReplicaClient(redisCfg)
 
 	// Enable Redis latency monitoring by setting latency-monitor-threshold
 	// This is required for the LATENCY LATEST command to return meaningful data
@@ -110,7 +130,7 @@ func NewClient() Client {
 		if err != nil {
 			// Log the error but continue - the command might not be supported in all Redis versions
 			// or the user might not have permission to run CONFIG commands
-			level.Warn(log.Logger).Log(
+			level.Warn(logger).Log(
 				definitions.LogKeyMsg, "Failed to enable Redis latency monitoring",
 				"error", err,
 			)
@@ -121,9 +141,7 @@ func NewClient() Client {
 }
 
 // newRedisClient initializes the redisClient by setting its write handle based on the provided Redis configuration.
-func (clt *redisClient) newRedisClient() {
-	redisCfg := config.GetFile().GetServer().GetRedis()
-
+func (clt *redisClient) newRedisClient(redisCfg *config.Redis) {
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
 		clt.SetWriteHandle(newRedisClusterClient(redisCfg))
 	} else if len(redisCfg.GetSentinel().GetAddresses()) > 0 && redisCfg.GetSentinel().GetMasterName() != "" {
@@ -138,9 +156,7 @@ func (clt *redisClient) newRedisClient() {
 }
 
 // newRedisReplicaClient initializes read handles for Redis replicas based on the configuration, supporting multiple setups.
-func (clt *redisClient) newRedisReplicaClient() {
-	redisCfg := config.GetFile().GetServer().GetRedis()
-
+func (clt *redisClient) newRedisReplicaClient(redisCfg *config.Redis) {
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
 		// For Redis Cluster, create a read-only client for read operations
 		clusterCfg := redisCfg.GetCluster()

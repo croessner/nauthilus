@@ -18,18 +18,32 @@ package bruteforce
 import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{}
+type Handler struct {
+	deps *handlerdeps.Deps
+}
 
-func New() *Handler {
-	return &Handler{}
+func New(deps *handlerdeps.Deps) *Handler {
+	return &Handler{deps: deps}
 }
 
 func (h *Handler) Register(router gin.IRouter) {
 	bg := router.Group("/" + definitions.CatBruteForce)
+
+	// Prefer deps-based registration so the request path can use injected Redis.
+	// The core handler keeps legacy wrappers for non-migrated call sites.
+	if h.deps != nil && h.deps.Cfg != nil {
+		bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+		bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+		bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+		bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+
+		return
+	}
 
 	bg.GET("/"+definitions.ServList, core.HanldeBruteForceList)
 	bg.POST("/"+definitions.ServList, core.HanldeBruteForceList)

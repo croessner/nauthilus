@@ -157,7 +157,7 @@ func RedisRunScript(ctx context.Context) lua.LGFunction {
 			argsList []any
 		)
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		script := L.CheckString(2)
 		uploadScriptName := L.CheckString(3)
 		keys := L.CheckTable(4)
@@ -189,7 +189,7 @@ func RedisRunScript(ctx context.Context) lua.LGFunction {
 // RedisUploadScript uploads a Lua script to Redis, returns the SHA1 hash of the script or an error message on failure.
 func RedisUploadScript(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		script := L.CheckString(2)
 		uploadScriptName := L.CheckString(3)
 

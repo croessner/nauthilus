@@ -24,6 +24,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 )
@@ -147,5 +148,6 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() 
 type Deps struct {
 	Cfg    config.File
 	Logger *slog.Logger
+	Redis  rediscli.Client
 	Svc    Services
 }

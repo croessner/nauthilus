@@ -163,7 +163,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	if mw.IsLoggingEnabled() {
-		r.Use(mdlog.LoggerMiddleware())
+		r.Use(mdlog.LoggerMiddlewareWithLogger(c.logger))
 	}
 
 	// Make the resolved account available as early as possible in the chain.

@@ -459,7 +459,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
-	if config.GetEnvironment().GetDevMode() {
+	if getDefaultEnvironment().GetDevMode() {
 		util.DebugModule(definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 

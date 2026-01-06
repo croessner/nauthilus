@@ -702,7 +702,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 		return
 	}
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
+	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && getDefaultEnvironment().GetDevMode() {
 		util.DebugModule(
 			definitions.DbgWebAuthn,
 			definitions.LogKeyGUID, guid,
@@ -792,7 +792,7 @@ func RegisterTotpPOSTHandler(ctx *gin.Context) {
 
 		// Remove current user from cache to enforce refreshing it.
 		for _, userKey := range userKeys.GetStringSlice() {
-			if _, err = rediscli.GetClient().GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
+			if _, err = getDefaultRedisClient().GetWriteHandle().Del(auth.Ctx(), userKey).Result(); err != nil {
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 				level.Error(log.Logger).Log(

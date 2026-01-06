@@ -22,7 +22,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -33,7 +32,7 @@ import (
 // RedisGet retrieves a value from Redis using the given key and pushes it to the Lua state based on a specified type.
 func RedisGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 		valueType := definitions.TypeString
 
@@ -61,7 +60,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 // RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
 func RedisSet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		value, err := convert.LuaValue(L.Get(3))
@@ -202,7 +201,7 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 // RedisIncr increments the integer value of a Redis key by 1 and returns the new value or an error if it fails.
 func RedisIncr(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -227,7 +226,7 @@ func RedisIncr(ctx context.Context) lua.LGFunction {
 // RedisDel deletes a given Redis key and reports the number of keys removed or an error if the operation fails.
 func RedisDel(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -252,7 +251,7 @@ func RedisDel(ctx context.Context) lua.LGFunction {
 // RedisExpire sets an expiration time on a Redis key and returns true if successful, or nil and an error if it fails.
 func RedisExpire(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 		expiration := L.CheckNumber(3)
 
@@ -278,7 +277,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 // RedisRename renames a Redis key to a new key; returns an error if the operation fails.
 func RedisRename(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		oldKey := L.CheckString(2)
 		newKey := L.CheckString(3)
 
@@ -304,7 +303,7 @@ func RedisRename(ctx context.Context) lua.LGFunction {
 // RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
 func RedisPing(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -328,7 +327,7 @@ func RedisPing(ctx context.Context) lua.LGFunction {
 // RedisExists checks if a given key exists in Redis, returning the count of matching keys as a Lua number.
 func RedisExists(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()

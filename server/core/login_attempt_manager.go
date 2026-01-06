@@ -15,11 +15,7 @@
 
 package core
 
-import (
-	"strconv"
-
-	"github.com/croessner/nauthilus/server/config"
-)
+import "strconv"
 
 // LoginAttemptManager defines a small object that centralizes initialization and
 // mutation of login attempt counters from different sources (headers, brute-force buckets).
@@ -131,7 +127,7 @@ func (a *AuthState) ensureLAM() *defaultLoginAttemptManager {
 	}
 
 	if a.attempts == nil {
-		a.attempts = newLoginAttemptManager(uint(config.GetEnvironment().GetMaxLoginAttempts()))
+		a.attempts = newLoginAttemptManager(uint(getDefaultEnvironment().GetMaxLoginAttempts()))
 	}
 
 	// keep legacy mirror in sync (FailCount semantics)

@@ -19,7 +19,6 @@ import (
 	"context"
 	"sort"
 
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -32,7 +31,7 @@ func RedisZAdd(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		const errorMsg = "Expected a table of string-number pairs"
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		key := L.CheckString(2)
 		values := L.CheckTable(3)
@@ -101,7 +100,7 @@ func parseLuaTableToRedisZSet(L *lua.LState, values *lua.LTable, errorMsg string
 // RedisZRange retrieves a range of members from a sorted set in Redis based on their rank, defined by start and stop indexes.
 func RedisZRange(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		start := int64(L.CheckNumber(3))
@@ -134,7 +133,7 @@ func RedisZRange(ctx context.Context) lua.LGFunction {
 // RedisZRevRange retrieves a range of elements from a sorted set in reverse order based on their indices.
 func RedisZRevRange(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		start := int64(L.CheckNumber(3))
@@ -167,7 +166,7 @@ func RedisZRevRange(ctx context.Context) lua.LGFunction {
 // RedisZRangeByScore retrieves elements from a sorted set in Redis based on a given score range and optional limits.
 func RedisZRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		minScore := L.CheckString(3)    // The minimum score (e.g., "-inf" or a numeric value)
@@ -222,7 +221,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var members []any
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		key := L.CheckString(2)
 		membersTable := L.CheckTable(3) // Lua table containing the members to remove
@@ -259,7 +258,7 @@ func RedisZRem(ctx context.Context) lua.LGFunction {
 // RedisZRemRangeByScore removes all elements in a Redis sorted set with scores within the specified range.
 func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		key := L.CheckString(2)      // The key of the sorted set
 		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
@@ -288,7 +287,7 @@ func RedisZRemRangeByScore(ctx context.Context) lua.LGFunction {
 // Added in version 1.7.20
 func RedisZRemRangeByRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		key := L.CheckString(2)  // The key of the sorted set
 		start := L.CheckInt64(3) // Start rank (0-based, inclusive)
@@ -316,7 +315,7 @@ func RedisZRemRangeByRank(ctx context.Context) lua.LGFunction {
 // RedisZRank retrieves the rank of a member within a sorted set in Redis, returning the rank or an error if applicable.
 func RedisZRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		member := L.CheckString(3) // The member whose rank needs to be retrieved
@@ -344,7 +343,7 @@ func RedisZRank(ctx context.Context) lua.LGFunction {
 // Added in version 1.7.7
 func RedisZCount(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		minScore := L.CheckString(3) // Minimum score (e.g., "-inf" or a numeric value)
@@ -373,7 +372,7 @@ func RedisZCount(ctx context.Context) lua.LGFunction {
 // Added in version 1.7.7
 func RedisZScore(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		member := L.CheckString(3) // The member whose score needs to be retrieved
@@ -401,7 +400,7 @@ func RedisZScore(ctx context.Context) lua.LGFunction {
 // The rank is 0-based, meaning that the member with the highest score has rank 0.
 func RedisZRevRank(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		key := L.CheckString(2)
 		member := L.CheckString(3) // The member whose rank needs to be retrieved
@@ -429,7 +428,7 @@ func RedisZRevRank(ctx context.Context) lua.LGFunction {
 // Added in version 1.7.18
 func RedisZIncrBy(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 
 		key := L.CheckString(2)
 		increment := float64(L.CheckNumber(3)) // The increment value

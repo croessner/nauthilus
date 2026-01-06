@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/redis/go-redis/v9"
@@ -76,12 +75,12 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 		var cancel context.CancelFunc
 
 		if mode == "read" {
-			fallback = rediscli.GetClient().GetReadHandle()
+			fallback = getDefaultClient().GetReadHandle()
 			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx)
 
 			defer cancel()
 		} else {
-			fallback = rediscli.GetClient().GetWriteHandle()
+			fallback = getDefaultClient().GetWriteHandle()
 			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx)
 
 			defer cancel()

@@ -27,7 +27,6 @@ import (
 )
 
 // FxEventLogger adapts fx internal events to the existing slog-based logging.
-// It is intentionally minimal in Phase 0 and not wired into the runtime path yet.
 type FxEventLogger struct {
 	logger *slog.Logger
 }

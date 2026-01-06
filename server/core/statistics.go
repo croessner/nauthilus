@@ -162,11 +162,11 @@ func UpdateRedisPoolStats() {
 
 	for range ticker.C {
 		redisStatsMap := map[string]*redis.PoolStats{
-			"default_rw": rediscli.GetClient().GetWriteHandle().PoolStats(),
+			"default_rw": getDefaultRedisClient().GetWriteHandle().PoolStats(),
 		}
 
-		if rediscli.GetClient().GetWriteHandle() != rediscli.GetClient().GetReadHandle() {
-			redisStatsMap["default_ro"] = rediscli.GetClient().GetReadHandle().PoolStats()
+		if getDefaultRedisClient().GetWriteHandle() != getDefaultRedisClient().GetReadHandle() {
+			redisStatsMap["default_ro"] = getDefaultRedisClient().GetReadHandle().PoolStats()
 		}
 
 		for _, redisStats := range redislib.GetStandaloneStats() {

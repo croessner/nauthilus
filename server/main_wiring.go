@@ -22,14 +22,20 @@ import (
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/app/envfx"
 	"github.com/croessner/nauthilus/server/app/logfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/redifx"
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	"go.uber.org/fx"
 )
@@ -64,8 +70,30 @@ func newLogger(_ *bootstrapped) *slog.Logger {
 // newRedisClient provides the Redis facade for fx.
 //
 // It depends on the bootstrap token to ensure configuration/logging has been initialized.
-func newRedisClient(_ *bootstrapped) redifx.Client {
-	return redifx.NewClient()
+type redisDeps struct {
+	fx.Out
+
+	Client    redifx.Client
+	Rebuilder redifx.Rebuilder
+}
+
+// newRedisDeps provides a swap-capable Redis facade (Client) and its rebuild controller.
+//
+// Restart orchestration should rebuild Redis via the injected Rebuilder,
+// not via the global `rediscli.RebuildClient()`.
+func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger) (redisDeps, error) {
+	snap := cfgProvider.Current()
+	client := rediscli.NewClientWithDeps(snap.File, logger)
+	managed := redifx.NewManagedClient(client)
+
+	// Ensure the current underlying client is closed on process stop.
+	lc.Append(fx.Hook{OnStop: func(context.Context) error {
+		managed.Close()
+
+		return nil
+	}})
+
+	return redisDeps{Client: managed, Rebuilder: managed}, nil
 }
 
 // newActionWorkers constructs the action worker pool used by the legacy worker orchestration.
@@ -81,11 +109,13 @@ func newContextStoreForRuntime(
 	ctx context.Context,
 	_ *bootstrapped,
 	cfgProvider configfx.Provider,
+	env envfx.Environment,
 	logger *slog.Logger,
 	redisClient redifx.Client,
 ) *contextStore {
 	store := newContextStore()
 	store.cfgProvider = cfgProvider
+	store.env = env
 	store.logger = logger
 	store.redisClient = redisClient
 	store.action = newContextTuple(ctx)
@@ -128,13 +158,32 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			bootfx.InitializeHTTPClients()
 			core.InitPassDBResultPool()
 			setupWorkers(p.Ctx, p.Store, p.ActionWorkers)
-			if err := setupRedis(p.Ctx, p.Ctx); err != nil {
+
+			if err := setupRedis(p.Ctx, p.Ctx, p.Store.redisClient); err != nil {
 				return err
 			}
 
+			// Ensure backend package uses the injected Redis client.
+			backend.SetDefaultRedisClient(p.Store.redisClient)
+
+			// Ensure bruteforce package uses the injected Redis client.
+			bruteforce.SetDefaultRedisClient(p.Store.redisClient)
+
+			// Ensure core helpers use the injected Redis client.
+			core.SetDefaultRedisClient(p.Store.redisClient)
+
+			// Ensure bruteforce tolerations use the injected Redis client.
+			tolerate.SetDefaultClient(p.Store.redisClient)
+
+			// Ensure Lua redislib has a configured default client before any Lua code runs.
+			redislib.SetDefaultClient(p.Store.redisClient)
+
 			bootfx.RunLuaInitScript(p.Ctx)
 			core.LoadStatsFromRedis(p.Ctx)
-			startHTTPServer(p.Ctx, p.Store)
+
+			if err := startHTTPServer(p.Ctx, p.Store); err != nil {
+				return err
+			}
 
 			if err := p.ConnMgrSvc.Start(p.Ctx); err != nil {
 				return err

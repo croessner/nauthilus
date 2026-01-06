@@ -25,7 +25,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -195,7 +194,7 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 				if !foundRepeating {
 					key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 					stats.GetMetrics().GetRedisReadCounter().Inc()
-					if exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
+					if exists, err := getDefaultRedisClient().GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
 						if r.CIDR > bestCIDRRepeating {
 							bestCIDRRepeating = r.CIDR
 							foundRepeatingNet = candidate

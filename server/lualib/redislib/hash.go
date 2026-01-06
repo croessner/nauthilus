@@ -20,7 +20,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -30,7 +29,7 @@ import (
 // RedisHGet executes the HGET command in Redis, retrieves a field from a hash, and converts it to a Lua value type.
 func RedisHGet(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
@@ -70,7 +69,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 2 {
@@ -118,7 +117,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 1 {
@@ -147,7 +146,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 // RedisHLen returns a Lua function that retrieves the length of a Redis hash stored at the specified key.
 func RedisHLen(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -172,7 +171,7 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 // RedisHGetAll retrieves all fields and values of a hash stored at the specified Redis key and returns them as a Lua table.
 func RedisHGetAll(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
@@ -212,7 +211,7 @@ func RedisHMGet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		fields := make([]string, 0, L.GetTop()-2)
@@ -259,7 +258,7 @@ func RedisHMGet(ctx context.Context) lua.LGFunction {
 // RedisHIncrBy increments the numerical value of a hash field in Redis by the specified amount and returns the new value.
 func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := L.CheckInt64(4)
@@ -286,7 +285,7 @@ func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 // RedisHIncrByFloat increments the float value of a field in a hash by a specified amount and returns the new value.
 func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := float64(L.CheckNumber(4))
@@ -313,7 +312,7 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 // RedisHExists checks if a specific field exists in a hash stored at a given key in Redis. It returns true or false.
 func RedisHExists(ctx context.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 

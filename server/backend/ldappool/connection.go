@@ -858,7 +858,7 @@ func (l *LDAPConnectionImpl) simpleBind(guid string, ldapConf *config.LDAPConf) 
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
 	util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
-	if config.GetEnvironment().GetDevMode() {
+	if getDefaultEnvironment().GetDevMode() {
 		util.DebugModule(definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
 	}
 

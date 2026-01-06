@@ -283,7 +283,7 @@ func RegisterRedisPool(L *lua.LState) int {
 
 // GetRedisConnection retrieves a Redis connection by name. Searches through standalone, failover, and cluster pools.
 // If found, it returns the connection as a Lua userdata object. If not found, it returns nil and an error message.
-// Special case: If the name is "default", it returns the system-wide client from rediscli.GetClient().
+// Special case: If the name is "default", it returns the process-wide default client.
 func GetRedisConnection(L *lua.LState) int {
 	var (
 		okay   bool
@@ -294,7 +294,7 @@ func GetRedisConnection(L *lua.LState) int {
 
 	// Special case for "default" pool - use the system-wide client
 	if name == "default" {
-		client = rediscli.GetClient().GetWriteHandle()
+		client = getDefaultClient().GetWriteHandle()
 	} else if client, okay = redisPools[name]; !okay {
 		if client, okay = redisFailoverPools[failoverPool{name: name}]; !okay {
 			if client, okay = redisClusterPools[name]; !okay {

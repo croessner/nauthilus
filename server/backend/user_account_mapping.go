@@ -13,23 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package app
+package backend
 
 import (
-	"github.com/croessner/nauthilus/server/app/configfx"
-	"github.com/croessner/nauthilus/server/app/envfx"
-	"github.com/croessner/nauthilus/server/app/logfx"
-	"github.com/croessner/nauthilus/server/app/redifx"
+	"context"
 
-	"go.uber.org/fx"
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/definitions"
 )
 
-// Module will become the fx wiring home for the server.
-func Module() fx.Option {
-	return fx.Options(
-		configfx.Module(),
-		envfx.Module(),
-		logfx.Module(),
-		redifx.Module(),
-	)
+// SetUserAccountMapping writes/updates the username → account mapping in Redis.
+//
+// Core packages should not call `rediscli.GetClient()` directly.
+// This helper uses the backend Redis seam (`getDefaultRedisClient()`).
+func SetUserAccountMapping(ctx context.Context, username, account string) error {
+	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+
+	return getDefaultRedisClient().GetWriteHandle().HSet(ctx, key, username, account).Err()
 }

@@ -31,7 +31,7 @@ type Snapshot struct {
 
 // Provider provides the current config snapshot.
 //
-// Phase 4 goal: newly migrated components should prefer this over global `config.GetFile()`.
+// Newly migrated components should prefer this over global `config.GetFile()`.
 type Provider interface {
 	Current() Snapshot
 }

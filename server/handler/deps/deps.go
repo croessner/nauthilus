@@ -204,6 +204,7 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc {
 type Deps struct {
 	Cfg      config.File
 	Logger   *slog.Logger
+	Redis    rediscli.Client
 	WebAuthn *webauthn.WebAuthn
 	Svc      Services
 }

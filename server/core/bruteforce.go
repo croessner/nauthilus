@@ -520,7 +520,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		// Phase: redis_hint_exists (single read to check if client_net has a history)
 		redisHintStart := time.Now()
-		exists, err := rediscli.GetClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
+		exists, err := getDefaultRedisClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
 		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("redis_hint_exists").Observe(time.Since(redisHintStart).Seconds())
 
 		if err == nil && exists {

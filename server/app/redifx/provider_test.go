@@ -13,10 +13,14 @@ func TestNewClientReturnsClient(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{})
 
 	db, _ := redismock.NewClientMock()
-	rediscli.NewTestClient(db)
+	clt := rediscli.NewTestClient(db)
 
-	clt := NewClient()
-	if clt == nil {
-		t.Fatalf("expected client")
+	managed := NewManagedClient(clt)
+	if managed == nil {
+		t.Fatalf("expected managed client")
+	}
+
+	if managed.GetWriteHandle() == nil {
+		t.Fatalf("expected write handle")
 	}
 }

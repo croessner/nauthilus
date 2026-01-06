@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/server/app/bootfx"
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
+	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
 	"github.com/croessner/nauthilus/server/app/restartfx"
 	"github.com/croessner/nauthilus/server/backend"
@@ -44,9 +45,10 @@ import (
 // It is intentionally conservative: it performs a best-effort reload (without stopping
 // the HTTP server) and delegates to existing helpers for worker/Redis/script handling.
 type reloadOrchestrator struct {
-	store         *contextStore
-	actionWorkers []*action.Worker
-	monitoringSvc *loopsfx.BackendMonitoringService
+	store          *contextStore
+	actionWorkers  []*action.Worker
+	monitoringSvc  *loopsfx.BackendMonitoringService
+	redisRebuilder redifx.Rebuilder
 }
 
 const (
@@ -191,7 +193,21 @@ func (r *reloadOrchestrator) restartActionWorkers(waitCtx context.Context, paren
 }
 
 func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx context.Context) {
-	rediscli.RebuildClient()
+	logger := getLogger(r.store)
+	cfg := config.GetFile()
+
+	if r.store != nil && r.store.cfgProvider != nil {
+		if snap := r.store.cfgProvider.Current(); snap.File != nil {
+			cfg = snap.File
+		}
+	}
+
+	if r.redisRebuilder != nil {
+		_ = r.redisRebuilder.Rebuild(cfg, logger)
+	} else {
+		// Legacy fallback for non-migrated wiring.
+		rediscli.RebuildClient()
+	}
 
 	if readinessCtx == nil {
 		return
@@ -208,7 +224,7 @@ func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx c
 		runCtx = context.Background()
 	}
 
-	if err := setupRedis(readinessCtx, runCtx); err != nil {
+	if err := setupRedis(readinessCtx, runCtx, r.store.redisClient); err != nil {
 		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during reload", definitions.LogKeyError, err)
 	}
 }
@@ -285,9 +301,10 @@ type restartOrchestrator struct {
 	store         *contextStore
 	actionWorkers []*action.Worker
 
-	statsSvc      *loopsfx.StatsService
-	monitoringSvc *loopsfx.BackendMonitoringService
-	connMgrSvc    *loopsfx.ConnMgrService
+	statsSvc       *loopsfx.StatsService
+	monitoringSvc  *loopsfx.BackendMonitoringService
+	connMgrSvc     *loopsfx.ConnMgrService
+	redisRebuilder redifx.Rebuilder
 }
 
 func (r *restartOrchestrator) Name() string {
@@ -323,7 +340,9 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 		// Best-effort: ensure the process keeps serving HTTP even if the restart
 		// operation fails or times out.
-		startHTTPServer(r.ctx, r.store)
+		if err := startHTTPServer(r.ctx, r.store); err != nil {
+			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
+		}
 	}()
 
 	// Stop HTTP first to avoid serving requests with a partially restarted dependency graph.
@@ -398,13 +417,27 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	}
 
 	step = "rebuild_redis_client"
-	rediscli.RebuildClient()
+	cfg := config.GetFile()
+
+	if r.store != nil && r.store.cfgProvider != nil {
+		if snap := r.store.cfgProvider.Current(); snap.File != nil {
+			cfg = snap.File
+		}
+	}
+
+	if r.redisRebuilder != nil {
+		if err := r.redisRebuilder.Rebuild(cfg, logger); err != nil {
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to rebuild Redis client via DI", definitions.LogKeyError, err)
+		}
+	} else {
+		rediscli.RebuildClient()
+	}
 
 	redisReadyCtx, redisReadyCancel := context.WithTimeout(opCtx, definitions.RestartRedisReadyTimeout)
 	defer redisReadyCancel()
 
 	step = "setup_redis"
-	if err := setupRedis(redisReadyCtx, r.ctx); err != nil {
+	if err := setupRedis(redisReadyCtx, r.ctx, r.store.redisClient); err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
 		restartErr = err
@@ -461,7 +494,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 }
 
 // newReloadOrchestrator registers the reload orchestrator as a grouped reloadable.
-func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker) (struct {
+func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMonitoringService, actionWorkers []*action.Worker, redisRebuilder redifx.Rebuilder) (struct {
 	fx.Out
 	Reloadable reloadfx.Reloadable `group:"reloadables"`
 }, error) {
@@ -476,7 +509,7 @@ func newReloadOrchestrator(store *contextStore, monitoringSvc *loopsfx.BackendMo
 		fx.Out
 		Reloadable reloadfx.Reloadable `group:"reloadables"`
 	}{
-		Reloadable: &reloadOrchestrator{store: store, actionWorkers: actionWorkers, monitoringSvc: monitoringSvc},
+		Reloadable: &reloadOrchestrator{store: store, actionWorkers: actionWorkers, monitoringSvc: monitoringSvc, redisRebuilder: redisRebuilder},
 	}, nil
 }
 
@@ -488,6 +521,7 @@ func newRestartOrchestrator(
 	statsSvc *loopsfx.StatsService,
 	monitoringSvc *loopsfx.BackendMonitoringService,
 	connMgrSvc *loopsfx.ConnMgrService,
+	redisRebuilder redifx.Rebuilder,
 ) (struct {
 	fx.Out
 	Restartable restartfx.Restartable `group:"restartables"`
@@ -504,12 +538,13 @@ func newRestartOrchestrator(
 		Restartable restartfx.Restartable `group:"restartables"`
 	}{
 		Restartable: &restartOrchestrator{
-			ctx:           ctx,
-			store:         store,
-			actionWorkers: actionWorkers,
-			statsSvc:      statsSvc,
-			monitoringSvc: monitoringSvc,
-			connMgrSvc:    connMgrSvc,
+			ctx:            ctx,
+			store:          store,
+			actionWorkers:  actionWorkers,
+			statsSvc:       statsSvc,
+			monitoringSvc:  monitoringSvc,
+			connMgrSvc:     connMgrSvc,
+			redisRebuilder: redisRebuilder,
 		},
 	}, nil
 }

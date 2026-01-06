@@ -69,7 +69,7 @@ var defaultAuthenticator = Authenticator{
 	BF:       getBruteForceService(),
 	Lua:      getLuaFilter(),
 	Post:     getPostAction(),
-	Resp:     defaultResponseWriter,
+	Resp:     getDefaultResponseWriter(),
 }
 
 // Authenticate runs the full password authentication flow.

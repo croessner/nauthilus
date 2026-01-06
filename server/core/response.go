@@ -16,6 +16,9 @@
 package core
 
 import (
+	"log/slog"
+	"sync/atomic"
+
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -28,7 +31,6 @@ import (
 
 // StateView is a read-only snapshot wrapper around AuthState used by response and header layers.
 // It keeps a private pointer to AuthState to avoid behavior changes.
-// Future phases may replace direct AuthState access with copied fields.
 type StateView struct {
 	auth *AuthState
 }
@@ -57,30 +59,68 @@ type ResponseWriter interface {
 	TempFail(ctx *gin.Context, view *StateView, reason string)
 }
 
-// DefaultResponseWriter implements ResponseWriter with current behavior.
-type DefaultResponseWriter struct{}
-
-var defaultResponseWriter ResponseWriter = DefaultResponseWriter{}
-
-// AuthOK is the general method to indicate authentication success.
-func (a *AuthState) AuthOK(ctx *gin.Context) {
-	defaultResponseWriter.OK(ctx, a.View())
+// ResponseDeps provides the dependencies required to write responses without using globals.
+// Migrates request paths to use these injected dependencies.
+type ResponseDeps struct {
+	Cfg    config.File
+	Env    config.Environment
+	Logger *slog.Logger
 }
 
-// AuthFail handles the failure of authentication.
-// It increases the login attempts, then delegates header/logging to the ResponseWriter.
-func (a *AuthState) AuthFail(ctx *gin.Context) {
-	a.increaseLoginAttempts()
-	defaultResponseWriter.Fail(ctx, a.View())
+// globalResponseWriter keeps legacy behavior without requiring config/env/logger to be loaded
+// during package init.
+//
+// This type is used as the process default until the HTTP boundary overwrites it via
+// `SetDefaultResponseWriter(...)` with a DI-configured writer.
+type globalResponseWriter struct{}
+
+type depResponseWriter struct {
+	deps ResponseDeps
 }
 
-// AuthTempFail sends a temporary failure response with the provided reason and logs the error.
-func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
-	defaultResponseWriter.TempFail(ctx, a.View(), reason)
+type writerHolder struct {
+	w ResponseWriter
 }
 
-// OK implements the success response logic (unchanged behavior).
-func (DefaultResponseWriter) OK(ctx *gin.Context, view *StateView) {
+var defaultResponseWriter atomic.Value
+
+func init() {
+	// Backward-compatible default: do not touch config/env/logging globals during init.
+	// Many tests compile/run without having loaded the config singleton.
+	// atomic.Value must never store values of different concrete types.
+	defaultResponseWriter.Store(writerHolder{w: ResponseWriter(globalResponseWriter{})})
+}
+
+func getDefaultResponseWriter() ResponseWriter {
+	if v := defaultResponseWriter.Load(); v != nil {
+		if h, ok := v.(writerHolder); ok {
+			if h.w != nil {
+				return h.w
+			}
+		}
+	}
+
+	// Should not happen, but keep behavior safe.
+	return globalResponseWriter{}
+}
+
+// SetDefaultResponseWriter configures the process-wide response writer.
+// This is set at the HTTP boundary during startup (Phase 7.2) so that request paths
+// do not need to access global config/logger/environment.
+func SetDefaultResponseWriter(w ResponseWriter) {
+	if w == nil {
+		return
+	}
+
+	defaultResponseWriter.Store(writerHolder{w: w})
+}
+
+// NewDefaultResponseWriter constructs the default response writer with injected dependencies.
+func NewDefaultResponseWriter(deps ResponseDeps) ResponseWriter {
+	return depResponseWriter{deps: deps}
+}
+
+func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	a := view.auth
 	// On successful authentication, reset the internal fail counter to
 	// ensure future logging reflects fresh attempts. Brute-force storage
@@ -110,15 +150,13 @@ func (DefaultResponseWriter) OK(ctx *gin.Context, view *StateView) {
 	}
 }
 
-// Fail implements the failure response logic (unchanged behavior).
-func (DefaultResponseWriter) Fail(ctx *gin.Context, view *StateView) {
+func (globalResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 	a := view.auth
 	a.setFailureHeaders(ctx)
 	a.loginAttemptProcessing(ctx)
 }
 
-// TempFail implements the temporary failure logic (unchanged behavior).
-func (DefaultResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
+func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
 	ctx.Header("Auth-Status", reason)
 	ctx.Header("X-Nauthilus-Session", a.GUID)
@@ -128,6 +166,7 @@ func (DefaultResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason 
 
 	if a.Service == definitions.ServJSON {
 		ctx.JSON(a.StatusCodeInternalError, gin.H{"error": reason})
+
 		return
 	}
 
@@ -137,6 +176,84 @@ func (DefaultResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason 
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
 	level.Warn(log.Logger).Log(keyvals...)
+}
+
+// AuthOK is the general method to indicate authentication success.
+func (a *AuthState) AuthOK(ctx *gin.Context) {
+	getDefaultResponseWriter().OK(ctx, a.View())
+}
+
+// AuthFail handles the failure of authentication.
+// It increases the login attempts, then delegates header/logging to the ResponseWriter.
+func (a *AuthState) AuthFail(ctx *gin.Context) {
+	a.increaseLoginAttempts()
+	getDefaultResponseWriter().Fail(ctx, a.View())
+}
+
+// AuthTempFail sends a temporary failure response with the provided reason and logs the error.
+func (a *AuthState) AuthTempFail(ctx *gin.Context, reason string) {
+	getDefaultResponseWriter().TempFail(ctx, a.View(), reason)
+}
+
+// OK implements the success response logic (unchanged behavior).
+func (w depResponseWriter) OK(ctx *gin.Context, view *StateView) {
+	a := view.auth
+	// On successful authentication, reset the internal fail counter to
+	// ensure future logging reflects fresh attempts. Brute-force storage
+	// remains authoritative for persistence.
+	a.ResetLoginAttemptsOnSuccess()
+	setCommonHeaders(ctx, a)
+
+	switch a.Service {
+	case definitions.ServNginx:
+		setNginxHeadersWithDeps(w.deps.Cfg, w.deps.Env, w.deps.Logger, ctx, a)
+	case definitions.ServHeader:
+		setHeaderHeaders(ctx, a)
+	case definitions.ServJSON:
+		sendAuthResponse(ctx, a)
+	}
+
+	handleLogging(ctx, a)
+
+	// Only authentication attempts
+	if !(a.NoAuth || a.ListAccounts) {
+		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
+		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
+
+		if !w.deps.Cfg.HasFeature(definitions.FeatureBruteForce) {
+			return
+		}
+	}
+}
+
+// Fail implements the failure response logic (unchanged behavior).
+func (w depResponseWriter) Fail(ctx *gin.Context, view *StateView) {
+	a := view.auth
+	a.setFailureHeaders(ctx)
+	a.loginAttemptProcessing(ctx)
+}
+
+// TempFail implements the temporary failure logic (unchanged behavior).
+func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
+	a := view.auth
+	ctx.Header("Auth-Status", reason)
+	ctx.Header("X-Nauthilus-Session", a.GUID)
+	a.setSMPTHeaders(ctx)
+
+	a.StatusMessage = reason
+
+	if a.Service == definitions.ServJSON {
+		ctx.JSON(a.StatusCodeInternalError, gin.H{"error": reason})
+
+		return
+	}
+
+	ctx.String(a.StatusCodeInternalError, a.StatusMessage)
+
+	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
+	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
+
+	level.Warn(w.deps.Logger).Log(keyvals...)
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.

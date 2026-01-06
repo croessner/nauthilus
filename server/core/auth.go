@@ -44,7 +44,6 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -615,7 +614,7 @@ func (a *AuthState) String() string {
 		case "GUID":
 			continue
 		case "Password":
-			if config.GetEnvironment().GetDevMode() {
+			if getDefaultEnvironment().GetDevMode() {
 				result += fmt.Sprintf(" %s='%v'", typeOfValue.Field(index).Name, value.Field(index).Interface())
 			} else {
 				result += fmt.Sprintf(" %s='<hidden>'", typeOfValue.Field(index).Name)
@@ -1362,10 +1361,8 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 				// Update Redis mapping with a bounded write deadline.
 				defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-				key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
-
 				dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil)
-				werr := rediscli.GetClient().GetWriteHandle().HSet(dWriteCtx, key, auth.Username, acc).Err()
+				werr := backend.SetUserAccountMapping(dWriteCtx, auth.Username, acc)
 				cancelWrite()
 
 				if werr != nil {
@@ -1910,7 +1907,7 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 
 	if passDBResult.Authenticated {
 		if !(a.HaveMonitoringFlag(definitions.MonInMemory) || a.IsMasterUser()) {
-			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, config.GetEnvironment().GetLocalCacheAuthTTL())
+			localcache.LocalCache.Set(a.generateLocalCacheKey(), passDBResult, getDefaultEnvironment().GetLocalCacheAuthTTL())
 		}
 
 		a.Authenticated = true
@@ -2041,8 +2038,6 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 		values   []any
 	)
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
-
 	// Service-scoped read to avoid inheriting a canceled request context
 	dReadCtx, cancelRead := util.GetCtxWithDeadlineRedisRead(nil)
 	accountName = backend.GetUserAccountFromCache(dReadCtx, a.Username, a.GUID)
@@ -2071,7 +2066,7 @@ func (a *AuthState) updateUserAccountInRedis() (accountName string, err error) {
 
 		// Service-scoped write for robust cache update
 		dWriteCtx, cancelWrite := util.GetCtxWithDeadlineRedisWrite(nil)
-		err = rediscli.GetClient().GetWriteHandle().HSet(dWriteCtx, key, a.Username, accountName).Err()
+		err = backend.SetUserAccountMapping(dWriteCtx, a.Username, accountName)
 		cancelWrite()
 	}
 
@@ -2814,8 +2809,6 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 }
 
 // ApplyCredentials applies non-empty credential fields to the AuthState.
-// This function is part of Phase 8 (setter reduction) to consolidate multiple
-// Set* calls into a single application step without changing behavior.
 func (a *AuthState) ApplyCredentials(c Credentials) {
 	if a == nil {
 		return

@@ -24,6 +24,9 @@ import (
 	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/ldappool"
+	"github.com/croessner/nauthilus/server/bruteforce"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -38,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -63,6 +67,9 @@ type contextStore struct {
 
 	// cfgProvider provides the current config snapshot for newly migrated code paths.
 	cfgProvider configfx.Provider
+
+	// env is the injected environment configuration.
+	env config.Environment
 
 	// logger is the injected process logger for newly migrated code paths.
 	logger *slog.Logger
@@ -207,20 +214,24 @@ func setupLuaWorker(store *contextStore, ctx context.Context) {
 }
 
 // checkRedisConnections validates the availability of both write and read Redis connections using Ping commands.
-func checkRedisConnections(ctx context.Context) bool {
-	if rediscli.GetClient().GetWriteHandle() == nil {
+func checkRedisConnections(ctx context.Context, client rediscli.Client) bool {
+	if client == nil {
 		return false
 	}
 
-	if err := rediscli.GetClient().GetWriteHandle().Ping(ctx).Err(); err != nil {
+	if client.GetWriteHandle() == nil {
 		return false
 	}
 
-	if rediscli.GetClient().GetReadHandle() == nil {
+	if err := client.GetWriteHandle().Ping(ctx).Err(); err != nil {
 		return false
 	}
 
-	if err := rediscli.GetClient().GetReadHandle().Ping(ctx).Err(); err != nil {
+	if client.GetReadHandle() == nil {
+		return false
+	}
+
+	if err := client.GetReadHandle().Ping(ctx).Err(); err != nil {
 		return false
 	}
 
@@ -231,7 +242,7 @@ func checkRedisConnections(ctx context.Context) bool {
 //
 // readinessCtx is used for the connectivity check loop.
 // runCtx is used for background goroutines (metrics, scripts) and should be the process/root context.
-func setupRedis(readinessCtx context.Context, runCtx context.Context) error {
+func setupRedis(readinessCtx context.Context, runCtx context.Context, client rediscli.Client) error {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
@@ -246,7 +257,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context) error {
 			}
 		}
 
-		if checkRedisConnections(readinessCtx) {
+		if checkRedisConnections(readinessCtx, client) {
 			go core.UpdateRedisPoolStats()
 			go rediscli.UpdateRedisServerMetrics(runCtx)
 
@@ -283,23 +294,61 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context) error {
 }
 
 // startHTTPServer starts the HTTP server by initializing the context, setting up channels, and launching the HTTP application.
-func startHTTPServer(ctx context.Context, store *contextStore) {
+func startHTTPServer(ctx context.Context, store *contextStore) error {
 	if store == nil {
-		return
+		return fmt.Errorf("context store is nil")
 	}
 
-	logger := log.Logger
-	if store.logger != nil {
-		logger = store.logger
+	if store.logger == nil {
+		return fmt.Errorf("logger is nil")
 	}
 
-	cfg := config.GetFile()
-	if store.cfgProvider != nil {
-		snap := store.cfgProvider.Current()
-		if snap.File != nil {
-			cfg = snap.File
-		}
+	if store.env == nil {
+		return fmt.Errorf("environment is nil")
 	}
+
+	if store.cfgProvider == nil {
+		return fmt.Errorf("config provider is nil")
+	}
+
+	snap := store.cfgProvider.Current()
+	if snap.File == nil {
+		return fmt.Errorf("config snapshot file is nil")
+	}
+
+	logger := store.logger
+	cfg := snap.File
+	env := store.env
+
+	// Configure response/header behavior via DI instead of globals.
+	core.SetDefaultResponseWriter(core.NewDefaultResponseWriter(core.ResponseDeps{Cfg: cfg, Env: env, Logger: logger}))
+
+	// Make environment available to core subtrees without direct global access.
+	core.SetDefaultEnvironment(env)
+
+	// Make environment available to util subtrees without direct global access.
+	util.SetDefaultEnvironment(env)
+
+	// Make environment available to backend/ldappool without direct global access.
+	ldappool.SetDefaultEnvironment(env)
+
+	// Make environment available to lualib/action without direct global access.
+	action.SetDefaultEnvironment(env)
+
+	// Make Redis available to lualib/redislib without direct global access.
+	redislib.SetDefaultClient(store.redisClient)
+
+	// Make Redis available to backend package without direct global access.
+	backend.SetDefaultRedisClient(store.redisClient)
+
+	// Make Redis available to bruteforce package without direct global access.
+	bruteforce.SetDefaultRedisClient(store.redisClient)
+
+	// Make Redis available to core helpers without direct global access.
+	core.SetDefaultRedisClient(store.redisClient)
+
+	// Make Redis available to bruteforce tolerations without direct global access.
+	tolerate.SetDefaultClient(store.redisClient)
 
 	level.Info(logger).Log(
 		definitions.LogKeyMsg, "Starting Nauthilus HTTP server",
@@ -357,9 +406,14 @@ func startHTTPServer(ctx context.Context, store *contextStore) {
 	}
 
 	// Backchannel API
-	setupBackchannel = handlerbackchannel.Setup
+	setupBackchannel = func(e *gin.Engine) {
+		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger, Redis: store.redisClient, Svc: handlerdeps.NewDefaultServices()}
+		handlerbackchannel.SetupWithDeps(e, deps)
+	}
 
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{Cfg: cfg, Logger: logger})
 
 	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
+
+	return nil
 }

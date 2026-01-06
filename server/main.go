@@ -20,6 +20,7 @@ import (
 	stdlog "log"
 
 	"github.com/croessner/nauthilus/server/app/bootfx"
+	"github.com/croessner/nauthilus/server/app/envfx"
 	"github.com/croessner/nauthilus/server/app/loopsfx"
 	"github.com/croessner/nauthilus/server/app/opsfx"
 	"github.com/croessner/nauthilus/server/app/reloadfx"
@@ -77,7 +78,8 @@ func main() {
 		fx.Provide(newBootstrapped),
 		fx.Provide(newConfigDeps),
 		fx.Provide(newLogger),
-		fx.Provide(newRedisClient),
+		fx.Provide(newRedisDeps),
+		envfx.Module(),
 		loopsfx.Module(),
 		opsfx.Module(),
 		reloadfx.Module(),

@@ -17,6 +17,7 @@ package core
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -58,14 +59,18 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	if config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
+	setNginxHeadersWithDeps(config.GetFile(), getDefaultEnvironment(), log.Logger, ctx, auth)
+}
+
+func setNginxHeadersWithDeps(cfg config.File, env config.Environment, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {
+	if cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if BackendServers.GetTotalServers() == 0 {
 			ctx.Header("Auth-Status", "Internal failure")
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, auth.GUID,
 				definitions.LogKeyMsg, "No backend servers found for backend_server_monitoring feature",
 				definitions.LogKeyError, "No backend servers found for backend_server_monitoring feature",
-				definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
+				definitions.LogKeyInstance, cfg.GetServer().GetInstanceName(),
 			)
 		} else {
 			if auth.UsedBackendIP != "" && auth.UsedBackendPort > 0 {
@@ -76,14 +81,14 @@ func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
 	} else {
 		switch auth.Protocol.Get() {
 		case definitions.ProtoSMTP:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetSMTPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetSMTPBackendPort()))
+			ctx.Header("Auth-Server", env.GetSMTPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetSMTPBackendPort()))
 		case definitions.ProtoIMAP:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetIMAPBackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetIMAPBackendPort()))
+			ctx.Header("Auth-Server", env.GetIMAPBackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetIMAPBackendPort()))
 		case definitions.ProtoPOP3:
-			ctx.Header("Auth-Server", config.GetEnvironment().GetPOP3BackendAddress())
-			ctx.Header("Auth-Port", fmt.Sprintf("%d", config.GetEnvironment().GetPOP3BackendPort()))
+			ctx.Header("Auth-Server", env.GetPOP3BackendAddress())
+			ctx.Header("Auth-Port", fmt.Sprintf("%d", env.GetPOP3BackendPort()))
 		}
 	}
 }

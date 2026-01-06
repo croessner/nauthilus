@@ -29,7 +29,6 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -57,7 +56,7 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(sctx)
 	defer cancel()
 
-	accountName, err = rediscli.GetClient().GetReadHandle().HGet(dCtx, key, username).Result()
+	accountName, err = getDefaultRedisClient().GetReadHandle().HGet(dCtx, key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			// Record real Redis errors (not a miss)
@@ -85,7 +84,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	defer cancel()
 
 	// Get all fields from the hash
-	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
+	hashValues, err := getDefaultRedisClient().GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
@@ -222,7 +221,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	defer cancel()
 
 	// Use HSet to store the hash fields
-	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe := getDefaultRedisClient().GetWriteHandle().Pipeline()
 	pipe.HSet(dCtx, key, hashFields)
 	pipe.Expire(dCtx, key, ttl) // Set expiration on the hash
 
@@ -320,7 +319,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	defer cancel()
 
 	// Get all fields from the hash
-	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
+	hashValues, err := getDefaultRedisClient().GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, "Failed to get WebAuthn user from redis",
@@ -415,7 +414,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 	defer cancel()
 
 	// Use pipeline to set hash and expiration in a single operation
-	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe := getDefaultRedisClient().GetWriteHandle().Pipeline()
 	pipe.HSet(dCtx, key, hashFields)
 	pipe.Expire(dCtx, key, ttl) // Set expiration on the hash
 
