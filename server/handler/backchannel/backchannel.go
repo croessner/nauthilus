@@ -16,7 +16,6 @@
 package backchannel
 
 import (
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
@@ -36,15 +35,16 @@ import (
 // It mirrors the previous setupBackChannelEndpoints behavior while delegating concrete
 // route registrations to modular handlers.
 func Setup(router *gin.Engine) {
-	deps := &handlerdeps.Deps{Cfg: config.GetFile(), Svc: handlerdeps.NewDefaultServices()}
-
-	SetupWithDeps(router, deps)
+	panic("backchannel.Setup is deprecated; use backchannel.SetupWithDeps with explicit dependencies")
 }
 
 func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
-	if deps == nil || deps.Cfg == nil {
-		// Keep legacy safety net for callers that are not migrated yet.
-		deps = &handlerdeps.Deps{Cfg: config.GetFile(), Svc: handlerdeps.NewDefaultServices()}
+	if deps == nil || deps.Cfg == nil || deps.Logger == nil {
+		panic("backchannel.SetupWithDeps requires non-nil deps (Cfg, Logger)")
+	}
+
+	if deps.Svc == nil {
+		deps.Svc = handlerdeps.NewDefaultServices()
 	}
 
 	cfg := deps.Cfg
@@ -66,7 +66,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	group := router.Group("/api/v1")
 
 	if cfg.GetServer().GetBasicAuth().IsEnabled() {
-		group.Use(mdauth.BasicAuthMiddleware())
+		group.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
 	}
 
 	if cfg.GetServer().GetJWTAuth().IsEnabled() {
@@ -76,10 +76,10 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	group.Use(mdlua.LuaContextMiddleware())
 
 	// Register modules
-	auth.New(cfg).Register(group)
+	auth.NewWithDeps(deps).Register(group)
 	bruteforce.New(deps).Register(group)
 	confighandler.NewWithDeps(deps).Register(group)
 	custom.New().Register(group)
 	cache.NewWithDeps(deps).Register(group)
-	asyncjobs.New().Register(group)
+	asyncjobs.NewWithDeps(deps).Register(group)
 }

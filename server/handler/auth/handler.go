@@ -21,16 +21,26 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	cfg config.File
+	cfg  config.File
+	deps *handlerdeps.Deps
 }
 
 func New(cfg config.File) *Handler {
 	return &Handler{cfg: cfg}
+}
+
+func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+	if deps == nil {
+		return &Handler{}
+	}
+
+	return &Handler{cfg: deps.Cfg, deps: deps}
 }
 
 func (h *Handler) Register(router gin.IRouter) {
@@ -146,7 +156,7 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 	ctx.Request = ctx.Request.WithContext(spanCtx)
 
 	// Same pre-processing flow but use the specific SASL handler
-	auth := core.NewAuthStateWithSetup(ctx)
+	auth := h.newAuthState(ctx)
 	if auth == nil {
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
@@ -161,7 +171,7 @@ func (h *Handler) saslAuthd(ctx *gin.Context) {
 }
 
 func (h *Handler) process(ctx *gin.Context) {
-	auth := core.NewAuthStateWithSetup(ctx)
+	auth := h.newAuthState(ctx)
 
 	if auth == nil {
 		ctx.AbortWithStatus(http.StatusBadRequest)
@@ -174,4 +184,12 @@ func (h *Handler) process(ctx *gin.Context) {
 	}
 
 	auth.HandleAuthentication(ctx)
+}
+
+func (h *Handler) newAuthState(ctx *gin.Context) core.State {
+	if h.deps != nil {
+		return core.NewAuthStateWithSetupWithDeps(ctx, core.AuthDeps{Cfg: h.deps.Cfg, Env: h.deps.Env, Logger: h.deps.Logger, Redis: h.deps.Redis})
+	}
+
+	return core.NewAuthStateWithSetup(ctx)
 }

@@ -53,7 +53,9 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 	defer bspan.End()
 
-	if config.GetFile().HaveLuaActions() {
+	cfg := a.cfg()
+
+	if cfg.HaveLuaActions() {
 		finished := make(chan action.Done)
 		accountName := a.GetAccount()
 
@@ -61,7 +63,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 		commonRequest := lualib.GetCommonRequest()
 
 		// Set the fields
-		commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+		commonRequest.Debug = cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 		// repeating is true if either pre-detection flagged (alreadyTriggered) or the
 		// brute-force bucket counter has reached or exceeded the rule limit.
 		bfCount := a.BruteForceCounter[rule.Name]
@@ -235,7 +237,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	cfg := a.cfg()
+
+	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
 
 		if stopPre != nil {
@@ -260,8 +264,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	if config.GetFile().GetBruteForce().HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, config.GetFile().GetBruteForce().SoftWhitelist) {
+	bfCfg := cfg.GetBruteForce()
+	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
+		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, bfCfg.SoftWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
@@ -276,8 +281,8 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 	}
 
-	if len(config.GetFile().GetBruteForce().GetIPWhitelist()) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
+	if bfCfg != nil && len(bfCfg.GetIPWhitelist()) > 0 {
+		if a.IsInNetwork(bfCfg.IPWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
 
@@ -315,7 +320,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}()
 
 	// All rules
-	rules := config.GetFile().GetBruteForceRules()
+	rules := cfg.GetBruteForceRules()
 
 	if len(rules) == 0 {
 		return false
@@ -324,7 +329,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	logBruteForceDebug(a)
 
 	bruteForceProtocolEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
+	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
@@ -514,7 +519,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	// 2) Determine repeating based on alreadyTriggered or counter >= limit; fallback to pre-result hash if buckets expired.
 	bfRepeating := alreadyTriggered || (a.BruteForceCounter[rules[ruleNumber].Name] >= rules[ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		key := a.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -571,7 +576,9 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	var bm bruteforce.BucketManager
 
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	cfg := a.cfg()
+
+	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -579,7 +586,8 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	if config.GetFile().GetBruteForce() == nil {
+	bfCfg := cfg.GetBruteForce()
+	if bfCfg == nil {
 		return
 	}
 

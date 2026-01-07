@@ -27,7 +27,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	jwtapi "github.com/croessner/nauthilus/server/model/jwt"
@@ -53,7 +52,7 @@ func (d JWTDeps) effectiveLogger() *slog.Logger {
 		return d.Logger
 	}
 
-	return log.Logger
+	return getDefaultLogger()
 }
 
 func (d JWTDeps) jwtConfig() *config.JWTAuth {
@@ -66,7 +65,7 @@ func (d JWTDeps) redisPrefix() string {
 
 // GenerateJWTToken generates a JWT token for the given username and roles
 func GenerateJWTToken(username string, roles []string) (string, int64, error) {
-	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	jwtConfig := getDefaultConfigFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() {
 		return "", 0, errors.New("JWT authentication is not enabled")
@@ -106,7 +105,7 @@ func GenerateJWTToken(username string, roles []string) (string, int64, error) {
 
 // GenerateRefreshToken generates a refresh token for the given username
 func GenerateRefreshToken(username string) (string, error) {
-	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	jwtConfig := getDefaultConfigFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() || !jwtConfig.IsRefreshTokenEnabled() {
 		return "", errors.New("JWT refresh tokens are not enabled")
@@ -142,7 +141,7 @@ func GenerateRefreshToken(username string) (string, error) {
 
 // StoreTokenInRedis stores a JWT token in Redis for multi-instance compatibility
 func StoreTokenInRedis(ctx context.Context, username, token string, expiresAt int64) error {
-	deps := JWTDeps{Cfg: config.GetFile(), Logger: log.Logger, Redis: getDefaultRedisClient()}
+	deps := JWTDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
 
 	return StoreTokenInRedisWithDeps(ctx, username, token, expiresAt, deps)
 }
@@ -175,7 +174,7 @@ func StoreTokenInRedisWithDeps(ctx context.Context, username, token string, expi
 
 // StoreRefreshTokenInRedis stores a JWT refresh token in Redis for multi-instance compatibility
 func StoreRefreshTokenInRedis(ctx context.Context, username, refreshToken string) error {
-	deps := JWTDeps{Cfg: config.GetFile(), Logger: log.Logger, Redis: getDefaultRedisClient()}
+	deps := JWTDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
 
 	return StoreRefreshTokenInRedisWithDeps(ctx, username, refreshToken, deps)
 }
@@ -210,7 +209,7 @@ func StoreRefreshTokenInRedisWithDeps(ctx context.Context, username, refreshToke
 
 // GetTokenFromRedis retrieves a JWT token from Redis
 func GetTokenFromRedis(ctx context.Context, username string) (string, error) {
-	deps := JWTDeps{Cfg: config.GetFile(), Logger: log.Logger, Redis: getDefaultRedisClient()}
+	deps := JWTDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
 
 	return GetTokenFromRedisWithDeps(ctx, username, deps)
 }
@@ -246,7 +245,7 @@ func GetTokenFromRedisWithDeps(ctx context.Context, username string, deps JWTDep
 
 // GetRefreshTokenFromRedis retrieves a JWT refresh token from Redis
 func GetRefreshTokenFromRedis(ctx context.Context, username string) (string, error) {
-	deps := JWTDeps{Cfg: config.GetFile(), Logger: log.Logger, Redis: getDefaultRedisClient()}
+	deps := JWTDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
 
 	return GetRefreshTokenFromRedisWithDeps(ctx, username, deps)
 }
@@ -282,7 +281,7 @@ func GetRefreshTokenFromRedisWithDeps(ctx context.Context, username string, deps
 
 // ValidateJWTToken validates a JWT token and returns the claims
 func ValidateJWTToken(ctx context.Context, tokenString string) (*jwtclaims.Claims, error) {
-	deps := JWTDeps{Cfg: config.GetFile(), Logger: log.Logger, Redis: getDefaultRedisClient()}
+	deps := JWTDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
 
 	return ValidateJWTTokenWithDeps(ctx, tokenString, deps)
 }
@@ -383,7 +382,7 @@ func ExtractJWTTokenWithCfg(ctx *gin.Context, cfg config.File) (string, error) {
 
 // ExtractJWTToken extracts the JWT token from the Authorization header
 func ExtractJWTToken(ctx *gin.Context) (string, error) {
-	return ExtractJWTTokenWithCfg(ctx, config.GetFile())
+	return ExtractJWTTokenWithCfg(ctx, getDefaultConfigFile())
 }
 
 // JWTAuthMiddlewareWithDeps is a deps-based variant of JWTAuthMiddleware.
@@ -461,7 +460,7 @@ func JWTAuthMiddlewareWithDeps(deps JWTDeps) gin.HandlerFunc {
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// Skip if JWT auth is not enabled
-		if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		if !getDefaultConfigFile().GetServer().GetJWTAuth().IsEnabled() {
 			ctx.Next()
 
 			return
@@ -509,7 +508,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			}
 
 			if !hasAuthenticateRole {
-				level.Warn(log.Logger).Log(
+				level.Warn(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 					definitions.LogKeyUsername, claims.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -533,7 +532,7 @@ func HandleJWTTokenGenerationWithDeps(deps JWTDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		cfg := deps.Cfg
 		if cfg == nil {
-			cfg = config.GetFile()
+			cfg = getDefaultConfigFile()
 		}
 
 		logger := deps.effectiveLogger()
@@ -778,7 +777,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		cfg := deps.Cfg
 		if cfg == nil {
-			cfg = config.GetFile()
+			cfg = getDefaultConfigFile()
 		}
 
 		logger := deps.effectiveLogger()
@@ -953,7 +952,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 
 // HandleJWTTokenGeneration handles the JWT token generation endpoint
 func HandleJWTTokenGeneration(ctx *gin.Context) {
-	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	jwtConfig := getDefaultConfigFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() {
 		ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "JWT authentication is not enabled"})
@@ -998,7 +997,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		}
 
 		if !authenticated {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, request.Username,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1014,7 +1013,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		// Generate JWT token
 		token, expiresAt, err := GenerateJWTToken(request.Username, userRoles)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, request.Username,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1035,7 +1034,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		if jwtConfig.IsRefreshTokenEnabled() {
 			refreshToken, err := GenerateRefreshToken(request.Username)
 			if err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyUsername, request.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1050,7 +1049,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		// Store tokens in Redis if enabled
 		if jwtConfig.IsStoreInRedisEnabled() {
 			if err := StoreTokenInRedis(ctx, request.Username, token, expiresAt); err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyUsername, request.Username,
 					definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1061,7 +1060,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 			if jwtConfig.IsRefreshTokenEnabled() && response.RefreshToken != "" {
 				if err := StoreRefreshTokenInRedis(ctx, request.Username, response.RefreshToken); err != nil {
-					level.Error(log.Logger).Log(
+					level.Error(getDefaultLogger()).Log(
 						definitions.LogKeyGUID, guid,
 						definitions.LogKeyUsername, request.Username,
 						definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1072,7 +1071,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 			}
 		}
 
-		level.Info(log.Logger).Log(
+		level.Info(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyUsername, request.Username,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1101,7 +1100,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 	// Authenticate user
 	authResult := auth.HandlePassword(ctx)
 	if authResult != definitions.AuthResultOK {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, auth.GetGUID(),
 			definitions.LogKeyUsername, auth.GetUsername(),
 			definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1130,7 +1129,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 	// Generate JWT token
 	token, expiresAt, err := GenerateJWTToken(request.Username, roles)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, auth.GetGUID(),
 			definitions.LogKeyUsername, auth.GetUsername(),
 			definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1151,7 +1150,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 	if jwtConfig.IsRefreshTokenEnabled() {
 		refreshToken, err := GenerateRefreshToken(request.Username)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, auth.GetGUID(),
 				definitions.LogKeyUsername, auth.GetUsername(),
 				definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1166,7 +1165,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 	// Store tokens in Redis if enabled
 	if jwtConfig.IsStoreInRedisEnabled() {
 		if err := StoreTokenInRedis(ctx, request.Username, token, expiresAt); err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, auth.GetGUID(),
 				definitions.LogKeyUsername, auth.GetUsername(),
 				definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1177,7 +1176,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 		if jwtConfig.IsRefreshTokenEnabled() && response.RefreshToken != "" {
 			if err := StoreRefreshTokenInRedis(ctx, request.Username, response.RefreshToken); err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, auth.GetGUID(),
 					definitions.LogKeyUsername, auth.GetUsername(),
 					definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1188,7 +1187,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 		}
 	}
 
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, auth.GetGUID(),
 		definitions.LogKeyUsername, auth.GetUsername(),
 		definitions.LogKeyClientIP, auth.GetClientIP(),
@@ -1200,7 +1199,7 @@ func HandleJWTTokenGeneration(ctx *gin.Context) {
 
 // HandleJWTTokenRefresh handles the JWT token refresh endpoint
 func HandleJWTTokenRefresh(ctx *gin.Context) {
-	jwtConfig := config.GetFile().GetServer().GetJWTAuth()
+	jwtConfig := getDefaultConfigFile().GetServer().GetJWTAuth()
 
 	if !jwtConfig.IsEnabled() || !jwtConfig.IsRefreshTokenEnabled() {
 		ctx.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "JWT refresh tokens are not enabled"})
@@ -1294,7 +1293,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		}
 
 		if !userFound {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1311,7 +1310,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	// Generate new JWT token
 	newToken, expiresAt, err := GenerateJWTToken(claims.Subject, roles)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyUsername, claims.Subject,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1326,7 +1325,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	// Generate new refresh token
 	newRefreshToken, err := GenerateRefreshToken(claims.Subject)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyUsername, claims.Subject,
 			definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1341,7 +1340,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 	// Store tokens in Redis if enabled
 	if jwtConfig.IsStoreInRedisEnabled() {
 		if err := StoreTokenInRedis(ctx, claims.Subject, newToken, expiresAt); err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1351,7 +1350,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		}
 
 		if err := StoreRefreshTokenInRedis(ctx, claims.Subject, newRefreshToken); err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, claims.Subject,
 				definitions.LogKeyClientIP, ctx.ClientIP(),
@@ -1361,7 +1360,7 @@ func HandleJWTTokenRefresh(ctx *gin.Context) {
 		}
 	}
 
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyUsername, claims.Subject,
 		definitions.LogKeyClientIP, ctx.ClientIP(),

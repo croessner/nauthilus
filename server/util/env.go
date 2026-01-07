@@ -16,6 +16,8 @@
 package util
 
 import (
+	stdlog "log"
+	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -32,6 +34,8 @@ type envHolder struct {
 }
 
 var defaultEnvironment atomic.Value
+
+var warnMissingEnvOnce sync.Once
 
 func init() {
 	defaultEnvironment.Store(envHolder{env: nil})
@@ -51,5 +55,10 @@ func getDefaultEnvironment() config.Environment {
 		}
 	}
 
-	return config.GetEnvironment()
+	// Hard fail: environment must be configured at the boundary.
+	warnMissingEnvOnce.Do(func() {
+		stdlog.Printf("ERROR: util default Environment is not configured. Ensure the boundary calls util.SetDefaultEnvironment(...)\n")
+	})
+
+	panic("util: default Environment not configured")
 }

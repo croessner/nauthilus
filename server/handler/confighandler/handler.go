@@ -30,10 +30,6 @@ type Handler struct {
 	deps *handlerdeps.Deps
 }
 
-func New(cfg config.File) *Handler {
-	return &Handler{cfg: cfg}
-}
-
 // NewWithDeps constructs the config handler with injected dependencies.
 //
 // Enables deps-based endpoints (avoid globals in request path).
@@ -52,18 +48,17 @@ func (h *Handler) Register(r gin.IRouter) {
 }
 
 func (h *Handler) load(c *gin.Context) {
+	if h.cfg == nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+
+		return
+	}
+
 	if h.cfg.GetServer().GetEndpoint().IsConfigurationDisabled() {
 		c.AbortWithStatus(http.StatusNotFound)
 
 		return
 	}
 
-	// Prefer deps-based handler to avoid globals in request path.
-	if h.deps != nil && h.deps.Cfg != nil {
-		core.NewConfigLoadHandler(h.deps.Cfg, h.deps.Logger)(c)
-
-		return
-	}
-
-	core.HandleConfigLoad(c)
+	core.NewConfigLoadHandler(h.cfg, h.deps.Logger)(c)
 }

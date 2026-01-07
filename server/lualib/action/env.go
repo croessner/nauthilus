@@ -16,6 +16,8 @@
 package action
 
 import (
+	stdlog "log"
+	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -23,14 +25,15 @@ import (
 
 // Environment injection seam for the Lua action worker package.
 //
-// This removes direct `config.GetEnvironment()` usage from migrated code paths
-// while keeping a legacy fallback for non-migrated call sites.
+// Runtime must configure a default environment at the boundary.
 
 type envHolder struct {
 	env config.Environment
 }
 
 var defaultEnvironment atomic.Value
+
+var warnMissingEnvOnce sync.Once
 
 func init() {
 	defaultEnvironment.Store(envHolder{env: nil})
@@ -50,5 +53,10 @@ func getDefaultEnvironment() config.Environment {
 		}
 	}
 
-	return config.GetEnvironment()
+	// Hard fail: environment must be configured at the boundary.
+	warnMissingEnvOnce.Do(func() {
+		stdlog.Printf("ERROR: lualib/action default Environment is not configured. Ensure the boundary calls action.SetDefaultEnvironment(...)\n")
+	})
+
+	panic("lualib/action: default Environment not configured")
 }

@@ -16,23 +16,25 @@
 package core
 
 import (
+	stdlog "log"
+	"sync"
 	"sync/atomic"
 
 	"github.com/croessner/nauthilus/server/config"
 )
 
-// Make environment consumption injectable for core subtrees.
+// Environment injection seam for core subtrees.
 //
-// Until all consumers accept explicit deps, we keep a process-wide default that
-// is set at the HTTP boundary (and other boundaries later). This removes direct
-// `config.GetEnvironment()` calls from migrated code while keeping backward
-// compatibility for non-migrated call sites.
+// This enables incremental migration away from direct `config.GetEnvironment()`
+// calls by providing a process-wide default that is set at the boundary.
 
 type envHolder struct {
 	env config.Environment
 }
 
 var defaultEnvironment atomic.Value
+
+var warnMissingEnvOnce sync.Once
 
 func init() {
 	// Keep nil by default to avoid touching config/env globals during init.
@@ -55,7 +57,10 @@ func getDefaultEnvironment() config.Environment {
 		}
 	}
 
-	// Legacy fallback for non-migrated call sites.
-	// This may still panic if the legacy singleton is uninitialized, preserving old behavior.
-	return config.GetEnvironment()
+	// Hard fail: environment must be configured at the boundary.
+	warnMissingEnvOnce.Do(func() {
+		stdlog.Printf("ERROR: core default Environment is not configured. Ensure the boundary calls core.SetDefaultEnvironment(...)\n")
+	})
+
+	panic("core: default Environment not configured")
 }

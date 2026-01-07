@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"reflect"
@@ -39,11 +40,11 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/jwtutil"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/authdto"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -298,8 +299,19 @@ type State interface {
 	IsMasterUser() bool
 }
 
+type AuthDeps struct {
+	Cfg    config.File
+	Env    config.Environment
+	Logger *slog.Logger
+	Redis  rediscli.Client
+}
+
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
+	// deps holds the injected runtime dependencies for this auth request.
+	// It must be initialized by the request-boundary constructor.
+	deps AuthDeps
+
 	// StartTime represents the starting time of a client request.
 	StartTime time.Time
 
@@ -493,6 +505,38 @@ type AuthState struct {
 
 	*bruteforce.PasswordHistory
 	*lualib.Context
+}
+
+func (a *AuthState) cfg() config.File {
+	if a != nil && a.deps.Cfg != nil {
+		return a.deps.Cfg
+	}
+
+	return getDefaultConfigFile()
+}
+
+func (a *AuthState) env() config.Environment {
+	if a != nil && a.deps.Env != nil {
+		return a.deps.Env
+	}
+
+	return getDefaultEnvironment()
+}
+
+func (a *AuthState) logger() *slog.Logger {
+	if a != nil && a.deps.Logger != nil {
+		return a.deps.Logger
+	}
+
+	return getDefaultLogger()
+}
+
+func (a *AuthState) redis() rediscli.Client {
+	if a != nil && a.deps.Redis != nil {
+		return a.deps.Redis
+	}
+
+	return getDefaultRedisClient()
 }
 
 var _ State = (*AuthState)(nil)
@@ -1149,7 +1193,7 @@ func (a *AuthState) loginAttemptProcessing(ctx *gin.Context) {
 	keyvals := a.LogLineTemplate("fail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Authentication request has failed")
 
-	level.Notice(log.Logger).Log(keyvals...)
+	level.Notice(a.logger()).Log(keyvals...)
 
 	stats.GetMetrics().GetRejectedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
 	stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelFailure).Inc()
@@ -1170,9 +1214,13 @@ func (a *AuthState) setSMPTHeaders(ctx *gin.Context) {
 // IsMasterUser checks whether the current user is a master user based on the MasterUser configuration in the GetFile().
 // It returns true if MasterUser is enabled and the number of occurrences of the delimiter in the Username is equal to 1, otherwise it returns false.
 func (a *AuthState) IsMasterUser() bool {
-	if config.GetFile().GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(a.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(a.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter())
+	cfg := a.cfg()
+	mu := cfg.GetServer().GetMasterUser()
+
+	if mu.IsEnabled() {
+		delim := mu.GetDelimiter()
+		if strings.Count(a.Username, delim) == 1 {
+			parts := strings.Split(a.Username, delim)
 			if len(parts[0]) > 0 && len(parts[1]) > 0 {
 				return true
 			}
@@ -1224,7 +1272,7 @@ func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 			err = checkAllBackends(configErrors, auth)
 		}
 	} else {
-		level.Error(log.Logger).Log(
+		level.Error(auth.logger()).Log(
 			definitions.LogKeyGUID, auth.GUID,
 			"passdb", passDB.backend.String(),
 			definitions.LogKeyMsg, "Error occurred during backend processing",
@@ -1249,7 +1297,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, auth *AuthStat
 	// If all (real) Database backends failed, we must return with a temporary failure
 	if allConfigErrors {
 		err = errors.ErrAllBackendConfigError
-		level.Error(log.Logger).Log(
+		level.Error(auth.logger()).Log(
 			definitions.LogKeyGUID, auth.GUID,
 			"passdb", "all",
 			definitions.LogKeyMsg, "All backends failed",
@@ -1352,7 +1400,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 			cancelRead()
 
 			if err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, auth.GUID,
 					definitions.LogKeyMsg, "Failed to lookup user->account mapping in Redis",
 					definitions.LogKeyError, err,
@@ -1366,7 +1414,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 				cancelWrite()
 
 				if werr != nil {
-					level.Error(log.Logger).Log(
+					level.Error(getDefaultLogger()).Log(
 						definitions.LogKeyGUID, auth.GUID,
 						definitions.LogKeyMsg, "Failed to update user->account mapping in Redis",
 						definitions.LogKeyError, werr,
@@ -1599,7 +1647,9 @@ func (a *AuthState) initializePassDBResult() *PassDBResult {
 func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definitions.Backend]int, passDBs []*PassDBMap) {
 	backendPos = make(map[definitions.Backend]int)
 
-	for index, backendType := range config.GetFile().GetServer().GetBackends() {
+	cfg := getDefaultConfigFile()
+
+	for index, backendType := range cfg.GetServer().GetBackends() {
 		db := backendType.Get()
 		switch db {
 		case definitions.BackendCache:
@@ -1608,7 +1658,7 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 				useCache = true
 			}
 		case definitions.BackendLDAP:
-			if !config.GetFile().LDAPHavePoolOnly(backendType.GetName()) {
+			if !cfg.LDAPHavePoolOnly(backendType.GetName()) {
 				mgr := NewLDAPManager(backendType.GetName())
 				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, mgr.PassDB)
 			}
@@ -1688,11 +1738,11 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 				logs = append(logs, a.AdditionalLogs...)
 			}
 
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				logs...,
 			)
 		} else {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, a.GUID,
 				definitions.LogKeyMsg, "Error verifying password",
 				definitions.LogKeyError, err)
@@ -1714,7 +1764,7 @@ func (a *AuthState) processUserFound(passDBResult *PassDBResult) (accountName st
 	if a.UserFound {
 		accountName, err = a.updateUserAccountInRedis()
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(getDefaultLogger()).Log(
 				definitions.LogKeyGUID, a.GUID,
 				definitions.LogKeyMsg, "Error updating user account in Redis",
 				definitions.LogKeyError, err)
@@ -1761,7 +1811,7 @@ func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) 
 	case definitions.BackendCache:
 	case definitions.BackendLocalCache:
 	default:
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyMsg, "Unable to get the cache name backend",
 			definitions.LogKeyError, fmt.Errorf("unknown backend type: %s", a.UsedPassDBBackend),
@@ -1777,7 +1827,7 @@ func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) 
 func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
 	cacheNames := backend.GetCacheNames(a.Protocol.Get(), usedBackend)
 	if len(cacheNames) != 1 {
-		level.Error(log.Logger).Log(
+		level.Error(a.logger()).Log(
 			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyMsg, "Cache names are not correct",
 			definitions.LogKeyError, fmt.Errorf("cache names are not correct: %v", cacheNames),
@@ -1952,7 +2002,7 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 		return res
 	}
 
-	level.Error(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
+	level.Error(a.logger()).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "LuaFilter not registered")
 
 	return definitions.AuthResultTempFail
 }
@@ -1967,7 +2017,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 
 	a.Protocol.Set("account-provider")
 
-	for _, backendType := range config.GetFile().GetServer().GetBackends() {
+	for _, backendType := range a.cfg().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
 			mgr := NewLDAPManager(backendType.GetName())
@@ -1997,13 +2047,13 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 		} else {
 			var detailedError *errors.DetailedError
 			if stderrors.As(err, &detailedError) {
-				level.Error(log.Logger).Log(
+				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, detailedError.GetDetails(),
 					definitions.LogKeyError, err,
 				)
 			} else {
-				level.Error(log.Logger).Log(
+				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, "Error calling account database",
 					definitions.LogKeyError, err,
@@ -2107,7 +2157,7 @@ func (a *AuthState) Ctx() context.Context {
 // If JWT authentication is not enabled or no claims are found, it returns false.
 func (a *AuthState) HasJWTRole(ctx *gin.Context, role string) bool {
 	// Check if JWT auth is enabled
-	if !config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+	if !a.cfg().GetServer().GetJWTAuth().IsEnabled() {
 		return false
 	}
 
@@ -2135,6 +2185,8 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	}
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
+	cfg := a.cfg()
+	logger := a.logger()
 
 	// We reset flags, because they might have been cached in the in-memory cahce.
 	a.NoAuth = false
@@ -2146,11 +2198,11 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
 		// Check if JWT is enabled and user has the required role
-		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		if cfg.GetServer().GetJWTAuth().IsEnabled() {
 			if a.HasJWTRole(ctx, "user_info") {
 				a.NoAuth = true
 			} else {
-				level.Warn(log.Logger).Log(
+				level.Warn(logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyMsg, "JWT user does not have the 'user_info' role required for no-auth mode",
 				)
@@ -2162,11 +2214,11 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 		util.DebugModule(definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
 
 		// Check if JWT is enabled and user has the required role
-		if config.GetFile().GetServer().GetJWTAuth().IsEnabled() {
+		if cfg.GetServer().GetJWTAuth().IsEnabled() {
 			if a.HasJWTRole(ctx, "list_accounts") {
 				a.ListAccounts = true
 			} else {
-				level.Warn(log.Logger).Log(
+				level.Warn(logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyMsg, "JWT user does not have the 'list_accounts' role required for list-accounts mode",
 				)
@@ -2203,11 +2255,16 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		defer stop()
 	}
 
-	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	username := ctx.GetHeader(config.GetFile().GetUsername())
-	password := ctx.GetHeader(config.GetFile().GetPassword())
+	cfg := getDefaultConfigFile()
+	if a, ok := auth.(*AuthState); ok {
+		cfg = a.cfg()
+	}
 
-	encoded := ctx.GetHeader(config.GetFile().GetPasswordEncoded())
+	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
+	username := ctx.GetHeader(cfg.GetUsername())
+	password := ctx.GetHeader(cfg.GetPassword())
+
+	encoded := ctx.GetHeader(cfg.GetPasswordEncoded())
 	if encoded == "1" {
 		// Decode password locally before applying
 		padding := len(password) % 4
@@ -2231,8 +2288,8 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 		))
 
 		a.ApplyContextData(NewAuthContext(
-			WithProtocol(ctx.GetHeader(config.GetFile().GetProtocol())),
-			WithMethod(ctx.GetHeader(config.GetFile().GetAuthMethod())),
+			WithProtocol(ctx.GetHeader(cfg.GetProtocol())),
+			WithMethod(ctx.GetHeader(cfg.GetAuthMethod())),
 		))
 	}
 
@@ -2240,7 +2297,7 @@ func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	if a, ok := auth.(*AuthState); ok {
 		lam := a.ensureLAM()
 		if lam != nil {
-			lam.InitFromHeader(ctx.GetHeader(config.GetFile().GetLoginAttempt()))
+			lam.InitFromHeader(ctx.GetHeader(cfg.GetLoginAttempt()))
 			// Mirror for backward compatibility: store FailCount (number of failures)
 			a.LoginAttempts = lam.FailCount()
 		}
@@ -2496,7 +2553,7 @@ func setupAuth(ctx *gin.Context, auth State) {
 // Otherwise, it calls the setupAuth function to setup the AuthState struct based on the service parameter from the gin.Context object.
 // Finally, it returns the created AuthState struct.
 func NewAuthStateWithSetup(ctx *gin.Context) State {
-	// Setup stage tracing
+	// Setup tracing
 	tr := monittrace.New("nauthilus/auth")
 	tctx, tsp := tr.Start(ctx.Request.Context(), "auth.setup",
 		attribute.String("service", ctx.GetString(definitions.CtxServiceKey)),
@@ -2532,10 +2589,60 @@ func NewAuthStateWithSetup(ctx *gin.Context) State {
 	return auth
 }
 
+// NewAuthStateWithSetupWithDeps is the dependency-injected variant of NewAuthStateWithSetup.
+// Call this from request boundaries that already have explicit deps available.
+func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
+	// Setup tracing
+	tr := monittrace.New("nauthilus/auth")
+	tctx, tsp := tr.Start(ctx.Request.Context(), "auth.setup",
+		attribute.String("service", ctx.GetString(definitions.CtxServiceKey)),
+		attribute.String("method", ctx.Request.Method),
+	)
+
+	defer tsp.End()
+
+	// Propagate tracing context downwards for any callee that reads request context
+	ctx.Request = ctx.Request.WithContext(tctx)
+
+	auth := NewAuthStateFromContextWithDeps(ctx, deps)
+
+	svc := ctx.GetString(definitions.CtxServiceKey)
+	if svc == "" {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
+
+		return nil
+	}
+
+	auth.SetStatusCodes(svc)
+	setupAuth(ctx, auth)
+
+	// prominent early log: show all incoming data including session GUID
+	if a, ok := auth.(*AuthState); ok {
+		logProcessingRequest(ctx, a)
+	}
+
+	if ctx.Errors.Last() != nil {
+		return nil
+	}
+
+	return auth
+}
+
 // NewAuthStateFromContext initializes and returns an AuthState using the provided gin.Context.
 // It gets an AuthState from the pool, sets the context to a copied HTTPClientContext and assigns the current time to the StartTime field.
 func NewAuthStateFromContext(ctx *gin.Context) State {
+	return NewAuthStateFromContextWithDeps(ctx, AuthDeps{
+		Cfg:    getDefaultConfigFile(),
+		Env:    getDefaultEnvironment(),
+		Logger: getDefaultLogger(),
+		Redis:  getDefaultRedisClient(),
+	})
+}
+
+// NewAuthStateFromContextWithDeps initializes and returns an AuthState using the provided gin.Context and explicit deps.
+func NewAuthStateFromContextWithDeps(ctx *gin.Context, deps AuthDeps) State {
 	auth := &AuthState{
+		deps:              deps,
 		StartTime:         time.Now(),
 		HTTPClientContext: ctx,
 		HTTPClientRequest: ctx.Request,
@@ -2577,15 +2684,16 @@ func (a *AuthState) WithLocalInfo(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.XLocalIP = ctx.GetHeader(config.GetFile().GetLocalIP())
-	a.XPort = ctx.GetHeader(config.GetFile().GetLocalPort())
+	cfg := a.cfg()
+	a.XLocalIP = ctx.GetHeader(cfg.GetLocalIP())
+	a.XPort = ctx.GetHeader(cfg.GetLocalPort())
 
 	return a
 }
 
 // postResolvDNS resolves the client IP to a host name if DNS client IP resolution is enabled in the configuration.
 func (a *AuthState) postResolvDNS(ctx *gin.Context) {
-	if config.GetFile().GetServer().GetDNS().GetResolveClientIP() {
+	if a.cfg().GetServer().GetDNS().GetResolveClientIP() {
 		stopTimer := stats.PrometheusTimer(definitions.PromDNS, definitions.DNSResolvePTR)
 
 		a.ClientHost = util.ResolveIPAddress(ctx, a.ClientIP)
@@ -2604,18 +2712,19 @@ func (a *AuthState) WithClientInfo(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.OIDCCID = ctx.GetHeader(config.GetFile().GetOIDCCID())
-	a.ClientIP = ctx.GetHeader(config.GetFile().GetClientIP())
-	a.XClientPort = ctx.GetHeader(config.GetFile().GetClientPort())
-	a.XClientID = ctx.GetHeader(config.GetFile().GetClientID())
-	a.ClientHost = ctx.GetHeader(config.GetFile().GetClientHost())
+	cfg := a.cfg()
+	a.OIDCCID = ctx.GetHeader(cfg.GetOIDCCID())
+	a.ClientIP = ctx.GetHeader(cfg.GetClientIP())
+	a.XClientPort = ctx.GetHeader(cfg.GetClientPort())
+	a.XClientID = ctx.GetHeader(cfg.GetClientID())
+	a.ClientHost = ctx.GetHeader(cfg.GetClientHost())
 
 	if a.ClientIP == "" {
 		// This might be valid if HAproxy v2 support is enabled
-		if config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
+		if cfg.GetServer().IsHAproxyProtocolEnabled() {
 			a.ClientIP, a.XClientPort, err = net.SplitHostPort(ctx.Request.RemoteAddr)
 			if err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(a.logger()).Log(
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, "Failed to split client IP and port",
 					definitions.LogKeyError, err,
@@ -2648,22 +2757,23 @@ func (a *AuthState) WithXSSL(ctx *gin.Context) State {
 		return nil
 	}
 
-	a.XSSL = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSL())
-	a.XSSLSessionID = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSessionID())
-	a.XSSLClientVerify = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLVerify())
-	a.XSSLClientDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSubject())
-	a.XSSLClientCN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientCN())
-	a.XSSLIssuer = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuer())
-	a.XSSLClientNotBefore = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotBefore())
-	a.XSSLClientNotAfter = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientNotAfter())
-	a.XSSLSubjectDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSubjectDN())
-	a.XSSLIssuerDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLIssuerDN())
-	a.XSSLClientSubjectDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientSubjectDN())
-	a.XSSLClientIssuerDN = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLClientIssuerDN())
-	a.XSSLCipher = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLCipher())
-	a.XSSLProtocol = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLProtocol())
-	a.SSLSerial = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLSerial())
-	a.SSLFingerprint = ctx.GetHeader(config.GetFile().GetServer().GetDefaultHTTPRequestHeader().GetSSLFingerprint())
+	h := a.cfg().GetServer().GetDefaultHTTPRequestHeader()
+	a.XSSL = ctx.GetHeader(h.GetSSL())
+	a.XSSLSessionID = ctx.GetHeader(h.GetSSLSessionID())
+	a.XSSLClientVerify = ctx.GetHeader(h.GetSSLVerify())
+	a.XSSLClientDN = ctx.GetHeader(h.GetSSLSubject())
+	a.XSSLClientCN = ctx.GetHeader(h.GetSSLClientCN())
+	a.XSSLIssuer = ctx.GetHeader(h.GetSSLIssuer())
+	a.XSSLClientNotBefore = ctx.GetHeader(h.GetSSLClientNotBefore())
+	a.XSSLClientNotAfter = ctx.GetHeader(h.GetSSLClientNotAfter())
+	a.XSSLSubjectDN = ctx.GetHeader(h.GetSSLSubjectDN())
+	a.XSSLIssuerDN = ctx.GetHeader(h.GetSSLIssuerDN())
+	a.XSSLClientSubjectDN = ctx.GetHeader(h.GetSSLClientSubjectDN())
+	a.XSSLClientIssuerDN = ctx.GetHeader(h.GetSSLClientIssuerDN())
+	a.XSSLCipher = ctx.GetHeader(h.GetSSLCipher())
+	a.XSSLProtocol = ctx.GetHeader(h.GetSSLProtocol())
+	a.SSLSerial = ctx.GetHeader(h.GetSSLSerial())
+	a.SSLFingerprint = ctx.GetHeader(h.GetSSLFingerprint())
 
 	return a
 }

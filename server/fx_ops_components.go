@@ -107,7 +107,11 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 
 func (r *reloadOrchestrator) stopWorkersForConfig(ctx context.Context, cfg config.File) {
 	if cfg == nil {
-		cfg = config.GetFile()
+		cfg = getConfigFile(r.store)
+	}
+
+	if cfg == nil {
+		return
 	}
 
 	for _, backendType := range cfg.GetServer().GetBackends() {
@@ -194,12 +198,11 @@ func (r *reloadOrchestrator) restartActionWorkers(waitCtx context.Context, paren
 
 func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx context.Context) {
 	logger := getLogger(r.store)
-	cfg := config.GetFile()
+	cfg := getConfigFile(r.store)
 
-	if r.store != nil && r.store.cfgProvider != nil {
-		if snap := r.store.cfgProvider.Current(); snap.File != nil {
-			cfg = snap.File
-		}
+	if cfg == nil {
+		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to restart Redis without a config snapshot")
+		return
 	}
 
 	if r.redisRebuilder != nil {
@@ -224,7 +227,7 @@ func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx c
 		runCtx = context.Background()
 	}
 
-	if err := setupRedis(readinessCtx, runCtx, r.store.redisClient); err != nil {
+	if err := setupRedis(readinessCtx, runCtx, logger, r.store.redisClient); err != nil {
 		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during reload", definitions.LogKeyError, err)
 	}
 }
@@ -258,14 +261,14 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 				continue
 			}
 
-			setupLDAPWorker(r.store, ctx)
+			setupLDAPWorker(r.store, ctx, cfg)
 			ldapStarted = true
 		case definitions.BackendLua:
 			if luaStarted {
 				continue
 			}
 
-			setupLuaWorker(r.store, ctx)
+			setupLuaWorker(r.store, ctx, cfg)
 
 			luaStarted = true
 		case definitions.BackendCache:
@@ -400,7 +403,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// Stop workers (LDAP/Lua) and action workers before rebuilding Redis.
 	step = "stop_workers"
-	reloader.stopWorkersForConfig(opCtx, config.GetFile())
+	reloader.stopWorkersForConfig(opCtx, getConfigFile(r.store))
 
 	if r.store != nil && r.store.action != nil {
 		step = "stop_action_workers"
@@ -417,12 +420,11 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	}
 
 	step = "rebuild_redis_client"
-	cfg := config.GetFile()
+	cfg := getConfigFile(r.store)
 
-	if r.store != nil && r.store.cfgProvider != nil {
-		if snap := r.store.cfgProvider.Current(); snap.File != nil {
-			cfg = snap.File
-		}
+	if cfg == nil {
+		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to restart without a config snapshot")
+		return fmt.Errorf("config snapshot is nil")
 	}
 
 	if r.redisRebuilder != nil {
@@ -437,7 +439,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	defer redisReadyCancel()
 
 	step = "setup_redis"
-	if err := setupRedis(redisReadyCtx, r.ctx, r.store.redisClient); err != nil {
+	if err := setupRedis(redisReadyCtx, r.ctx, logger, r.store.redisClient); err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
 		restartErr = err
@@ -445,7 +447,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 
 	// Start workers (LDAP/Lua) and action workers after Redis is ready.
 	step = "start_workers"
-	reloader.startWorkersForConfig(r.ctx, config.GetFile())
+	reloader.startWorkersForConfig(r.ctx, getConfigFile(r.store))
 
 	if r.store != nil && r.store.action != nil {
 		step = "start_action_workers"
@@ -572,9 +574,12 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 		}
 	}
 
-	for _, backendType := range config.GetFile().GetServer().GetBackends() {
-		if !waitForBackendShutdown(ctx, backendType) {
-			return
+	cfg := getConfigFile(store)
+	if cfg != nil {
+		for _, backendType := range cfg.GetServer().GetBackends() {
+			if !waitForBackendShutdown(ctx, cfg, backendType) {
+				return
+			}
 		}
 	}
 
@@ -591,7 +596,7 @@ func waitForShutdown(ctx context.Context, store *contextStore, actionWorkers []*
 //
 // It returns true if the backend was recognized and waited on, or false if the backend
 // type is unknown.
-func waitForBackendShutdown(ctx context.Context, passDB *config.Backend) bool {
+func waitForBackendShutdown(ctx context.Context, cfg config.File, passDB *config.Backend) bool {
 	switch passDB.Get() {
 	case definitions.BackendLDAP:
 		poolNames := backend.GetChannel().GetLdapChannel().GetPoolNames()
@@ -604,7 +609,7 @@ func waitForBackendShutdown(ctx context.Context, passDB *config.Backend) bool {
 		}
 
 		for _, poolName := range poolNames {
-			if config.GetFile().LDAPHavePoolOnly(poolName) {
+			if cfg != nil && cfg.LDAPHavePoolOnly(poolName) {
 				continue
 			}
 
@@ -624,17 +629,29 @@ func waitForBackendShutdown(ctx context.Context, passDB *config.Backend) bool {
 		}
 	case definitions.BackendCache:
 	default:
-		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "Unknown backend")
+		level.Warn(getLogger(nil)).Log(definitions.LogKeyMsg, "Unknown backend")
 	}
 
 	return true
 }
 
-// getLogger returns the injected logger if available, falling back to the global logger.
+// getLogger returns the injected logger if available.
+//
+// It falls back to `slog.Default()` to avoid relying on package-level globals.
 func getLogger(store *contextStore) *slog.Logger {
 	if store != nil && store.logger != nil {
 		return store.logger
 	}
 
-	return log.Logger
+	return slog.Default()
+}
+
+func getConfigFile(store *contextStore) config.File {
+	if store != nil && store.cfgProvider != nil {
+		if snap := store.cfgProvider.Current(); snap.File != nil {
+			return snap.File
+		}
+	}
+
+	return nil
 }

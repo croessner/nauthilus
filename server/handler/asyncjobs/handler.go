@@ -16,17 +16,32 @@
 package asyncjobs
 
 import (
+	"net/http"
+
 	"github.com/croessner/nauthilus/server/core"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Handler registers the async jobs status endpoint.
-type Handler struct{}
+type Handler struct {
+	deps *handlerdeps.Deps
+}
 
 func New() *Handler { return &Handler{} }
 
+func NewWithDeps(deps *handlerdeps.Deps) *Handler { return &Handler{deps: deps} }
+
 func (h *Handler) Register(router gin.IRouter) {
 	ag := router.Group("/async")
-	ag.GET("/jobs/:jobId", core.HandleAsyncJobStatus)
+
+	if h.deps == nil || h.deps.Cfg == nil || h.deps.Logger == nil || h.deps.Redis == nil {
+		// Strict DI: this endpoint requires explicit dependencies.
+		ag.GET("/jobs/:jobId", func(c *gin.Context) { c.AbortWithStatus(http.StatusInternalServerError) })
+
+		return
+	}
+
+	ag.GET("/jobs/:jobId", core.NewAsyncJobStatusHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 }

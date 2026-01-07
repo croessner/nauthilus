@@ -33,7 +33,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -499,7 +498,7 @@ func processErrorLogging(ctx *gin.Context, err error) {
 
 	logError(ctx, err)
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug && getDefaultEnvironment().GetDevMode() {
+	if getDefaultConfigFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug && getDefaultEnvironment().GetDevMode() {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -519,14 +518,14 @@ func logError(ctx *gin.Context, err error) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	if stderrors.As(err, &detailedError) {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, (*detailedError).GetDetails(),
 			definitions.LogKeyError, (*detailedError).Error(),
 			definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "An error occurred",
 			definitions.LogKeyError, err,
@@ -611,7 +610,7 @@ func getLocalized(ctx *gin.Context, messageID string) string {
 	}
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			"message_id", messageID,
 			definitions.LogKeyMsg, "Failed to get localized message",
@@ -763,7 +762,7 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 func createConfiguration(httpClient *http.Client) *openapi.Configuration {
 	return &openapi.Configuration{
 		HTTPClient: httpClient,
-		Servers:    []openapi.ServerConfiguration{{URL: config.GetFile().GetServer().HydraAdminUrl}},
+		Servers:    []openapi.ServerConfiguration{{URL: getDefaultConfigFile().GetServer().HydraAdminUrl}},
 	}
 }
 
@@ -885,7 +884,7 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 	auth.SetStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
-		if config.GetFile().GetOauth2() != nil {
+		if getDefaultConfigFile().GetOauth2() != nil {
 			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
@@ -1085,7 +1084,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 // logInfoLoginSkip logs the login skip event with the provided details.
 func (a *ApiConfig) logInfoLoginSkip() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, true,
 		definitions.LogKeyClientID, *a.clientId,
@@ -1098,7 +1097,7 @@ func (a *ApiConfig) logInfoLoginSkip() {
 
 // logInfoLoginNoSkip logs information about the login operation without skipping any step.
 func (a *ApiConfig) logInfoLoginNoSkip() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *a.clientId,
@@ -1308,14 +1307,14 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 	)
 
 	oauth2Client := a.loginRequest.GetClient()
-	if config.GetFile().GetOauth2() != nil {
+	if getDefaultConfigFile().GetOauth2() != nil {
 		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
 
 	if subject == "" {
 		subject = account
 
-		level.Warn(log.Logger).Log(
+		level.Warn(getDefaultLogger()).Log(
 			definitions.LogKeyGUID, a.guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Empty 'subject', using '%s' as value", account),
 		)
@@ -1340,7 +1339,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 // - bool: Indicates whether redirection is performed or not.
 // - error: The error if any occurs.
 func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authResult definitions.AuthResult, subject string) (bool, error) {
-	if config.GetFile().GetSkipTOTP(*a.clientId) {
+	if getDefaultConfigFile().GetSkipTOTP(*a.clientId) {
 		return false, nil
 	}
 
@@ -1470,7 +1469,7 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, auth State) {
 		logs = append(logs, additionalLogs...)
 	}
 
-	level.Info(log.Logger).Log(logs...)
+	level.Info(getDefaultLogger()).Log(logs...)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
@@ -1521,7 +1520,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && getDefaultEnvironment().GetDevMode() {
+	if getDefaultConfigFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && getDefaultEnvironment().GetDevMode() {
 		util.DebugModule(
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
@@ -1594,7 +1593,7 @@ func (a *ApiConfig) processAuthFailLogin(auth State, authResult definitions.Auth
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
-		if !config.GetFile().GetSkipTOTP(*a.clientId) {
+		if !getDefaultConfigFile().GetSkipTOTP(*a.clientId) {
 			if _, found := auth.GetTOTPSecretOk(); found {
 				session.Set(definitions.CookieAuthResult, uint8(authResult))
 				session.Set(definitions.CookieUsername, a.ctx.Request.Form.Get("username"))
@@ -1638,7 +1637,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 		logs = append(logs, additionalLogs...)
 	}
 
-	level.Info(log.Logger).Log(logs...)
+	level.Info(getDefaultLogger()).Log(logs...)
 }
 
 // runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
@@ -1654,7 +1653,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 		userFound, err = auth.userExists()
 		if err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(
+				level.Error(getDefaultLogger()).Log(
 					definitions.LogKeyGUID, auth.GetGUID(),
 					definitions.LogKeyMsg, "Error checking if user exists",
 					definitions.LogKeyError, err,
@@ -1934,7 +1933,7 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	ctx.HTML(http.StatusOK, "device.html", loginData)
 
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *clientId,
@@ -2035,8 +2034,8 @@ func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue an
 func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	var scopeDescription string
 
-	if config.GetFile().GetOauth2() != nil {
-		for _, customScope := range config.GetFile().GetOauth2().CustomScopes {
+	if getDefaultConfigFile().GetOauth2() != nil {
+		for _, customScope := range getDefaultConfigFile().GetOauth2().CustomScopes {
 			if customScope.Name != requestedScope {
 				continue
 			}
@@ -2076,7 +2075,7 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
 func (a *ApiConfig) HandleConsentSkip() {
-	if !(a.consentRequest.GetSkip() || config.GetFile().GetSkipConsent(*a.clientId)) {
+	if !(a.consentRequest.GetSkip() || getDefaultConfigFile().GetSkipConsent(*a.clientId)) {
 		a.processConsent()
 	} else {
 		a.redirectWithConsent()
@@ -2235,7 +2234,7 @@ func (a *ApiConfig) redirectWithConsent() {
 			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
 			GrantScope:               acceptedScopes,
 			Remember: func() *bool {
-				if config.GetFile().GetSkipConsent(*a.clientId) {
+				if getDefaultConfigFile().GetSkipConsent(*a.clientId) {
 					remember := true
 
 					return &remember
@@ -2261,7 +2260,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 // logInfoConsent logs information about the consent request.
 func (a *ApiConfig) logInfoConsent() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *a.clientId,
@@ -2274,7 +2273,7 @@ func (a *ApiConfig) logInfoConsent() {
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
 func (a *ApiConfig) logInfoRedirectWithConsent() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, true,
 		definitions.LogKeyClientID, *a.clientId,
@@ -2329,7 +2328,7 @@ func ConsentGETHandler(ctx *gin.Context) {
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, apiConfig.guid,
 		"skip_hydra", fmt.Sprintf("%v", apiConfig.consentRequest.GetSkip()),
-		"skip_config", fmt.Sprintf("%v", config.GetFile().GetSkipConsent(*apiConfig.clientId)),
+		"skip_config", fmt.Sprintf("%v", getDefaultConfigFile().GetSkipConsent(*apiConfig.clientId)),
 	)
 
 	apiConfig.HandleConsentSkip()
@@ -2498,7 +2497,7 @@ func (a *ApiConfig) processConsentReject() {
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
 func (a *ApiConfig) logInfoConsentAccept() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
@@ -2510,7 +2509,7 @@ func (a *ApiConfig) logInfoConsentAccept() {
 
 // logInfoConsentReject logs the information about a rejected consent request.
 func (a *ApiConfig) logInfoConsentReject() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
@@ -2606,7 +2605,7 @@ func (a *ApiConfig) handleLogout() {
 
 // logInfoLogout logs information about a logout action.
 func (a *ApiConfig) logInfoLogout() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		definitions.LogKeyUriPath, viper.GetString("logout_page"),
@@ -2752,7 +2751,7 @@ func (a *ApiConfig) rejectLogout() {
 
 // logInfoLogoutAccept logs information about the logout request acceptance.
 func (a *ApiConfig) logInfoLogoutAccept() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
@@ -2762,7 +2761,7 @@ func (a *ApiConfig) logInfoLogoutAccept() {
 
 // logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
 func (a *ApiConfig) logInfoLogoutReject() {
-	level.Info(log.Logger).Log(
+	level.Info(getDefaultLogger()).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
@@ -2914,8 +2913,8 @@ func processGroupsClaim(claimDict map[string]any, claims map[string]any) {
 // - acceptedScopes: A []string representing the list of accepted scopes.
 // - index: An int indicating the index of the accepted scope to process.
 func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int) {
-	for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
-		customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
+	for scopeIndex := range getDefaultConfigFile().GetOauth2().CustomScopes {
+		customScope := getDefaultConfigFile().GetOauth2().CustomScopes[scopeIndex]
 
 		if acceptedScopes[index] != customScope.Name {
 			continue
@@ -2969,7 +2968,7 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 
 // Logs error for unknown claim type
 func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
-	level.Error(log.Logger).Log(
+	level.Error(getDefaultLogger()).Log(
 		"custom_claim_name", customClaimName,
 		definitions.LogKeyMsg, "Unknown claim type",
 		definitions.LogKeyError, fmt.Eprintf("Unknown type '%s'", customClaimType),

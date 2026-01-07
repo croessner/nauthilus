@@ -31,6 +31,15 @@ import (
 // Metrics include the total number of requests and the duration of HTTP responses.
 // The middleware respects configuration settings for enabling Prometheus timers and uses predefined labels for tracking.
 func PrometheusMiddleware() gin.HandlerFunc {
+	return PrometheusMiddlewareWithCfg(nil)
+}
+
+func PrometheusMiddlewareWithCfg(cfg config.File) gin.HandlerFunc {
+	enableTimer := false
+	if cfg != nil {
+		enableTimer = cfg.GetServer().GetPrometheusTimer().IsEnabled()
+	}
+
 	return func(ctx *gin.Context) {
 		var timer *prometheus.Timer
 
@@ -42,7 +51,7 @@ func PrometheusMiddleware() gin.HandlerFunc {
 		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
-		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
+		if enableTimer {
 			timer = prometheus.NewTimer(stats.GetMetrics().GetHttpResponseTimeSeconds().WithLabelValues(path))
 		}
 
@@ -50,7 +59,7 @@ func PrometheusMiddleware() gin.HandlerFunc {
 
 		stats.GetMetrics().GetHttpRequestsTotal().WithLabelValues(path).Inc()
 
-		if config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
+		if enableTimer && timer != nil {
 			timer.ObserveDuration()
 		}
 

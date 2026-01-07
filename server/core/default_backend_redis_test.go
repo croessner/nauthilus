@@ -9,7 +9,7 @@ import (
 // Ensure backend Redis seam is configured for core package tests.
 //
 // Core tests import `backend` and may call functions that now require
-// `backend.SetDefaultRedisClient(...)` (Stage C hard-fail). Tests commonly swap
+// `backend.SetDefaultRedisClient(...)` (hard fail). Tests commonly swap
 // the global redis client via `rediscli.NewTestClient(db)`.
 //
 // This adapter delegates at call time to the currently active global client so

@@ -18,6 +18,7 @@ package auth
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -185,7 +186,15 @@ func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
 // It validates credentials provided in the request against the configured username and password.
 // Returns true if authentication is successful or not required, false if the authentication fails or is throttled.
 func CheckAndRequireBasicAuth(ctx *gin.Context) bool {
-	if !config.GetFile().GetServer().GetBasicAuth().IsEnabled() {
+	return CheckAndRequireBasicAuthWithCfg(ctx, config.GetFile())
+}
+
+func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
+	if cfg == nil {
+		cfg = config.GetFile()
+	}
+
+	if !cfg.GetServer().GetBasicAuth().IsEnabled() {
 		return true
 	}
 
@@ -195,7 +204,7 @@ func CheckAndRequireBasicAuth(ctx *gin.Context) bool {
 	}
 
 	username, password, ok := ctx.Request.BasicAuth()
-	if ok && secureCompare(username, config.GetFile().GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, config.GetFile().GetServer().GetBasicAuth().GetPassword()) {
+	if ok && secureCompare(username, cfg.GetServer().GetBasicAuth().GetUsername()) && secureCompare(password, cfg.GetServer().GetBasicAuth().GetPassword()) {
 		return true
 	}
 
@@ -212,6 +221,14 @@ func CheckAndRequireBasicAuth(ctx *gin.Context) bool {
 // It validates credentials against configured username and password, and challenges unauthorized requests.
 // If basic auth is disabled or bypassed based on the route configuration, it allows the request to proceed.
 func BasicAuthMiddleware() gin.HandlerFunc {
+	return BasicAuthMiddlewareWithDeps(config.GetFile(), log.Logger)
+}
+
+func BasicAuthMiddlewareWithDeps(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+	if logger == nil {
+		logger = log.Logger
+	}
+
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 
@@ -237,7 +254,7 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 		}
 
 		if cat == "" || svc == "" {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "missing routing context keys",
 				definitions.LogKeyError, "missing routing context keys",
@@ -251,7 +268,7 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 
 		// Note: Chicken-egg problem.
 		if cat == definitions.CatAuth && svc == definitions.ServBasic {
-			level.Warn(log.Logger).Log(
+			level.Warn(logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "Disabling HTTP basic Auth",
 				"category", cat,
@@ -262,7 +279,7 @@ func BasicAuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Use shared helper to validate or challenge for Basic Auth
-		if !CheckAndRequireBasicAuth(ctx) {
+		if !CheckAndRequireBasicAuthWithCfg(ctx, cfg) {
 			return
 		}
 

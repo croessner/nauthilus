@@ -128,7 +128,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	if mw.IsLimitEnabled() {
 		limitCounter := mdlimit.NewLimitCounter(c.cfg.GetServer().GetMaxConcurrentRequests())
 
-		r.Use(limitCounter.Middleware())
+		r.Use(limitCounter.MiddlewareWithLogger(c.logger))
 	}
 
 	// Tracing middleware (OpenTelemetry) – enabled if insights.tracing.enable is true

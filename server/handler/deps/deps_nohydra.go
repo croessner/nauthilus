@@ -147,6 +147,7 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() 
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
 	Cfg    config.File
+	Env    config.Environment
 	Logger *slog.Logger
 	Redis  rediscli.Client
 	Svc    Services

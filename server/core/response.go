@@ -22,7 +22,6 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 
@@ -105,7 +104,7 @@ func getDefaultResponseWriter() ResponseWriter {
 }
 
 // SetDefaultResponseWriter configures the process-wide response writer.
-// This is set at the HTTP boundary during startup (Phase 7.2) so that request paths
+// This is set at the HTTP boundary during startup so that request paths
 // do not need to access global config/logger/environment.
 func SetDefaultResponseWriter(w ResponseWriter) {
 	if w == nil {
@@ -144,7 +143,7 @@ func (globalResponseWriter) OK(ctx *gin.Context, view *StateView) {
 		stats.GetMetrics().GetAcceptedProtocols().WithLabelValues(a.Protocol.Get()).Inc()
 		stats.GetMetrics().GetLoginsCounter().WithLabelValues(definitions.LabelSuccess).Inc()
 
-		if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+		if !getDefaultConfigFile().HasFeature(definitions.FeatureBruteForce) {
 			return
 		}
 	}
@@ -175,7 +174,7 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
-	level.Warn(log.Logger).Log(keyvals...)
+	level.Warn(getDefaultLogger()).Log(keyvals...)
 }
 
 // AuthOK is the general method to indicate authentication success.

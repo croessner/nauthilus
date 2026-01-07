@@ -203,6 +203,7 @@ func (DefaultServices) FinishRegistration() gin.HandlerFunc {
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
 	Cfg      config.File
+	Env      config.Environment
 	Logger   *slog.Logger
 	Redis    rediscli.Client
 	WebAuthn *webauthn.WebAuthn

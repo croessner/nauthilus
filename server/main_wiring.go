@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	stdlog "log"
 	"log/slog"
 
@@ -97,8 +98,17 @@ func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provide
 }
 
 // newActionWorkers constructs the action worker pool used by the legacy worker orchestration.
-func newActionWorkers(_ *bootstrapped) []*action.Worker {
-	return initializeActionWorkers()
+func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider) ([]*action.Worker, error) {
+	if cfgProvider == nil {
+		return nil, fmt.Errorf("config provider is nil")
+	}
+
+	snap := cfgProvider.Current()
+	if snap.File == nil {
+		return nil, fmt.Errorf("config snapshot file is nil")
+	}
+
+	return initializeActionWorkers(snap.File), nil
 }
 
 // newContextStoreForRuntime constructs the runtime context store.
@@ -157,9 +167,18 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			bootfx.InitializeBruteForceTolerate(p.Ctx)
 			bootfx.InitializeHTTPClients()
 			core.InitPassDBResultPool()
-			setupWorkers(p.Ctx, p.Store, p.ActionWorkers)
 
-			if err := setupRedis(p.Ctx, p.Ctx, p.Store.redisClient); err != nil {
+			snap := p.Store.cfgProvider.Current()
+			if snap.File == nil {
+				return fmt.Errorf("config snapshot file is nil")
+			}
+
+			// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
+			core.SetDefaultConfigFile(snap.File)
+			core.SetDefaultLogger(p.Store.logger)
+			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger)
+
+			if err := setupRedis(p.Ctx, p.Ctx, p.Store.logger, p.Store.redisClient); err != nil {
 				return err
 			}
 

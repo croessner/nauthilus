@@ -55,6 +55,7 @@ func setupMinimalTestConfig(t *testing.T) {
 	_ = be.Set("cache")
 	cfg.Server.Backends = []*config.Backend{&be}
 	config.SetTestFile(cfg)
+	SetDefaultConfigFile(config.GetFile())
 
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 }
@@ -207,13 +208,14 @@ func TestCacheFlushAsync_Enqueue_OK(t *testing.T) {
 	// Stub job id and time and async runner
 	prevGen := genJobID
 	prevNow := nowFunc
-	prevStarter := asyncStarter
+	prevStarter := asyncStarterWithDeps
 	genJobID = func() string { return "job-fixed" }
 	nowFunc = func() time.Time { return time.Unix(0, 0).UTC() }
-	asyncStarter = func(jobID string, guid string, fn func(ctx context.Context) (int, []string, error)) { /* no-op in test */
+	asyncStarterWithDeps = func(_ asyncJobDeps, _ string, _ string, _ func(ctx context.Context) (int, []string, error)) {
+		/* no-op in test */
 	}
 
-	defer func() { genJobID = prevGen; nowFunc = prevNow; asyncStarter = prevStarter }()
+	defer func() { genJobID = prevGen; nowFunc = prevNow; asyncStarterWithDeps = prevStarter }()
 
 	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "async:job:" + "job-fixed"
 

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -33,7 +32,7 @@ import (
 // LoggerMiddleware creates a middleware for logging HTTP requests and responses, including latency and client details.
 // It assigns a unique identifier (GUID) to each request and logs authentication methods, TLS info, and status codes.
 func LoggerMiddleware() gin.HandlerFunc {
-	return LoggerMiddlewareWithLogger(log.Logger)
+	return LoggerMiddlewareWithLogger(slog.Default())
 }
 
 // LoggerMiddlewareWithLogger is a deps-based variant of LoggerMiddleware.
@@ -91,9 +90,9 @@ func LoggerMiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 			}
 		}
 
-		// Fall back to legacy global logger if caller passed nil.
+		// Fall back to process default logger if caller passed nil.
 		if logger == nil {
-			logger = log.Logger
+			logger = slog.Default()
 		}
 
 		logWrapper(logger).Log(

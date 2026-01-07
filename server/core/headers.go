@@ -22,7 +22,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/gin-gonic/gin"
@@ -59,7 +58,7 @@ func setCommonHeaders(ctx *gin.Context, auth *AuthState) {
 // If the Protocol is definitions.ProtoIMAP, it sets the "Auth-Server" header to the IMAPBackendAddress and the "Auth-Port" header to the IMAPBackendPort.
 // If the Protocol is definitions.ProtoPOP3, it sets the "Auth-Server" header to the POP3BackendAddress and the "Auth-Port" header to the POP3BackendPort.
 func setNginxHeaders(ctx *gin.Context, auth *AuthState) {
-	setNginxHeadersWithDeps(config.GetFile(), getDefaultEnvironment(), log.Logger, ctx, auth)
+	setNginxHeadersWithDeps(getDefaultConfigFile(), getDefaultEnvironment(), getDefaultLogger(), ctx, auth)
 }
 
 func setNginxHeadersWithDeps(cfg config.File, env config.Environment, logger *slog.Logger, ctx *gin.Context, auth *AuthState) {

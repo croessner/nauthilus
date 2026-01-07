@@ -56,7 +56,7 @@ func getDefaultRedisClient() rediscli.Client {
 		}
 	}
 
-	// Hard fail always.
+	// Hard fail: the default Redis client must be configured at the boundary.
 	warnMissingRedisOnce.Do(func() {
 		stdlog.Printf("ERROR: core default Redis client is not configured. Ensure the boundary calls core.SetDefaultRedisClient(...)\n")
 	})

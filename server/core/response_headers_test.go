@@ -34,6 +34,11 @@ func setupMinimalConfig(t *testing.T) {
 	cfg := &config.FileSettings{Server: &config.ServerSection{}}
 	config.SetTestFile(cfg)
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
+
+	// Ensure core default seams are initialized for legacy response/header paths.
+	corepkg.SetDefaultConfigFile(config.GetFile())
+	corepkg.SetDefaultEnvironment(config.GetEnvironment())
+	corepkg.SetDefaultLogger(log.Logger)
 }
 
 func TestResponseWriter_OK_NginxSetsHeaders(t *testing.T) {

@@ -54,7 +54,7 @@ func (r *Router) WithResponseCompression() *Router {
 
 // WithMetricsMiddleware enables Prometheus request metrics middleware.
 func (r *Router) WithMetricsMiddleware() *Router {
-	r.Engine.Use(mdmet.PrometheusMiddleware())
+	r.Engine.Use(mdmet.PrometheusMiddlewareWithCfg(r.Cfg))
 
 	return r
 }
