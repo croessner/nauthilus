@@ -246,7 +246,18 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		}
 	}
 
-	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
+	// Redis Cluster: use a bucket-specific hash-tag so that keys are distributed across the cluster.
+	// We keep the key name (including the network) stable/readable.
+	hashTag := network.String()
+	if protocolPart != "" {
+		hashTag += "|p=" + protocolPart
+	}
+
+	if oidcCIDPart != "" {
+		hashTag += "|oidc=" + oidcCIDPart
+	}
+
+	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + fmt.Sprintf(
 		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
 	// Append protocol part with a separator if it exists
@@ -1373,9 +1384,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scoped
+		hashTag := scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + scoped
 	}
 
 	util.DebugModule(
@@ -1422,9 +1435,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scoped
+		hashTag := scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + scoped
 	}
 
 	util.DebugModule(

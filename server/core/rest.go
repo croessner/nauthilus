@@ -575,18 +575,19 @@ func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) 
 			scopedTol := scoper.Scope(ipscoper.ScopeTolerations, ip)
 
 			// Password-history hashes (account+IP and IP-only) — delete for raw and scoped identifiers
-			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + ip)
-			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + ip)
+			prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+			userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + accountName + ":" + ip + "}:" + accountName + ":" + ip)
+			userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + ip + "}:" + ip)
 
 			// PW_HIST totals (account+IP and IP-only) — delete for raw and scoped identifiers
-			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + accountName + ":" + ip)
-			userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + ip)
+			userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + accountName + ":" + ip + "}:" + accountName + ":" + ip)
+			userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + ip + "}:" + ip)
 
 			if scopedRWP != ip {
-				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + accountName + ":" + scopedRWP)
-				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scopedRWP)
-				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + accountName + ":" + scopedRWP)
-				userKeys.Set(config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scopedRWP)
+				userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + accountName + ":" + scopedRWP + "}:" + accountName + ":" + scopedRWP)
+				userKeys.Set(prefix + definitions.RedisPwHashKey + ":{" + scopedRWP + "}:" + scopedRWP)
+				userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + accountName + ":" + scopedRWP + "}:" + accountName + ":" + scopedRWP)
+				userKeys.Set(prefix + definitions.RedisPwHistTotalKey + ":{" + scopedRWP + "}:" + scopedRWP)
 			}
 
 			// Tolerations keys — delete base hash and both positive/negative ZSETs for raw and scoped identifiers
