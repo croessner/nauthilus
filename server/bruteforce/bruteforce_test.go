@@ -115,7 +115,7 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 
 		rule := config.GetFile().GetBruteForceRules()[0]
-		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"5"})
+		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("5")
 
 		var message string
 
@@ -134,7 +134,7 @@ func TestBruteForceLogic(t *testing.T) {
 		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
 
 		rule := config.GetFile().GetBruteForceRules()[0]
-		mock.ExpectMGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal([]interface{}{"15"})
+		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("15")
 
 		var message string
 
