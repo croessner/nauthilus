@@ -21,9 +21,9 @@ import (
 	"encoding/hex"
 	errors2 "errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -227,10 +227,11 @@ type bucketManagerImpl struct {
 	scoper ipscoper.IPScoper
 
 	// Precalc fields (computed once per request)
-	parsedIP  net.IP
-	ipIsV4    bool
-	ipIsV6    bool
-	netByCIDR map[uint]*net.IPNet // CIDR -> network
+	parsedIP      net.IP
+	ipIsV4        bool
+	ipIsV6        bool
+	ipv6Validated bool
+	netByCIDR     map[uint]*net.IPNet // CIDR -> network
 }
 
 // sgBurst entdoppelt parallele identische Burst-Gate-Anfragen (gleicher Burst-Key) ohne Logikänderung.
@@ -275,9 +276,6 @@ func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	// Try to reconstruct filters from PW_HIST metadata if they are missing
 	bm.loadPWHistFiltersIfMissing()
-	var ipProto string
-	var protocolPart string
-	var oidcCIDPart string
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
@@ -290,53 +288,42 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		return
 	}
 
-	if network == nil {
-		return
+	return bm.getBruteForceBucketRedisKeyWithNetwork(rule, network)
+}
+
+func (bm *bucketManagerImpl) getBruteForceBucketRedisKeyWithNetwork(rule *config.BruteForceRule, network *net.IPNet) (key string) {
+	if rule == nil {
+		return ""
 	}
 
+	if network == nil {
+		return ""
+	}
+
+	ipProto := ""
 	if rule.IPv4 {
 		ipProto = "4"
 	} else if rule.IPv6 {
 		ipProto = "6"
 	}
 
-	// Add protocol information to the key if the rule has FilterByProtocol specified
+	protocolPart := ""
 	if len(rule.GetFilterByProtocol()) > 0 && bm.protocol != "" {
-		// Check if the current protocol is in the FilterByProtocol list
-		protocolMatched := false
-		for _, p := range rule.FilterByProtocol {
-			if p == bm.protocol {
-				protocolMatched = true
-
-				break
-			}
-		}
-
-		if protocolMatched {
+		if containsString(rule.FilterByProtocol, bm.protocol) {
 			protocolPart = bm.protocol
 		}
 	}
 
-	// Add OIDC Client ID information to the key if the rule has FilterByOIDCCID specified
+	oidcCIDPart := ""
 	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
-		// Check if the current OIDC Client ID is in the FilterByOIDCCID list
-		oidcCIDMatched := false
-		for _, cid := range rule.FilterByOIDCCID {
-			if cid == bm.oidcCID {
-				oidcCIDMatched = true
-
-				break
-			}
-		}
-
-		if oidcCIDMatched {
+		if containsString(rule.FilterByOIDCCID, bm.oidcCID) {
 			oidcCIDPart = bm.oidcCID
 		}
 	}
 
-	// Redis Cluster: use a bucket-specific hash-tag so that keys are distributed across the cluster.
-	// We keep the key name (including the network) stable/readable.
-	hashTag := network.String()
+	netStr := network.String()
+
+	hashTag := netStr
 	if protocolPart != "" {
 		hashTag += "|p=" + protocolPart
 	}
@@ -345,8 +332,12 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		hashTag += "|oidc=" + oidcCIDPart
 	}
 
-	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + fmt.Sprintf(
-		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
+	periodSeconds := int64(math.Round(rule.Period.Seconds()))
+	periodPart := strconv.FormatInt(periodSeconds, 10)
+	cidrPart := strconv.FormatUint(uint64(rule.CIDR), 10)
+	failedPart := strconv.FormatUint(uint64(rule.FailedRequests), 10)
+
+	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + periodPart + ":" + cidrPart + ":" + failedPart + ":" + ipProto + ":" + netStr
 
 	// Append protocol part with a separator if it exists
 	if protocolPart != "" {
@@ -360,7 +351,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
 
-	return
+	return key
 }
 
 // WithUsername sets the username for the bucketManager instance.
@@ -669,7 +660,7 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	bm.loadPWHistFiltersIfMissing()
 
 	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
-	if bm.parsedIP == nil {
+	if bm.parsedIP == nil || bm.netByCIDR == nil {
 		bm.PrepareNetcalc(rules)
 	}
 
@@ -719,8 +710,8 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		}
 
 		matchedAnyRule = true
-		// Prepare key for this rule
-		key := bm.GetBruteForceBucketRedisKey(&rules[i])
+		// Prepare key for this rule (avoid calling getNetwork twice)
+		key := bm.getBruteForceBucketRedisKeyWithNetwork(&rules[i], n)
 		if key != "" {
 			cands = append(cands, bkcand{idx: i, key: key})
 		}
@@ -1752,23 +1743,36 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 		return nil, fmt.Errorf("%s '%s'", errors.ErrWrongIPAddress, bm.clientIP)
 	}
 
-	if strings.Contains(ipAddress.String(), ":") {
-		_, err = netaddr.ParseIPv6(bm.clientIP)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	bits := 0
 	if bm.ipIsV4 || (!bm.ipIsV6 && ipAddress.To4() != nil) {
 		bm.ipIsV4 = true
+		bm.ipIsV6 = false
+
 		if !rule.IPv4 {
 			return nil, nil
 		}
+
+		ipAddress = ipAddress.To4()
+		bits = 32
 	} else if bm.ipIsV6 || ipAddress.To16() != nil {
 		bm.ipIsV6 = true
+		bm.ipIsV4 = false
+
 		if !rule.IPv6 {
 			return nil, nil
 		}
+
+		if !bm.ipv6Validated {
+			_, err = netaddr.ParseIPv6(bm.clientIP)
+			if err != nil {
+				return nil, err
+			}
+
+			bm.ipv6Validated = true
+		}
+
+		ipAddress = ipAddress.To16()
+		bits = 128
 	}
 
 	// Lookup or compute network for this CIDR
@@ -1778,10 +1782,12 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 		}
 	}
 
-	_, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, rule.CIDR))
-	if err != nil {
-		return nil, err
+	mask := net.CIDRMask(int(rule.CIDR), bits)
+	if mask == nil {
+		return nil, fmt.Errorf("invalid CIDR %d for client IP '%s'", rule.CIDR, bm.clientIP)
 	}
+
+	network = &net.IPNet{IP: ipAddress.Mask(mask), Mask: mask}
 
 	if bm.netByCIDR != nil {
 		bm.netByCIDR[rule.CIDR] = network
@@ -1801,15 +1807,34 @@ func (bm *bucketManagerImpl) PrepareNetcalc(rules []config.BruteForceRule) {
 		bm.parsedIP = net.ParseIP(bm.clientIP)
 	}
 
-	// Determine family bits
-	if bm.parsedIP != nil {
-		if bm.parsedIP.To4() != nil {
-			bm.ipIsV4 = true
-			bm.ipIsV6 = false
-		} else if bm.parsedIP.To16() != nil {
-			bm.ipIsV6 = true
-			bm.ipIsV4 = false
+	if bm.parsedIP == nil {
+		return
+	}
+
+	ipAddress := bm.parsedIP
+	bits := 0
+
+	if ip4 := ipAddress.To4(); ip4 != nil {
+		bm.ipIsV4 = true
+		bm.ipIsV6 = false
+		ipAddress = ip4
+		bits = 32
+	} else if ip16 := ipAddress.To16(); ip16 != nil {
+		bm.ipIsV6 = true
+		bm.ipIsV4 = false
+
+		if !bm.ipv6Validated {
+			if _, err := netaddr.ParseIPv6(bm.clientIP); err == nil {
+				bm.ipv6Validated = true
+			} else {
+				return
+			}
 		}
+
+		ipAddress = ip16
+		bits = 128
+	} else {
+		return
 	}
 
 	// Precompute unique CIDR networks used by rules applicable to the detected family
@@ -1826,9 +1851,12 @@ func (bm *bucketManagerImpl) PrepareNetcalc(rules []config.BruteForceRule) {
 			continue
 		}
 
-		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, r.CIDR)); err == nil && n != nil {
-			bm.netByCIDR[r.CIDR] = n
+		mask := net.CIDRMask(int(r.CIDR), bits)
+		if mask == nil {
+			continue
 		}
+
+		bm.netByCIDR[r.CIDR] = &net.IPNet{IP: ipAddress.Mask(mask), Mask: mask}
 	}
 }
 
