@@ -363,7 +363,21 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 	}
 
 	cfg := bm.effectiveCfg()
-	key = cfg.GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
+	// Redis Cluster: use a bucket-specific hash-tag so that keys are distributed across the cluster,
+	// while still keeping the key name (including the network) stable/readable.
+	//
+	// NOTE: We intentionally do NOT try to force all bucket-counter keys into one slot. Reads are
+	// performed via pipelined GETs to avoid CROSSSLOT issues.
+	hashTag := network.String()
+	if protocolPart != "" {
+		hashTag += "|p=" + protocolPart
+	}
+
+	if oidcCIDPart != "" {
+		hashTag += "|oidc=" + oidcCIDPart
+	}
+
+	key = cfg.GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + fmt.Sprintf(
 		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
 
 	// Append protocol part with a separator if it exists
@@ -693,54 +707,65 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			keys = append(keys, c.key)
 		}
 
-		// Always use MGET, even for a single candidate
-		// metrics
+		// Redis Cluster: multi-key reads (MGET) require all keys in the same hash slot.
+		// Bucket keys are intentionally distributed (hash-tag is bucket-specific), therefore read via
+		// a pipeline of GETs.
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("mget_bucket_counter").Inc()
+		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_get_bucket_counter").Inc()
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		vals, errM := bm.effectiveRedis().GetReadHandle().MGet(dCtx, keys...).Result()
+		pipe := bm.effectiveRedis().GetReadHandle().Pipeline()
+		cmds := make([]*redis.StringCmd, 0, len(keys))
+
+		for _, k := range keys {
+			cmds = append(cmds, pipe.Get(dCtx, k))
+		}
+
+		_, errP := pipe.Exec(dCtx)
+
 		cancel()
 
-		if errM != nil {
-			level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("MGET bucket counters failed: %v", errM))
-		} else {
-			if bm.bruteForceCounter == nil {
-				bm.bruteForceCounter = make(map[string]uint)
-			}
+		if errP != nil && !errors2.Is(errP, redis.Nil) {
+			level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline GET bucket counters failed: %v", errP))
+		}
 
-			for i, raw := range vals {
-				v := uint(0)
-				if raw != nil {
-					switch t := raw.(type) {
-					case string:
-						if n, perr := strconv.ParseUint(t, 10, 64); perr == nil {
-							v = uint(n)
-						}
-					case []byte:
-						if n, perr := strconv.ParseUint(string(t), 10, 64); perr == nil {
-							v = uint(n)
-						}
+		if bm.bruteForceCounter == nil {
+			bm.bruteForceCounter = make(map[string]uint)
+		}
+
+		for i, cmd := range cmds {
+			v := uint(0)
+			if cmd != nil {
+				if err := cmd.Err(); err == nil {
+					if n, perr := strconv.ParseUint(cmd.Val(), 10, 64); perr == nil {
+						v = uint(n)
 					}
+				} else if !errors2.Is(err, redis.Nil) {
+					level.Warn(log.Logger).Log(
+						definitions.LogKeyGUID, bm.guid,
+						definitions.LogKeyMsg, "GET bucket counter failed",
+						"key", keys[i],
+						definitions.LogKeyError, err,
+					)
 				}
-
-				name := rules[cands[i].idx].Name
-				bm.bruteForceCounter[name] = v
 			}
 
-			// Evaluate in rule order using filled counters
-			for _, c := range cands {
-				r := &rules[c.idx]
-				if bm.bruteForceCounter[r.Name]+1 >= r.FailedRequests {
-					ruleTriggered = true
-					*message = "Brute force attack detected"
+			name := rules[cands[i].idx].Name
+			bm.bruteForceCounter[name] = v
+		}
 
-					stats.GetMetrics().GetBruteForceRejected().WithLabelValues(r.Name).Inc()
+		// Evaluate in rule order using filled counters
+		for _, c := range cands {
+			r := &rules[c.idx]
+			if bm.bruteForceCounter[r.Name]+1 >= r.FailedRequests {
+				ruleTriggered = true
+				*message = "Brute force attack detected"
 
-					ruleNumber = c.idx
+				stats.GetMetrics().GetBruteForceRejected().WithLabelValues(r.Name).Inc()
 
-					return withError, ruleTriggered, ruleNumber
-				}
+				ruleNumber = c.idx
+
+				return withError, ruleTriggered, ruleNumber
 			}
 		}
 	}
@@ -1773,9 +1798,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scoped
+		hashTag := scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + scoped
 	}
 
 	util.DebugModule(
@@ -1822,9 +1849,11 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scoped
+		hashTag := scoped
+		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + scoped
 	}
 
 	util.DebugModule(
