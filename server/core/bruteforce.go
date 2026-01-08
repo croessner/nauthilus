@@ -189,6 +189,54 @@ func logBruteForceDebug(auth *AuthState) {
 	)
 }
 
+// filterActiveBruteForceRules filters and returns the active brute force rules based on protocol and IP family criteria.
+func (a *AuthState) filterActiveBruteForceRules(ctx *gin.Context, tr monittrace.Tracer, rules []config.BruteForceRule, ip net.IP) []config.BruteForceRule {
+	activeRules := make([]config.BruteForceRule, 0, len(rules))
+
+	var ipFamily string
+	switch {
+	case ip != nil && ip.To4() != nil:
+		ipFamily = "ipv4"
+	case ip != nil && ip.To16() != nil:
+		ipFamily = "ipv6"
+	default:
+		ipFamily = "unknown"
+	}
+
+	proto := ""
+	if a.Protocol != nil {
+		proto = a.Protocol.Get()
+	}
+
+	_, filterSpan := tr.Start(ctx.Request.Context(), "auth.bruteforce.rule_filter",
+		attribute.String("protocol", proto),
+		attribute.String("client_ip", a.ClientIP),
+		attribute.String("oidc_cid", a.OIDCCID),
+		attribute.String("ip_family", ipFamily),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer filterSpan.End()
+
+	skipped := 0
+
+	for _, r := range rules {
+		if !r.MatchesContext(proto, a.OIDCCID, ip) {
+			skipped++
+
+			continue
+		}
+
+		activeRules = append(activeRules, r)
+	}
+
+	filterSpan.SetAttributes(
+		attribute.Int("rules.active", len(activeRules)),
+		attribute.Int("rules.skipped", skipped),
+	)
+
+	return activeRules
+}
+
 // CheckBruteForce checks if a client is triggering brute force detection based on predefined rules and configurations.
 // It evaluates conditions like authentication state, IP whitelisting, protocol enforcement, and bucket rate limits.
 // Returns true if brute force detection is triggered, and false otherwise.
@@ -213,13 +261,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		defer stopOverall()
 	}
 
-	// Prechecks timer (covers early exits)
-	var stopPre func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_prechecks_total"); s != nil {
-		stopPre = s
-		// We'll stop this once we transition to rule filtering
-	}
-
 	var (
 		ruleTriggered bool
 		message       string
@@ -229,11 +270,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	if a.NoAuth || a.ListAccounts {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "noauth_or_list"))
 
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
-
 		return false
 	}
 
@@ -241,11 +277,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	if !cfg.HasFeature(definitions.FeatureBruteForce) {
 		cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "feature_disabled"))
-
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
 
 		return false
 	}
@@ -255,11 +286,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 		a.AdditionalLogs = append(a.AdditionalLogs, definitions.Localhost)
-
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
 
 		return false
 	}
@@ -272,11 +298,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "soft_whitelisted"))
 
-			if stopPre != nil {
-				stopPre()
-				stopPre = nil
-			}
-
 			return false
 		}
 	}
@@ -287,11 +308,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.Whitelisted)
 
 			cspan.SetAttributes(attribute.Bool("skipped", true), attribute.String("reason", "ip_whitelisted"))
-
-			if stopPre != nil {
-				stopPre()
-				stopPre = nil
-			}
 
 			return false
 		}
@@ -344,11 +360,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
-		if stopPre != nil {
-			stopPre()
-			stopPre = nil
-		}
-
 		return false
 	}
 
@@ -368,104 +379,27 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
-	// End of prechecks; start rule filter phase
-	if stopPre != nil {
-		stopPre()
-		stopPre = nil
-	}
-
-	// Pre-filter rules by protocol and IP family
-	var stopFilter func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_rule_filter_total"); s != nil {
-		stopFilter = s
-	}
-
-	filterStart := time.Now()
-	activeRules := make([]config.BruteForceRule, 0, len(rules))
-
-	// Determine IP family once
+	// Determine IP once
 	ip := net.ParseIP(a.ClientIP)
-	isV4 := ip != nil && ip.To4() != nil
-	isV6 := ip != nil && !isV4 && ip.To16() != nil
 
-	for _, r := range rules {
-		// Protocol filter: if rule specifies protocols, require match
-		if len(r.GetFilterByProtocol()) > 0 {
-			matched := false
-			for _, p := range r.GetFilterByProtocol() {
-				if p == a.Protocol.Get() {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// IP family filter
-		if isV4 && !r.IPv4 {
-			continue
-		}
-
-		if isV6 && !r.IPv6 {
-			continue
-		}
-
-		activeRules = append(activeRules, r)
-	}
-
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("filter").Observe(time.Since(filterStart).Seconds())
-	if stopFilter != nil {
-		stopFilter()
-	}
+	activeRules := a.filterActiveBruteForceRules(ctx, tr, rules, ip)
 
 	// Use filtered rules from here on and precompute networks
 	rules = activeRules
-	netcalcStart := time.Now()
-	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_netcalc_total"); stop != nil {
-		defer stop()
-	}
 
 	// Precompute network strings per CIDR for active rules (no behavior change)
 	bm.PrepareNetcalc(rules)
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("netcalc").Observe(time.Since(netcalcStart).Seconds())
 
 	network := &net.IPNet{}
 
-	// Phase: pre_result (fast check using precomputed hashes/counters)
-	preResultStart := time.Now()
-	var stopPreRes func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_pre_result_total"); s != nil {
-		stopPreRes = s
-	}
-
 	abort, alreadyTriggered, ruleNumber := bm.CheckRepeatingBruteForcer(rules, &network, &message)
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("pre_result").Observe(time.Since(preResultStart).Seconds())
-	if stopPreRes != nil {
-		stopPreRes()
-	}
 
 	if abort {
 		return false
 	}
 
 	if !alreadyTriggered {
-		// Phase: bucket_eval (read current counters from Redis and evaluate limits)
-		bucketEvalStart := time.Now()
-		var stopBucket func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_bucket_eval_total"); s != nil {
-			stopBucket = s
-		}
-
 		abort, ruleTriggered, ruleNumber = bm.CheckBucketOverLimit(rules, &message)
-		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("bucket_eval").Observe(time.Since(bucketEvalStart).Seconds())
-		if stopBucket != nil {
-			stopBucket()
-		}
-
 		if abort {
 			return false
 		}
@@ -478,13 +412,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// A rule matched either in pre-result or bucket evaluation
 	stats.GetMetrics().GetBruteForceRulesMatchedTotal().Inc()
-
-	// Phase: process (persist/update counters, set action context)
-	processStart := time.Now()
-	var stopProcess func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_process_total"); s != nil {
-		stopProcess = s
-	}
 
 	triggered := bm.ProcessBruteForce(ruleTriggered, alreadyTriggered, &rules[ruleNumber], network, message, func() {
 		a.FeatureName = bm.GetFeatureName()
@@ -499,11 +426,6 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		}
 		a.PasswordHistory = bm.GetPasswordHistory()
 	})
-	stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("process").Observe(time.Since(processStart).Seconds())
-
-	if stopProcess != nil {
-		stopProcess()
-	}
 
 	// Compute and store brute-force hints for the Post-Action.
 	// 1) Derive client_net from the matched network; fallback to ClientIP/CIDR.
@@ -523,11 +445,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		// Phase: redis_hint_exists (single read to check if client_net has a history)
-		redisHintStart := time.Now()
 		exists, err := getDefaultRedisClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
-		stats.GetMetrics().GetBruteForcePhaseSeconds().WithLabelValues("redis_hint_exists").Observe(time.Since(redisHintStart).Seconds())
-
 		if err == nil && exists {
 			bfRepeating = true
 		}
@@ -680,6 +598,13 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
 
+	proto := ""
+	if a.Protocol != nil {
+		proto = a.Protocol.Get()
+	}
+
+	ip := net.ParseIP(a.ClientIP)
+
 	for _, rule := range config.GetFile().GetBruteForceRules() {
 		// Per-rule iteration timer
 		var stopIter func()
@@ -687,36 +612,8 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 			stopIter = s
 		}
 
-		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
-		if len(rule.FilterByProtocol) > 0 && a.Protocol != nil && a.Protocol.Get() != "" {
-			protocolMatched := false
-			for _, p := range rule.FilterByProtocol {
-				if p == a.Protocol.Get() {
-					protocolMatched = true
-
-					break
-				}
-			}
-
-			if !protocolMatched {
-				continue
-			}
-		}
-
-		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
-		if len(rule.FilterByOIDCCID) > 0 && a.OIDCCID != "" {
-			oidcCIDMatched := false
-			for _, cid := range rule.FilterByOIDCCID {
-				if cid == a.OIDCCID {
-					oidcCIDMatched = true
-
-					break
-				}
-			}
-
-			if !oidcCIDMatched {
-				continue
-			}
+		if !rule.MatchesContext(proto, a.OIDCCID, ip) {
+			continue
 		}
 
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {

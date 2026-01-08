@@ -275,9 +275,6 @@ type Metrics interface {
 	// GetBruteForceEvalSeconds measures end-to-end latency of the brute-force evaluation path.
 	GetBruteForceEvalSeconds() prometheus.Histogram
 
-	// GetBruteForcePhaseSeconds measures sub-phase timings within the brute-force evaluation, labeled by phase.
-	GetBruteForcePhaseSeconds() *prometheus.HistogramVec
-
 	// GetBruteForceCacheHitsTotal counts in-process cache/burst gating hits within the brute-force path, labeled by kind.
 	GetBruteForceCacheHitsTotal() *prometheus.CounterVec
 
@@ -506,11 +503,6 @@ func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
 // GetBruteForceEvalSeconds returns the bruteForceEvalSeconds field.
 func (m *metricsImpl) GetBruteForceEvalSeconds() prometheus.Histogram {
 	return m.bruteForceEvalSeconds
-}
-
-// GetBruteForcePhaseSeconds returns the bruteForcePhaseSeconds field.
-func (m *metricsImpl) GetBruteForcePhaseSeconds() *prometheus.HistogramVec {
-	return m.bruteForcePhaseSeconds
 }
 
 // GetBruteForceCacheHitsTotal returns the bruteForceCacheHitsTotal field.

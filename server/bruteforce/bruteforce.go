@@ -39,8 +39,11 @@ import (
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -487,10 +490,30 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 // CheckRepeatingBruteForcer checks a set of brute force rules against a given network and updates the message if triggered.
 // Returns whether an error occurred, if a rule was already triggered, and the triggering rule index.
 func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer sp.End()
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(attribute.String("ip_family", ipFamily))
+
 	// Micro-cache fast path: reuse a very recent decision for identical semantic request key.
 	if c := getMicroCache(); c != nil {
 		if v, ok := c.Get("bfdec:" + bm.bfBurstKey()); ok {
 			if md, ok2 := v.(microDecision); ok2 && md.Block {
+				sp.SetAttributes(attribute.Bool("micro_cache.hit", true))
+
 				// find rule index by name to keep downstream behavior intact
 				for i := range rules {
 					if rules[i].Name == md.Rule {
@@ -503,6 +526,11 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 						bm.bruteForceName = md.Rule
 						*message = "Brute force attack detected (micro-cache)"
 						stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("micro").Inc()
+						sp.SetAttributes(
+							attribute.Bool("triggered", true),
+							attribute.String("rule", md.Rule),
+							attribute.Int("rule.index", i),
+						)
 
 						return false, true, i
 					}
@@ -510,9 +538,26 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			}
 		}
 	}
+	sp.SetAttributes(attribute.Bool("micro_cache.hit", false))
 
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
+
+	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
+	if bm.parsedIP == nil {
+		bm.PrepareNetcalc(rules)
+
+		// Update family info after PrepareNetcalc populated bm.parsedIP.
+		switch {
+		case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+			ipFamily = "ipv4"
+		case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+			ipFamily = "ipv6"
+		default:
+			ipFamily = "unknown"
+		}
+		sp.SetAttributes(attribute.String("ip_family", ipFamily))
+	}
 
 	var (
 		ruleName string
@@ -530,37 +575,13 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// Gather candidates
 	*network = nil
+
+	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.repeating_check.gather_candidates")
+	defer gatherSpan.End()
+
 	for i := range rules {
-		// Protocol filter
-		if len(rules[i].FilterByProtocol) > 0 && bm.protocol != "" {
-			matched := false
-			for _, p := range rules[i].FilterByProtocol {
-				if p == bm.protocol {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// OIDC filter
-		if len(rules[i].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
-			matched := false
-			for _, cid := range rules[i].FilterByOIDCCID {
-				if cid == bm.oidcCID {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
+		if !rules[i].MatchesContext(bm.protocol, bm.oidcCID, bm.parsedIP) {
+			continue
 		}
 
 		n, nErr := bm.getNetwork(&rules[i])
@@ -582,6 +603,11 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		matchedAnyRule = true
 		candidates = append(candidates, cand{idx: i, field: n.String()})
 	}
+
+	gatherSpan.SetAttributes(
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(candidates)),
+	)
 
 	// If we have candidates, issue a single HMGET to find the first hit
 	if len(candidates) > 0 {
@@ -626,6 +652,12 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 						*network = nnet
 					}
 
+					sp.SetAttributes(
+						attribute.Bool("triggered", true),
+						attribute.String("rule", ruleName),
+						attribute.Int("rule.index", ruleNumber),
+					)
+
 					return false, alreadyTriggered, ruleNumber
 				}
 			}
@@ -641,7 +673,14 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			definitions.LogKeyBruteForce, "No matching brute force buckets found",
 			"protocol", bm.protocol,
 			"client_ip", bm.clientIP)
+		sp.SetAttributes(attribute.Bool("rules.matched_any", false))
 	}
+
+	sp.SetAttributes(
+		attribute.Bool("triggered", alreadyTriggered),
+		attribute.Int("candidates.total", len(candidates)),
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+	)
 
 	return withError, alreadyTriggered, ruleNumber
 }
@@ -649,8 +688,31 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 // CheckBucketOverLimit evaluates brute force rules for a given network to detect potential brute force attacks.
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.bucket_over_limit",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer sp.End()
+
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
+
+	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
+	if bm.parsedIP == nil {
+		bm.PrepareNetcalc(rules)
+	}
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(attribute.String("ip_family", ipFamily))
 
 	matchedAnyRule := false
 
@@ -661,24 +723,18 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	}
 	cands := make([]bkcand, 0, len(rules))
 
-	for i := range rules {
-		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
-		if len(rules[i].FilterByProtocol) > 0 && bm.protocol != "" {
-			if !containsString(rules[i].FilterByProtocol, bm.protocol) {
-				continue
-			}
-		}
+	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.bucket_over_limit.gather_candidates")
 
-		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
-		if len(rules[i].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
-			if !containsString(rules[i].FilterByOIDCCID, bm.oidcCID) {
-				continue
-			}
+	for i := range rules {
+		if !rules[i].MatchesContext(bm.protocol, bm.oidcCID, bm.parsedIP) {
+			continue
 		}
 
 		// Skip, where the current IP address does not match the current rule
 		n, nErr := bm.getNetwork(&rules[i])
 		if nErr != nil {
+			gatherSpan.End()
+
 			level.Error(log.Logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to get network for brute force rule",
@@ -700,6 +756,12 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			cands = append(cands, bkcand{idx: i, key: key})
 		}
 	}
+
+	gatherSpan.SetAttributes(
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(cands)),
+	)
+	gatherSpan.End()
 
 	if len(cands) > 0 {
 		keys := make([]string, 0, len(cands))
@@ -765,6 +827,12 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 
 				ruleNumber = c.idx
 
+				sp.SetAttributes(
+					attribute.Bool("triggered", true),
+					attribute.String("rule", r.Name),
+					attribute.Int("rule.index", ruleNumber),
+				)
+
 				return withError, ruleTriggered, ruleNumber
 			}
 		}
@@ -778,6 +846,12 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			"protocol", bm.protocol,
 			"client_ip", bm.clientIP)
 	}
+
+	sp.SetAttributes(
+		attribute.Bool("triggered", ruleTriggered),
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(cands)),
+	)
 
 	return withError, ruleTriggered, ruleNumber
 }
@@ -849,7 +923,39 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 
 // ProcessBruteForce evaluates and handles brute force detection logic, deciding whether further actions are necessary.
 func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.process",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Bool("rule_triggered", ruleTriggered),
+		attribute.Bool("already_triggered", alreadyTriggered),
+	)
+	defer sp.End()
+
+	// Propagate span context to all downstream operations inside this method.
+	prevCtx := bm.ctx
+	bm.ctx = ctx
+	defer func() {
+		bm.ctx = prevCtx
+	}()
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(
+		attribute.String("ip_family", ipFamily),
+	)
+
 	if alreadyTriggered || ruleTriggered {
+		if rule != nil {
+			sp.SetAttributes(attribute.String("rule", rule.Name))
+		}
+
 		var useCache bool
 
 		// capture context flag for downstream operations (e.g., PW_HIST behavior)
@@ -937,6 +1043,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			c.Set("bfdec:"+bm.bfBurstKey(), dec, 0)
 		}
 
+		sp.SetAttributes(attribute.Bool("triggered", true))
+
 		return true
 	}
 
@@ -945,6 +1053,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		dec := microDecision{Block: false, Rule: ""}
 		c.Set("bfdec:"+bm.bfBurstKey(), dec, 0)
 	}
+
+	sp.SetAttributes(attribute.Bool("triggered", false))
 
 	return false
 }

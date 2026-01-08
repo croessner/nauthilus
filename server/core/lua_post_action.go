@@ -25,10 +25,12 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -112,6 +114,14 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 		return "", false
 	}
 
+	tr := monittrace.New("nauthilus/auth")
+	_, sp := tr.Start(ctx, "auth.bruteforce.hints",
+		attribute.String("client_ip", clientIP),
+		attribute.String("protocol", protocol),
+		attribute.String("oidc_cid", oidccid),
+	)
+	defer sp.End()
+
 	// Check whether the protocol is enabled for brute-force processing
 	bfProtoEnabled := false
 	for _, p := range config.GetFile().GetServer().GetBruteForceProtocols() {
@@ -131,60 +141,24 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 		return "", false
 	}
 
+	rules := config.GetFile().GetBruteForceRules()
+	sp.SetAttributes(attribute.Int("rules.total", len(rules)))
+
 	var (
 		foundRepeatingNet string
 		foundRepeating    bool
 		bestCIDRRepeating uint = 0 // prefer most specific repeating
 		bestCIDRFallback  uint = 0 // prefer most specific fallback
+		considered        int
 	)
 
-	for i := range config.GetFile().GetBruteForceRules() {
-		r := &config.GetFile().GetBruteForceRules()[i]
-
-		// FilterByProtocol
-		if len(r.FilterByProtocol) > 0 && protocol != "" {
-			matched := false
-			for _, fp := range r.FilterByProtocol {
-				if fp == protocol {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// FilterByOIDCCID
-		if len(r.FilterByOIDCCID) > 0 && oidccid != "" {
-			matched := false
-			for _, cid := range r.FilterByOIDCCID {
-				if cid == oidccid {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// IP version
-		if ip.To4() != nil {
-			if !r.IPv4 {
-				continue
-			}
-		} else if ip.To16() != nil {
-			if !r.IPv6 {
-				continue
-			}
-		} else {
+	for i := range rules {
+		r := &rules[i]
+		if !r.MatchesContext(protocol, oidccid, ip) {
 			continue
 		}
+
+		considered++
 
 		if r.CIDR > 0 {
 			if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", clientIP, r.CIDR)); err == nil && n != nil {
@@ -212,6 +186,11 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 			}
 		}
 	}
+
+	sp.SetAttributes(
+		attribute.Int("rules.considered", considered),
+		attribute.Bool("repeating", foundRepeating),
+	)
 
 	if foundRepeating {
 		repeating = true

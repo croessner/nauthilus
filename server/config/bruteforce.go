@@ -17,6 +17,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"time"
 )
 
@@ -485,4 +486,60 @@ func (b *BruteForceRule) GetFilterByOIDCCID() []string {
 	}
 
 	return b.FilterByOIDCCID
+}
+
+// MatchesContext returns true if the rule is applicable for the given request context.
+// It applies protocol and OIDC CID filters (when present and the corresponding input is non-empty)
+// and validates the IP family (IPv4/IPv6) against the rule.
+func (b *BruteForceRule) MatchesContext(protocol string, oidcCID string, ip net.IP) bool {
+	if b == nil {
+		return false
+	}
+
+	if ip == nil {
+		return false
+	}
+
+	// Protocol filter
+	if len(b.FilterByProtocol) > 0 && protocol != "" {
+		matched := false
+		for _, p := range b.FilterByProtocol {
+			if p == protocol {
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			return false
+		}
+	}
+
+	// OIDC filter
+	if len(b.FilterByOIDCCID) > 0 && oidcCID != "" {
+		matched := false
+		for _, cid := range b.FilterByOIDCCID {
+			if cid == oidcCID {
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			return false
+		}
+	}
+
+	// IP family
+	if ip.To4() != nil {
+		return b.IPv4
+	}
+
+	if ip.To16() != nil {
+		return b.IPv6
+	}
+
+	return false
 }
