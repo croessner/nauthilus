@@ -480,15 +480,18 @@ func spanRecordError(L *lua.LState) int {
 		return 0
 	}
 
-	v := L.CheckAny(2)
-	switch vv := v.(type) {
-	case lua.LString:
-		lsp.span.RecordError(&luaErr{msg: string(vv)})
-		lsp.span.SetStatus(codes.Error, string(vv))
-	default:
-		lsp.span.RecordError(&luaErr{msg: vv.String()})
-		lsp.span.SetStatus(codes.Error, vv.String())
+	v := L.Get(2)
+	if v == lua.LNil {
+		return 0
 	}
+
+	errStr := strings.TrimSpace(v.String())
+	if errStr == "" || errStr == "redis: nil" || errStr == "nil" {
+		return 0
+	}
+
+	lsp.span.RecordError(&luaErr{msg: errStr})
+	lsp.span.SetStatus(codes.Error, errStr)
 
 	return 0
 }
