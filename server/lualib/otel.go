@@ -274,7 +274,8 @@ func ensureSpanMT(L *lua.LState) {
 		"add_event":      spanAddEvent,
 		"set_status":     spanSetStatus,
 		"record_error":   spanRecordError,
-		"end":            spanEnd,
+		"end":            spanEnd, // Reserved ke
+		"finish":         spanEnd,
 	}))
 }
 
