@@ -1069,6 +1069,11 @@ type Redis struct {
 	// MaintNotificationsEnabled toggles CLIENT MAINT_NOTIFICATIONS support (RESP3 push based).
 	// Only applicable to standalone and cluster clients. Defaults to false for compatibility.
 	MaintNotificationsEnabled bool `mapstructure:"maint_notifications_enabled"`
+
+	// Protocol sets the Redis protocol version (2 or 3). If not set (0), it defaults to 2
+	// unless features requiring RESP3 (like client-side tracking or maintenance notifications)
+	// are enabled. Forcing 2 can resolve parsing issues with asynchronous push messages in pipelines.
+	Protocol int `mapstructure:"protocol" validate:"omitempty,oneof=0 2 3"`
 }
 
 // RedisBatching controls optional client-side command batching.
@@ -1335,6 +1340,15 @@ func (r *Redis) GetNegCacheTTL() time.Duration {
 	}
 
 	return r.NegCacheTTL
+}
+
+// GetProtocol returns the configured Redis protocol or 2 if not set.
+func (r *Redis) GetProtocol() int {
+	if r == nil {
+		return 2
+	}
+
+	return r.Protocol
 }
 
 // GetPoolTimeout returns the configured pool timeout or the default of 80ms.
