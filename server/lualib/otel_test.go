@@ -130,6 +130,62 @@ func TestOTEL_WithSpan_Basic(t *testing.T) {
 	}
 }
 
+func TestOTEL_Span_Finish(t *testing.T) {
+	coll := &spanCollector{}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(coll)),
+	)
+	cleanup := setupTracingEnabled(tp)
+
+	defer cleanup()
+
+	L := lua.NewState()
+	defer L.Close()
+
+	// Preload module with a background context
+	L.PreloadModule(definitions.LuaModOpenTelemetry, LoaderModOTEL(context.Background()))
+
+	script := `
+      local otel = require("nauthilus_opentelemetry")
+      local tr = otel.tracer("test/scope")
+      local span = tr:start_span("manual.op", { kind = "internal" })
+      span:set_attribute("manual", true)
+      span:finish()
+    `
+
+	if err := L.DoString(script); err != nil {
+		t.Fatalf("lua error: %v", err)
+	}
+
+	// One span expected with name manual.op
+	if len(coll.spans) == 0 {
+		t.Fatalf("expected spans to be recorded, got 0")
+	}
+
+	var found bool
+	for _, sp := range coll.spans {
+		if sp.Name() == "manual.op" {
+			found = true
+			attrs := sp.Attributes()
+			hasManual := false
+			for _, a := range attrs {
+				if string(a.Key) == "manual" && a.Value.AsBool() {
+					hasManual = true
+				}
+			}
+
+			if !hasManual {
+				t.Fatalf("missing expected attribute 'manual'")
+			}
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected to find span 'manual.op'")
+	}
+}
+
 func TestOTEL_BaggageAndPropagation(t *testing.T) {
 	coll := &spanCollector{}
 	tp := sdktrace.NewTracerProvider(
