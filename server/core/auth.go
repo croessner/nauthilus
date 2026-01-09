@@ -26,6 +26,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -3138,7 +3139,16 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
 	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
 	auth.SetUsername(ctx.GetHeader(config.GetFile().GetUsername()))
-	auth.SetPassword(ctx.GetHeader(config.GetFile().GetPassword()))
+
+	password := ctx.GetHeader(config.GetFile().GetPassword())
+
+	if strings.Contains(password, "%") {
+		if decodedPassword, err := url.PathUnescape(password); err == nil {
+			password = decodedPassword
+		}
+	}
+
+	auth.SetPassword(password)
 
 	encoded := ctx.GetHeader(config.GetFile().GetPasswordEncoded())
 	if encoded == "1" {
