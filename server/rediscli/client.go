@@ -125,8 +125,9 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 		MaxRetries:            redisCfg.GetMaxRetries(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Explicitly prefer RESP3 to ensure push notifications for tracking
-		Protocol: 3,
+		// Prefer RESP3 only if requested or features requiring it are enabled.
+		// Otherwise, default to RESP2 to avoid parsing issues with asynchronous push messages.
+		Protocol: getProtocol(redisCfg),
 	}
 
 	// Enable CLIENT TRACKING if configured
@@ -171,8 +172,8 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 		MaxRetries:            redisCfg.GetMaxRetries(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP3 to support push notifications
-		Protocol: 3,
+		// Ensure RESP version based on configuration and features
+		Protocol: getProtocol(redisCfg),
 	}
 
 	// Maintenance Notifications: only enable if configured. Standalone supports MaintNotificationsConfig.
@@ -231,8 +232,8 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 		ReadOnly:       clusterCfg.GetRouteReadsToReplicas(),
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP3 to support push notifications for tracking
-		Protocol: 3,
+		// Ensure RESP version based on configuration and features
+		Protocol: getProtocol(redisCfg),
 	}
 
 	// Maintenance Notifications for cluster: configurable. Apply to options to propagate to nodes.
@@ -312,8 +313,8 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 		ReadOnly:       true, // Always use replicas for read operations
 		// CLIENT SETINFO toggle from configuration (default disabled for compatibility).
 		DisableIdentity: !redisCfg.IsIdentityEnabled(),
-		// Ensure RESP3 to support push notifications for tracking
-		Protocol: 3,
+		// Ensure RESP version based on configuration and features
+		Protocol: getProtocol(redisCfg),
 	}
 
 	// Maintenance Notifications for cluster read-only client: mirror primary setting.
@@ -404,4 +405,24 @@ func buildClientTrackingArgs(ct *config.RedisClientTracking) []interface{} {
 	}
 
 	return args
+}
+
+// getProtocol determines the Redis protocol version (2 or 3) to use.
+func getProtocol(redisCfg *config.Redis) int {
+	if redisCfg == nil {
+		return 2
+	}
+
+	// If a protocol is explicitly configured, use it.
+	if p := redisCfg.GetProtocol(); p > 0 {
+		return p
+	}
+
+	// Default to RESP3 only if features requiring it are enabled.
+	if redisCfg.GetClientTracking().IsEnabled() || redisCfg.IsMaintNotificationsEnabled() {
+		return 3
+	}
+
+	// Default to RESP2 for stability with pipelines.
+	return 2
 }
