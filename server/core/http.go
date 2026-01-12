@@ -35,6 +35,7 @@ import (
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
 	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/rediscli"
 	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-contrib/pprof"
@@ -44,7 +45,6 @@ import (
 	"github.com/pires/go-proxyproto"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/net/http2"
@@ -53,16 +53,20 @@ import (
 type HTTPDeps struct {
 	Cfg    config.File
 	Logger *slog.Logger
+	Env    config.Environment
+	Redis  rediscli.Client
 }
 
 // DefaultBootstrap wires the existing bootstrapping functions.
 type DefaultBootstrap struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
-	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger}
+	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // InitSessionStore creates and returns the secure cookie-backed Gin session store
@@ -100,10 +104,12 @@ func (b DefaultBootstrap) InitGinLogging() {
 type DefaultRouterComposer struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
-	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger}
+	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // ComposeEngine creates a fresh gin.Engine without any default middleware.
@@ -222,7 +228,7 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	}
 
 	if c.cfg.GetServer().Frontend.Enabled {
-		r.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
+		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
 		rb := approuter.NewRouter(c.cfg)
 		rb.Engine = r
@@ -240,10 +246,12 @@ func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 type DefaultHTTPServerFactory struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewDefaultHTTPServerFactory(deps HTTPDeps) DefaultHTTPServerFactory {
-	return DefaultHTTPServerFactory{cfg: deps.Cfg, logger: deps.Logger}
+	return DefaultHTTPServerFactory{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // New constructs a configured *http.Server* with HTTP/2 enabled and sensible
@@ -288,11 +296,14 @@ func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 
 // HAProxyListenerProvider provides PROXY v2 listener when enabled.
 type HAProxyListenerProvider struct {
-	cfg config.File
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewHAProxyListenerProvider(deps HTTPDeps) HAProxyListenerProvider {
-	return HAProxyListenerProvider{cfg: deps.Cfg}
+	return HAProxyListenerProvider{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // Get returns a PROXY v2 aware listener if the feature is enabled in the
@@ -319,10 +330,12 @@ func (p HAProxyListenerProvider) Get() *proxyproto.Listener {
 type DefaultTLSConfigurator struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewDefaultTLSConfigurator(deps HTTPDeps) DefaultTLSConfigurator {
-	return DefaultTLSConfigurator{cfg: deps.Cfg, logger: deps.Logger}
+	return DefaultTLSConfigurator{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // Build assembles a *tls.Config* honoring configured CA, cipher suites,
@@ -444,10 +457,12 @@ func (s *DefaultServerSignals) HTTP3Done() chan Done {
 type DefaultTransportRunner struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 }
 
 func NewDefaultTransportRunner(deps HTTPDeps) DefaultTransportRunner {
-	return DefaultTransportRunner{cfg: deps.Cfg, logger: deps.Logger}
+	return DefaultTransportRunner{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
 }
 
 // Serve launches the HTTP/1.1+2 server (and optionally HTTP/3) and manages
@@ -543,6 +558,8 @@ func serveHTTPInternal(logger *slog.Logger, srv *http.Server, certFile, keyFile 
 type DefaultHTTPApp struct {
 	cfg    config.File
 	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
 
 	Bootstrap         Bootstrap
 	RouterComposer    RouterComposer
@@ -559,6 +576,8 @@ func NewDefaultHTTPApp(deps HTTPDeps) *DefaultHTTPApp {
 	return &DefaultHTTPApp{
 		cfg:    deps.Cfg,
 		logger: deps.Logger,
+		env:    deps.Env,
+		redis:  deps.Redis,
 
 		Bootstrap:         NewDefaultBootstrap(deps),
 		RouterComposer:    NewDefaultRouterComposer(deps),

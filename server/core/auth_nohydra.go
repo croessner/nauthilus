@@ -35,3 +35,8 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 
 // processGroupsClaim is a no-op in non-hydra builds.
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {}
+
+// GetOauth2SubjectAndClaims is a stub in non-hydra builds.
+func (a *AuthState) GetOauth2SubjectAndClaims(_ any) (string, map[string]any) {
+	return "", nil
+}

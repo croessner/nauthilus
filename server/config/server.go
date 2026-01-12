@@ -1799,10 +1799,31 @@ func (m *MasterUser) GetDelimiter() string {
 
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
-	Enabled            bool   `mapstructure:"enabled"`
-	CSRFSecret         string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreAuthKey string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
-	CookieStoreEncKey  string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	Enabled                 bool   `mapstructure:"enabled"`
+	CSRFSecret              string `mapstructure:"csrf_secret" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreAuthKey      string `mapstructure:"cookie_store_auth_key" validate:"omitempty,len=32,alphanumsymbol,excludesall= "`
+	CookieStoreEncKey       string `mapstructure:"cookie_store_encryption_key" validate:"omitempty,alphanumsymbol,excludesall= ,validateCookieStoreEncKey"`
+	HTMLStaticContentPath   string `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
+	DefaultLogoImage        string `mapstructure:"default_logo_image" validate:"omitempty"`
+	LoginPage               string `mapstructure:"login_page" validate:"omitempty"`
+	LoginPageWelcome        string `mapstructure:"login_page_welcome" validate:"omitempty"`
+	LoginPageLogoImageAlt   string `mapstructure:"login_page_logo_image_alt" validate:"omitempty"`
+	TwoFactorPage           string `mapstructure:"two_factor_page" validate:"omitempty"`
+	ConsentPage             string `mapstructure:"consent_page" validate:"omitempty"`
+	LogoutPage              string `mapstructure:"logout_page" validate:"omitempty"`
+	ErrorPage               string `mapstructure:"error_page" validate:"omitempty"`
+	NotifyPage              string `mapstructure:"notify_page" validate:"omitempty"`
+	DevicePage              string `mapstructure:"device_page" validate:"omitempty"`
+	Homepage                string `mapstructure:"homepage" validate:"omitempty,url"`
+	LogoutPageWelcome       string `mapstructure:"logout_page_welcome" validate:"omitempty"`
+	ConsentPageWelcome      string `mapstructure:"consent_page_welcome" validate:"omitempty"`
+	ConsentPageLogoImageAlt string `mapstructure:"consent_page_logo_image_alt" validate:"omitempty"`
+	NotifyPageWelcome       string `mapstructure:"notify_page_welcome" validate:"omitempty"`
+	NotifyPageLogoImageAlt  string `mapstructure:"notify_page_logo_image_alt" validate:"omitempty"`
+	HydraAdminUri           string `mapstructure:"hydra_admin_uri" validate:"omitempty,url"`
+	TotpIssuer              string `mapstructure:"totp_issuer" validate:"omitempty"`
+	TotpSkew                uint   `mapstructure:"totp_skew" validate:"omitempty"`
+	LoginRememberFor        int    `mapstructure:"login_remember_for" validate:"omitempty"`
 }
 
 // IsEnabled checks if the Frontend is enabled.
@@ -1843,6 +1864,214 @@ func (f *Frontend) GetCookieStoreEncKey() string {
 	}
 
 	return f.CookieStoreEncKey
+}
+
+// GetHTMLStaticContentPath retrieves the HTML static content path from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHTMLStaticContentPath() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.HTMLStaticContentPath
+}
+
+// GetDefaultLogoImage retrieves the default logo image from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetDefaultLogoImage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DefaultLogoImage
+}
+
+// GetLoginPage retrieves the login page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPage
+}
+
+// GetLoginPageWelcome retrieves the login page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPageWelcome
+}
+
+// GetLoginPageLogoImageAlt retrieves the login page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLoginPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LoginPageLogoImageAlt
+}
+
+// GetTwoFactorPage retrieves the two factor page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetTwoFactorPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TwoFactorPage
+}
+
+// GetConsentPage retrieves the consent page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPage
+}
+
+// GetLogoutPage retrieves the logout page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLogoutPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LogoutPage
+}
+
+// GetErrorPage retrieves the error page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetErrorPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ErrorPage
+}
+
+// GetNotifyPage retrieves the notify page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPage
+}
+
+// GetDevicePage retrieves the device page from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetDevicePage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DevicePage
+}
+
+// GetHomepage retrieves the homepage from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHomepage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.Homepage
+}
+
+// GetLogoutPageWelcome retrieves the logout page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetLogoutPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LogoutPageWelcome
+}
+
+// GetConsentPageWelcome retrieves the consent page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPageWelcome
+}
+
+// GetConsentPageLogoImageAlt retrieves the consent page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetConsentPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.ConsentPageLogoImageAlt
+}
+
+// GetNotifyPageWelcome retrieves the notify page welcome message from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPageWelcome() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPageWelcome
+}
+
+// GetNotifyPageLogoImageAlt retrieves the notify page logo image alt text from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetNotifyPageLogoImageAlt() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.NotifyPageLogoImageAlt
+}
+
+// GetHydraAdminUri retrieves the Hydra admin URI from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetHydraAdminUri() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.HydraAdminUri
+}
+
+// GetTotpIssuer retrieves the TOTP issuer from the Frontend configuration.
+// Returns an empty string if the Frontend is nil.
+func (f *Frontend) GetTotpIssuer() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.TotpIssuer
+}
+
+// GetTotpSkew retrieves the TOTP skew from the Frontend configuration.
+func (f *Frontend) GetTotpSkew() uint {
+	if f == nil {
+		return 0
+	}
+
+	return f.TotpSkew
+}
+
+// GetLoginRememberFor retrieves the login remember duration from the Frontend configuration.
+func (f *Frontend) GetLoginRememberFor() int {
+	if f == nil {
+		return 0
+	}
+
+	return f.LoginRememberFor
 }
 
 func validateCookieStoreEncKey(fl validator.FieldLevel) bool {

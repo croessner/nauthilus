@@ -70,8 +70,15 @@ func LogoutGETHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra
 // LogoutPOSTHandler handles POST requests to the '/logout/post' endpoint, returning a 404 status when Hydra is disabled.
 func LogoutPOSTHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }
 
-// NotifyGETHandler handles GET requests for the notification page, returning a 404 status indicating Hydra is disabled.
-func NotifyGETHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }
+// NotifyGETHandler handles GET requests for the notification page.
+func NotifyGETHandler(ctx *gin.Context) {
+	NotifyGETHandlerWithDeps(ctx, AuthDeps{
+		Cfg:    getDefaultConfigFile(),
+		Env:    getDefaultEnvironment(),
+		Logger: getDefaultLogger(),
+		Redis:  getDefaultRedisClient(),
+	})
+}
 
 // LoginGET2FAHandler handles GET requests for the 2FA page, responding with a "hydra disabled" message when not enabled.
 func LoginGET2FAHandler(ctx *gin.Context) { ctx.String(http.StatusNotFound, "hydra disabled") }

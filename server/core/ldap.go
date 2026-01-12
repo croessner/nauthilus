@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -30,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
@@ -40,8 +42,8 @@ import (
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
 type ldapManagerImpl struct {
-	// poolName specifies the identifier for the LDAP connection pool to be utilized by the manager implementation.
 	poolName string
+	deps     AuthDeps
 }
 
 // handleMasterUserMode handles the master user mode functionality for authentication.
@@ -123,6 +125,22 @@ func restoreMasterUserTOTPSecret(passDBResult *PassDBResult, totpSecretPre []any
 }
 
 // PassDB implements the LDAP password database backend.
+func (lm *ldapManagerImpl) effectiveCfg() config.File {
+	return lm.deps.Cfg
+}
+
+func (lm *ldapManagerImpl) effectiveLogger() *slog.Logger {
+	return lm.deps.Logger
+}
+
+func (lm *ldapManagerImpl) effectiveEnv() config.Environment {
+	return lm.deps.Env
+}
+
+func (lm *ldapManagerImpl) effectiveRedis() rediscli.Client {
+	return lm.deps.Redis
+}
+
 func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.passdb",
@@ -590,8 +608,9 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 var _ BackendManager = (*ldapManagerImpl)(nil)
 
 // NewLDAPManager creates and returns a BackendManager for managing LDAP authentication backends using the specified pool name.
-func NewLDAPManager(poolName string) BackendManager {
+func NewLDAPManager(poolName string, deps AuthDeps) BackendManager {
 	return &ldapManagerImpl{
 		poolName: poolName,
+		deps:     deps,
 	}
 }

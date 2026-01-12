@@ -380,41 +380,52 @@ func startHTTPServer(ctx context.Context, store *contextStore) error {
 
 	// Metrics endpoint (always register)
 	setupMetrics = func(e *gin.Engine) {
-		handlermetrics.New().Register(e)
+		handlermetrics.NewWithDeps(cfg, logger, store.redisClient).Register(e)
 	}
 
 	// Frontend handlers only if enabled (keeps logic parity)
 	if cfg.GetServer().Frontend.Enabled {
 		sessStore := core.NewDefaultBootstrap(core.HTTPDeps{Cfg: cfg, Logger: logger}).InitSessionStore()
-		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger, Svc: handlerdeps.NewDefaultServices()}
+		deps := &handlerdeps.Deps{Cfg: cfg, Logger: logger}
+		deps.Svc = handlerdeps.NewDefaultServices(deps)
 
 		if tags.HydraEnabled {
 			setupHydra = func(e *gin.Engine) {
 				deps.Env = env
+				deps.Redis = store.redisClient
 				handlerhydra.New(sessStore, deps).Register(e)
 			}
 			setup2FA = func(e *gin.Engine) {
 				deps.Env = env
+				deps.Redis = store.redisClient
 				handlertwofa.New(sessStore, deps).Register(e)
 			}
 			setupWebAuthn = func(e *gin.Engine) {
 				deps.Env = env
+				deps.Redis = store.redisClient
 				handlerwebauthn.New(sessStore, deps).Register(e)
 			}
 		}
 		setupNotify = func(e *gin.Engine) {
 			deps.Env = env
+			deps.Redis = store.redisClient
 			handlernotify.New(sessStore, deps).Register(e)
 		}
 	}
 
 	// Backchannel API
 	setupBackchannel = func(e *gin.Engine) {
-		deps := &handlerdeps.Deps{Cfg: cfg, Env: env, Logger: logger, Redis: store.redisClient, Svc: handlerdeps.NewDefaultServices()}
+		deps := &handlerdeps.Deps{Cfg: cfg, Env: env, Logger: logger, Redis: store.redisClient}
+		deps.Svc = handlerdeps.NewDefaultServices(deps)
 		handlerbackchannel.SetupWithDeps(e, deps)
 	}
 
-	app := core.NewDefaultHTTPApp(core.HTTPDeps{Cfg: cfg, Logger: logger})
+	app := core.NewDefaultHTTPApp(core.HTTPDeps{
+		Cfg:    cfg,
+		Logger: logger,
+		Env:    env,
+		Redis:  store.redisClient,
+	})
 
 	go app.Start(store.server.ctx, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel, signals)
 

@@ -44,7 +44,7 @@ func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
 	}
 
 	if deps.Svc == nil {
-		deps.Svc = handlerdeps.NewDefaultServices()
+		deps.Svc = handlerdeps.NewDefaultServices(deps)
 	}
 
 	cfg := deps.Cfg

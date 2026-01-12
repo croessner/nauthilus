@@ -35,8 +35,8 @@ import (
 
 // luaManagerImpl provides an implementation for managing Lua connections and operations using a specific connection backend.
 type luaManagerImpl struct {
-	// backendName specifies the identifier for the Lua connection backend to be utilized by the manager implementation.
 	backendName string
+	deps        AuthDeps
 }
 
 // PassDB implements the Lua password database backend.
@@ -445,8 +445,9 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 var _ BackendManager = &luaManagerImpl{}
 
 // NewLuaManager initializes and returns a new LuaManager instance with the specified backend name.
-func NewLuaManager(backendName string) BackendManager {
+func NewLuaManager(backendName string, deps AuthDeps) BackendManager {
 	return &luaManagerImpl{
 		backendName: backendName,
+		deps:        deps,
 	}
 }

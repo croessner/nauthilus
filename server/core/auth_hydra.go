@@ -280,7 +280,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 
 // GetOauth2SubjectAndClaims returns the subject and claims for the provided OAuth2 client
 // by combining client configuration, custom scopes, and AuthState attributes.
-func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
+func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[string]any) {
 	var (
 		okay    bool
 		index   int
@@ -289,13 +289,19 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		claims  map[string]any
 	)
 
+	// Cast any to openapi.OAuth2Client
+	clientInterface, ok := oauth2Client.(openapi.OAuth2Client)
+	if !ok {
+		return "", nil
+	}
+
 	if config.GetFile().GetOauth2() != nil {
 		claims = make(map[string]any)
 
 		clientIDFound := false
 
 		for index, client = range config.GetFile().GetOauth2().Clients {
-			if client.ClientId == oauth2Client.GetClientId() {
+			if client.ClientId == clientInterface.GetClientId() {
 				clientIDFound = true
 
 				util.DebugModule(
@@ -313,7 +319,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		}
 
 		for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
-			a.processCustomClaims(scopeIndex, oauth2Client, claims)
+			a.processCustomClaims(scopeIndex, clientInterface, claims)
 		}
 
 		if client.Subject != "" {
@@ -348,7 +354,7 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		}
 	} else {
 		// Default result, if no oauth2/clients definition is found
-		subject = *a.AccountField
+		subject = a.AccountField
 	}
 
 	return subject, claims

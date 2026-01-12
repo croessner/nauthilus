@@ -17,6 +17,51 @@ package definitions
 
 import "time"
 
+// Cookie keys used by registration/login flows.
+const (
+	// CookieAccount refers to the user's account identifier.
+	CookieAccount = "account"
+
+	// CookieHaveTOTP indicates whether the user already has a TOTP secret.
+	CookieHaveTOTP = "already_have_totp"
+
+	// CookieTOTPURL holds the otpauth:// URL during TOTP registration.
+	CookieTOTPURL = "totp_url"
+
+	// CookieUserBackend records which backend authenticated the user (e.g. LDAP/Lua).
+	CookieUserBackend = "user_backend"
+
+	// CookieUniqueUserID stores a backend-specific unique user identifier.
+	CookieUniqueUserID = "unique_userid"
+
+	// CookieDisplayName stores a human-friendly display name for the user.
+	CookieDisplayName = "display_name"
+
+	// CookieLang stores the UI language preference selected during login/consent.
+	CookieLang = "lang"
+
+	// CookieUsername stores the supplied username during the login flow.
+	CookieUsername = "username"
+
+	// CookieAuthResult stores the authentication outcome (uint8 AuthResult).
+	CookieAuthResult = "auth_result"
+
+	// CookieSubject stores the OIDC subject if computed in-session.
+	CookieSubject = "subject"
+
+	// CookieRemember signals a "remember me" option for the session.
+	CookieRemember = "remember"
+
+	// CookieRegistration is used during WebAuthn device registration.
+	CookieRegistration = "webauthn_registration"
+
+	// CookieTOTPSecret temporarily holds a generated TOTP secret during flow.
+	CookieTOTPSecret = "totp_secret"
+
+	// CookieHome marks that the user reached the 2FA home page in the flow.
+	CookieHome = "home"
+)
+
 // SingleflightWaitCap defines the maximum time a follower waits for an in-process
 // singleflight result when no request deadline is present.
 // It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.

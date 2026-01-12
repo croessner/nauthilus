@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
@@ -119,6 +120,32 @@ func NewConfigLoadHandler(cfg config.File, logger *slog.Logger) gin.HandlerFunc 
 
 // For brief documentation of this file please have a look at the Markdown document REST-API.md.
 
+func (a *AuthState) handleMasterUserMode() string {
+	if a.cfg().GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(a.Username, a.cfg().GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(a.Username, a.cfg().GetServer().GetMasterUser().GetDelimiter())
+
+			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
+				return a.Username
+			}
+
+			if !a.MasterUserMode {
+				a.MasterUserMode = true
+
+				// Return master user
+				return parts[1]
+			} else {
+				a.MasterUserMode = false
+
+				// Return real user
+				return parts[0]
+			}
+		}
+	}
+
+	return a.Username
+}
+
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 	if a.Service == definitions.ServBasic {
@@ -132,6 +159,8 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 
 			return
 		}
+	} else if a.Service == definitions.ServOryHydra {
+		a.handleMasterUserMode()
 	}
 
 	if a.ListAccounts {
@@ -166,6 +195,10 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 // ProcessFeatures handles the processing of authentication-related features for a given context.
 // It determines the action to take based on various authentication results and applies the necessary response.
 func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
+	if a.Service == definitions.ServOryHydra {
+		a.handleMasterUserMode()
+	}
+
 	if !(a.NoAuth || ctx.GetBool(definitions.CtxLocalCacheAuthKey)) {
 		switch a.HandleFeatures(ctx) {
 		case definitions.AuthResultFeatureTLS:
@@ -205,6 +238,10 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 
 // ProcessAuthentication handles the authentication logic for all services.
 func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
+	if a.Service == definitions.ServOryHydra {
+		a.handleMasterUserMode()
+	}
+
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
 		tolerate.GetTolerate().SetIPAddress(a.Ctx(), a.ClientIP, a.Username, true)
@@ -428,7 +465,7 @@ func handleBruteForceListWithDeps(ctx *gin.Context, deps restAdminDeps) {
 		tokenString, err := ExtractJWTTokenWithCfg(ctx, deps.Cfg)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTTokenWithDeps(ctx, tokenString, JWTDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis})
+			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis})
 			if err == nil {
 				// Check if user has the security or admin role
 				hasRequiredRole := false
@@ -511,14 +548,13 @@ func handleConfigLoadWithDeps(ctx *gin.Context, deps restAdminDeps) {
 		tokenString, err := ExtractJWTToken(ctx)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTToken(ctx, tokenString)
+			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: cfg, Logger: getDefaultLogger(), Redis: rediscli.GetClient()})
 			if err == nil {
 				// Check if user has the security or admin role
 				hasRequiredRole := false
 				for _, role := range claims.Roles {
 					if role == definitions.RoleAdmin {
 						hasRequiredRole = true
-
 						break
 					}
 				}
@@ -681,7 +717,7 @@ func processUserCmdWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	// Remove PW_HIST_SET from Redis (use UNLINK to avoid blocking)
-	key := bruteforce.GetPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
 	if result, err = redisClient.GetWriteHandle().Unlink(ctx, key).Result(); err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -725,7 +761,7 @@ func getIPsFromPWHistSetWithDeps(ctx context.Context, accountName string, deps r
 	var ips []string
 
 	redisClient := deps.effectiveRedis()
-	key := bruteforce.GetPWHistIPsRedisKey(accountName)
+	key := bruteforce.GetPWHistIPsRedisKey(accountName, deps.Cfg)
 
 	if result, err := redisClient.GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 		if !stderrors.Is(err, redis.Nil) {

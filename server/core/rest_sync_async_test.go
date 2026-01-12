@@ -136,7 +136,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 	// ResolveAccountIdentifier may treat identifier as account directly; do not require HGET here for stability
 
 	// getIPsFromPWHistSet may not be called in minimal path; do not assert SMEMBERS strictly
-	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user)
+	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 
 	// processUserCmd: UNLINK PW_HIST_IPS set, SREM affected accounts
 	mock.ExpectUnlink(pwHistSet).SetVal(1)

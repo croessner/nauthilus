@@ -218,6 +218,12 @@ type State interface {
 	// GetAccountOk returns the account field value and a boolean indicating if the account field is present and valid.
 	GetAccountOk() (string, bool)
 
+	// GetUniqueUserIDOk returns the unique user identifier and a boolean indicating its presence.
+	GetUniqueUserIDOk() (string, bool)
+
+	// GetDisplayNameOk returns the user display name and a boolean indicating its presence.
+	GetDisplayNameOk() (string, bool)
+
 	// GetTOTPSecretOk retrieves the TOTP secret if available and returns it along with a bool indicating its presence.
 	GetTOTPSecretOk() (string, bool)
 
@@ -242,11 +248,17 @@ type State interface {
 	// GetAttributes retrieves a map of database attributes where keys are field names and values are the corresponding data.
 	GetAttributes() bktype.AttributeMapping
 
+	// GetAttributesCopy returns a deep copy of the attributes map.
+	GetAttributesCopy() bktype.AttributeMapping
+
 	// GetAdditionalLogs retrieves a slice of additional log entries, useful for appending context-specific logging details.
 	GetAdditionalLogs() []any
 
 	// GetClientIP retrieves the client's IP address associated with the current authentication or request context.
 	GetClientIP() string
+
+	// GetLogger returns the injected logger for this state.
+	GetLogger() *slog.Logger
 
 	// PreproccessAuthRequest preprocesses the authentication request and determines if it should be rejected.
 	PreproccessAuthRequest(ctx *gin.Context) bool
@@ -298,13 +310,9 @@ type State interface {
 
 	// IsMasterUser determines if the authenticated user has master-level privileges, returning true if they do.
 	IsMasterUser() bool
-}
 
-type AuthDeps struct {
-	Cfg    config.File
-	Env    config.Environment
-	Logger *slog.Logger
-	Redis  rediscli.Client
+	// GetOauth2SubjectAndClaims retrieves the subject and claims for OAuth2/OIDC.
+	GetOauth2SubjectAndClaims(client any) (string, map[string]any)
 }
 
 // AuthState represents a struct that holds information related to an authentication process.
@@ -509,35 +517,24 @@ type AuthState struct {
 }
 
 func (a *AuthState) cfg() config.File {
-	if a != nil && a.deps.Cfg != nil {
-		return a.deps.Cfg
-	}
-
-	return getDefaultConfigFile()
+	return a.deps.Cfg
 }
 
 func (a *AuthState) env() config.Environment {
-	if a != nil && a.deps.Env != nil {
-		return a.deps.Env
-	}
-
-	return getDefaultEnvironment()
+	return a.deps.Env
 }
 
 func (a *AuthState) logger() *slog.Logger {
-	if a != nil && a.deps.Logger != nil {
-		return a.deps.Logger
-	}
-
-	return getDefaultLogger()
+	return a.deps.Logger
 }
 
 func (a *AuthState) redis() rediscli.Client {
-	if a != nil && a.deps.Redis != nil {
-		return a.deps.Redis
-	}
+	return a.deps.Redis
+}
 
-	return getDefaultRedisClient()
+// GetLogger returns the injected logger for this state.
+func (a *AuthState) GetLogger() *slog.Logger {
+	return a.deps.Logger
 }
 
 var _ State = (*AuthState)(nil)
@@ -1660,11 +1657,11 @@ func (a *AuthState) handleBackendTypes() (useCache bool, backendPos map[definiti
 			}
 		case definitions.BackendLDAP:
 			if !cfg.LDAPHavePoolOnly(backendType.GetName()) {
-				mgr := NewLDAPManager(backendType.GetName())
+				mgr := NewLDAPManager(backendType.GetName(), a.deps)
 				passDBs = a.appendBackend(passDBs, definitions.BackendLDAP, mgr.PassDB)
 			}
 		case definitions.BackendLua:
-			mgr := NewLuaManager(backendType.GetName())
+			mgr := NewLuaManager(backendType.GetName(), a.deps)
 			passDBs = a.appendBackend(passDBs, definitions.BackendLua, mgr.PassDB)
 		case definitions.BackendUnknown:
 		case definitions.BackendLocalCache:
@@ -2021,13 +2018,13 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	for _, backendType := range a.cfg().GetServer().GetBackends() {
 		switch backendType.Get() {
 		case definitions.BackendLDAP:
-			mgr := NewLDAPManager(backendType.GetName())
+			mgr := NewLDAPManager(backendType.GetName(), a.deps)
 			accounts = append(accounts, &AccountListMap{
 				definitions.BackendLDAP,
 				mgr.AccountDB,
 			})
 		case definitions.BackendLua:
-			mgr := NewLuaManager(backendType.GetName())
+			mgr := NewLuaManager(backendType.GetName(), a.deps)
 			accounts = append(accounts, &AccountListMap{
 				definitions.BackendLua,
 				mgr.AccountDB,
