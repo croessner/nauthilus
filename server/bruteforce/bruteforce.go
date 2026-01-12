@@ -501,6 +501,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	sp.SetAttributes(attribute.String("ip_family", ipFamily))
 
 	// Micro-cache fast path: reuse a very recent decision for identical semantic request key.
+	_, msp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.micro_cache_emtpy")
 	if c := getMicroCache(); c != nil {
 		if v, ok := c.Get("bfdec:" + bm.bfBurstKey()); ok {
 			if md, ok2 := v.(microDecision); ok2 && md.Block {
@@ -530,10 +531,14 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			}
 		}
 	}
+	msp.End()
+
 	sp.SetAttributes(attribute.Bool("micro_cache.hit", false))
 
 	// Ensure protocol/OIDC context is present when checking rules
+	_, lhsp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.load_pw_hist_filters_if_empty")
 	bm.loadPWHistFiltersIfMissing()
+	lhsp.End()
 
 	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
 	if bm.parsedIP == nil {
@@ -1840,6 +1845,11 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 // PrepareNetcalc precomputes parsed IP, family and unique CIDR networks for the provided rules.
 // This does not change decision logic; it only caches values for reuse within the request.
 func (bm *bucketManagerImpl) PrepareNetcalc(rules []config.BruteForceRule) {
+	tr := monittrace.New("nauthilus/auth")
+	_, span := tr.Start(bm.ctx, "bm.preparenetcalc")
+
+	defer span.End()
+
 	if bm.netByCIDR == nil {
 		bm.netByCIDR = make(map[uint]*net.IPNet, 8)
 	}
