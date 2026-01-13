@@ -20,6 +20,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -27,6 +28,8 @@ import (
 )
 
 func TestRedisLPush(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name             string
 		key              string
@@ -68,7 +71,7 @@ func TestRedisLPush(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -157,7 +160,7 @@ func TestRedisRPush(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -242,7 +245,7 @@ func TestRedisLPop(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -316,7 +319,7 @@ func TestRedisRPop(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -409,7 +412,7 @@ func TestRedisLRange(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -493,7 +496,7 @@ func TestRedisLLen(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

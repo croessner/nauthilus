@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -28,6 +29,8 @@ import (
 )
 
 func TestRedisPFAdd(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name        string
 		key         string
@@ -69,7 +72,7 @@ func TestRedisPFAdd(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -144,7 +147,7 @@ func TestRedisPFCount(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -219,7 +222,7 @@ func TestRedisPFMerge(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

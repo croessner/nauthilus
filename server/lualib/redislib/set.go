@@ -18,6 +18,7 @@ package redislib
 import (
 	"context"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -26,7 +27,7 @@ import (
 )
 
 // RedisSAdd adds one or more members to a Redis set associated with the given key and returns the count of added members.
-func RedisSAdd(ctx context.Context) lua.LGFunction {
+func RedisSAdd(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
@@ -46,7 +47,7 @@ func RedisSAdd(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.SAdd(dCtx, key, values...)
@@ -64,7 +65,7 @@ func RedisSAdd(ctx context.Context) lua.LGFunction {
 }
 
 // RedisSIsMember determines if a specified value is a member of a Redis set, returning a boolean or an error.
-func RedisSIsMember(ctx context.Context) lua.LGFunction {
+func RedisSIsMember(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
@@ -79,7 +80,7 @@ func RedisSIsMember(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.SIsMember(dCtx, key, value)
@@ -97,14 +98,14 @@ func RedisSIsMember(ctx context.Context) lua.LGFunction {
 }
 
 // RedisSMembers retrieves all members of a Redis set corresponding to the given key and returns them as a Lua table.
-func RedisSMembers(ctx context.Context) lua.LGFunction {
+func RedisSMembers(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.SMembers(dCtx, key)
@@ -128,7 +129,7 @@ func RedisSMembers(ctx context.Context) lua.LGFunction {
 }
 
 // RedisSRem removes one or more members from a Redis set identified by the given key. Returns the count of removed members.
-func RedisSRem(ctx context.Context) lua.LGFunction {
+func RedisSRem(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
@@ -148,7 +149,7 @@ func RedisSRem(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.SRem(dCtx, key, values...)
@@ -166,14 +167,14 @@ func RedisSRem(ctx context.Context) lua.LGFunction {
 }
 
 // RedisSCard returns a Lua function to retrieve the cardinality (number of elements) of a Redis set for a given key.
-func RedisSCard(ctx context.Context) lua.LGFunction {
+func RedisSCard(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.SCard(dCtx, key)

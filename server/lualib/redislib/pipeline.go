@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -60,7 +61,7 @@ func setPipelineItem(L *lua.LState, item *lua.LTable, val any, err error) {
 //	})
 //
 // Returns a Lua table of results (one entry per command). For write-only commands the result is their native reply.
-func RedisPipeline(ctx context.Context) lua.LGFunction {
+func RedisPipeline(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		// Args:
 		// 1: redis handle (userdata or "default")
@@ -76,12 +77,12 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 
 		if mode == "read" {
 			fallback = getDefaultClient().GetReadHandle()
-			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx)
+			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 
 			defer cancel()
 		} else {
 			fallback = getDefaultClient().GetWriteHandle()
-			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx)
+			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 
 			defer cancel()
 		}

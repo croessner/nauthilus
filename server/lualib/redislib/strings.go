@@ -18,6 +18,7 @@ package redislib
 import (
 	"context"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -26,7 +27,7 @@ import (
 )
 
 // RedisMGet retrieves the values of multiple keys from Redis.
-func RedisMGet(ctx context.Context) lua.LGFunction {
+func RedisMGet(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		keys := make([]string, L.GetTop()-1)
@@ -37,7 +38,7 @@ func RedisMGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.MGet(dCtx, keys...)
@@ -64,7 +65,7 @@ func RedisMGet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisMSet sets multiple key-value pairs in Redis.
-func RedisMSet(ctx context.Context) lua.LGFunction {
+func RedisMSet(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 3 || (L.GetTop()-1)%2 != 0 {
 			L.Push(lua.LNil)
@@ -90,7 +91,7 @@ func RedisMSet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.MSet(dCtx, kvpairs...)
@@ -108,14 +109,14 @@ func RedisMSet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisKeys returns all keys matching a pattern.
-func RedisKeys(ctx context.Context) lua.LGFunction {
+func RedisKeys(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		pattern := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Keys(dCtx, pattern)
@@ -138,7 +139,7 @@ func RedisKeys(ctx context.Context) lua.LGFunction {
 }
 
 // RedisScan incrementally iterates over keys in Redis.
-func RedisScan(ctx context.Context) lua.LGFunction {
+func RedisScan(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		cursor := uint64(L.CheckNumber(2))
@@ -147,7 +148,7 @@ func RedisScan(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		// Use the Scan command to get a batch of keys

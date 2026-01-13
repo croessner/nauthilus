@@ -57,6 +57,8 @@ type ServerSection struct {
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
 	Middlewares Middlewares `mapstructure:"middlewares" validate:"omitempty"`
 	Timeouts    Timeouts    `mapstructure:"timeouts" validate:"omitempty"`
+
+	TrustedProxies []string `mapstructure:"trusted_proxies" validate:"omitempty,dive,ip|cidr"`
 }
 
 // Middlewares defines switches for enabling/disabling individual HTTP middlewares.
@@ -1820,6 +1822,8 @@ type Frontend struct {
 	ConsentPageLogoImageAlt string `mapstructure:"consent_page_logo_image_alt" validate:"omitempty"`
 	NotifyPageWelcome       string `mapstructure:"notify_page_welcome" validate:"omitempty"`
 	NotifyPageLogoImageAlt  string `mapstructure:"notify_page_logo_image_alt" validate:"omitempty"`
+	LanguageResources       string `mapstructure:"language_resources" validate:"omitempty,dir"`
+	DefaultLanguage         string `mapstructure:"default_language" validate:"omitempty"`
 	HydraAdminUri           string `mapstructure:"hydra_admin_uri" validate:"omitempty,url"`
 	TotpIssuer              string `mapstructure:"totp_issuer" validate:"omitempty"`
 	TotpSkew                uint   `mapstructure:"totp_skew" validate:"omitempty"`
@@ -2034,6 +2038,24 @@ func (f *Frontend) GetNotifyPageLogoImageAlt() string {
 	}
 
 	return f.NotifyPageLogoImageAlt
+}
+
+// GetLanguageResources retrieves the language resources path from the Frontend configuration.
+func (f *Frontend) GetLanguageResources() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.LanguageResources
+}
+
+// GetDefaultLanguage retrieves the default language from the Frontend configuration.
+func (f *Frontend) GetDefaultLanguage() string {
+	if f == nil {
+		return ""
+	}
+
+	return f.DefaultLanguage
 }
 
 // GetHydraAdminUri retrieves the Hydra admin URI from the Frontend configuration.
@@ -2663,6 +2685,7 @@ type Timeouts struct {
 	LDAPModify       time.Duration `mapstructure:"ldap_modify"`
 	SingleflightWork time.Duration `mapstructure:"singleflight_work"`
 	LuaBackend       time.Duration `mapstructure:"lua_backend"`
+	LuaScript        time.Duration `mapstructure:"lua_script"`
 }
 
 // GetRedisRead returns the timeout for Redis read operations. Defaults to 1s if unset/invalid.
@@ -2726,6 +2749,26 @@ func (t *Timeouts) GetLuaBackend() time.Duration {
 }
 
 // GetTimeouts retrieves the Timeouts configuration section from ServerSection.
+func (t *Timeouts) GetLuaScript() time.Duration {
+	if t.LuaScript == 0 {
+		return 30 * time.Second
+	}
+
+	return t.LuaScript
+}
+
+func (s *ServerSection) GetTrustedProxies() []string {
+	if s == nil {
+		return []string{}
+	}
+
+	return s.TrustedProxies
+}
+
+func (s *ServerSection) GetEnvironment() Environment {
+	return GetEnvironment()
+}
+
 func (s *ServerSection) GetTimeouts() *Timeouts {
 	if s == nil {
 		return &Timeouts{}

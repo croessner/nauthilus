@@ -20,6 +20,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -99,7 +100,7 @@ func TestRedisZAdd(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -247,7 +248,7 @@ func TestRedisZRange(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -365,7 +366,7 @@ func TestRedisZRevRange(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -525,7 +526,7 @@ func TestRedisZRangeByScore(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -690,7 +691,7 @@ func TestRedisZRem(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -798,7 +799,7 @@ func TestRedisZRemRangeByScore(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -911,7 +912,7 @@ func TestRedisZRemRangeByRank(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1008,7 +1009,7 @@ func TestRedisZRank(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1122,7 +1123,7 @@ func TestRedisZCount(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1226,7 +1227,7 @@ func TestRedisZIncrBy(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1325,7 +1326,7 @@ func TestRedisZScore(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1422,7 +1423,7 @@ func TestRedisZRevRank(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1489,7 +1490,7 @@ func TestRedisZScoreWithCustomHandle(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -1560,7 +1561,7 @@ func TestRedisZRevRankWithCustomHandle(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 

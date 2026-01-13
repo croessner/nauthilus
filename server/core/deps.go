@@ -18,16 +18,18 @@ package core
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
 )
 
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
-	Cfg    config.File
-	Logger *slog.Logger
-	Env    config.Environment
-	Redis  rediscli.Client
+	Cfg      config.File
+	Logger   *slog.Logger
+	Env      config.Environment
+	Redis    rediscli.Client
+	Tolerate tolerate.Tolerate
 }
 
 type HydraHandlers struct {

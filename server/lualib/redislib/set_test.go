@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -80,9 +81,7 @@ func TestRedisSAdd(t *testing.T) {
 	}
 
 	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -163,9 +162,7 @@ func TestRedisSIsMember(t *testing.T) {
 	}
 
 	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -237,9 +234,7 @@ func TestRedisSMembers(t *testing.T) {
 		},
 	}
 	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -327,9 +322,7 @@ func TestRedisSRem(t *testing.T) {
 	}
 
 	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -406,9 +399,7 @@ func TestRedisSCard(t *testing.T) {
 	}
 
 	L := lua.NewState()
-
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

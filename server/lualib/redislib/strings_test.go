@@ -20,6 +20,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -64,7 +65,7 @@ func TestRedisMGet(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -158,7 +159,7 @@ func TestRedisMSet(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -245,7 +246,7 @@ func TestRedisKeys(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -351,7 +352,7 @@ func TestRedisScan(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -30,6 +31,7 @@ import (
 )
 
 func TestRedisSet_WithOptionsTable(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 	now := time.Now().Add(2 * time.Hour).Truncate(time.Second)
 
 	tests := []struct {
@@ -132,7 +134,7 @@ func TestRedisSet_WithOptionsTable(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {
@@ -178,7 +180,7 @@ func TestRedisSet_WithOptionsTable_NilSemantics(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

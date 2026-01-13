@@ -16,6 +16,8 @@
 package frontend
 
 import (
+	"log/slog"
+
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/util"
@@ -81,7 +83,7 @@ type NotifyPageData struct {
 }
 
 // GetLocalized is a function that returns the localized message based on the message ID and the context provided.
-func GetLocalized(ctx *gin.Context, messageID string) string {
+func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messageID string) string {
 	localizer := ctx.MustGet(definitions.CtxLocalizedKey).(*i18n.Localizer)
 
 	localizeConfig := i18n.LocalizeConfig{
@@ -89,7 +91,9 @@ func GetLocalized(ctx *gin.Context, messageID string) string {
 	}
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			cfg,
+			logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			"message_id", messageID,

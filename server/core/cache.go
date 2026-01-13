@@ -45,7 +45,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 		ppc         *bktype.PositivePasswordCache
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "cache_backend_request_total")
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromBackend, "cache_backend_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -61,7 +61,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if accountName != "" {
-		cacheNames := backend.GetCacheNames(auth.Protocol.Get(), definitions.CacheAll)
+		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Protocol.Get(), definitions.CacheAll)
 
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			// Child span per cache name read attempt
@@ -76,7 +76,7 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 			ppc = &bktype.PositivePasswordCache{}
 
 			isRedisErr := false
-			if isRedisErr, err = backend.LoadCacheFromRedis(auth.Ctx(), redisPosUserKey, ppc); err != nil {
+			if isRedisErr, err = backend.LoadCacheFromRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.deps.Redis, redisPosUserKey, ppc); err != nil {
 				csp.RecordError(err)
 
 				csp.End()

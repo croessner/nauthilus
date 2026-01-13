@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
@@ -32,13 +33,13 @@ import (
 
 // LDAPMainWorker orchestrates LDAP lookup operations, manages a connection pool, and processes incoming requests in a loop.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPMainWorker(ctx context.Context, poolName string) {
+func LDAPMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, poolName string) {
 	// Ensure the LDAP-scoped shared TTL cache is initialized and its janitor is
 	// bound to this worker's lifecycle. This avoids running the TTL janitor when
 	// no LDAP backend is active.
 	ldappool.StartSharedTTLCache(ctx)
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolLookup, poolName)
+	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolLookup, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -51,13 +52,13 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 	// Configure queue length limit from config (0 = unlimited)
 	lookupLimit := 0
 	if poolName == definitions.DefaultBackendName {
-		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
-			if c, ok := cfg.(*config.LDAPConf); ok {
+		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
+			if c, ok := ldapCfg.(*config.LDAPConf); ok {
 				lookupLimit = c.GetLookupQueueLength()
 			}
 		}
 	} else {
-		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		pools := cfg.GetLDAP().GetOptionalLDAPPools()
 		if pools != nil {
 			if pc := pools[poolName]; pc != nil {
 				lookupLimit = pc.GetLookupQueueLength()
@@ -113,9 +114,9 @@ func LDAPMainWorker(ctx context.Context, poolName string) {
 // LDAPAuthWorker is responsible for handling LDAP authentication requests using a connection pool and concurrency control.
 // It initializes the authentication connection pool, starts a resource management process, and handles requests or exits gracefully.
 // It now uses a priority queue instead of channels for better request handling.
-func LDAPAuthWorker(ctx context.Context, poolName string) {
+func LDAPAuthWorker(ctx context.Context, cfg config.File, logger *slog.Logger, poolName string) {
 
-	ldapPool := ldappool.NewPool(ctx, definitions.LDAPPoolAuth, poolName)
+	ldapPool := ldappool.NewPool(ctx, cfg, logger, definitions.LDAPPoolAuth, poolName)
 
 	// Start a background cleaner process
 	go ldapPool.StartHouseKeeper()
@@ -128,13 +129,13 @@ func LDAPAuthWorker(ctx context.Context, poolName string) {
 	// Configure auth queue length limit from config (0 = unlimited)
 	authLimit := 0
 	if poolName == definitions.DefaultBackendName {
-		if cfg := config.GetFile().GetLDAP().GetConfig(); cfg != nil {
-			if c, ok := cfg.(*config.LDAPConf); ok {
+		if ldapCfg := cfg.GetLDAP().GetConfig(); ldapCfg != nil {
+			if c, ok := ldapCfg.(*config.LDAPConf); ok {
 				authLimit = c.GetAuthQueueLength()
 			}
 		}
 	} else {
-		pools := config.GetFile().GetLDAP().GetOptionalLDAPPools()
+		pools := cfg.GetLDAP().GetOptionalLDAPPools()
 		if pools != nil {
 			if pc := pools[poolName]; pc != nil {
 				authLimit = pc.GetAuthQueueLength()

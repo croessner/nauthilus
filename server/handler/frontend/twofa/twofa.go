@@ -47,11 +47,11 @@ func (h *Handler) Register(router gin.IRouter) {
 	group := router.Group(definitions.TwoFAv1Root)
 
 	// This page handles the user login request to do a two-factor authentication
-	twoFactorGroup := common.RouterGroup(viper.GetString("login_2fa_page"), group, h.Store, h.Deps.Svc.LoginGET2FAHandler(), h.Deps.Svc.LoginPOST2FAHandler())
+	twoFactorGroup := common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, viper.GetString("login_2fa_page"), group, h.Store, h.Deps.Svc.LoginGET2FAHandler(), h.Deps.Svc.LoginPOST2FAHandler())
 
 	twoFactorGroup.GET("/home", h.Deps.Svc.Register2FAHomeHandler())
 	twoFactorGroup.GET("/home/:languageTag", h.Deps.Svc.Register2FAHomeHandler())
 
 	// This page handles the TOTP registration
-	common.RouterGroup(viper.GetString("totp_page"), group, h.Store, h.Deps.Svc.RegisterTotpGETHandler(), h.Deps.Svc.RegisterTotpPOSTHandler())
+	common.RouterGroup(h.Deps.Cfg, h.Deps.Logger, h.Deps.Redis, viper.GetString("totp_page"), group, h.Store, h.Deps.Svc.RegisterTotpGETHandler(), h.Deps.Svc.RegisterTotpPOSTHandler())
 }

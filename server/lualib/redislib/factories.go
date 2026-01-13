@@ -18,63 +18,154 @@ package redislib
 import (
 	"context"
 
+	"github.com/croessner/nauthilus/server/config"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // This file exposes WithCtx factory aliases that mirror the existing command factories,
 // allowing per-request binding by simply delegating to the current ctx-bound implementations.
 
-func RedisPingWithCtx(ctx context.Context) lua.LGFunction          { return RedisPing(ctx) }
-func RedisGetWithCtx(ctx context.Context) lua.LGFunction           { return RedisGet(ctx) }
-func RedisSetWithCtx(ctx context.Context) lua.LGFunction           { return RedisSet(ctx) }
-func RedisIncrWithCtx(ctx context.Context) lua.LGFunction          { return RedisIncr(ctx) }
-func RedisDelWithCtx(ctx context.Context) lua.LGFunction           { return RedisDel(ctx) }
-func RedisExpireWithCtx(ctx context.Context) lua.LGFunction        { return RedisExpire(ctx) }
-func RedisExistsWithCtx(ctx context.Context) lua.LGFunction        { return RedisExists(ctx) }
-func RedisHGetWithCtx(ctx context.Context) lua.LGFunction          { return RedisHGet(ctx) }
-func RedisHSetWithCtx(ctx context.Context) lua.LGFunction          { return RedisHSet(ctx) }
-func RedisHDelWithCtx(ctx context.Context) lua.LGFunction          { return RedisHDel(ctx) }
-func RedisHLenWithCtx(ctx context.Context) lua.LGFunction          { return RedisHLen(ctx) }
-func RedisHGetAllWithCtx(ctx context.Context) lua.LGFunction       { return RedisHGetAll(ctx) }
-func RedisHMGetWithCtx(ctx context.Context) lua.LGFunction         { return RedisHMGet(ctx) }
-func RedisHIncrByWithCtx(ctx context.Context) lua.LGFunction       { return RedisHIncrBy(ctx) }
-func RedisHIncrByFloatWithCtx(ctx context.Context) lua.LGFunction  { return RedisHIncrByFloat(ctx) }
-func RedisHExistsWithCtx(ctx context.Context) lua.LGFunction       { return RedisHExists(ctx) }
-func RedisRenameWithCtx(ctx context.Context) lua.LGFunction        { return RedisRename(ctx) }
-func RedisSAddWithCtx(ctx context.Context) lua.LGFunction          { return RedisSAdd(ctx) }
-func RedisSIsMemberWithCtx(ctx context.Context) lua.LGFunction     { return RedisSIsMember(ctx) }
-func RedisSMembersWithCtx(ctx context.Context) lua.LGFunction      { return RedisSMembers(ctx) }
-func RedisSRemWithCtx(ctx context.Context) lua.LGFunction          { return RedisSRem(ctx) }
-func RedisSCardWithCtx(ctx context.Context) lua.LGFunction         { return RedisSCard(ctx) }
-func RedisRunScriptWithCtx(ctx context.Context) lua.LGFunction     { return RedisRunScript(ctx) }
-func RedisUploadScriptWithCtx(ctx context.Context) lua.LGFunction  { return RedisUploadScript(ctx) }
-func RedisPipelineWithCtx(ctx context.Context) lua.LGFunction      { return RedisPipeline(ctx) }
-func RedisZAddWithCtx(ctx context.Context) lua.LGFunction          { return RedisZAdd(ctx) }
-func RedisZRemWithCtx(ctx context.Context) lua.LGFunction          { return RedisZRem(ctx) }
-func RedisZRankWithCtx(ctx context.Context) lua.LGFunction         { return RedisZRank(ctx) }
-func RedisZRangeWithCtx(ctx context.Context) lua.LGFunction        { return RedisZRange(ctx) }
-func RedisZRevRangeWithCtx(ctx context.Context) lua.LGFunction     { return RedisZRevRange(ctx) }
-func RedisZRangeByScoreWithCtx(ctx context.Context) lua.LGFunction { return RedisZRangeByScore(ctx) }
-func RedisZRemRangeByScoreWithCtx(ctx context.Context) lua.LGFunction {
-	return RedisZRemRangeByScore(ctx)
+func RedisPingWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisPing(ctx, cfg)
 }
-func RedisZRemRangeByRankWithCtx(ctx context.Context) lua.LGFunction {
-	return RedisZRemRangeByRank(ctx)
+func RedisGetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction { return RedisGet(ctx, cfg) }
+func RedisSetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction { return RedisSet(ctx, cfg) }
+func RedisIncrWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisIncr(ctx, cfg)
 }
-func RedisZCountWithCtx(ctx context.Context) lua.LGFunction   { return RedisZCount(ctx) }
-func RedisZScoreWithCtx(ctx context.Context) lua.LGFunction   { return RedisZScore(ctx) }
-func RedisZRevRankWithCtx(ctx context.Context) lua.LGFunction { return RedisZRevRank(ctx) }
-func RedisZIncrByWithCtx(ctx context.Context) lua.LGFunction  { return RedisZIncrBy(ctx) }
-func RedisLPushWithCtx(ctx context.Context) lua.LGFunction    { return RedisLPush(ctx) }
-func RedisRPushWithCtx(ctx context.Context) lua.LGFunction    { return RedisRPush(ctx) }
-func RedisLPopWithCtx(ctx context.Context) lua.LGFunction     { return RedisLPop(ctx) }
-func RedisRPopWithCtx(ctx context.Context) lua.LGFunction     { return RedisRPop(ctx) }
-func RedisLRangeWithCtx(ctx context.Context) lua.LGFunction   { return RedisLRange(ctx) }
-func RedisLLenWithCtx(ctx context.Context) lua.LGFunction     { return RedisLLen(ctx) }
-func RedisMGetWithCtx(ctx context.Context) lua.LGFunction     { return RedisMGet(ctx) }
-func RedisMSetWithCtx(ctx context.Context) lua.LGFunction     { return RedisMSet(ctx) }
-func RedisKeysWithCtx(ctx context.Context) lua.LGFunction     { return RedisKeys(ctx) }
-func RedisScanWithCtx(ctx context.Context) lua.LGFunction     { return RedisScan(ctx) }
-func RedisPFAddWithCtx(ctx context.Context) lua.LGFunction    { return RedisPFAdd(ctx) }
-func RedisPFCountWithCtx(ctx context.Context) lua.LGFunction  { return RedisPFCount(ctx) }
-func RedisPFMergeWithCtx(ctx context.Context) lua.LGFunction  { return RedisPFMerge(ctx) }
+func RedisDelWithCtx(ctx context.Context, cfg config.File) lua.LGFunction { return RedisDel(ctx, cfg) }
+func RedisExpireWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisExpire(ctx, cfg)
+}
+func RedisExistsWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisExists(ctx, cfg)
+}
+func RedisHGetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHGet(ctx, cfg)
+}
+func RedisHSetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHSet(ctx, cfg)
+}
+func RedisHDelWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHDel(ctx, cfg)
+}
+func RedisHLenWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHLen(ctx, cfg)
+}
+func RedisHGetAllWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHGetAll(ctx, cfg)
+}
+func RedisHMGetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHMGet(ctx, cfg)
+}
+func RedisHIncrByWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHIncrBy(ctx, cfg)
+}
+func RedisHIncrByFloatWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHIncrByFloat(ctx, cfg)
+}
+func RedisHExistsWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisHExists(ctx, cfg)
+}
+func RedisRenameWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisRename(ctx, cfg)
+}
+func RedisSAddWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisSAdd(ctx, cfg)
+}
+func RedisSIsMemberWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisSIsMember(ctx, cfg)
+}
+func RedisSMembersWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisSMembers(ctx, cfg)
+}
+func RedisSRemWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisSRem(ctx, cfg)
+}
+func RedisSCardWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisSCard(ctx, cfg)
+}
+func RedisRunScriptWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisRunScript(ctx, cfg)
+}
+func RedisUploadScriptWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisUploadScript(ctx, cfg)
+}
+func RedisPipelineWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisPipeline(ctx, cfg)
+}
+func RedisZAddWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZAdd(ctx, cfg)
+}
+func RedisZRemWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRem(ctx, cfg)
+}
+func RedisZRankWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRank(ctx, cfg)
+}
+func RedisZRangeWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRange(ctx, cfg)
+}
+func RedisZRevRangeWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRevRange(ctx, cfg)
+}
+func RedisZRangeByScoreWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRangeByScore(ctx, cfg)
+}
+func RedisZRemRangeByScoreWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRemRangeByScore(ctx, cfg)
+}
+func RedisZRemRangeByRankWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRemRangeByRank(ctx, cfg)
+}
+func RedisZCountWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZCount(ctx, cfg)
+}
+func RedisZScoreWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZScore(ctx, cfg)
+}
+func RedisZRevRankWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZRevRank(ctx, cfg)
+}
+func RedisZIncrByWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisZIncrBy(ctx, cfg)
+}
+func RedisLPushWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisLPush(ctx, cfg)
+}
+func RedisRPushWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisRPush(ctx, cfg)
+}
+func RedisLPopWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisLPop(ctx, cfg)
+}
+func RedisRPopWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisRPop(ctx, cfg)
+}
+func RedisLRangeWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisLRange(ctx, cfg)
+}
+func RedisLLenWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisLLen(ctx, cfg)
+}
+func RedisMGetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisMGet(ctx, cfg)
+}
+func RedisMSetWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisMSet(ctx, cfg)
+}
+func RedisKeysWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisKeys(ctx, cfg)
+}
+func RedisScanWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisScan(ctx, cfg)
+}
+func RedisPFAddWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisPFAdd(ctx, cfg)
+}
+func RedisPFCountWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisPFCount(ctx, cfg)
+}
+func RedisPFMergeWithCtx(ctx context.Context, cfg config.File) lua.LGFunction {
+	return RedisPFMerge(ctx, cfg)
+}

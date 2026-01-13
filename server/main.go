@@ -78,6 +78,7 @@ func main() {
 		fx.Provide(newBootstrapped),
 		fx.Provide(newConfigDeps),
 		fx.Provide(newLogger),
+		fx.Provide(newDbgModuleMapping),
 		fx.Provide(newRedisDeps),
 		envfx.Module(),
 		loopsfx.Module(),

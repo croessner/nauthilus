@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -27,7 +28,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/stats"
@@ -57,7 +57,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		reverseIPAddr string
 	)
 
-	if stats.HavePrometheusLabelEnabled(definitions.PromFeature) {
+	if stats.HavePrometheusLabelEnabled(a.Cfg(), definitions.PromFeature) {
 		timer := prometheus.NewTimer(stats.GetMetrics().GetRblDuration().WithLabelValues(rbl.Name))
 
 		defer timer.ObserveDuration()
@@ -105,7 +105,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	query := fmt.Sprintf("%s.%s", reverseIPAddr, rbl.GetRBL())
 
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
+	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(a.Cfg().GetServer().GetDNS().GetTimeout()*time.Second))
 
 	defer cancel()
 
@@ -140,7 +140,9 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 	for _, result := range results {
 		if result.String() == rbl.GetReturnCode() {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				a.Cfg(),
+				a.Logger(),
 				definitions.DbgRBL,
 				definitions.LogKeyGUID, guid,
 				"query", query, "result", result.String(), "rbl", rbl.GetName(),
@@ -151,7 +153,9 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 
 		for _, returnCode := range rbl.GetReturnCodes() {
 			if result.String() == returnCode {
-				util.DebugModule(
+				util.DebugModuleWithCfg(
+					a.Cfg(),
+					a.Logger(),
 					definitions.DbgRBL,
 					definitions.LogKeyGUID, guid,
 					"query", query, "result", result.String(), "rbl", rbl.GetName(),
@@ -169,7 +173,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
 	isListed, rblName, rblErr := a.isListed(ctx, rbl)
 	if rblErr != nil {
-		handleRBLError(a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLError(a.Cfg(), a.Logger(), a.GUID, rblErr, rbl, dnsResolverErr)
 		handleRBLOutcome(rblChan, 0)
 
 		return
@@ -192,15 +196,15 @@ func handleRBLOutcome(rblChan chan int, weight int) {
 }
 
 // handleRBLError handles errors encountered during RBL checks, logs them, and updates failure status if needed.
-func handleRBLError(guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
+func handleRBLError(cfg config.File, logger *slog.Logger, guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
 	if strings.Contains(err.Error(), "no such host") {
-		util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		util.DebugModuleWithCfg(cfg, logger, definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if !rbl.IsAllowFailure() {
 			dnsResolverErr.Store(true)
 		}
 
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "RBL check failed",
 			definitions.LogKeyError, err,
@@ -224,7 +228,7 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 		dnsResolverErr atomic.Bool
 	)
 
-	rbls := config.GetFile().GetRBLs()
+	rbls := a.Cfg().GetRBLs()
 	if rbls == nil {
 		return
 	}
@@ -238,9 +242,11 @@ func (a *AuthState) checkRBLs(ctx *gin.Context) (totalRBLScore int, err error) {
 
 	for _, rbl := range rblLists {
 		r := rbl
-		g.Go(func() {
+		g.Add(1)
+		go func() {
+			defer g.Done()
 			a.processRBL(ctx, &r, rblChan, &dnsResolverErr)
-		})
+		}()
 	}
 
 	g.Wait()

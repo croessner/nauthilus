@@ -18,6 +18,7 @@ package tolerate
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -27,14 +28,12 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/ipscoper"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
-
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
@@ -90,8 +89,8 @@ func (c *houseKeeper) removeIPAddress(ipAddress string) {
 }
 
 // newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
-func newHouseKeeper(ctx context.Context) *houseKeeper {
-	maxConcurrentRequests := config.GetFile().GetServer().GetMaxConcurrentRequests()
+func newHouseKeeper(ctx context.Context, cfg config.File) *houseKeeper {
+	maxConcurrentRequests := cfg.GetServer().GetMaxConcurrentRequests()
 	if maxConcurrentRequests == 0 {
 		maxConcurrentRequests = 1000
 	}
@@ -145,6 +144,12 @@ type Tolerate interface {
 	GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64
 }
 
+type tolerateDeps struct {
+	cfg    config.File
+	logger *slog.Logger
+	redis  rediscli.Client
+}
+
 type tolerateImpl struct {
 	houseKeeperContext context.Context
 	pctTolerated       uint8
@@ -152,9 +157,22 @@ type tolerateImpl struct {
 	mu                 sync.Mutex
 	// sg dedupliziert parallele identische Redis-Script-Aufrufe pro IP (logikgleich, weniger RTT)
 	sg singleflight.Group
+
+	deps tolerateDeps
 }
 
-// SetCustomTolerations sets the custom toleration configurations in a thread-safe manner. It replaces existing values.
+func (t *tolerateImpl) effectiveCfg() config.File {
+	return t.deps.cfg
+}
+
+func (t *tolerateImpl) effectiveLogger() *slog.Logger {
+	return t.deps.logger
+}
+
+func (t *tolerateImpl) effectiveRedis() rediscli.Client {
+	return t.deps.redis
+}
+
 func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 	// Trace configuration update (service-scoped)
 	tr := monittrace.New("nauthilus/tolerate")
@@ -183,7 +201,6 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 	t.customTolerates = tolerations
 }
 
-// SetCustomToleration updates toleration settings for a specific IP address with provided percentage and TTL in a thread-safe manner.
 func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration) {
 	tr := monittrace.New("nauthilus/tolerate")
 	ctx, sp := tr.Start(svcctx.Get(), "tolerate.set_one",
@@ -232,7 +249,6 @@ func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8,
 	t.SetCustomTolerations(newTolerations)
 }
 
-// DeleteCustomToleration removes a toleration entry for a given IP address from the custom tolerations in a thread-safe manner.
 func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
 	tr := monittrace.New("nauthilus/tolerate")
 	ctx, sp := tr.Start(svcctx.Get(), "tolerate.delete",
@@ -264,14 +280,7 @@ func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
 	t.SetCustomTolerations(newTolerations)
 }
 
-// GetCustomTolerations retrieves the current list of custom toleration configurations in a thread-safe manner.
 func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
-	tr := monittrace.New("nauthilus/tolerate")
-	ctx, sp := tr.Start(svcctx.Get(), "tolerate.get_all")
-	_ = ctx
-
-	defer sp.End()
-
 	t.mu.Lock()
 
 	defer t.mu.Unlock()
@@ -279,8 +288,6 @@ func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
 	return t.customTolerates
 }
 
-// SetIPAddress increments the Redis hash counter for the specified IP address based on authentication status.
-// It sets a TTL for the hash key to manage the expiration of the tolerance data.
 func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool) {
 	tr := monittrace.New("nauthilus/tolerate")
 	sctx, sp := tr.Start(ctx, "tolerate.set_ip",
@@ -296,10 +303,10 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	}
 
 	// Track scoped identifier in housekeeping to avoid per-/128 duplicates for IPv6
-	scoped := tolScoper.Scope(ipscoper.ScopeTolerations, ipAddress)
+	scoped := tolScoper.WithCfg(t.deps.cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
 	t.getHouseKeeper().setIPAddress(scoped)
 
-	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
 
 	for _, customTolerate := range t.customTolerates {
 		if !t.findIP(customTolerate.IPAddress, ipAddress) {
@@ -329,10 +336,11 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	// Use Lua script to add to sorted set, count elements, and set expirations atomically
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(sctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(sctx, t.deps.cfg)
 
 	result, err := rediscli.ExecuteScript(
 		dCtx,
+		t.effectiveRedis(),
 		"ZAddCountAndExpire",
 		rediscli.LuaScripts["ZAddCountAndExpire"],
 		[]string{redisKey + flag, t.getRedisKey(ipAddress)},
@@ -345,17 +353,16 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	cancel()
 
 	if err != nil {
-		t.logRedisError(ipAddress, err)
+		t.logRedisError(t.deps.logger, ipAddress, err)
 
 		return
 	}
 
 	// Log the result for debugging if needed
-	util.DebugModule(definitions.DbgTolerate,
+	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger, definitions.DbgTolerate,
 		definitions.LogKeyMsg, fmt.Sprintf("ZAddCountAndExpire result: %v", result),
 		"ip", ipAddress,
 		"username", username,
-		"authenticated", authenticated,
 	)
 }
 
@@ -365,7 +372,6 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 	tctx, tsp := tr.Start(ctx, "tolerate.is_tolerated",
 		attribute.String("ip_address", ipAddress),
 	)
-
 	defer tsp.End()
 
 	var (
@@ -374,12 +380,12 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		negative int64
 	)
 
-	tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
 	pctTolerated := t.pctTolerated
-	adaptiveToleration := config.GetFile().GetBruteForce().GetAdaptiveToleration()
-	minToleratePercent := config.GetFile().GetBruteForce().GetMinToleratePercent()
-	maxToleratePercent := config.GetFile().GetBruteForce().GetMaxToleratePercent()
-	scaleFactor := config.GetFile().GetBruteForce().GetScaleFactor()
+	adaptiveToleration := t.deps.cfg.GetBruteForce().GetAdaptiveToleration()
+	minToleratePercent := t.deps.cfg.GetBruteForce().GetMinToleratePercent()
+	maxToleratePercent := t.deps.cfg.GetBruteForce().GetMaxToleratePercent()
+	scaleFactor := t.deps.cfg.GetBruteForce().GetScaleFactor()
 
 	// Check for custom tolerations for this IP
 	for _, customTolerate := range t.customTolerates {
@@ -426,12 +432,13 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		// Execute the adaptive toleration calculation script
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
 		resultAny, err, _ := t.sg.Do("tol:"+redisKey, func() (any, error) {
 			defer cancel()
 
 			return rediscli.ExecuteScript(
 				dCtx,
+				t.effectiveRedis(),
 				"CalculateAdaptiveToleration",
 				rediscli.LuaScripts["CalculateAdaptiveToleration"],
 				[]string{redisKey},
@@ -446,7 +453,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 		result := resultAny
 
 		if err != nil {
-			t.logRedisError(ipAddress, err)
+			t.logRedisError(t.deps.logger, ipAddress, err)
 			// Fall back to standard calculation if script fails
 		} else {
 			if arr, ok := result.([]any); ok {
@@ -544,7 +551,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 
 		for _, ipAddress := range t.getHouseKeeper().getIPsToClean() {
 			redisKey := t.getRedisKey(ipAddress)
-			tolerateTTL := config.GetFile().GetBruteForce().GetTolerateTTL()
+			tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
 
 			for _, customTolerate := range t.customTolerates {
 				if !t.findIP(customTolerate.IPAddress, ipAddress) {
@@ -560,8 +567,8 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 				// Check if key exists with a read-deadline context
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
-				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext)
-				keysExists := getDefaultClient().GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
+				dCtxRead, cancelRead := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext, t.deps.cfg)
+				keysExists := t.deps.redis.GetReadHandle().Exists(dCtxRead, redisKey+flag).Val()
 				cancelRead()
 
 				if keysExists == 0 {
@@ -573,17 +580,17 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 				// Remove old entries with a write-deadline context
 				stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-				dCtxWrite, cancelWrite := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext)
-				removed, err = getDefaultClient().GetWriteHandle().ZRemRangeByScore(
+				dCtxWrite, cancelWrite := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext, t.deps.cfg)
+				removed, err = t.deps.redis.GetWriteHandle().ZRemRangeByScore(
 					dCtxWrite,
 					redisKey+flag,
 					"-inf",
-					strconv.FormatInt(now-int64(tolerateTTL), 10),
+					strconv.FormatInt(now-int64(tolerateTTL.Seconds()), 10),
 				).Result()
 				cancelWrite()
 
 				if err != nil {
-					t.logRedisError(ipAddress, err)
+					t.logRedisError(t.deps.logger, ipAddress, err)
 
 					break
 				}
@@ -615,9 +622,9 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 
 	ipMap := make(map[string]int64)
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(gctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(gctx, t.deps.cfg)
 
-	result, err = getDefaultClient().GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
+	result, err = t.deps.redis.GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
 
 	cancel()
 
@@ -642,7 +649,7 @@ var _ Tolerate = (*tolerateImpl)(nil)
 // getHouseKeeper initializes and returns a singleton instance of houseKeeper in a thread-safe manner.
 func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
 	initCleaner.Do(func() {
-		cleaner = newHouseKeeper(t.houseKeeperContext)
+		cleaner = newHouseKeeper(t.houseKeeperContext, t.deps.cfg)
 	})
 
 	return cleaner
@@ -650,15 +657,15 @@ func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
 
 // getRedisKey constructs a Redis key using the configured prefix and the given IP address.
 func (t *tolerateImpl) getRedisKey(ipAddress string) string {
-	// Apply tolerations scoping (e.g., IPv6 /CIDR) so all components use consistent keys
-	scoped := tolScoper.Scope(ipscoper.ScopeTolerations, ipAddress)
+	cfg := t.deps.cfg
+	scoped := tolScoper.WithCfg(cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
 
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:TR:{" + scoped + "}"
+	return cfg.GetServer().GetRedis().GetPrefix() + "bf:TR:{" + scoped + "}"
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
 func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative int64, maxNegatives int64, tolerated uint8, mode string) {
-	util.DebugModule(
+	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger,
 		definitions.DbgTolerate,
 		definitions.LogKeyClientIP, address,
 		"positives", positive,
@@ -669,17 +676,16 @@ func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative i
 	)
 }
 
-// logDbgRemovedRecords logs the count of removed records for debugging purposes in the tolerate module.
 func (t *tolerateImpl) logDbgRemovedRecords(removed int64) {
-	util.DebugModule(
+	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger,
 		definitions.DbgTolerate,
 		"removed", removed,
 	)
 }
 
 // logRedisError logs a Redis error and the associated client IP address as a warning-level log entry.
-func (t *tolerateImpl) logRedisError(ipAddress string, err error) {
-	level.Warn(log.Logger).Log(
+func (t *tolerateImpl) logRedisError(logger *slog.Logger, ipAddress string, err error) {
+	level.Warn(logger).Log(
 		definitions.LogKeyClientIP, ipAddress,
 		definitions.LogKeyMsg, err,
 	)
@@ -713,22 +719,25 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 	return false
 }
 
-// GetTolerate initializes and returns a singleton instance of Tolerate with the configured tolerance percentage.
-func GetTolerate() Tolerate {
-	initTolerate.Do(func() {
-		tolerate = newTolerate(config.GetFile().GetBruteForce().GetToleratePercent())
-	})
-
-	return tolerate
-}
-
-// newTolerate creates a new Tolerate implementation with a specified percentage tolerance for negative actions.
-func newTolerate(pctTolerated uint8) Tolerate {
-	tolerate = &tolerateImpl{
+func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client, pctTolerated uint8) Tolerate {
+	t := &tolerateImpl{
 		pctTolerated:    pctTolerated,
-		customTolerates: config.GetFile().GetBruteForce().GetCustomTolerations(),
+		customTolerates: cfg.GetBruteForce().GetCustomTolerations(),
 		mu:              sync.Mutex{},
+		deps: tolerateDeps{
+			cfg:    cfg,
+			logger: logger,
+			redis:  redis,
+		},
 	}
 
+	return t
+}
+
+func SetTolerate(t Tolerate) {
+	tolerate = t
+}
+
+func GetTolerate() Tolerate {
 	return tolerate
 }

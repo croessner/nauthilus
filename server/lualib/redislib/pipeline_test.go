@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -26,8 +27,9 @@ import (
 )
 
 func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
@@ -159,7 +161,7 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 
 func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
@@ -200,7 +202,7 @@ func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 
 func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
@@ -241,7 +243,7 @@ func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 
 func TestRedisPipeline_HMGET(t *testing.T) {
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	db, mock := redismock.NewClientMock()

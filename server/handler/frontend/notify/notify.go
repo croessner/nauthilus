@@ -41,6 +41,6 @@ func (h *Handler) Register(router gin.IRouter) {
 	group := router.Group(viper.GetString("notify_page"))
 
 	group.Use(sessions.Sessions(definitions.SessionName, h.Store))
-	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), core.WithLanguageMiddleware(), h.Deps.Svc.NotifyGETHandler())
-	group.GET("/:languageTag", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(), core.WithLanguageMiddleware(), h.Deps.Svc.NotifyGETHandler())
+	group.GET("/", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(h.Deps.Cfg, h.Deps.Logger), core.WithLanguageMiddleware(core.AuthDeps{Cfg: h.Deps.Cfg, Logger: h.Deps.Logger, Redis: h.Deps.Redis}), h.Deps.Svc.NotifyGETHandler())
+	group.GET("/:languageTag", mdlua.LuaContextMiddleware(), mdauth.ProtectEndpointMiddleware(h.Deps.Cfg, h.Deps.Logger), core.WithLanguageMiddleware(core.AuthDeps{Cfg: h.Deps.Cfg, Logger: h.Deps.Logger, Redis: h.Deps.Redis}), h.Deps.Svc.NotifyGETHandler())
 }

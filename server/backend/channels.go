@@ -83,8 +83,13 @@ var _ Channel = &channelImpl{}
 // GetChannel returns a singleton instance of the Channel interface, initializing it if not already created.
 func GetChannel() Channel {
 	initChannel.Do(func() {
+		// Fallback initializer if not already set by DI boundary
 		if channel == nil {
-			channel = NewChannel()
+			if !config.IsFileLoaded() {
+				panic("config not loaded")
+			}
+
+			channel = NewChannel(config.GetFile())
 		}
 	})
 
@@ -92,15 +97,19 @@ func GetChannel() Channel {
 }
 
 // NewChannel initializes and returns a new instance of the Channel interface implementation.
-func NewChannel() Channel {
+func NewChannel(cfg config.File) Channel {
+	if cfg == nil {
+		return &channelImpl{}
+	}
+
 	var ldapChannel LDAPChannel
 	var luaChannel LuaChannel
 
-	if config.GetFile().HaveLDAPBackend() {
+	if cfg.HaveLDAPBackend() {
 		ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
 	}
 
-	if config.GetFile().HaveLuaBackend() {
+	if cfg.HaveLuaBackend() {
 		luaChannel = NewLuaChannel(definitions.DefaultBackendName)
 	}
 
@@ -108,6 +117,10 @@ func NewChannel() Channel {
 		ldapChannel: ldapChannel,
 		luaChannel:  luaChannel,
 	}
+}
+
+func SetChannel(c Channel) {
+	channel = c
 }
 
 // LDAPChannel defines an interface for managing LDAP-related channels for communication and operation handling.

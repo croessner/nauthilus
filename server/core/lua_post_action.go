@@ -26,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
@@ -55,8 +56,12 @@ type PostActionArgs struct {
 
 // RunLuaPostAction enqueues a Lua post action on the worker channel using the
 // pooled CommonRequest object. It mirrors prior behavior and preserves metrics.
-func RunLuaPostAction(args PostActionArgs) {
-	stopTimer := stats.PrometheusTimer(definitions.PromPostAction, "lua_post_action_request_total")
+func (a *AuthState) RunLuaPostAction(args PostActionArgs) {
+	if !a.Cfg().HasFeature(definitions.FeatureBruteForce) || args.Request.ClientIP == "" {
+		return
+	}
+
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromPostAction, "lua_post_action_request_total")
 	if stopTimer != nil {
 		defer stopTimer()
 	}
@@ -73,8 +78,8 @@ func RunLuaPostAction(args PostActionArgs) {
 	if clientNet == "" {
 		// Use service-root context; derive a bounded Redis read context for hint computation
 		base := svcctx.Get()
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base)
-		cn, rep := ComputeBruteForceHints(dCtx, args.Request.ClientIP, args.Request.Protocol, args.Request.OIDCCID)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(base, a.Cfg())
+		cn, rep := ComputeBruteForceHints(dCtx, a.Cfg(), a.Redis(), args.Request.ClientIP, args.Request.Protocol, args.Request.OIDCCID)
 
 		cancel()
 
@@ -109,8 +114,8 @@ func RunLuaPostAction(args PostActionArgs) {
 // ComputeBruteForceHints derives clientNet and repeating fields for the post action
 // based on config rules, protocol and optional OIDC client id. The logic matches
 // the previous inline implementation used by ExecuteLuaPostAction.
-func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid string) (clientNet string, repeating bool) {
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) || clientIP == "" {
+func ComputeBruteForceHints(ctx context.Context, cfg config.File, redisClient rediscli.Client, clientIP, protocol, oidccid string) (clientNet string, repeating bool) {
+	if !cfg.HasFeature(definitions.FeatureBruteForce) || clientIP == "" {
 		return "", false
 	}
 
@@ -124,7 +129,7 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 
 	// Check whether the protocol is enabled for brute-force processing
 	bfProtoEnabled := false
-	for _, p := range config.GetFile().GetServer().GetBruteForceProtocols() {
+	for _, p := range cfg.GetServer().GetBruteForceProtocols() {
 		if p.Get() == protocol {
 			bfProtoEnabled = true
 
@@ -141,7 +146,7 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 		return "", false
 	}
 
-	rules := config.GetFile().GetBruteForceRules()
+	rules := cfg.GetBruteForceRules()
 	sp.SetAttributes(attribute.Int("rules.total", len(rules)))
 
 	var (
@@ -166,9 +171,9 @@ func ComputeBruteForceHints(ctx context.Context, clientIP, protocol, oidccid str
 
 				// (1) Historical hit in the pre-result hash map?
 				if !foundRepeating {
-					key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+					key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 					stats.GetMetrics().GetRedisReadCounter().Inc()
-					if exists, err := getDefaultRedisClient().GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
+					if exists, err := redisClient.GetReadHandle().HExists(ctx, key, candidate).Result(); err == nil && exists {
 						if r.CIDR > bestCIDRRepeating {
 							bestCIDRRepeating = r.CIDR
 							foundRepeatingNet = candidate

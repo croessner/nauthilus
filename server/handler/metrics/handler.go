@@ -38,10 +38,6 @@ type Handler struct {
 	redis  rediscli.Client
 }
 
-func New() *Handler {
-	return &Handler{}
-}
-
 func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
@@ -49,19 +45,8 @@ func NewWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client) *H
 func (h *Handler) Register(router gin.IRouter) {
 	router.GET("/metrics", func(ctx *gin.Context) {
 		cfg := h.cfg
-		if cfg == nil {
-			cfg = config.GetFile()
-		}
-
 		logger := h.logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-
 		redisClient := h.redis
-		if redisClient == nil {
-			redisClient = rediscli.GetClient()
-		}
 
 		// If JWT is enabled, allow only users with RoleSecurity
 		if cfg.GetServer().GetJWTAuth().IsEnabled() {
@@ -70,12 +55,10 @@ func (h *Handler) Register(router gin.IRouter) {
 				if claims, err := core.ValidateJWTToken(ctx, tokenString, core.JWTDeps{Cfg: cfg, Logger: logger, Redis: redisClient}); err == nil {
 					for _, role := range claims.Roles {
 						if role == definitions.RoleSecurity {
-							promHandler := promhttp.HandlerFor(
+							promhttp.HandlerFor(
 								prometheus.DefaultGatherer,
 								promhttp.HandlerOpts{DisableCompression: true},
-							)
-
-							promHandler.ServeHTTP(ctx.Writer, ctx.Request)
+							).ServeHTTP(ctx.Writer, ctx.Request)
 
 							return
 						}
@@ -85,13 +68,11 @@ func (h *Handler) Register(router gin.IRouter) {
 		}
 
 		// Fallback to Basic Auth if enabled
-		if mdauth.CheckAndRequireBasicAuthWithCfg(ctx, cfg) {
-			promHandler := promhttp.HandlerFor(
+		if mdauth.CheckAndRequireBasicAuth(ctx, cfg) {
+			promhttp.HandlerFor(
 				prometheus.DefaultGatherer,
 				promhttp.HandlerOpts{DisableCompression: true},
-			)
-
-			promHandler.ServeHTTP(ctx.Writer, ctx.Request)
+			).ServeHTTP(ctx.Writer, ctx.Request)
 
 			return
 		}

@@ -61,13 +61,10 @@ func sessionCleaner(ctx *gin.Context) {
 }
 
 // LoginGET2FAHandler Page '/2fa/v1/register'
-func LoginGET2FAHandler(ctx *gin.Context) {
-	LoginGET2FAHandlerWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func LoginGET2FAHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		LoginGET2FAHandlerWithDeps(ctx, deps)
+	}
 }
 
 // LoginGET2FAHandlerWithDeps is the DI variant of LoginGET2FAHandler.
@@ -110,7 +107,7 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = frontend.GetLocalized(ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
@@ -118,7 +115,7 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 
 	// Using data structure from frontend package
 	loginData := &frontend.LoginPageData{
-		Title: frontend.GetLocalized(ctx, "Login"),
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
 			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -131,14 +128,14 @@ func displayLoginpage(ctx *gin.Context, languageCurrentName string, languagePass
 		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               frontend.GetLocalized(ctx, "Login"),
-		Privacy:             frontend.GetLocalized(ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    frontend.GetLocalized(ctx, "Please enter your username or email address"),
-		Password:            frontend.GetLocalized(ctx, "Password"),
-		PasswordPlaceholder: frontend.GetLocalized(ctx, "Please enter your password"),
-		Submit:              frontend.GetLocalized(ctx, "Submit"),
-		Or:                  frontend.GetLocalized(ctx, "or"),
-		Device:              frontend.GetLocalized(ctx, "Login with WebAuthn"),
+		Login:               frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please enter your username or email address"),
+		Password:            frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Password"),
+		PasswordPlaceholder: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please enter your password"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
+		Or:                  frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "or"),
+		Device:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login with WebAuthn"),
 		PostLoginEndpoint:   definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage,
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
@@ -161,7 +158,7 @@ func displayTOTPpage(ctx *gin.Context, languageCurrentName string, languagePassi
 	session := sessions.Default(ctx)
 
 	twoFactorData := &frontend.TwoFactorData{
-		Title: frontend.GetLocalized(ctx, "Login"),
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
 			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -172,9 +169,9 @@ func displayTOTPpage(ctx *gin.Context, languageCurrentName string, languagePassi
 		Welcome:             deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
 		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(), // Corrected from totp_page_logo_image_alt
-		Code:                frontend.GetLocalized(ctx, "OTP-Code"),
-		Tos:                 frontend.GetLocalized(ctx, "Terms of service"),
-		Submit:              frontend.GetLocalized(ctx, "Submit"),
+		Code:                frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "OTP-Code"),
+		Tos:                 frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Terms of service"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
 		PostLoginEndpoint:   definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage,
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
@@ -215,13 +212,10 @@ func getSessionTOTPSecret(ctx *gin.Context) (string, string, string) {
 }
 
 // LoginPOST2FAHandler Page '/2fa/v1/register/post'
-func LoginPOST2FAHandler(ctx *gin.Context) {
-	LoginPOST2FAHandlerWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func LoginPOST2FAHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		LoginPOST2FAHandlerWithDeps(ctx, deps)
+	}
 }
 
 // LoginPOST2FAHandlerWithDeps is the DI variant of LoginPOST2FAHandler.
@@ -485,13 +479,10 @@ func totpValidation(guid string, code string, account string, totpSecret string,
 }
 
 // Register2FAHomeHandler Page '/2fa/v1/register/home'
-func Register2FAHomeHandler(ctx *gin.Context) {
-	Register2FAHomeHandlerWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func Register2FAHomeHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		Register2FAHomeHandlerWithDeps(ctx, deps)
+	}
 }
 
 // Register2FAHomeHandlerWithDeps is the DI variant of Register2FAHomeHandler.
@@ -529,7 +520,7 @@ func Register2FAHomeHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	languagePassive := frontend.CreateLanguagePassive(ctx, deps.Cfg, definitions.TwoFAv1Root+deps.Cfg.GetServer().Frontend.TwoFactorPage+"/post", config.DefaultLanguageTags, languageCurrentName)
 
 	homeData := &frontend.HomePageData{
-		Title: frontend.GetLocalized(ctx, "Home"),
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Home"),
 		WantWelcome: func() bool {
 			if deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -541,11 +532,11 @@ func Register2FAHomeHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		Welcome:             deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		LogoImage:           deps.Cfg.GetServer().Frontend.GetDefaultLogoImage(),
 		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(), // Corrected
-		HomeMessage:         frontend.GetLocalized(ctx, "Please make a selection"),
-		RegisterTOTP:        frontend.GetLocalized(ctx, "Register TOTP"),
+		HomeMessage:         frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please make a selection"),
+		RegisterTOTP:        frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Register TOTP"),
 		EndpointTOTP:        definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage, // Corrected
-		Or:                  frontend.GetLocalized(ctx, "or"),
-		RegisterWebAuthn:    frontend.GetLocalized(ctx, "Register WebAuthn"),
+		Or:                  frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "or"),
+		RegisterWebAuthn:    frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Register WebAuthn"),
 		EndpointWebAuthn:    definitions.TwoFAv1Root + deps.Cfg.GetServer().Frontend.TwoFactorPage + "/webauthn", // Placeholder
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
@@ -557,13 +548,10 @@ func Register2FAHomeHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 }
 
 // RegisterTotpGETHandler Page '/2fa/v1/totp'
-func RegisterTotpGETHandler(ctx *gin.Context) {
-	RegisterTotpGETHandlerWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func RegisterTotpGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		RegisterTotpGETHandlerWithDeps(ctx, deps)
+	}
 }
 
 // RegisterTotpGETHandlerWithDeps is the DI variant of RegisterTotpGETHandler.
@@ -634,14 +622,14 @@ func RegisterTotpGETHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 
 	if errorMessage = ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = frontend.GetLocalized(ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
 	}
 
 	totpData := frontend.TOTPPageData{
-		Title: frontend.GetLocalized(ctx, "Login"),
+		Title: frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Login"),
 		WantWelcome: func() bool {
 			if deps.Cfg.GetServer().Frontend.GetNotifyPageWelcome() != "" { // Reusing notify welcome
 				return true
@@ -654,10 +642,10 @@ func RegisterTotpGETHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		LogoImageAlt:        deps.Cfg.GetServer().Frontend.GetNotifyPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		TOTPMessage:         frontend.GetLocalized(ctx, "Please scan and verify the following QR code"),
-		TOTPCopied:          frontend.GetLocalized(ctx, "Copied to clipboard!"),
-		Code:                frontend.GetLocalized(ctx, "OTP-Code"),
-		Submit:              frontend.GetLocalized(ctx, "Submit"),
+		TOTPMessage:         frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Please scan and verify the following QR code"),
+		TOTPCopied:          frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Copied to clipboard!"),
+		Code:                frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "OTP-Code"),
+		Submit:              frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Submit"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -672,13 +660,10 @@ func RegisterTotpGETHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 }
 
 // RegisterTotpPOSTHandler Page '/2fa/v1/totp/post'
-func RegisterTotpPOSTHandler(ctx *gin.Context) {
-	RegisterTotpPOSTHandlerWithDeps(ctx, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func RegisterTotpPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		RegisterTotpPOSTHandlerWithDeps(ctx, deps)
+	}
 }
 
 // RegisterTotpPOSTHandlerWithDeps is the DI variant of RegisterTotpPOSTHandler.
@@ -707,7 +692,9 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 	}
 
 	if deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && deps.Env.GetDevMode() {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			deps.Cfg,
+			deps.Logger,
 			definitions.DbgWebAuthn,
 			definitions.LogKeyGUID, guid,
 			"totp_key", fmt.Sprintf("%+v", totpKey),

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -28,6 +29,8 @@ import (
 )
 
 func TestRedisGet(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name             string
 		key              string
@@ -60,7 +63,7 @@ func TestRedisGet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -143,7 +146,7 @@ func TestRedisSet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -223,7 +226,7 @@ func TestRedisExpire(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -298,7 +301,7 @@ func TestRedisIncr(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -372,7 +375,7 @@ func TestRedisDel(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -450,7 +453,7 @@ func TestRedisRename(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -515,7 +518,7 @@ func TestPing(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 

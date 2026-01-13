@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -71,7 +72,7 @@ var uploads = &Uploads{
 var defaultHashTag = "{lua-nauthilus}"
 
 // evaluateRedisScript executes a given Lua script on the Redis server with specified keys and arguments.
-func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
+func evaluateRedisScript(ctx context.Context, cfg config.File, client redis.UniversalClient, script string, uploadScriptName string, keys []string, args ...any) (any, error) {
 	var (
 		err    error
 		result any
@@ -90,13 +91,13 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
 	if uploadScriptName != "" {
 		script = uploads.Get(uploadScriptName)
 		if script == "" {
-			return fmt.Errorf("could not find script with name %s", uploadScriptName), nil
+			return nil, fmt.Errorf("could not find script with name %s", uploadScriptName)
 		}
 
 		result, err = client.EvalSha(dCtx, script, keys, evalArgs...).Result()
@@ -134,10 +135,10 @@ func evaluateRedisScript(ctx context.Context, client redis.UniversalClient, scri
 }
 
 // uploadRedisScript uploads a Lua script to Redis and returns its SHA1 hash or an error if the upload fails.
-func uploadRedisScript(ctx context.Context, client redis.UniversalClient, script string) (any, error) {
+func uploadRedisScript(ctx context.Context, cfg config.File, client redis.UniversalClient, script string) (any, error) {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
 	sha1, err := client.ScriptLoad(dCtx, script).Result()
@@ -150,7 +151,7 @@ func uploadRedisScript(ctx context.Context, client redis.UniversalClient, script
 
 // RedisRunScript executes a Redis script with the provided keys and arguments, returning the result or an error as Lua values.
 // It expects three arguments: the script string, a table of keys, and a table of arguments. It returns two values: an error message (or nil) and the script result (or nil).
-func RedisRunScript(ctx context.Context) lua.LGFunction {
+func RedisRunScript(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var (
 			keyList  []string
@@ -171,7 +172,7 @@ func RedisRunScript(ctx context.Context) lua.LGFunction {
 			argsList = append(argsList, v.String())
 		})
 
-		result, err := evaluateRedisScript(ctx, client, script, uploadScriptName, keyList, argsList...)
+		result, err := evaluateRedisScript(ctx, cfg, client, script, uploadScriptName, keyList, argsList...)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -187,13 +188,13 @@ func RedisRunScript(ctx context.Context) lua.LGFunction {
 }
 
 // RedisUploadScript uploads a Lua script to Redis, returns the SHA1 hash of the script or an error message on failure.
-func RedisUploadScript(ctx context.Context) lua.LGFunction {
+func RedisUploadScript(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		script := L.CheckString(2)
 		uploadScriptName := L.CheckString(3)
 
-		sha1, err := uploadRedisScript(ctx, client, script)
+		sha1, err := uploadRedisScript(ctx, cfg, client, script)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))

@@ -66,7 +66,11 @@ func TestBruteForceLogic(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("IP already identified as brute forcer", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "192.168.1.1", bruteforce.BucketManagerDeps{
+			Cfg:    config.GetFile(),
+			Logger: log.GetLogger(),
+			Redis:  rediscli.GetClient(),
+		})
 		testNetwork := "192.168.0.0/16"
 
 		mock.ExpectHMGet(
@@ -89,7 +93,11 @@ func TestBruteForceLogic(t *testing.T) {
 	})
 
 	t.Run("IP not identified as brute forcer", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "192.168.1.1", bruteforce.BucketManagerDeps{
+			Cfg:    config.GetFile(),
+			Logger: log.GetLogger(),
+			Redis:  rediscli.GetClient(),
+		})
 		testNetwork := "192.168.0.0/16"
 
 		mock.ExpectHMGet(
@@ -112,7 +120,11 @@ func TestBruteForceLogic(t *testing.T) {
 	})
 
 	t.Run("IP not over the limit", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "192.168.1.1", bruteforce.BucketManagerDeps{
+			Cfg:    config.GetFile(),
+			Logger: log.GetLogger(),
+			Redis:  rediscli.GetClient(),
+		})
 
 		rule := config.GetFile().GetBruteForceRules()[0]
 		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("5")
@@ -131,7 +143,11 @@ func TestBruteForceLogic(t *testing.T) {
 	})
 
 	t.Run("IP over the limit", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "192.168.1.1")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "192.168.1.1", bruteforce.BucketManagerDeps{
+			Cfg:    config.GetFile(),
+			Logger: log.GetLogger(),
+			Redis:  rediscli.GetClient(),
+		})
 
 		rule := config.GetFile().GetBruteForceRules()[0]
 		mock.ExpectGet(bm.GetBruteForceBucketRedisKey(&rule)).SetVal("15")
@@ -159,7 +175,7 @@ func TestBruteForceLogic(t *testing.T) {
 		// ARGV[1]=hashedPW, ARGV[2]=ttlSec (neg cache TTL), ARGV[3]=maxFields
 		hashedPW := util.GetHash(util.PreparePassword(password))
 
-		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIPAddress, bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)
@@ -246,7 +262,7 @@ func TestBruteForceLogic(t *testing.T) {
 
 		hashedPW := util.GetHash(util.PreparePassword(password))
 
-		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIPAddress, bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)
@@ -332,7 +348,7 @@ func TestBruteForceLogic(t *testing.T) {
 
 		hashedPW := util.GetHash(util.PreparePassword(password))
 
-		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIPAddress, bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)
@@ -444,11 +460,23 @@ func TestBruteForceLogic(t *testing.T) {
 		const accountName = "testaccount"
 		const testIPAddress = "192.168.1.1"
 
-		tolerate.GetTolerate().SetCustomToleration(testIPAddress, 10, time.Hour)
+		cfg := config.GetFile()
+		logger := log.GetLogger()
+		redis := rediscli.GetClient()
+
+		// Ensure tolerate instance is initialized with deps
+		tol := tolerate.NewTolerateWithDeps(cfg, logger, redis, 0)
+		tolerate.SetTolerate(tol)
+		tol.SetCustomToleration(testIPAddress, 10, time.Hour)
 
 		hashedPW := util.GetHash(util.PreparePassword(password))
 
-		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIPAddress, bruteforce.BucketManagerDeps{
+			Cfg:      cfg,
+			Logger:   logger,
+			Redis:    redis,
+			Tolerate: tol,
+		}).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)
@@ -570,7 +598,7 @@ func TestBruteForceFilters(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("Bucket key includes protocol and OIDC when filters configured and context provided", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithProtocol("imap").
 			WithOIDCCID("cid123")
 
@@ -586,7 +614,7 @@ func TestBruteForceFilters(t *testing.T) {
 	})
 
 	t.Run("Bucket key reconstructs filters from Redis metadata when context missing", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()})
 		rule := config.GetFile().GetBruteForceRules()[0]
 
 		// loadPWHistFiltersIfMissing will try IP-specific meta first
@@ -607,7 +635,7 @@ func TestBruteForceFilters(t *testing.T) {
 	})
 
 	t.Run("CheckRepeatingBruteForcer respects protocol filter and uses cached pre-result", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").WithProtocol("imap")
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).WithProtocol("imap")
 		rule := config.GetFile().GetBruteForceRules()[0]
 
 		// Pre-result (cache) lookup uses BRUTEFORCE hash with the matching network key
@@ -667,7 +695,7 @@ func TestBruteForceFiltersNonMatching(t *testing.T) {
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	t.Run("Key should not include non-matching protocol and rule should not match", func(t *testing.T) {
-		bm := bruteforce.NewBucketManager(context.Background(), "test", "10.0.1.2").
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithProtocol("smtp") // not in FilterByProtocol
 
 		rule := config.GetFile().GetBruteForceRules()[0]
@@ -727,7 +755,7 @@ func TestSaveFailedPasswordCounterTotals(t *testing.T) {
 		const accountName = "testaccount"
 		const testIPAddress = "192.168.1.1"
 
-		bm := bruteforce.NewBucketManager(context.Background(), "test", testIPAddress).
+		bm := bruteforce.NewBucketManagerWithDeps(context.Background(), "test", testIPAddress, bruteforce.BucketManagerDeps{Cfg: config.GetFile(), Logger: log.GetLogger(), Redis: rediscli.GetClient()}).
 			WithUsername("testuser").
 			WithPassword(password).
 			WithAccountName(accountName)

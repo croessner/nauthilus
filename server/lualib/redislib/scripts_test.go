@@ -20,6 +20,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
@@ -100,7 +101,7 @@ func TestRedisRunScript(t *testing.T) {
 			L.Push(args)
 
 			// Call function and check error
-			numReturned := RedisRunScript(context.Background())(L)
+			numReturned := RedisRunScript(context.Background(), config.GetFile())(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")
@@ -171,7 +172,7 @@ func TestRedisUploadScript(t *testing.T) {
 			L.Push(lua.LString(tc.script))
 			L.Push(lua.LString(tc.uploadScriptName))
 
-			numReturned := RedisUploadScript(context.Background())(L)
+			numReturned := RedisUploadScript(context.Background(), config.GetFile())(L)
 			errReturned := L.Get(-1).String() != "nil"
 
 			assert.Equal(t, tc.expectErr, errReturned, "")

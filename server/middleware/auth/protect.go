@@ -15,26 +15,30 @@
 
 package auth
 
-import "github.com/gin-gonic/gin"
+import (
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/config"
+	"github.com/gin-gonic/gin"
+)
 
 // protectFactory is a function reference that returns the actual ProtectEndpoint middleware.
 // It is injected by the core package to avoid import cycles while exposing the middleware
 // from within the middleware/auth package.
-var protectFactory func() gin.HandlerFunc
+var protectFactory func(cfg config.File, logger *slog.Logger) gin.HandlerFunc
 
 // SetProtectMiddleware registers the factory used by ProtectEndpointMiddleware.
 // The core package should call this during initialization to provide the implementation.
-func SetProtectMiddleware(factory func() gin.HandlerFunc) {
+func SetProtectMiddleware(factory func(cfg config.File, logger *slog.Logger) gin.HandlerFunc) {
 	protectFactory = factory
 }
 
 // ProtectEndpointMiddleware returns the configured ProtectEndpoint middleware.
 // If no factory was registered, it returns a no-op middleware that simply calls Next().
-// This indirection allows external packages to depend on middleware/auth without importing core.
-func ProtectEndpointMiddleware() gin.HandlerFunc {
+func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	if protectFactory == nil {
 		return func(ctx *gin.Context) { ctx.Next() }
 	}
 
-	return protectFactory()
+	return protectFactory(cfg, logger)
 }

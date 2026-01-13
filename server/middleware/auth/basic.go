@@ -27,7 +27,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/gin-gonic/gin"
@@ -185,13 +184,13 @@ func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
 // CheckAndRequireBasicAuth enforces basic authentication if it's enabled in the server configuration.
 // It validates credentials provided in the request against the configured username and password.
 // Returns true if authentication is successful or not required, false if the authentication fails or is throttled.
-func CheckAndRequireBasicAuth(ctx *gin.Context) bool {
-	return CheckAndRequireBasicAuthWithCfg(ctx, config.GetFile())
+func CheckAndRequireBasicAuth(ctx *gin.Context, cfg config.File) bool {
+	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
 }
 
 func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	if cfg == nil {
-		cfg = config.GetFile()
+		return true
 	}
 
 	if !cfg.GetServer().GetBasicAuth().IsEnabled() {
@@ -220,15 +219,11 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 // BasicAuthMiddleware provides HTTP Basic Authentication for protected routes in a Gin application.
 // It validates credentials against configured username and password, and challenges unauthorized requests.
 // If basic auth is disabled or bypassed based on the route configuration, it allows the request to proceed.
-func BasicAuthMiddleware() gin.HandlerFunc {
-	return BasicAuthMiddlewareWithDeps(config.GetFile(), log.Logger)
+func BasicAuthMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+	return BasicAuthMiddlewareWithDeps(cfg, logger)
 }
 
 func BasicAuthMiddlewareWithDeps(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
-	if logger == nil {
-		logger = log.Logger
-	}
-
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey)
 

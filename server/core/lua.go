@@ -17,13 +17,13 @@ package core
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/model/mfa"
@@ -37,6 +37,14 @@ import (
 type luaManagerImpl struct {
 	backendName string
 	deps        AuthDeps
+}
+
+func (lm *luaManagerImpl) effectiveCfg() config.File {
+	return lm.deps.Cfg
+}
+
+func (lm *luaManagerImpl) effectiveLogger() *slog.Logger {
+	return lm.deps.Logger
 }
 
 // PassDB implements the Lua password database backend.
@@ -59,13 +67,13 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromBackend, "lua_backend_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromBackend, "lua_backend_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		if err != nil {
 			lsp.RecordError(err)
 		}
@@ -81,7 +89,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest := lualib.GetCommonRequest()
 
 	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Repeating = false     // unavailable
 	commonRequest.UserFound = false     // set by backend_result
 	commonRequest.Authenticated = false // set by backend_result
@@ -126,7 +134,7 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	commonRequest.SSLFingerprint = auth.SSLFingerprint
 
 	// Derive a timeout context for Lua backend work
-	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
 	defer cancelLua()
 
@@ -264,13 +272,13 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "lua_account_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "lua_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		if err != nil {
 			asp.RecordError(err)
 		}
@@ -284,7 +292,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest := lualib.GetCommonRequest()
 
 	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Service
 	commonRequest.Session = auth.GUID
 	commonRequest.ClientIP = auth.ClientIP
@@ -294,7 +302,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	commonRequest.OIDCCID = auth.OIDCCID
 
 	// Derive a timeout context for Lua backend work (list accounts) using service-scoped context
-	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 	ctxLua, cancelLua := context.WithTimeout(svcctx.Get(), dLua)
 	defer cancelLua()
 
@@ -335,7 +343,7 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	accounts = accountSet.GetStringSlice()
 
 	if len(accounts) == 0 {
-		level.Warn(log.Logger).Log(
+		level.Warn(lm.effectiveLogger()).Log(
 			definitions.LogKeyGUID, auth.GUID,
 			definitions.LogKeyMsg, "No accounts found in Lua backend",
 		)
@@ -371,13 +379,13 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 		protocol         *config.LuaSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "lua_store_totp_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "lua_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	if protocol, err = config.GetFile().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		return
 	}
 
@@ -387,7 +395,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	commonRequest := lualib.GetCommonRequest()
 
 	// Set the fields
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Debug = lm.effectiveCfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.Service = auth.Service
 	commonRequest.Session = auth.GUID
 	commonRequest.Username = auth.Username
@@ -398,7 +406,7 @@ func (lm *luaManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) (
 	commonRequest.OIDCCID = auth.OIDCCID
 
 	// Derive a timeout context for Lua backend work (add TOTP)
-	dLua := config.GetFile().GetServer().GetTimeouts().GetLuaBackend()
+	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 	ctxLua, cancelLua := context.WithTimeout(auth.Ctx(), dLua)
 	defer cancelLua()
 

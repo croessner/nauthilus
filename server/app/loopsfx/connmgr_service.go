@@ -17,12 +17,12 @@ package loopsfx
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/server/config"
+	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/server/stats"
@@ -33,6 +33,9 @@ type ConnMgrService struct {
 	interval                time.Duration
 	startGenericConnections func(context.Context)
 
+	cfgProvider configfx.Provider
+	logger      *slog.Logger
+
 	mu      sync.Mutex
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -41,22 +44,29 @@ type ConnMgrService struct {
 }
 
 // NewDefaultConnMgrService creates a ConnMgrService with default settings for connection monitoring and context handling.
-func NewDefaultConnMgrService() *ConnMgrService {
-	return NewConnMgrService(5*time.Second, stats.UpdateGenericConnectionsWithContext)
+func NewDefaultConnMgrService(cfgProvider configfx.Provider, logger *slog.Logger) *ConnMgrService {
+	return NewConnMgrService(5*time.Second, stats.UpdateGenericConnectionsWithContext, cfgProvider, logger)
 }
 
 // NewConnMgrService initializes and returns a new instance of ConnMgrService with the given interval and start function.
-func NewConnMgrService(interval time.Duration, startGenericConnections func(context.Context)) *ConnMgrService {
+func NewConnMgrService(interval time.Duration, startGenericConnections func(context.Context), cfgProvider configfx.Provider, logger *slog.Logger) *ConnMgrService {
 	return &ConnMgrService{
 		interval:                interval,
 		startGenericConnections: startGenericConnections,
+		cfgProvider:             cfgProvider,
+		logger:                  logger,
 	}
 }
 
 // Start initializes and starts the connection monitoring process with the provided parent context.
 func (s *ConnMgrService) Start(parent context.Context) error {
-	if !config.GetFile().GetServer().GetInsights().IsMonitorConnectionsEnabled() {
-		level.Info(log.Logger).Log(definitions.LogKeyMsg, "Connection monitoring is disabled")
+	snap := s.cfgProvider.Current()
+	if snap.File == nil {
+		return nil
+	}
+
+	if !snap.File.GetServer().GetInsights().IsMonitorConnectionsEnabled() {
+		level.Info(s.logger).Log(definitions.LogKeyMsg, "Connection monitoring is disabled")
 
 		return nil
 	}
@@ -71,10 +81,10 @@ func (s *ConnMgrService) Start(parent context.Context) error {
 	s.ctx, s.cancel = context.WithCancel(parent)
 	s.running = true
 
-	level.Info(log.Logger).Log(definitions.LogKeyMsg, "Starting connection monitoring")
+	level.Info(s.logger).Log(definitions.LogKeyMsg, "Starting connection monitoring")
 
 	manager := connmgr.GetConnectionManager()
-	manager.Register(s.ctx, config.GetFile().GetServer().Address, "local", "HTTP server")
+	manager.Register(s.ctx, snap.File, snap.File.GetServer().Address, "local", "HTTP server")
 
 	s.wg.Add(1)
 	go func() {
@@ -92,7 +102,7 @@ func (s *ConnMgrService) Start(parent context.Context) error {
 		}()
 	}
 
-	manager.StartMonitoring(s.ctx)
+	manager.StartMonitoring(s.ctx, snap.File)
 
 	return nil
 }

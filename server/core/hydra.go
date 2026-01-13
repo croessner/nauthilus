@@ -56,8 +56,8 @@ import (
 var httpClient *http.Client
 
 // InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
+func InitHTTPClient(cfg config.File) {
+	httpClient = util.NewHTTPClientWithCfg(cfg)
 }
 
 // ApiConfig is a struct that encapsulates configuration and parameters for
@@ -102,13 +102,8 @@ type ApiConfig struct {
 }
 
 // HandleErr handles an error by logging the error details and printing a goroutine dump.
-func HandleErr(ctx *gin.Context, err error) {
-	HandleErrWithDeps(ctx, err, AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func (h *HydraHandlers) HandleErr(ctx *gin.Context, err error) {
+	HandleErrWithDeps(ctx, err, h.deps)
 }
 
 // HandleErrWithDeps is the DI-capable variant of HandleErr.
@@ -187,10 +182,11 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response, de
 // The function returns lang, needCookie, and needRedirect.
 //
 //goland:noinspection GoDfaConstantCondition
-func setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
+func (a *ApiConfig) setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
 	switch {
 	case langFromURL == "" && langFromCookie == "":
 		// 1. No language from URL and no cookie is set
+		lang = a.deps.Cfg.GetServer().Frontend.GetDefaultLanguage()
 		needCookie = true
 		needRedirect = true
 	case langFromURL == "" && langFromCookie != "":
@@ -214,13 +210,8 @@ func setLanguageDetails(langFromURL string, langFromCookie string) (lang string,
 }
 
 // WithLanguageMiddleware is a middleware function that handles the language setup for the application.
-func WithLanguageMiddleware() gin.HandlerFunc {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
+func WithLanguageMiddleware(deps AuthDeps) gin.HandlerFunc {
+	h := NewHydraHandlers(deps)
 
 	return h.WithLanguageMiddleware()
 }
@@ -252,12 +243,14 @@ func (h *HydraHandlers) WithLanguageMiddleware() gin.HandlerFunc {
 			langFromCookie, _ = cookieValue.(string)
 		}
 
-		lang, needCookie, needRedirect := setLanguageDetails(langFromURL, langFromCookie)
+		lang, needCookie, needRedirect := h.setLanguageDetails(langFromURL, langFromCookie)
 		accept := ctx.GetHeader("Accept-Language")
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
 
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			h.deps.Cfg,
+			h.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, guid,
 			"accept", accept,
@@ -350,7 +343,7 @@ func (a *ApiConfig) initialize() {
 // - `handleLoginSkip` method
 // - `handleLoginNoSkip` method
 func (a *ApiConfig) handleLogin(ctx *gin.Context, skip bool) {
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
+	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
 
 	if skip {
 		a.handleLoginSkip(ctx)
@@ -369,7 +362,7 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 		claims        map[string]any
 	)
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
+	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
 
 	oauth2Client := a.loginRequest.GetClient()
 
@@ -447,7 +440,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		errorMessage string
 	)
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
+	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
 
 	oauth2Client := a.loginRequest.GetClient()
 
@@ -483,7 +476,7 @@ func (a *ApiConfig) handleLoginNoSkip() {
 	if authResult, found := userData[definitions.CookieAuthResult]; found {
 		if authResult != definitions.AuthResultUnset {
 			twoFactorData := &frontend.TwoFactorData{
-				Title: frontend.GetLocalized(a.ctx, "Login"),
+				Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
 				WantWelcome: func() bool {
 					if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 						return true
@@ -494,18 +487,18 @@ func (a *ApiConfig) handleLoginNoSkip() {
 				Welcome:             a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 				ApplicationName:     applicationName,
 				WantAbout:           wantAbout,
-				About:               frontend.GetLocalized(a.ctx, "Get further information about this application..."),
+				About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 				AboutUri:            clientUri,
 				LogoImage:           imageUri,
 				LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 				WantPolicy:          wantPolicy,
-				Code:                frontend.GetLocalized(a.ctx, "OTP-Code"),
-				Policy:              frontend.GetLocalized(a.ctx, "Privacy policy"),
+				Code:                frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "OTP-Code"),
+				Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 				PolicyUri:           policyUri,
 				WantTos:             wantTos,
-				Tos:                 frontend.GetLocalized(a.ctx, "Terms of service"),
+				Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 				TosUri:              tosUri,
-				Submit:              frontend.GetLocalized(a.ctx, "Submit"),
+				Submit:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Submit"),
 				PostLoginEndpoint:   a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
 				LanguageTag:         session.Get(definitions.CookieLang).(string),
 				LanguageCurrentName: languageCurrentName,
@@ -516,7 +509,9 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 			a.ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				a.deps.Cfg,
+				a.deps.Logger,
 				definitions.DbgHydra,
 				definitions.LogKeyGUID, a.guid,
 				definitions.LogKeyMsg, "Two factor authentication",
@@ -530,14 +525,14 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 	if errorMessage = a.ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = frontend.GetLocalized(a.ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
 	}
 
 	loginData := &frontend.LoginPageData{
-		Title: frontend.GetLocalized(a.ctx, "Login"),
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
 		WantWelcome: func() bool {
 			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -548,27 +543,27 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		Welcome:             a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               frontend.GetLocalized(a.ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		LogoImage:           imageUri,
 		LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               frontend.GetLocalized(a.ctx, "Login"),
-		Privacy:             frontend.GetLocalized(a.ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    frontend.GetLocalized(a.ctx, "Please enter your username or email address"),
-		Password:            frontend.GetLocalized(a.ctx, "Password"),
-		PasswordPlaceholder: frontend.GetLocalized(a.ctx, "Please enter your password"),
+		Login:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Please enter your username or email address"),
+		Password:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Password"),
+		PasswordPlaceholder: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Please enter your password"),
 		WantPolicy:          wantPolicy,
-		Policy:              frontend.GetLocalized(a.ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 frontend.GetLocalized(a.ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Remember:            frontend.GetLocalized(a.ctx, "Remember me"),
-		Submit:              frontend.GetLocalized(a.ctx, "Submit"),
-		Or:                  frontend.GetLocalized(a.ctx, "or"),
-		Device:              frontend.GetLocalized(a.ctx, "Login with WebAuthn"),
+		Remember:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Remember me"),
+		Submit:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Submit"),
+		Or:                  frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "or"),
+		Device:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login with WebAuthn"),
 		PostLoginEndpoint:   a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
 		DeviceLoginEndpoint: a.deps.Cfg.GetServer().Frontend.GetDevicePage(),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
@@ -657,14 +652,13 @@ func (h *HydraHandlers) LoginGETHandler(ctx *gin.Context) {
 }
 
 // LoginGETHandler Page '/login' (legacy)
-func LoginGETHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.LoginGETHandler(ctx)
+func LoginGETHandler(deps AuthDeps) gin.HandlerFunc {
+	InitHTTPClient(deps.Cfg)
+
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LoginGETHandler(ctx)
+	}
 }
 
 // initializeAuthLogin initializes the AuthState struct with the necessary information for logging in.
@@ -1040,7 +1034,9 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 	}
 
 	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && a.deps.Env.GetDevMode() {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			a.deps.Cfg,
+			a.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
 			"totp_key", fmt.Sprintf("%+v", key),
@@ -1341,14 +1337,11 @@ func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 }
 
 // LoginPOSTHandler Page '/login/post' (legacy)
-func LoginPOSTHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.LoginPOSTHandler(ctx)
+func LoginPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LoginPOSTHandler(ctx)
+	}
 }
 
 // DeviceGETHandler Page '/device'
@@ -1427,7 +1420,7 @@ func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 	languagePassive := frontend.CreateLanguagePassive(ctx, h.deps.Cfg, h.deps.Cfg.GetServer().Frontend.GetDevicePage(), config.DefaultLanguageTags, languageCurrentName)
 
 	loginData := &frontend.LoginPageData{
-		Title: frontend.GetLocalized(ctx, "Login"),
+		Title: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login"),
 		WantWelcome: func() bool {
 			if h.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -1438,22 +1431,22 @@ func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 		Welcome:             h.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               frontend.GetLocalized(ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		LogoImage:           imageUri,
 		LogoImageAlt:        h.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               frontend.GetLocalized(ctx, "Login"),
-		Privacy:             frontend.GetLocalized(ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    frontend.GetLocalized(ctx, "Please enter your username or email address"),
+		Login:               frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address"),
 		WantPolicy:          wantPolicy,
-		Policy:              frontend.GetLocalized(ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 frontend.GetLocalized(ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Submit:              frontend.GetLocalized(ctx, "Submit"),
+		Submit:              frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit"),
 		PostLoginEndpoint:   h.deps.Cfg.GetServer().Frontend.GetDevicePage(),
 		DeviceLoginEndpoint: h.deps.Cfg.GetServer().Frontend.GetDevicePage(),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
@@ -1476,14 +1469,11 @@ func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 }
 
 // DeviceGETHandler Page '/device' (legacy)
-func DeviceGETHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.DeviceGETHandler(ctx)
+func DeviceGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.DeviceGETHandler(ctx)
+	}
 }
 
 // DevicePOSTHandler Page '/device/post'
@@ -1540,19 +1530,19 @@ func (a *ApiConfig) handleRequestedScopes(ctx *gin.Context, requestedScopes []st
 func (a *ApiConfig) getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	switch requestedScope {
 	case definitions.ScopeOpenId:
-		return frontend.GetLocalized(ctx, "Allow access to identity information")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to identity information")
 	case definitions.ScopeOfflineAccess:
-		return frontend.GetLocalized(ctx, "Allow an application access to private data without your personal presence")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow an application access to private data without your personal presence")
 	case definitions.ScopeProfile:
-		return frontend.GetLocalized(ctx, "Allow access to personal profile data")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to personal profile data")
 	case definitions.ScopeEmail:
-		return frontend.GetLocalized(ctx, "Allow access to your email address")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your email address")
 	case definitions.ScopeAddress:
-		return frontend.GetLocalized(ctx, "Allow access to your home address")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your home address")
 	case definitions.ScopePhone:
-		return frontend.GetLocalized(ctx, "Allow access to your phone number")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your phone number")
 	case definitions.ScopeGroups:
-		return frontend.GetLocalized(ctx, "Allow access to group memberships")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to group memberships")
 	default:
 		return a.getCustomScopeDescription(ctx, requestedScope, cookieValue)
 	}
@@ -1598,7 +1588,7 @@ func (a *ApiConfig) getCustomScopeDescription(ctx *gin.Context, requestedScope s
 	}
 
 	if scopeDescription == "" {
-		scopeDescription = frontend.GetLocalized(ctx, "Allow access to a specific scope")
+		scopeDescription = frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to a specific scope")
 	}
 
 	return scopeDescription
@@ -1681,7 +1671,7 @@ func (a *ApiConfig) processConsent() {
 	languagePassive := frontend.CreateLanguagePassive(a.ctx, a.deps.Cfg, a.deps.Cfg.GetServer().Frontend.GetConsentPage(), config.DefaultLanguageTags, languageCurrentName)
 
 	consentData := &frontend.ConsentPageData{
-		Title: frontend.GetLocalized(a.ctx, "Consent"),
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Consent"),
 		WantWelcome: func() bool {
 			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -1692,21 +1682,21 @@ func (a *ApiConfig) processConsent() {
 		Welcome:             a.deps.Cfg.GetServer().Frontend.GetConsentPageWelcome(),
 		LogoImage:           imageUri,
 		LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetConsentPageLogoImageAlt(),
-		ConsentMessage:      frontend.GetLocalized(a.ctx, "An application requests access to your data"),
+		ConsentMessage:      frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "An application requests access to your data"),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               frontend.GetLocalized(a.ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		Scopes:              scopes,
 		WantPolicy:          wantPolicy,
-		Policy:              frontend.GetLocalized(a.ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 frontend.GetLocalized(a.ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Remember:            frontend.GetLocalized(a.ctx, "Do not ask me again"),
-		AcceptSubmit:        frontend.GetLocalized(a.ctx, "Accept access"),
-		RejectSubmit:        frontend.GetLocalized(a.ctx, "Deny access"),
+		Remember:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Do not ask me again"),
+		AcceptSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Accept access"),
+		RejectSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Deny access"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -1746,7 +1736,9 @@ func (a *ApiConfig) redirectWithConsent() {
 	acceptedScopes := a.consentRequest.GetRequestedScope()
 	rememberFor := int64(a.deps.Cfg.GetServer().Frontend.GetLoginRememberFor())
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		a.deps.Cfg,
+		a.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, a.guid,
 		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
@@ -1765,7 +1757,9 @@ func (a *ApiConfig) redirectWithConsent() {
 	}
 
 	if needClaims {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			a.deps.Cfg,
+			a.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
 			definitions.LogKeyMsg, "Scope 'openid' found, need claims",
@@ -1871,7 +1865,9 @@ func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 
 	apiConfig.clientName = oauth2Client.GetClientName()
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		h.deps.Cfg,
+		h.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, apiConfig.guid,
 		"skip_hydra", fmt.Sprintf("%v", apiConfig.consentRequest.GetSkip()),
@@ -1882,14 +1878,11 @@ func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 }
 
 // ConsentGETHandler Page '/consent' (legacy)
-func ConsentGETHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.ConsentGETHandler(ctx)
+func ConsentGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.ConsentGETHandler(ctx)
+	}
 }
 
 // handleConsentSubmit processes the form submission for the consent page.
@@ -1950,7 +1943,9 @@ func (a *ApiConfig) processConsentAccept() {
 		}
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		a.deps.Cfg,
+		a.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, a.guid,
 		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
@@ -1969,7 +1964,7 @@ func (a *ApiConfig) processConsentAccept() {
 	}
 
 	if needClaims {
-		util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
+		util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
 
 		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext, a.deps)
 	}
@@ -2121,14 +2116,11 @@ func (h *HydraHandlers) ConsentPOSTHandler(ctx *gin.Context) {
 }
 
 // ConsentPOSTHandler Page '/consent/post' (legacy)
-func ConsentPOSTHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.ConsentPOSTHandler(ctx)
+func ConsentPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.ConsentPOSTHandler(ctx)
+	}
 }
 
 // handleLogout handles the logout functionality of the API.
@@ -2148,7 +2140,7 @@ func (a *ApiConfig) handleLogout() {
 	languagePassive := frontend.CreateLanguagePassive(a.ctx, a.deps.Cfg, a.deps.Cfg.GetServer().Frontend.GetLogoutPage(), config.DefaultLanguageTags, languageCurrentName)
 
 	logoutData := &frontend.LogoutPageData{
-		Title: frontend.GetLocalized(a.ctx, "Logout"),
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Logout"),
 		WantWelcome: func() bool {
 			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
@@ -2157,9 +2149,9 @@ func (a *ApiConfig) handleLogout() {
 			return false
 		}(),
 		Welcome:             a.deps.Cfg.GetServer().Frontend.GetLogoutPageWelcome(),
-		LogoutMessage:       frontend.GetLocalized(a.ctx, "Do you really want to log out?"),
-		AcceptSubmit:        frontend.GetLocalized(a.ctx, "Yes"),
-		RejectSubmit:        frontend.GetLocalized(a.ctx, "No"),
+		LogoutMessage:       frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Do you really want to log out?"),
+		AcceptSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Yes"),
+		RejectSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "No"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -2228,21 +2220,18 @@ func (h *HydraHandlers) LogoutGETHandler(ctx *gin.Context) {
 
 	if apiConfig.logoutRequest.GetRpInitiated() {
 		// We could skip the UI
-		util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
+		util.DebugModuleWithCfg(h.deps.Cfg, h.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
 	}
 
 	apiConfig.handleLogout()
 }
 
 // LogoutGETHandler Page '/logout' (legacy)
-func LogoutGETHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.LogoutGETHandler(ctx)
+func LogoutGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LogoutGETHandler(ctx)
+	}
 }
 
 // handleLogoutSubmit handles the logout submit action.
@@ -2385,14 +2374,11 @@ func (h *HydraHandlers) LogoutPOSTHandler(ctx *gin.Context) {
 }
 
 // LogoutPOSTHandler Page '/logout/post' (legacy)
-func LogoutPOSTHandler(ctx *gin.Context) {
-	h := NewHydraHandlers(AuthDeps{
-		Cfg:    getDefaultConfigFile(),
-		Env:    getDefaultEnvironment(),
-		Logger: getDefaultLogger(),
-		Redis:  getDefaultRedisClient(),
-	})
-	h.LogoutPOSTHandler(ctx)
+func LogoutPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LogoutPOSTHandler(ctx)
+	}
 }
 
 // getClaimsFromConsentContext extracts claims from consentContext based on acceptedScopes
@@ -2422,7 +2408,7 @@ func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentCo
 		processCustomScopes(claimDict, claims, acceptedScopes, index, deps)
 	}
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
+	util.DebugModuleWithCfg(deps.Cfg, deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
 
 	session = &openapi.AcceptOAuth2ConsentRequestSession{
 		IdToken: claims,

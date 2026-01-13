@@ -34,12 +34,12 @@ func LoaderBackendStateless() lua.LGFunction {
 
 // GetBackendServersWithReq returns the getBackendServers closure bound to the provided request.
 func GetBackendServersWithReq(req *Request) lua.LGFunction {
-	return getBackendServers(req.BackendServers)
+	return getBackendServers(req.CommonRequest.BackendServers)
 }
 
 // SelectBackendServerWithReq returns the selectBackendServer closure bound to the provided request.
 func SelectBackendServerWithReq(req *Request) lua.LGFunction {
-	return selectBackendServer(&req.UsedBackendAddress, &req.UsedBackendPort)
+	return selectBackendServer(&req.CommonRequest.UsedBackendAddr, &req.CommonRequest.UsedBackendPort)
 }
 
 // ApplyBackendResultWithPtr binds the applyBackendResult closure to the provided backend result pointer.

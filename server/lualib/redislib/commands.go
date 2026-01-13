@@ -20,6 +20,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/stats"
@@ -30,7 +31,7 @@ import (
 )
 
 // RedisGet retrieves a value from Redis using the given key and pushes it to the Lua state based on a specified type.
-func RedisGet(ctx context.Context) lua.LGFunction {
+func RedisGet(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
@@ -42,7 +43,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		err := convert.StringCmd(client.Get(dCtx, key), valueType, L)
@@ -58,7 +59,7 @@ func RedisGet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisSet provides a Lua function for setting a Redis key to a given value with optional expiration time in seconds.
-func RedisSet(ctx context.Context) lua.LGFunction {
+func RedisSet(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
@@ -147,12 +148,13 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 				// Keep ttlSeconds in local for use
 				// by closing over variable.
 				// To keep scope simple, we re-read from stack later.
+				// To keep scope simple, we re-read from stack later.
 			}
 		}
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		if useArgs {
@@ -199,14 +201,14 @@ func RedisSet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisIncr increments the integer value of a Redis key by 1 and returns the new value or an error if it fails.
-func RedisIncr(ctx context.Context) lua.LGFunction {
+func RedisIncr(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Incr(dCtx, key)
@@ -224,14 +226,14 @@ func RedisIncr(ctx context.Context) lua.LGFunction {
 }
 
 // RedisDel deletes a given Redis key and reports the number of keys removed or an error if the operation fails.
-func RedisDel(ctx context.Context) lua.LGFunction {
+func RedisDel(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Del(dCtx, key)
@@ -249,7 +251,7 @@ func RedisDel(ctx context.Context) lua.LGFunction {
 }
 
 // RedisExpire sets an expiration time on a Redis key and returns true if successful, or nil and an error if it fails.
-func RedisExpire(ctx context.Context) lua.LGFunction {
+func RedisExpire(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		key := L.CheckString(2)
@@ -257,7 +259,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Expire(dCtx, key, time.Duration(expiration)*time.Second)
@@ -275,7 +277,7 @@ func RedisExpire(ctx context.Context) lua.LGFunction {
 }
 
 // RedisRename renames a Redis key to a new key; returns an error if the operation fails.
-func RedisRename(ctx context.Context) lua.LGFunction {
+func RedisRename(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetWriteHandle())
 		oldKey := L.CheckString(2)
@@ -283,7 +285,7 @@ func RedisRename(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Rename(dCtx, oldKey, newKey)
@@ -301,13 +303,13 @@ func RedisRename(ctx context.Context) lua.LGFunction {
 }
 
 // RedisPing executes a Redis PING command and returns the result or an error message if it fails. Increases Redis read counter on success.
-func RedisPing(ctx context.Context) lua.LGFunction {
+func RedisPing(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Ping(dCtx)
@@ -325,14 +327,14 @@ func RedisPing(ctx context.Context) lua.LGFunction {
 }
 
 // RedisExists checks if a given key exists in Redis, returning the count of matching keys as a Lua number.
-func RedisExists(ctx context.Context) lua.LGFunction {
+func RedisExists(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		client := getRedisConnectionWithFallback(L, getDefaultClient().GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
 		cmd := client.Exists(dCtx, key)

@@ -111,28 +111,12 @@ func NewDefaultServices(deps *Deps) *DefaultServices {
 
 // LoginGETHandler handles GET requests for the login page, performing login flow initiation and error handling.
 func (s *DefaultServices) LoginGETHandler() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		h := core.NewHydraHandlers(core.AuthDeps{
-			Cfg:    s.deps.Cfg,
-			Logger: s.deps.Logger,
-			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
-		})
-		h.LoginGETHandler(ctx)
-	}
+	return core.LoginGETHandler(s.deps)
 }
 
 // LoginPOSTHandler handles POST requests for the login page, managing the login flow, validation, and 2FA logic.
 func (s *DefaultServices) LoginPOSTHandler() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		h := core.NewHydraHandlers(core.AuthDeps{
-			Cfg:    s.deps.Cfg,
-			Logger: s.deps.Logger,
-			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
-		})
-		h.LoginPOSTHandler(ctx)
-	}
+	return core.LoginPOSTHandler(s.deps)
 }
 
 // Device/U2F/FIDO2 login
@@ -181,15 +165,7 @@ func (s *DefaultServices) ConsentGETHandler() gin.HandlerFunc {
 
 // ConsentPOSTHandler handles POST requests to the '/consent' endpoint, processing consent challenges and handling errors.
 func (s *DefaultServices) ConsentPOSTHandler() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		h := core.NewHydraHandlers(core.AuthDeps{
-			Cfg:    s.deps.Cfg,
-			Logger: s.deps.Logger,
-			Env:    s.deps.Env,
-			Redis:  s.deps.Redis,
-		})
-		h.ConsentPOSTHandler(ctx)
-	}
+	return core.ConsentPOSTHandler(s.deps)
 }
 
 // Logout
@@ -239,39 +215,39 @@ func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
 
 // LoginGET2FAHandler handles GET requests for the 2FA registration page, managing session state and TOTP page display logic.
 func (s *DefaultServices) LoginGET2FAHandler() gin.HandlerFunc {
-	return core.LoginGET2FAHandler
+	return core.LoginGET2FAHandler(s.deps)
 }
 
 // LoginPOST2FAHandler handles POST requests for the '/2fa/v1/register/post' endpoint, managing TOTP-based 2FA processing.
 func (s *DefaultServices) LoginPOST2FAHandler() gin.HandlerFunc {
-	return core.LoginPOST2FAHandler
+	return core.LoginPOST2FAHandler(s.deps)
 }
 
 // Register2FAHomeHandler serves as the handler for the '/2fa/v1/register/home' endpoint, managing TOTP and WebAuthn setups.
 func (s *DefaultServices) Register2FAHomeHandler() gin.HandlerFunc {
-	return core.Register2FAHomeHandler
+	return core.Register2FAHomeHandler(s.deps)
 }
 
 // RegisterTotpGETHandler serves the TOTP registration page, handles session validation and CSRF protection.
 func (s *DefaultServices) RegisterTotpGETHandler() gin.HandlerFunc {
-	return core.RegisterTotpGETHandler
+	return core.RegisterTotpGETHandler(s.deps)
 }
 
 // RegisterTotpPOSTHandler handles POST requests for TOTP registration, validates the TOTP code, and completes the registration.
 func (s *DefaultServices) RegisterTotpPOSTHandler() gin.HandlerFunc {
-	return core.RegisterTotpPOSTHandler
+	return core.RegisterTotpPOSTHandler(s.deps)
 }
 
 // WebAuthn
 
 // BeginRegistration handles the initiation of WebAuthn registration, verifying user sessions and returning registration options.
 func (s *DefaultServices) BeginRegistration() gin.HandlerFunc {
-	return core.BeginRegistration
+	return core.BeginRegistration(s.deps)
 }
 
 // FinishRegistration handles the completion of WebAuthn registration by verifying user session data and creating credentials.
 func (s *DefaultServices) FinishRegistration() gin.HandlerFunc {
-	return core.FinishRegistration
+	return core.FinishRegistration(s.deps)
 }
 
 // Deps aggregates top-level dependencies to be injected into handler modules.

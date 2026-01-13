@@ -88,15 +88,15 @@ func (r *reloadOrchestrator) ApplyConfig(ctx context.Context, snap configfx.Snap
 	_ = opCtx
 	r.reloadLogging(snap.File)
 
-	bootfx.DebugLoadableConfig()
+	bootfx.DebugLoadableConfig(snap.File, logger)
 
-	if err := bootfx.SetupLuaScripts(); err != nil {
+	if err := bootfx.SetupLuaScripts(snap.File, logger); err != nil {
 		level.Error(logger).Log(definitions.LogKeyMsg, "Unable to setup Lua scripts", definitions.LogKeyError, err)
 	} else {
-		bootfx.RunLuaInitScript(ctx)
+		bootfx.RunLuaInitScript(ctx, snap.File, logger)
 	}
 
-	bootfx.EnableBlockProfile()
+	bootfx.EnableBlockProfile(snap.File)
 	r.restartMonitoring(ctx)
 	stats.GetReloader().Reload()
 
@@ -227,7 +227,7 @@ func (r *reloadOrchestrator) restartRedis(readinessCtx context.Context, runCtx c
 		runCtx = context.Background()
 	}
 
-	if err := setupRedis(readinessCtx, runCtx, logger, r.store.redisClient); err != nil {
+	if err := setupRedis(readinessCtx, runCtx, cfg, logger, r.store.redisClient); err != nil {
 		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during reload", definitions.LogKeyError, err)
 	}
 }
@@ -261,14 +261,14 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 				continue
 			}
 
-			setupLDAPWorker(r.store, ctx, cfg)
+			go setupLDAPWorker(r.store, ctx, cfg, getLogger(r.store))
 			ldapStarted = true
 		case definitions.BackendLua:
 			if luaStarted {
 				continue
 			}
 
-			setupLuaWorker(r.store, ctx, cfg)
+			setupLuaWorker(r.store, ctx, cfg, getLogger(r.store))
 
 			luaStarted = true
 		case definitions.BackendCache:
@@ -439,7 +439,7 @@ func (r *restartOrchestrator) Restart(ctx context.Context) error {
 	defer redisReadyCancel()
 
 	step = "setup_redis"
-	if err := setupRedis(redisReadyCtx, r.ctx, logger, r.store.redisClient); err != nil {
+	if err := setupRedis(redisReadyCtx, r.ctx, cfg, logger, r.store.redisClient); err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
 		restartErr = err

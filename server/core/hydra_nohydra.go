@@ -21,18 +21,19 @@ package core
 import (
 	"net/http"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/gin-gonic/gin"
 )
 
 // WithLanguageMiddleware provides a no-op language middleware in non-hydra builds.
 // It preserves the handler chain shape without introducing i18n or CSRF concerns here.
-func WithLanguageMiddleware() gin.HandlerFunc {
+func WithLanguageMiddleware(_ AuthDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) { ctx.Next() }
 }
 
 // InitHTTPClient is a no-op placeholder when building without the hydra tag.
 // It maintains API parity with the hydra-enabled build where an HTTP client is initialized.
-func InitHTTPClient() {}
+func InitHTTPClient(_ config.File) {}
 
 // HandleErr renders a minimal error response when Hydra is disabled.
 // It ensures core packages can signal errors uniformly across build variants.

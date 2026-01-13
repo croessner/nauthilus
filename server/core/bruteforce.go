@@ -26,7 +26,6 @@ import (
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
@@ -83,7 +82,7 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 
 		// If still unknown, combine account lookup + repeating flag via Redis Lua preflight
 		if (!isRepeating || accountName == "") && clientNet != "" {
-			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Username, clientNet); err == nil {
+			if acc, rep, err := rediscli.AuthPreflight(ctx.Request.Context(), a.Redis(), a.Username, clientNet); err == nil {
 				if accountName == "" && acc != "" {
 					accountName = acc
 					// Mirror into AuthState
@@ -170,22 +169,24 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 	}
 }
 
-// logBruteForceDebug logs debug information related to brute force authentication attempts using the provided AuthState.
-func logBruteForceDebug(auth *AuthState) {
-	util.DebugModule(
+// logBruteForceDebug logs debug information related to brute force authentication attempts.
+func (a *AuthState) logBruteForceDebug() {
+	util.DebugModuleWithCfg(
+		a.Cfg(),
+		a.Logger(),
 		definitions.DbgBf,
-		definitions.LogKeyGUID, auth.GUID,
-		definitions.LogKeyClientIP, auth.ClientIP,
-		definitions.LogKeyClientPort, auth.XClientPort,
-		definitions.LogKeyClientHost, auth.ClientHost,
-		definitions.LogKeyClientID, auth.XClientID,
-		definitions.LogKeyLocalIP, auth.XLocalIP,
-		definitions.LogKeyPort, auth.XPort,
-		definitions.LogKeyUsername, auth.Username,
-		definitions.LogKeyProtocol, auth.Protocol.Get(),
-		"service", util.WithNotAvailable(auth.Service),
-		"no-auth", auth.NoAuth,
-		"list-accounts", auth.ListAccounts,
+		definitions.LogKeyGUID, a.GUID,
+		definitions.LogKeyClientIP, a.ClientIP,
+		definitions.LogKeyClientPort, a.XClientPort,
+		definitions.LogKeyClientHost, a.ClientHost,
+		definitions.LogKeyClientID, a.XClientID,
+		definitions.LogKeyLocalIP, a.XLocalIP,
+		definitions.LogKeyPort, a.XPort,
+		definitions.LogKeyUsername, a.Username,
+		definitions.LogKeyProtocol, a.Protocol.Get(),
+		"service", util.WithNotAvailable(a.Service),
+		"no-auth", a.NoAuth,
+		"list-accounts", a.ListAccounts,
 	)
 }
 
@@ -255,7 +256,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	// Overall BF check timer
 	var stopOverall func()
-	if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_overall_total"); s != nil {
+	if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_overall_total"); s != nil {
 		stopOverall = s
 
 		defer stopOverall()
@@ -314,7 +315,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// Existing generic timer
-	stopTimer := stats.PrometheusTimer(definitions.PromBruteForce, "brute_force_check_request_total")
+	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "brute_force_check_request_total")
 
 	// E2E histogram for BF path
 	bfStart := time.Now()
@@ -342,7 +343,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	logBruteForceDebug(a)
+	a.logBruteForceDebug()
 
 	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
@@ -356,14 +357,18 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	if !bruteForceProtocolEnabled {
-		level.Warn(log.Logger).Log(
+		level.Warn(a.logger()).Log(
 			definitions.LogKeyGUID, a.GUID,
 			definitions.LogKeyBruteForce, fmt.Sprintf("Not enabled for protocol '%s'", a.Protocol.Get()))
 
 		return false
 	}
 
-	bm = bruteforce.NewBucketManager(ctx.Request.Context(), a.GUID, a.ClientIP)
+	bm = bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.GUID, a.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg:    a.Cfg(),
+		Logger: a.Logger(),
+		Redis:  a.Redis(),
+	})
 
 	// Set the protocol on the bucket manager
 	if a.Protocol != nil && a.Protocol.Get() != "" {
@@ -376,7 +381,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	// IMPORTANT: set request attributes before running checks
-	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
+	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
 	bm = bm.WithPassword(a.Password).WithAccountName(accountName).WithUsername(a.Username)
 
 	// Determine IP once
@@ -445,7 +450,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		exists, err := getDefaultRedisClient().GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
+		exists, err := a.deps.Redis.GetReadHandle().HExists(ctx.Request.Context(), key, bfClientNet).Result()
 		if err == nil && exists {
 			bfRepeating = true
 		}
@@ -456,10 +461,11 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	a.BFRepeating = bfRepeating
 
 	if triggered || alreadyTriggered {
-		updateLuaContext(a.Context, definitions.FeatureBruteForce)
+		a.updateLuaContext(definitions.FeatureBruteForce)
+
 		// Time the Lua action execution
 		var stopLua func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_lua_action_total"); s != nil {
 			stopLua = s
 		}
 
@@ -488,7 +494,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	defer uspan.End()
 
 	// Overall timer for updating BF buckets after an auth failure
-	if stop := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
+	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_overall_total"); stop != nil {
 		defer stop()
 	}
 
@@ -509,7 +515,9 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		a.Cfg(),
+		a.Logger(),
 		definitions.DbgBf,
 		definitions.LogKeyGUID, a.GUID,
 		definitions.LogKeyClientIP, a.ClientIP,
@@ -534,7 +542,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	bruteForceEnabled := false
-	for _, bruteForceService := range config.GetFile().GetServer().GetBruteForceProtocols() {
+	for _, bruteForceService := range a.cfg().GetServer().GetBruteForceProtocols() {
 		if bruteForceService.Get() != a.Protocol.Get() {
 			continue
 		}
@@ -548,15 +556,15 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 		return
 	}
 
-	if len(config.GetFile().GetBruteForce().IPWhitelist) > 0 {
-		if a.IsInNetwork(config.GetFile().GetBruteForce().IPWhitelist) {
+	if len(a.cfg().GetBruteForce().IPWhitelist) > 0 {
+		if a.IsInNetwork(a.cfg().GetBruteForce().IPWhitelist) {
 			return
 		}
 	}
 
 	matchedPeriod := time.Duration(0)
 
-	for _, rule := range config.GetFile().GetBruteForceRules() {
+	for _, rule := range a.cfg().GetBruteForceRules() {
 		if a.BruteForceName != rule.Name {
 			continue
 		}
@@ -593,7 +601,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	if accountName == "" {
-		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Username, a.GUID)
+		accountName = backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.Username, a.GUID)
 	}
 
 	bm = bm.WithUsername(a.Username).WithPassword(a.Password).WithAccountName(accountName)
@@ -605,10 +613,10 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 
 	ip := net.ParseIP(a.ClientIP)
 
-	for _, rule := range config.GetFile().GetBruteForceRules() {
+	for _, rule := range a.cfg().GetBruteForceRules() {
 		// Per-rule iteration timer
 		var stopIter func()
-		if s := stats.PrometheusTimer(definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
+		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total"); s != nil {
 			stopIter = s
 		}
 

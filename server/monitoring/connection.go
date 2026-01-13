@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/textproto"
 	"strings"
@@ -44,30 +45,36 @@ type Monitor interface {
 }
 
 // ConnMonitor is a struct that implements monitoring of backend server connections by checking their availability.
-type ConnMonitor struct{}
+type ConnMonitor struct {
+	cfg    config.File
+	logger *slog.Logger
+}
 
 // CheckBackendConnection attempts to establish a connection to a backend server to verify its availability.
 // It returns an error if the connection cannot be established, using the specified configuration parameters.
-func (ConnMonitor) CheckBackendConnection(server *config.BackendServer) error {
-	return checkBackendConnection(server)
+func (cm *ConnMonitor) CheckBackendConnection(server *config.BackendServer) error {
+	return checkBackendConnection(cm.cfg, cm.logger, server)
 }
 
 var _ Monitor = (*ConnMonitor)(nil)
 
 // NewMonitor returns a new instance of the Monitor interface. The returned Monitor is implemented by the ConnMonitor struct.
-func NewMonitor() Monitor {
-	return &ConnMonitor{}
+func NewMonitor(cfg config.File, logger *slog.Logger) Monitor {
+	return &ConnMonitor{
+		cfg:    cfg,
+		logger: logger,
+	}
 }
 
 // checkBackendConnection attempts to establish a TCP connection to a specified backend server within a given timeout period.
 // If the backend requires HAProxy v2 protocol, it sends the necessary headers. For secure connections, it performs a TLS handshake.
 // Upon successful connection, it handles different protocols using the provided server settings. It returns an error if any step fails.
-func checkBackendConnection(server *config.BackendServer) error {
+func checkBackendConnection(cfg config.File, logger *slog.Logger, server *config.BackendServer) error {
 	timeout := 5 * time.Second
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(server.Host, fmt.Sprintf("%d", server.Port)), timeout)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "TCP dial failed",
 			"host", server.Host,
 			"port", server.Port,
@@ -84,8 +91,8 @@ func checkBackendConnection(server *config.BackendServer) error {
 	defer conn.Close()
 
 	if server.HAProxyV2 {
-		if err = checkHAproxyV2(conn, server.Host, server.Port); err != nil {
-			level.Error(log.Logger).Log(
+		if err = checkHAproxyV2(cfg, logger, conn, server.Host, server.Port); err != nil {
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, "HAProxy v2 header send failed",
 				"host", server.Host,
 				"port", server.Port,
@@ -138,7 +145,7 @@ func checkBackendConnection(server *config.BackendServer) error {
 	}
 
 	if server.DeepCheck {
-		err = handleProtocol(server, conn)
+		err = handleProtocol(logger, server, conn)
 	}
 
 	return err
@@ -147,19 +154,19 @@ func checkBackendConnection(server *config.BackendServer) error {
 // handleProtocol processes authentication for a test user over a network connection based on the specified protocol.
 // Supported protocols include SMTP, POP3, IMAP, and HTTP. If an unsupported protocol is specified, a warning is logged.
 // This function currently does not support plain connections requiring StartTLS.
-func handleProtocol(server *config.BackendServer, conn net.Conn) (err error) {
+func handleProtocol(logger *slog.Logger, server *config.BackendServer, conn net.Conn) (err error) {
 	// Limited support only. Plain connections requireing StartTLS are not supported at the moment!
 	switch strings.ToLower(server.Protocol) {
 	case "smtp", "lmtp":
-		err = checkSMTP(conn, server.Protocol, server.TestUsername, server.TestPassword)
+		err = checkSMTP(logger, conn, server.Protocol, server.TestUsername, server.TestPassword)
 	case "pop3":
-		err = checkPOP3(conn, server.TestUsername, server.TestPassword)
+		err = checkPOP3(logger, conn, server.TestUsername, server.TestPassword)
 	case "imap":
-		err = checkIMAP(conn, server.TestUsername, server.TestPassword)
+		err = checkIMAP(logger, conn, server.TestUsername, server.TestPassword)
 	case "sieve":
-		err = checkSieve(conn, server.Host, server.TestUsername, server.TestPassword, server.TLSSkipVerify)
+		err = checkSieve(logger, conn, server.Host, server.TestUsername, server.TestPassword, server.TLSSkipVerify)
 	case "http":
-		err = checkHTTP(conn, server.Host, server.RequestURI, server.TestUsername, server.TestPassword)
+		err = checkHTTP(logger, conn, server.Host, server.RequestURI, server.TestUsername, server.TestPassword)
 	default:
 		err = stderrors.New("unsupported protocol")
 	}
@@ -176,7 +183,7 @@ func isTLSConnection(conn net.Conn) bool {
 
 // checkSMTP performs SMTP authentication using the provided username and password over a given network connection.
 // It sends EHLO and AUTH LOGIN commands to the SMTP server, encodes credentials in base64, and logs errors if authentication fails.
-func checkSMTP(conn net.Conn, protocol string, username string, password string) error {
+func checkSMTP(logger *slog.Logger, conn net.Conn, protocol string, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 	protocol = strings.ToLower(protocol)
@@ -223,7 +230,7 @@ func checkSMTP(conn net.Conn, protocol string, username string, password string)
 	}
 
 	if !isTLSConnection(conn) {
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyMsg, "missing TLS on connection where required",
 			"protocol", "smtp",
 		)
@@ -273,7 +280,7 @@ func checkSMTP(conn net.Conn, protocol string, username string, password string)
 
 // checkPOP3 performs POP3 authentication using the provided username and password over a given network connection.
 // It sends USER and PASS commands to the POP3 server, validates responses, and logs errors if authentication fails.
-func checkPOP3(conn net.Conn, username string, password string) error {
+func checkPOP3(logger *slog.Logger, conn net.Conn, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
@@ -293,7 +300,7 @@ func checkPOP3(conn net.Conn, username string, password string) error {
 	}
 
 	if !isTLSConnection(conn) {
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyMsg, "missing TLS on connection where required",
 			"protocol", "pop3",
 		)
@@ -334,7 +341,7 @@ func isOkResponsePOP3(response string) bool {
 // checkIMAP authenticates to an IMAP server using provided username and password over an existing network connection.
 // It sends an IMAP LOGIN command and checks if the response indicates a successful login.
 // Errors in reading responses or unsuccessful logins are logged for diagnostic purposes.
-func checkIMAP(conn net.Conn, username string, password string) error {
+func checkIMAP(logger *slog.Logger, conn net.Conn, username string, password string) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
@@ -354,7 +361,7 @@ func checkIMAP(conn net.Conn, username string, password string) error {
 	}
 
 	if !isTLSConnection(conn) {
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyMsg, "missing TLS on connection where required",
 			"protocol", "imap",
 		)
@@ -383,7 +390,7 @@ func isOkResponseIMAP(response string) bool {
 
 // checkSieve authenticates with a Sieve server using an existing network connection.
 // It sends an AUTHENTICATE PLAIN command with encoded username and password.
-func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerify bool) error {
+func checkSieve(logger *slog.Logger, conn net.Conn, hostname, username, password string, tlsSkipVerify bool) error {
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
@@ -391,7 +398,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	// Wait for initial greeting
 	if response, err := isOkResponseSieve(tp); err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Sieve greeting read failed",
 			"host", hostname,
 			"protocol", "sieve",
@@ -401,7 +408,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 		return err
 	} else if response != "OK" {
 		//goland:noinspection GoErrorStringFormat
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Sieve greeting not OK",
 			"host", hostname,
 			"protocol", "sieve",
@@ -417,7 +424,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 	// Read STARTTLS response
 	if response, err := isOkResponseSieve(tp); err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Sieve STARTTLS read failed",
 			"host", hostname,
 			"protocol", "sieve",
@@ -426,7 +433,7 @@ func checkSieve(conn net.Conn, hostname, username, password string, tlsSkipVerif
 
 		return err
 	} else if response != "OK" {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Sieve STARTTLS refused",
 			"host", hostname,
 			"protocol", "sieve",
@@ -505,12 +512,12 @@ func isOkResponseSieve(tp *textproto.Reader) (response string, err error) {
 // checkHTTP performs an HTTP GET request with Basic Authentication using a given username and password.
 // It encodes the credentials, sends the request over a provided connection, and checks the response for success.
 // Errors related to request sending or response handling are logged and returned.
-func checkHTTP(conn net.Conn, hostname, requestURI, username, password string) error {
+func checkHTTP(logger *slog.Logger, conn net.Conn, hostname, requestURI, username, password string) error {
 	authHeader := ""
 
 	if username != "" && password != "" {
 		if !isTLSConnection(conn) {
-			level.Warn(log.Logger).Log(
+			level.Warn(logger).Log(
 				definitions.LogKeyMsg, "missing TLS on connection where required",
 				"protocol", "http",
 			)
@@ -559,7 +566,7 @@ func isOkResponseHTTP(response string) bool {
 
 // checkHAproxyV2 sends a HAProxy protocol v2 header to the given connection with specified Host address and port.
 // It returns an error if writing the header to the connection fails. The error is also logged for diagnostics.
-func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
+func checkHAproxyV2(cfg config.File, logger *slog.Logger, conn net.Conn, ipAddress string, port int) error {
 	header := &proxyproto.Header{
 		Command: proxyproto.LOCAL,
 		Version: 2,
@@ -575,16 +582,16 @@ func checkHAproxyV2(conn net.Conn, ipAddress string, port int) error {
 
 	_, err := header.WriteTo(conn)
 	if err != nil {
-		handleHAproxyV2Error(err)
+		handleHAproxyV2Error(cfg, logger, err)
 	}
 
 	return err
 }
 
 // handleHAproxyV2Error logs an error related to HAProxy version 2 operations using the global Logger.
-func handleHAproxyV2Error(err error) {
-	level.Error(log.Logger).Log(
-		definitions.LogKeyInstance, config.GetFile().GetServer().GetInstanceName(),
+func handleHAproxyV2Error(cfg config.File, logger *slog.Logger, err error) {
+	level.Error(logger).Log(
+		definitions.LogKeyInstance, cfg.GetServer().GetInstanceName(),
 		definitions.LogKeyMsg, "HAProxy v2 error",
 		definitions.LogKeyError, err,
 	)

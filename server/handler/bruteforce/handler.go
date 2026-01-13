@@ -19,6 +19,8 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,8 +47,11 @@ func (h *Handler) Register(router gin.IRouter) {
 		return
 	}
 
-	bg.GET("/"+definitions.ServList, core.HanldeBruteForceList)
-	bg.POST("/"+definitions.ServList, core.HanldeBruteForceList)
-	bg.DELETE("/"+definitions.ServFlush, core.HandleBruteForceRuleFlush)
-	bg.DELETE("/"+definitions.ServFlush+"/async", core.HandleBruteForceRuleFlushAsync)
+	// Legacy path (will eventually be removed when all call sites migrate to NewWithDeps)
+	adminDeps := core.NewRestAdminDeps(core.GetDefaultConfigFile(), log.GetLogger(), rediscli.GetClient())
+
+	bg.GET("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))
+	bg.POST("/"+definitions.ServList, core.HandleBruteForceList(adminDeps))
+	bg.DELETE("/"+definitions.ServFlush, core.HandleBruteForceRuleFlush(adminDeps))
+	bg.DELETE("/"+definitions.ServFlush+"/async", core.HandleBruteForceRuleFlushAsync(adminDeps))
 }

@@ -68,6 +68,21 @@ func newLogger(_ *bootstrapped) *slog.Logger {
 	return logfx.NewLogger()
 }
 
+// newDbgModuleMapping returns the current DbgModuleMapping and registers its lifecycle with the provided fx.Lifecycle.
+func newDbgModuleMapping(lc fx.Lifecycle) *definitions.DbgModuleMapping {
+	mapping := definitions.GetDbgModuleMapping()
+
+	lc.Append(fx.Hook{
+		OnStop: func(context.Context) error {
+			definitions.SetDbgModuleMapping(nil)
+
+			return nil
+		},
+	})
+
+	return mapping
+}
+
 // newRedisClient provides the Redis facade for fx.
 //
 // It depends on the bootstrap token to ensure configuration/logging has been initialized.
@@ -98,7 +113,7 @@ func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provide
 }
 
 // newActionWorkers constructs the action worker pool used by the legacy worker orchestration.
-func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider) ([]*action.Worker, error) {
+func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider, logger *slog.Logger) ([]*action.Worker, error) {
 	if cfgProvider == nil {
 		return nil, fmt.Errorf("config provider is nil")
 	}
@@ -108,7 +123,7 @@ func newActionWorkers(_ *bootstrapped, cfgProvider configfx.Provider) ([]*action
 		return nil, fmt.Errorf("config snapshot file is nil")
 	}
 
-	return initializeActionWorkers(snap.File), nil
+	return initializeActionWorkers(snap.File, logger), nil
 }
 
 // newContextStoreForRuntime constructs the runtime context store.
@@ -153,22 +168,23 @@ type runtimeLifecycleParams struct {
 func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
+			snap := p.Store.cfgProvider.Current()
+
 			// Initialize OpenTelemetry tracing early (no-op if disabled)
 			monitoring.GetTelemetry().Start(p.Ctx, version)
 
-			bootfx.InitializeInstanceInfo(version)
-			bootfx.DebugLoadableConfig()
+			bootfx.InitializeInstanceInfo(snap.File, version)
+			bootfx.DebugLoadableConfig(snap.File, p.Store.logger)
 
-			if err := bootfx.SetupLuaScripts(); err != nil {
+			if err := bootfx.SetupLuaScripts(snap.File, p.Store.logger); err != nil {
 				stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
 			}
 
-			bootfx.EnableBlockProfile()
-			bootfx.InitializeBruteForceTolerate(p.Ctx)
-			bootfx.InitializeHTTPClients()
+			bootfx.EnableBlockProfile(snap.File)
+			bootfx.InitializeBruteForceTolerate(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
+			bootfx.InitializeHTTPClients(snap.File)
 			core.InitPassDBResultPool()
 
-			snap := p.Store.cfgProvider.Current()
 			if snap.File == nil {
 				return fmt.Errorf("config snapshot file is nil")
 			}
@@ -176,9 +192,10 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			// Provide core defaults for legacy call sites that are not fully constructor-injected yet.
 			core.SetDefaultConfigFile(snap.File)
 			core.SetDefaultLogger(p.Store.logger)
+			p.ActionWorkers = initializeActionWorkers(snap.File, p.Store.logger)
 			setupWorkers(p.Ctx, p.Store, p.ActionWorkers, snap.File, p.Store.logger)
 
-			if err := setupRedis(p.Ctx, p.Ctx, p.Store.logger, p.Store.redisClient); err != nil {
+			if err := setupRedis(p.Ctx, p.Ctx, snap.File, p.Store.logger, p.Store.redisClient); err != nil {
 				return err
 			}
 
@@ -197,8 +214,8 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			// Ensure Lua redislib has a configured default client before any Lua code runs.
 			redislib.SetDefaultClient(p.Store.redisClient)
 
-			bootfx.RunLuaInitScript(p.Ctx)
-			core.LoadStatsFromRedis(p.Ctx)
+			bootfx.RunLuaInitScript(p.Ctx, snap.File, p.Store.logger)
+			core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 
 			if err := startHTTPServer(p.Ctx, p.Store); err != nil {
 				return err
@@ -221,6 +238,8 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 		OnStop: func(stopCtx context.Context) error {
 			p.Cancel()
 
+			snap := p.Store.cfgProvider.Current()
+
 			if err := p.StatsSvc.Stop(stopCtx); err != nil {
 				stdlog.Printf("Unable to stop stats service. Error: %v", err)
 			}
@@ -240,7 +259,7 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 
 			// Best-effort: do not let stats persistence block process termination.
 			statsCtx, statsCancel := context.WithTimeout(stopCtx, definitions.FxShutdownStatsFlushTimeout)
-			core.SaveStatsToRedis(statsCtx)
+			core.SaveStatsToRedis(statsCtx, snap.File, p.Store.logger, p.Store.redisClient)
 			statsCancel()
 
 			lualib.StopGlobalCache()

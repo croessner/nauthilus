@@ -18,6 +18,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
@@ -37,7 +37,6 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/server/util"
 
-	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -45,12 +44,12 @@ import (
 var _ = LoaderLDAPStateless
 
 // LoaderModLDAP initializes and loads the LDAP module into the Lua state with predefined functions for LDAP operations.
-func LoaderModLDAP(ctx context.Context) lua.LGFunction {
+func LoaderModLDAP(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnLDAPSearch:   LDAPSearchWithCtx(ctx),
 			definitions.LuaFnLDAPModify:   LDAPModifyWithCtx(ctx),
-			definitions.LuaFnLDAPEndpoint: LDAPEndpointWithCtx(ctx),
+			definitions.LuaFnLDAPEndpoint: LDAPEndpointWithCtx(cfg),
 		})
 
 		L.Push(mod)
@@ -73,7 +72,7 @@ func LoaderLDAPStateless() lua.LGFunction {
 // LuaMainWorker processes Lua script requests in a loop until the context is canceled.
 // It compiles the Lua script and handles requests using a dedicated goroutine for each.
 // It now uses a priority queue instead of channels for better request handling.
-func LuaMainWorker(ctx context.Context, backendName string) (err error) {
+func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, backendName string) (err error) {
 	var (
 		numberOfWorkers int
 		scriptPath      string
@@ -82,14 +81,14 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	errMsg := fmt.Sprintf("Lua backend script path not set for backend %s", backendName)
 
 	if backendName == definitions.DefaultBackendName {
-		numberOfWorkers = config.GetFile().GetLuaNumberOfWorkers()
+		numberOfWorkers = cfg.GetLuaNumberOfWorkers()
 
-		scriptPath = config.GetFile().GetLuaScriptPath()
+		scriptPath = cfg.GetLuaScriptPath()
 		if scriptPath == "" {
 			panic(errMsg)
 		}
 	} else {
-		optionalBackends := config.GetFile().GetLua().GetOptionalLuaBackends()
+		optionalBackends := cfg.GetLua().GetOptionalLuaBackends()
 
 		if optionalBackends == nil {
 			panic(errMsg)
@@ -113,7 +112,9 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 		panic(err)
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		cfg,
+		logger,
 		definitions.DbgLua,
 		definitions.LogKeyMsg, "lua_main_worker_created",
 		definitions.LogKeyBackendName, backendName,
@@ -127,13 +128,13 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	// Configure queue length limit from config (0 = unlimited)
 	queueLen := 0
 	if backendName == definitions.DefaultBackendName {
-		if cfg := config.GetFile().GetLua().GetConfig(); cfg != nil {
-			if c, ok := cfg.(*config.LuaConf); ok {
+		if luaCfg := cfg.GetLua().GetConfig(); luaCfg != nil {
+			if c, ok := luaCfg.(*config.LuaConf); ok {
 				queueLen = c.GetQueueLength()
 			}
 		}
 	} else {
-		optionalBackends := config.GetFile().GetLua().GetOptionalLuaBackends()
+		optionalBackends := cfg.GetLua().GetOptionalLuaBackends()
 		if optionalBackends != nil {
 			if bc := optionalBackends[backendName]; bc != nil {
 				queueLen = bc.GetQueueLength()
@@ -144,7 +145,10 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 	priorityqueue.LuaQueue.SetMaxQueueLength(backendName, queueLen)
 
 	// Create per-backend VM pool with MaxVMs equal to number of workers
-	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey("backend:"+backendName), vmpool.PoolOptions{MaxVMs: numberOfWorkers})
+	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey("backend:"+backendName), vmpool.PoolOptions{
+		MaxVMs: numberOfWorkers,
+		Config: cfg,
+	})
 
 	var wg sync.WaitGroup
 	for i := 0; i < numberOfWorkers; i++ {
@@ -165,7 +169,7 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 					return
 				}
 
-				handleLuaRequest(ctx, luaRequest, compiledScript, vmPool)
+				handleLuaRequest(ctx, cfg, logger, luaRequest, compiledScript, vmPool)
 			}
 		}()
 	}
@@ -184,7 +188,7 @@ func LuaMainWorker(ctx context.Context, backendName string) (err error) {
 // - ctx: The context for the Lua execution, including cancellation and timeout.
 // - luaRequest: The LuaRequest object containing details about the script execution request.
 // - compiledScript: The precompiled Lua script to be executed.
-func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
+func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger, luaRequest *bktype.LuaRequest, compiledScript *lua.FunctionProto, vmPool *vmpool.Pool) {
 	var (
 		nret       int
 		luaCommand string
@@ -193,7 +197,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
-		level.Info(log.Logger).Log(
+		level.Info(logger).Log(
 			definitions.LogKeyGUID, luaRequest.Session,
 			definitions.LogKeyMsg, "Lua backend handler latency",
 			definitions.LogKeyLatency, util.FormatDurationMs(latency),
@@ -201,13 +205,13 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	}()
 
 	logs := new(lualib.CustomLogKeyValue)
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
 
 	defer luaCancel()
 
 	L, acqErr := vmPool.Acquire(luaCtx)
 	if acqErr != nil {
-		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
+		level.Warn(logger).Log(definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
 
 		return
 	}
@@ -258,7 +262,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	// 3) nauthilus_redis
 	{
-		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext)
+		loader := redislib.LoaderModRedis(luaRequest.HTTPClientContext, cfg)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -269,8 +273,8 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	}
 
 	// 4) nauthilus_ldap (if enabled)
-	if config.GetFile().HaveLDAPBackend() {
-		loader := LoaderModLDAP(luaCtx)
+	if cfg.HaveLDAPBackend() {
+		loader := LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -281,7 +285,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	}
 
 	// 5) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -292,7 +296,7 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	}
 
 	// 6) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -305,8 +309,8 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 	// 6.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
-		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx)
+		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx, cfg)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -349,9 +353,9 @@ func handleLuaRequest(ctx context.Context, luaRequest *bktype.LuaRequest, compil
 
 	request := L.NewTable()
 
-	luaCommand, nret = setLuaRequestParameters(luaRequest, request)
+	luaCommand, nret = setLuaRequestParameters(cfg, luaRequest, request)
 
-	err := executeAndHandleError(compiledScript, luaCommand, luaRequest, L, request, nret, logs)
+	err := executeAndHandleError(ctx, cfg, logger, compiledScript, luaCommand, luaRequest, L, request, nret, logs)
 
 	// Decide whether to replace VM on hard error/timeout
 	if err != nil || luaCtx.Err() != nil {
@@ -378,13 +382,13 @@ func setupGlobals(luaRequest *bktype.LuaRequest, L *lua.LState, logs *lualib.Cus
 }
 
 // setLuaRequestParameters determines the Lua command and number of return values for a LuaRequest and modifies the request.
-func setLuaRequestParameters(luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
+func setLuaRequestParameters(cfg config.File, luaRequest *bktype.LuaRequest, request *lua.LTable) (luaCommand string, nret int) {
 	switch luaRequest.Function {
 	case definitions.LuaCommandPassDB:
 		luaCommand = definitions.LuaFnBackendVerifyPassword
 		nret = 2
 
-		luaRequest.SetupRequest(request)
+		luaRequest.SetupRequest(cfg, request)
 	case definitions.LuaCommandListAccounts:
 		luaCommand = definitions.LuaFnBackendListAccounts
 		nret = 2
@@ -404,19 +408,19 @@ func setLuaRequestParameters(luaRequest *bktype.LuaRequest, request *lua.LTable)
 }
 
 // executeAndHandleError executes a Lua script, handles errors, and logs details. It runs initialization, execution, and cleanup steps.
-func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
+func executeAndHandleError(ctx context.Context, cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, luaCommand string, luaRequest *bktype.LuaRequest, L *lua.LState, request *lua.LTable, nret int, logs *lualib.CustomLogKeyValue) (err error) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
 		logs.Set(fmt.Sprintf("backend_execute_%s_latency", luaCommand), util.FormatDurationMs(latency))
 	}()
 
-	if err = lualib.PackagePath(L); err != nil {
-		processError(err, luaRequest, logs)
+	if err = lualib.PackagePath(L, cfg); err != nil {
+		processError(cfg, logger, err, luaRequest, logs)
 	}
 
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
-		processError(err, luaRequest, logs)
+		processError(cfg, logger, err, luaRequest, logs)
 	}
 
 	var commandFunc = lua.LNil
@@ -437,7 +441,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, luaCommand string,
 			NRet:    nret,
 			Protect: true,
 		}, request); err != nil {
-			processError(err, luaRequest, logs)
+			processError(cfg, logger, err, luaRequest, logs)
 		}
 	}
 
@@ -518,10 +522,10 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, l
 }
 
 // processError handles Lua backend errors by logging the error details and communicating the error and logs via a channel.
-func processError(err error, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
-	level.Error(log.Logger).Log(
+func processError(cfg config.File, logger *slog.Logger, err error, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
+	level.Error(logger).Log(
 		definitions.LogKeyGUID, luaRequest.Session,
-		"script", config.GetFile().GetLuaScriptPath(),
+		"script", cfg.GetLuaScriptPath(),
 		definitions.LogKeyMsg, "lua_backend_error",
 		definitions.LogKeyError, err,
 	)

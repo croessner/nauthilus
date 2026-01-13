@@ -358,68 +358,24 @@ func (d *DbgModule) String() string {
 	return d.name
 }
 
-// Set updates the debug module based on the provided value.
-// It returns an error if the value is not valid.
-// Valid values for the debug module are "none", "all", "auth", "hydra", "webauthn",
-// "statistics", "whitelist", "ldap", "ldappool", "sql", "cache", "bf", "rbl",
-// "action", "feature", "lua", "filter", "tolerate", "jwt", "http", and "account".
-// If the value is valid, the module and name fields are updated accordingly.
-// An error of type ErrWrongDebugModule is returned if the value is not valid.
+// Set assigns a debug module based on the provided value and updates the DbgModule's state, returning an error if invalid.
 func (d *DbgModule) Set(value string) error {
 	if d == nil {
 		return nil
 	}
 
-	value = strings.TrimSpace(value)
+	trimmedValue := strings.TrimSpace(value)
 
-	switch value {
-	case definitions.DbgNoneName, "":
-		d.module = definitions.DbgNone
-	case definitions.DbgAllName:
-		d.module = definitions.DbgAll
-	case definitions.DbgAuthName:
-		d.module = definitions.DbgAuth
-	case definitions.DbgHydraName:
-		d.module = definitions.DbgHydra
-	case definitions.DbgWebAuthnName:
-		d.module = definitions.DbgWebAuthn
-	case definitions.DbgStatsName:
-		d.module = definitions.DbgStats
-	case definitions.DbgWhitelistName:
-		d.module = definitions.DbgWhitelist
-	case definitions.DbgLDAPName:
-		d.module = definitions.DbgLDAP
-	case definitions.DbgLDAPPoolName:
-		d.module = definitions.DbgLDAPPool
-	case definitions.DbgCacheName:
-		d.module = definitions.DbgCache
-	case definitions.DbgBfName:
-		d.module = definitions.DbgBf
-	case definitions.DbgRBLName:
-		d.module = definitions.DbgRBL
-	case definitions.DbgActionName:
-		d.module = definitions.DbgAction
-	case definitions.DbgFeatureName:
-		d.module = definitions.DbgFeature
-	case definitions.DbgLuaName:
-		d.module = definitions.DbgLua
-	case definitions.DbgFilterName:
-		d.module = definitions.DbgFilter
-	case definitions.DbgTolerateName:
-		d.module = definitions.DbgTolerate
-	case definitions.DbgJWTName:
-		d.module = definitions.DbgJWT
-	case definitions.DbgHTTPName:
-		d.module = definitions.DbgHTTP
-	case definitions.DbgAccountName:
-		d.module = definitions.DbgAccount
-	default:
-		return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
+	if mapping := definitions.GetDbgModuleMapping(); mapping != nil {
+		if module, ok := mapping.StrToMod[trimmedValue]; ok {
+			d.module = module
+			d.name = trimmedValue
+
+			return nil
+		}
 	}
 
-	d.name = value
-
-	return nil
+	return fmt.Errorf(errors.ErrWrongDebugModule.Error(), value)
 }
 
 // Type returns the type of the DbgModule, which is always "DebugModule".

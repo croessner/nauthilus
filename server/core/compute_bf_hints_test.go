@@ -64,12 +64,12 @@ func setupMinimalConfigForBF(t *testing.T) {
 
 func TestComputeBruteForceHints_InvalidIPOrFeatureOff(t *testing.T) {
 	// Feature off by default (no test file set)
-	cn, rep := corepkg.ComputeBruteForceHints(context.Background(), "", "imap", "")
+	cn, rep := corepkg.ComputeBruteForceHints(context.Background(), config.GetFile(), rediscli.GetClient(), "", "imap", "")
 	if cn != "" || rep {
 		t.Fatalf("expected no hints for empty IP")
 	}
 
-	cn, rep = corepkg.ComputeBruteForceHints(context.Background(), "not-an-ip", "imap", "")
+	cn, rep = corepkg.ComputeBruteForceHints(context.Background(), config.GetFile(), rediscli.GetClient(), "not-an-ip", "imap", "")
 	if cn != "" || rep {
 		t.Fatalf("expected no hints for invalid IP")
 	}
@@ -91,7 +91,7 @@ func TestComputeBruteForceHints_PositiveRepeatViaRedis(t *testing.T) {
 	mock.ExpectHExists(key, "203.0.113.0/24").SetVal(true)
 
 	ctx := context.Background()
-	cn, rep := corepkg.ComputeBruteForceHints(ctx, "203.0.113.1", "imap", "")
+	cn, rep := corepkg.ComputeBruteForceHints(ctx, config.GetFile(), rediscli.GetClient(), "203.0.113.1", "imap", "")
 	if !rep {
 		t.Fatalf("expected repeating=true from redis hit")
 	}

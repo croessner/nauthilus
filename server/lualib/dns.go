@@ -33,12 +33,12 @@ import (
 
 // Resolve performs a DNS record lookup for the specified domain and record type using Lua and the provided context.
 // It supports record types such as A, AAAA, MX, NS, TXT, CNAME, and PTR and returns the result or an error to Lua.
-func Resolve(ctx context.Context) lua.LGFunction {
+func Resolve(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		domain := L.CheckString(1)
 		recordType := strings.ToUpper(L.OptString(2, "A"))
 
-		result, err := lookupRecord(ctx, L, domain, recordType)
+		result, err := lookupRecord(ctx, cfg, L, domain, recordType)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -55,22 +55,30 @@ func Resolve(ctx context.Context) lua.LGFunction {
 // lookupRecord performs a DNS lookup for the specified domain and record type, returning the results as an LValue.
 // It supports record types like A, AAAA, MX, NS, TXT, CNAME, and PTR.
 // The context controls the timeout for the DNS request, while Lua state handles the returned data format.
-func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.LValue, error) {
-	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
+func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, kind string) (lua.LValue, error) {
+	ctxTimeut, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()*time.Second))
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver()
+	resolver := util.NewDNSResolverWithCfg(cfg)
 
 	switch kind {
 	case "A", "AAAA":
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
+			attribute.String("peer.service", "dns"),
 			attribute.String("dns.question.name", domain),
 			attribute.String("dns.question.type", kind),
 		)
+
+		host, port, ok := util.DNSResolverPeer(cfg)
+		if ok {
+			tsp.SetAttributes(
+				attribute.String("peer.hostname", host),
+				attribute.Int("peer.port", port),
+			)
+		}
 
 		ips, err := resolver.LookupIP(tctx, "ip", domain)
 		if err != nil {
@@ -235,10 +243,10 @@ func lookupRecord(ctx context.Context, L *lua.LState, domain, kind string) (lua.
 }
 
 // LoaderModDNS initializes and loads the DNS module for Lua, providing functions for DNS lookups and managing records.
-func LoaderModDNS(ctx context.Context) lua.LGFunction {
+func LoaderModDNS(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnDNSResolve: Resolve(ctx),
+			definitions.LuaFnDNSResolve: Resolve(ctx, cfg),
 		})
 
 		L.Push(mod)

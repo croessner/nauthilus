@@ -19,8 +19,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"go.opentelemetry.io/otel/trace"
@@ -28,7 +30,8 @@ import (
 
 func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 	// Initialize action channel
-	_ = action.NewWorker()
+	corepkg.SetDefaultConfigFile(config.GetFile())
+	_ = action.NewWorker(config.GetFile(), log.GetLogger())
 
 	done := make(chan struct{})
 	go func() {
@@ -79,7 +82,10 @@ func TestRunLuaPostAction_EnqueuesAndCopies(t *testing.T) {
 		},
 	}
 
-	corepkg.RunLuaPostAction(args)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
+		Cfg: config.GetFile(),
+	}).(*corepkg.AuthState)
+	auth.RunLuaPostAction(args)
 
 	<-done
 }

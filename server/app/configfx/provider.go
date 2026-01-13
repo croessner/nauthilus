@@ -49,6 +49,14 @@ type provider struct {
 
 var _ Reloader = (*provider)(nil)
 
+// NewProviderWithSnapshot constructs a Provider from a specific config.File instance.
+func NewProviderWithSnapshot(file config.File) Provider {
+	p := &provider{}
+	p.snapshot.Store(Snapshot{File: file, Version: 1})
+
+	return p
+}
+
 // NewProvider constructs a Provider from an already loaded global config.
 //
 // It does not load configuration itself; the legacy startup path still calls `config.NewFile()`.

@@ -15,12 +15,55 @@
 
 package logfx
 
-import "go.uber.org/fx"
+import (
+	"context"
 
-// Module provides an injectable logger and keeps the stdlib log bridge consistent.
-func Module() fx.Option {
-	return fx.Options(
-		fx.Provide(NewLogger),
-		fx.Invoke(BridgeStdLog),
-	)
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/app/reloadfx"
+	"github.com/croessner/nauthilus/server/log/level"
+
+	"go.uber.org/fx"
+)
+
+// Module defines the logfx module for UberFX.
+var Module = fx.Module("logfx",
+	fx.Provide(
+		NewLogger,
+		// Register the reloader as a Reloadable component
+		fx.Annotate(
+			NewLevelReloader,
+			fx.As(new(reloadfx.Reloadable)),
+			fx.ResultTags(`group:"reloaders"`),
+		),
+	),
+	fx.Invoke(BridgeStdLog),
+)
+
+// LevelReloader handles atomic updates of the level package configuration.
+type LevelReloader struct{}
+
+// NewLevelReloader creates a new LevelReloader instance.
+func NewLevelReloader() *LevelReloader {
+	return &LevelReloader{}
 }
+
+// Name returns the name of the reloader for the reload manager.
+func (l *LevelReloader) Name() string {
+	return "log_level_source"
+}
+
+// Order defines the execution order during a reload.
+func (l *LevelReloader) Order() int {
+	return 10
+}
+
+// ApplyConfig syncs the new configuration to the level package.
+func (l *LevelReloader) ApplyConfig(ctx context.Context, snap configfx.Snapshot) error {
+	if snap.File != nil && snap.File.GetServer() != nil {
+		level.ApplyGlobalConfig(snap.File.GetServer().GetLog().IsAddSourceEnabled())
+	}
+
+	return nil
+}
+
+var _ reloadfx.Reloadable = (*LevelReloader)(nil)

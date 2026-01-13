@@ -47,7 +47,9 @@ func TestRedisClusterHashTags(t *testing.T) {
 		},
 	})
 
-	bm := NewBucketManager(context.Background(), "test", "10.0.1.2").
+	bm := NewBucketManagerWithDeps(context.Background(), "test", "10.0.1.2", BucketManagerDeps{
+		Cfg: config.GetFile(),
+	}).
 		WithAccountName("acc").
 		WithUsername("user").
 		WithProtocol("imap").

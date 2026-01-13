@@ -52,15 +52,19 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	rediscli.NewTestClient(db)
 
 	// Prepare auth state
-	auth := &core.AuthState{
-		GUID:                "guid-123",
-		Protocol:            config.NewProtocol("imap"),
-		UsedPassDBBackend:   definitions.BackendLDAP, // will map to CacheLDAP but default cache name applies
-		SourcePassDBBackend: definitions.BackendLDAP,
-		AccountField:        "uid",
-		Password:            "secret",
-		Attributes:          map[string][]any{"uid": {"acc"}},
-	}
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg:    config.GetFile(),
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.GUID = "guid-123"
+	auth.Protocol = config.NewProtocol("imap")
+	auth.UsedPassDBBackend = definitions.BackendLDAP // will map to CacheLDAP but default cache name applies
+	auth.SourcePassDBBackend = definitions.BackendLDAP
+	auth.AccountField = "uid"
+	auth.Password = "secret"
+	auth.Attributes = map[string][]any{"uid": {"acc"}}
 
 	accountName := "acc"
 	cacheName := "__default__"

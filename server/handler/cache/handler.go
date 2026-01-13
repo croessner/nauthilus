@@ -20,6 +20,8 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
+	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
 
@@ -56,10 +58,15 @@ func (h *Handler) Register(router gin.IRouter) {
 		return
 	}
 
-	cg.DELETE("/"+definitions.ServFlush, h.flush)
-	cg.DELETE("/"+definitions.ServFlush+"/async", core.HandleUserFlushAsync)
-}
+	// Legacy path (will eventually be removed when all call sites migrate to NewWithDeps)
+	deps := core.AuthDeps{
+		Cfg:    core.GetDefaultConfigFile(),
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}
+	// core.restAdminDeps is compatible with core.AuthDeps's fields needed for these handlers
+	adminDeps := core.NewRestAdminDeps(deps.Cfg, deps.Logger, deps.Redis)
 
-func (h *Handler) flush(ctx *gin.Context) {
-	core.HandleUserFlush(ctx)
+	cg.DELETE("/"+definitions.ServFlush, core.HandleUserFlush(adminDeps))
+	cg.DELETE("/"+definitions.ServFlush+"/async", core.HandleUserFlushAsync(adminDeps))
 }

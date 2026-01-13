@@ -116,7 +116,15 @@ func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
 // This mirrors the legacy code which constructed the engine explicitly and
 // enables ContextWithFallback so gin.Context behaves consistently as a
 // context.Context with respect to Deadline/Done/Err/Value fallbacks.
-func (DefaultRouterComposer) ComposeEngine() *gin.Engine {
+func (c DefaultRouterComposer) ComposeEngine() *gin.Engine {
+	mdauth.SetProtectMiddleware(func(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+		return ProtectEndpointMiddleware(cfg, logger)
+	})
+
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient)
+	})
+
 	return gin.New(func(e *gin.Engine) {
 		e.ContextWithFallback = true
 	})
@@ -174,7 +182,7 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 
 	// Make the resolved account available as early as possible in the chain.
 	// This keeps account lookups consistent for all following middlewares/handlers.
-	r.Use(mdauth.AccountMiddleware())
+	r.Use(mdauth.AccountMiddleware(c.cfg, c.logger, c.redis))
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
@@ -607,10 +615,14 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	signals ServerSignals,
 ) {
 	// Keep auth protect middleware as before
-	mdauth.SetProtectMiddleware(ProtectEndpointMiddleware)
+	mdauth.SetProtectMiddleware(func(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+		return ProtectEndpointMiddleware(cfg, logger)
+	})
 
 	// Register account resolution middleware factory
-	mdauth.SetAccountMiddleware(AccountMiddleware)
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient)
+	})
 
 	if err := a.Bootstrap.InitWebAuthn(); err != nil {
 		// The legacy code exits on error; keep that behavior

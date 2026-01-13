@@ -48,7 +48,7 @@ func PrometheusMiddlewareWithCfg(cfg config.File) gin.HandlerFunc {
 			mode = "auth"
 		}
 
-		stopTimer := stats.PrometheusTimer(definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
+		stopTimer := stats.PrometheusTimer(cfg, definitions.PromRequest, fmt.Sprintf("request_%s_total", strings.ReplaceAll(mode, "-", "_")))
 		path := ctx.FullPath()
 
 		if enableTimer {

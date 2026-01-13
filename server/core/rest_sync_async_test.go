@@ -66,12 +66,17 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 
 	// redismock
 	db, mock := redismock.NewClientMock()
-	rediscli.NewTestClient(db)
+	redisClient := rediscli.NewTestClient(db)
+
+	cfg := config.GetFile()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	deps := HTTPDeps{
-		Cfg:    config.GetFile(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:    cfg,
+		Logger: logger,
+		Redis:  redisClient,
 	}
+	adminDeps := NewRestAdminDeps(cfg, logger, redisClient)
 
 	// router
 	composer := NewDefaultRouterComposer(deps)
@@ -82,16 +87,16 @@ func setupEngineWithMock(t *testing.T) (*gin.Engine, redismock.ClientMock) {
 	group := r.Group("/api/v1")
 
 	// Brute-force endpoints
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, HandleBruteForceRuleFlush)
-	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", HandleBruteForceRuleFlushAsync)
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush, HandleBruteForceRuleFlush(adminDeps))
+	group.DELETE("/"+definitions.CatBruteForce+"/"+definitions.ServFlush+"/async", HandleBruteForceRuleFlushAsync(adminDeps))
 
 	// Cache endpoints
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, HandleUserFlush)
-	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", HandleUserFlushAsync)
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush, HandleUserFlush(adminDeps))
+	group.DELETE("/"+definitions.CatCache+"/"+definitions.ServFlush+"/async", HandleUserFlushAsync(adminDeps))
 
 	// Async job status
 	ag := group.Group("/async")
-	ag.GET("/jobs/:jobId", HandleAsyncJobStatus)
+	ag.GET("/jobs/:jobId", NewAsyncJobStatusHandler(cfg, logger, redisClient))
 
 	return r, mock
 }

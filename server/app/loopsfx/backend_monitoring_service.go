@@ -17,9 +17,11 @@ package loopsfx
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/backendmonitoring"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
@@ -28,6 +30,9 @@ import (
 // BackendMonitoringService provides functionality to monitor backend services at specified intervals.
 type BackendMonitoringService struct {
 	interval time.Duration
+
+	cfgProvider configfx.Provider
+	logger      *slog.Logger
 
 	mu      sync.Mutex
 	parent  context.Context
@@ -38,23 +43,32 @@ type BackendMonitoringService struct {
 	running bool
 }
 
-func (s *BackendMonitoringService) enabled() bool {
-	return config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring)
+func (s *BackendMonitoringService) enabled(cfg config.File) bool {
+	return cfg.HasFeature(definitions.FeatureBackendServersMonitoring)
 }
 
 // NewDefaultBackendMonitoringService creates a BackendMonitoringService with a default delay for backend monitoring.
-func NewDefaultBackendMonitoringService() *BackendMonitoringService {
-	return NewBackendMonitoringService(definitions.BackendServerMonitoringDelay * time.Second)
+func NewDefaultBackendMonitoringService(cfgProvider configfx.Provider, logger *slog.Logger) *BackendMonitoringService {
+	return NewBackendMonitoringService(definitions.BackendServerMonitoringDelay*time.Second, cfgProvider, logger)
 }
 
 // NewBackendMonitoringService initializes a new BackendMonitoringService with the provided monitoring interval.
-func NewBackendMonitoringService(interval time.Duration) *BackendMonitoringService {
-	return &BackendMonitoringService{interval: interval}
+func NewBackendMonitoringService(interval time.Duration, cfgProvider configfx.Provider, logger *slog.Logger) *BackendMonitoringService {
+	return &BackendMonitoringService{
+		interval:    interval,
+		cfgProvider: cfgProvider,
+		logger:      logger,
+	}
 }
 
 // Start begins backend monitoring by initializing context, ticker, and spawning monitoring goroutine.
 func (s *BackendMonitoringService) Start(parent context.Context) error {
-	if !s.enabled() {
+	snap := s.cfgProvider.Current()
+	if snap.File == nil {
+		return nil
+	}
+
+	if !s.enabled(snap.File) {
 		return nil
 	}
 
@@ -75,11 +89,11 @@ func (s *BackendMonitoringService) Start(parent context.Context) error {
 	s.running = true
 
 	s.wg.Add(1)
-	go func(loopCtx context.Context, loopTicker *time.Ticker) {
+	go func(loopCtx context.Context, loopCfg config.File, loopLogger *slog.Logger, loopTicker *time.Ticker) {
 		defer s.wg.Done()
 
-		backendmonitoring.Run(loopCtx, loopTicker)
-	}(ctx, ticker)
+		backendmonitoring.Run(loopCtx, loopCfg, loopLogger, loopTicker)
+	}(ctx, snap.File, s.logger, ticker)
 
 	return nil
 }
@@ -91,7 +105,12 @@ func (s *BackendMonitoringService) Stop(stopCtx context.Context) error {
 
 // Restart restarts the backend monitoring service by stopping and then starting its monitoring loop.
 func (s *BackendMonitoringService) Restart(ctx context.Context) error {
-	if !s.enabled() {
+	snap := s.cfgProvider.Current()
+	if snap.File == nil {
+		return s.Stop(ctx)
+	}
+
+	if !s.enabled(snap.File) {
 		return s.Stop(ctx)
 	}
 

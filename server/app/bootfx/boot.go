@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/croessner/nauthilus/server/lualib/filter"
 	"github.com/croessner/nauthilus/server/lualib/hook"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 
 	jsoniter "github.com/json-iterator/go"
@@ -79,9 +80,17 @@ func ParseFlagsAndPrintVersion(version string) {
 // SetupConfiguration initializes the environment, loads the configuration file,
 // optional language bundles, and configures logging.
 func SetupConfiguration() error {
+	definitions.SetDbgModuleMapping(definitions.NewDbgModuleMapping())
+
 	config.NewEnvironmentConfig()
 
-	setTimeZone()
+	if tz := os.Getenv("TZ"); tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			time.Local = loc
+		} else {
+			stdlog.Printf("Error loading location '%s': %v", tz, err)
+		}
+	}
 
 	if config.ConfigFilePath != "" {
 		if _, err := os.Stat(config.ConfigFilePath); os.IsNotExist(err) {
@@ -95,7 +104,7 @@ func SetupConfiguration() error {
 	}
 
 	if file.GetServer().Frontend.Enabled {
-		loadLanguageBundles()
+		loadLanguageBundles(file)
 	}
 
 	log.SetupLogging(
@@ -105,28 +114,36 @@ func SetupConfiguration() error {
 		file.GetServer().GetLog().IsAddSourceEnabled(),
 		file.GetServer().GetInstanceName(),
 	)
-	stdlog.SetOutput(&slogStdWriter{logger: log.Logger})
+
+	// Sync the addSource configuration with the level package
+	level.ApplyGlobalConfig(file.GetServer().GetLog().IsAddSourceEnabled())
+
+	stdlog.SetOutput(&slogStdWriter{logger: log.GetLogger()})
 
 	return nil
 }
 
 // SetupLuaScripts pre-compiles Lua scripts for features, filters, init scripts, and hooks.
-func SetupLuaScripts() error {
-	preCompileSteps := []func() error{PreCompileFeatures, PreCompileFilters, PreCompileInit, PreCompileHooks}
-
-	for _, task := range preCompileSteps {
-		if err := task(); err != nil {
-			return err
-		}
+func SetupLuaScripts(cfg config.File, logger *slog.Logger) error {
+	if err := PreCompileFeatures(cfg); err != nil {
+		return err
 	}
 
-	return nil
+	if err := PreCompileFilters(cfg, logger); err != nil {
+		return err
+	}
+
+	if err := PreCompileInit(cfg); err != nil {
+		return err
+	}
+
+	return PreCompileHooks(cfg)
 }
 
 // PreCompileFeatures pre-compiles Lua features if enabled.
-func PreCompileFeatures() error {
-	if config.GetFile().HaveLuaFeatures() {
-		if err := feature.PreCompileLuaFeatures(); err != nil {
+func PreCompileFeatures(cfg config.File) error {
+	if cfg.HaveLuaFeatures() {
+		if err := feature.PreCompileLuaFeatures(cfg); err != nil {
 			return err
 		}
 	}
@@ -135,9 +152,9 @@ func PreCompileFeatures() error {
 }
 
 // PreCompileFilters pre-compiles Lua filters if enabled.
-func PreCompileFilters() error {
-	if config.GetFile().HaveLuaFilters() {
-		if err := filter.PreCompileLuaFilters(); err != nil {
+func PreCompileFilters(cfg config.File, logger *slog.Logger) error {
+	if cfg.HaveLuaFilters() {
+		if err := filter.PreCompileLuaFilters(cfg, logger); err != nil {
 			return err
 		}
 	}
@@ -146,10 +163,10 @@ func PreCompileFilters() error {
 }
 
 // PreCompileInit pre-compiles configured Lua init scripts.
-func PreCompileInit() error {
-	if config.GetFile().HaveLuaInit() {
-		for _, scriptPath := range config.GetFile().GetLuaInitScriptPaths() {
-			if err := hook.PreCompileLuaScript(scriptPath); err != nil {
+func PreCompileInit(cfg config.File) error {
+	if cfg.HaveLuaInit() {
+		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
+			if err := hook.PreCompileLuaScript(cfg, scriptPath); err != nil {
 				return err
 			}
 		}
@@ -159,9 +176,9 @@ func PreCompileInit() error {
 }
 
 // PreCompileHooks pre-compiles Lua hooks if enabled.
-func PreCompileHooks() error {
-	if config.GetFile().HaveLuaHooks() {
-		if err := hook.PreCompileLuaHooks(); err != nil {
+func PreCompileHooks(cfg config.File) error {
+	if cfg.HaveLuaHooks() {
+		if err := hook.PreCompileLuaHooks(cfg); err != nil {
 			return err
 		}
 	}
@@ -170,8 +187,8 @@ func PreCompileHooks() error {
 }
 
 // EnableBlockProfile toggles runtime block profiling according to configuration.
-func EnableBlockProfile() {
-	if config.GetFile().GetServer().GetInsights().IsBlockProfileEnabled() {
+func EnableBlockProfile(cfg config.File) {
+	if cfg.GetServer().GetInsights().IsBlockProfileEnabled() {
 		runtime.SetBlockProfileRate(1)
 	} else {
 		runtime.SetBlockProfileRate(-1)
@@ -179,16 +196,16 @@ func EnableBlockProfile() {
 }
 
 // DebugLoadableConfig logs selected configuration sections at debug level.
-func DebugLoadableConfig() {
+func DebugLoadableConfig(cfg config.File, logger *slog.Logger) {
 	debugIfNotNil := func(key string, value any) {
 		if value == nil {
 			return
 		}
 
-		level.Debug(log.Logger).Log(key, fmt.Sprintf("%+v", value))
+		level.Debug(logger).Log(key, fmt.Sprintf("%+v", value))
 	}
 
-	file := config.GetFile()
+	file := cfg
 
 	debugIfNotNil(definitions.FeatureRBL, file.GetRBLs())
 	debugIfNotNil(definitions.FeatureTLSEncryption, file.GetClearTextList())
@@ -204,66 +221,61 @@ func DebugLoadableConfig() {
 }
 
 // InitializeInstanceInfo sets the instance info metric labels.
-func InitializeInstanceInfo(version string) {
+func InitializeInstanceInfo(cfg config.File, version string) {
 	infoMetric := stats.GetMetrics().GetInstanceInfo().With(prometheus.Labels{
-		"instance_name": config.GetFile().GetServer().GetInstanceName(),
+		"instance_name": cfg.GetServer().GetInstanceName(),
 		"version":       version,
 	})
 
 	infoMetric.Set(1)
 }
 
-// InitializeHTTPClients initializes HTTP clients that are only needed when the frontend is enabled.
-func InitializeHTTPClients() {
-	if config.GetFile().GetServer().Frontend.Enabled {
-		core.InitHTTPClient()
+func InitializeHTTPClients(cfg config.File) {
+	if cfg.GetServer().Frontend.Enabled {
+		core.InitHTTPClient(cfg)
 	}
 }
 
 // RunLuaInitScript executes Lua init scripts (if configured).
-func RunLuaInitScript(ctx context.Context) {
-	if config.GetFile().HaveLuaInit() {
-		for _, scriptPath := range config.GetFile().GetLuaInitScriptPaths() {
-			hook.RunLuaInit(ctx, scriptPath)
+func RunLuaInitScript(ctx context.Context, cfg config.File, logger *slog.Logger) {
+	if cfg.HaveLuaInit() {
+		for _, scriptPath := range cfg.GetLuaInitScriptPaths() {
+			_ = hook.RunLuaInit(ctx, cfg, logger, scriptPath)
 		}
 	}
 }
 
 // InitializeBruteForceTolerate starts the brute force tolerate housekeeping.
-func InitializeBruteForceTolerate(ctx context.Context) {
-	go tolerate.GetTolerate().StartHouseKeeping(ctx)
+func InitializeBruteForceTolerate(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) {
+	t := tolerate.NewTolerateWithDeps(cfg, logger, redis, cfg.GetBruteForce().GetToleratePercent())
+	tolerate.SetTolerate(t)
+
+	go t.StartHouseKeeping(ctx)
 }
 
-func loadLanguageBundles() {
+func loadLanguageBundles(cfg config.File) {
 	core.LangBundle = i18n.NewBundle(language.English)
 
 	core.LangBundle.RegisterUnmarshalFunc("json", json.Unmarshal)
 
-	loadLanguageBundle("en")
-	loadLanguageBundle("de")
-	loadLanguageBundle("fr")
+	loadLanguageBundle(cfg, "en")
+	loadLanguageBundle(cfg, "de")
+	loadLanguageBundle(cfg, "fr")
 }
 
-func loadLanguageBundle(lang string) {
-	if _, err := core.LangBundle.LoadMessageFile(viper.GetString("language_resources") + "/" + lang + ".json"); err != nil {
+func loadLanguageBundle(cfg config.File, lang string) {
+	if _, err := core.LangBundle.LoadMessageFile(cfg.GetServer().Frontend.GetLanguageResources() + "/" + lang + ".json"); err != nil {
 		panic(err.Error())
 	}
 }
 
 // setTimeZone configures the process time zone based on the TZ environment variable.
 func setTimeZone() {
-	var err error
-
 	if tz := os.Getenv("TZ"); tz != "" {
-		if time.Local, err = time.LoadLocation(tz); err != nil {
-			if log.Logger != nil {
-				level.Error(log.Logger).Log(
-					definitions.LogKeyMsg, fmt.Sprintf("Error loading timezone location '%s'", tz),
-					definitions.LogKeyError, err,
-				)
-			} else {
-				stdlog.Printf("Error loading location '%s': %v", tz, err)
-			}
+		if loc, err := time.LoadLocation(tz); err == nil {
+			time.Local = loc
+		} else {
+			stdlog.Printf("Error loading location '%s': %v", tz, err)
 		}
 	}
 }

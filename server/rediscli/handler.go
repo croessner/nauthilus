@@ -23,7 +23,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/redis/go-redis/v9"
@@ -86,6 +85,9 @@ type Client interface {
 // redisClient represents a Redis client with separate handles for write and read operations.
 // It implements methods to initialize and retrieve these handles.
 type redisClient struct {
+	cfg    config.File
+	logger *slog.Logger
+
 	// writeHandle represents the primary Redis client used for write operations within the redisClient structure.
 	writeHandle redis.UniversalClient
 
@@ -97,7 +99,7 @@ var _ Client = (*redisClient)(nil)
 
 // NewClient creates and returns a new instance of a Redis client that implements the Client interface.
 func NewClient() Client {
-	return NewClientWithDeps(config.GetFile(), log.Logger)
+	return NewClientWithDeps(nil, nil)
 }
 
 // NewClientWithDeps creates and returns a new instance of a Redis client that implements the Client interface
@@ -106,15 +108,17 @@ func NewClient() Client {
 // This is the DI-owned construction path. It must not call
 // `config.GetFile()` or use `log.Logger` internally.
 func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
-	newClient := &redisClient{}
+	newClient := &redisClient{
+		cfg:    cfg,
+		logger: logger,
+	}
 
 	if cfg == nil {
-		// Preserve legacy behavior (panic) for misconfigured startups.
-		cfg = config.GetFile()
+		return nil
 	}
 
 	if logger == nil {
-		logger = log.Logger
+		return nil
 	}
 
 	redisCfg := cfg.GetServer().GetRedis()
@@ -143,15 +147,15 @@ func NewClientWithDeps(cfg config.File, logger *slog.Logger) Client {
 // newRedisClient initializes the redisClient by setting its write handle based on the provided Redis configuration.
 func (clt *redisClient) newRedisClient(redisCfg *config.Redis) {
 	if len(redisCfg.GetCluster().GetAddresses()) > 0 {
-		clt.SetWriteHandle(newRedisClusterClient(redisCfg))
+		clt.SetWriteHandle(newRedisClusterClient(clt.cfg, clt.logger, redisCfg))
 	} else if len(redisCfg.GetSentinel().GetAddresses()) > 0 && redisCfg.GetSentinel().GetMasterName() != "" {
-		clt.SetWriteHandle(newRedisFailoverClient(redisCfg, false))
+		clt.SetWriteHandle(newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, false))
 	} else {
 		if redisCfg.GetStandaloneMaster().GetAddress() == "" {
 			panic("no Redis master address provided")
 		}
 
-		clt.SetWriteHandle(newRedisClient(redisCfg, redisCfg.Master.Address))
+		clt.SetWriteHandle(newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.Master.Address))
 	}
 }
 
@@ -167,7 +171,7 @@ func (clt *redisClient) newRedisReplicaClient(redisCfg *config.Redis) {
 			clusterAddress := "cluster:" + clusterCfg.GetAddresses()[0]
 
 			// Create a new cluster client with ReadOnly set to true
-			readOnlyClient := newRedisClusterClientReadOnly(redisCfg)
+			readOnlyClient := newRedisClusterClientReadOnly(clt.cfg, clt.logger, redisCfg)
 
 			// Add the read-only client as a read handle
 			clt.AddReadHandle(clusterAddress, readOnlyClient)
@@ -177,20 +181,20 @@ func (clt *redisClient) newRedisReplicaClient(redisCfg *config.Redis) {
 	}
 
 	if len(redisCfg.GetSentinel().GetAddresses()) > 1 && redisCfg.GetSentinel().GetMasterName() != "" {
-		clt.AddReadHandle(redisCfg.GetSentinel().GetAddresses()[0], newRedisFailoverClient(redisCfg, true))
+		clt.AddReadHandle(redisCfg.GetSentinel().GetAddresses()[0], newRedisFailoverClient(clt.cfg, clt.logger, redisCfg, true))
 	}
 
 	// Deprecated
 	if redisCfg.GetStandaloneReplica().GetAddress() != "" {
 		if redisCfg.GetStandaloneMaster().GetAddress() != redisCfg.GetStandaloneReplica().GetAddress() {
-			clt.AddReadHandle(redisCfg.GetStandaloneReplica().GetAddress(), newRedisClient(redisCfg, redisCfg.GetStandaloneReplica().GetAddress()))
+			clt.AddReadHandle(redisCfg.GetStandaloneReplica().GetAddress(), newRedisClient(clt.cfg, clt.logger, redisCfg, redisCfg.GetStandaloneReplica().GetAddress()))
 		}
 	}
 
 	if len(redisCfg.GetStandaloneReplica().GetAddresses()) > 0 {
 		for _, address := range redisCfg.GetStandaloneReplica().GetAddresses() {
 			if address != redisCfg.GetStandaloneMaster().GetAddress() {
-				clt.AddReadHandle(address, newRedisClient(redisCfg, address))
+				clt.AddReadHandle(address, newRedisClient(clt.cfg, clt.logger, redisCfg, address))
 			}
 		}
 	}

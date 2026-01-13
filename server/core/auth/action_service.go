@@ -16,7 +16,6 @@
 package auth
 
 import (
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
@@ -30,7 +29,7 @@ type DefaultActionDispatcher struct{}
 func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string, luaAction definitions.LuaAction) {
 	auth := view.Auth()
 
-	if !config.GetFile().HaveLuaActions() {
+	if !auth.Cfg().HaveLuaActions() {
 		return
 	}
 
@@ -38,44 +37,12 @@ func (DefaultActionDispatcher) Dispatch(view *core.StateView, featureName string
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+	auth.FillCommonRequest(commonRequest)
 
-	// Populate fields exactly like the previous performAction implementation
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
 	commonRequest.UserFound = auth.GetAccount() != ""
 	commonRequest.NoAuth = auth.NoAuth
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.ClientHost = auth.ClientHost
-	commonRequest.ClientID = auth.XClientID
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.UserAgent = auth.UserAgent
-	commonRequest.Username = auth.Username
-	commonRequest.Account = auth.GetAccount()
-	commonRequest.AccountField = auth.GetAccountField()
-	commonRequest.Password = auth.Password
-	commonRequest.Protocol = auth.Protocol.Get()
-	commonRequest.OIDCCID = auth.OIDCCID
 	commonRequest.FeatureName = featureName
 	commonRequest.StatusMessage = &auth.StatusMessage
-	commonRequest.XSSL = auth.XSSL
-	commonRequest.XSSLSessionID = auth.XSSLSessionID
-	commonRequest.XSSLClientVerify = auth.XSSLClientVerify
-	commonRequest.XSSLClientDN = auth.XSSLClientDN
-	commonRequest.XSSLClientCN = auth.XSSLClientCN
-	commonRequest.XSSLIssuer = auth.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = auth.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = auth.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = auth.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = auth.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = auth.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = auth.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = auth.XSSLProtocol
-	commonRequest.XSSLCipher = auth.XSSLCipher
-	commonRequest.SSLSerial = auth.SSLSerial
-	commonRequest.SSLFingerprint = auth.SSLFingerprint
 
 	action.RequestChan <- &action.Action{
 		LuaAction:     luaAction,

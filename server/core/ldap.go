@@ -28,7 +28,6 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/model/mfa"
 	"github.com/croessner/nauthilus/server/rediscli"
@@ -56,10 +55,10 @@ type ldapManagerImpl struct {
 //
 // Returns:
 // - string: the username based on the master user mode flag.
-func handleMasterUserMode(auth *AuthState) string {
-	if config.GetFile().GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(auth.Username, config.GetFile().GetServer().GetMasterUser().GetDelimiter())
+func handleMasterUserMode(cfg config.File, auth *AuthState) string {
+	if cfg.GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(auth.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(auth.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
 				return auth.Username
@@ -170,7 +169,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 
@@ -194,7 +193,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		return
 	}
 
-	username := handleMasterUserMode(auth)
+	username := handleMasterUserMode(lm.effectiveCfg(), auth)
 
 	lspan.SetAttributes(
 		attribute.String("base_dn", baseDN),
@@ -202,7 +201,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	)
 
 	// Derive a timeout context for LDAP search
-	dSearch := config.GetFile().GetServer().GetTimeouts().GetLDAPSearch()
+	dSearch := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPSearch()
 	ctxSearch, cancelSearch := context.WithTimeout(auth.Ctx(), dSearch)
 	defer cancelSearch()
 
@@ -296,7 +295,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
 		// Derive a timeout context for LDAP bind/auth
-		dBind := config.GetFile().GetServer().GetTimeouts().GetLDAPBind()
+		dBind := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind()
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
 		defer cancelBind()
 
@@ -327,7 +326,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				lm.effectiveCfg(),
+				lm.effectiveLogger(),
 				definitions.DbgLDAP,
 				definitions.LogKeyGUID, auth.GUID,
 				definitions.LogKeyMsg, err,
@@ -390,7 +391,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		protocol     *config.LDAPSearchProtocol
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromAccount, "ldap_account_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromAccount, "ldap_account_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -398,7 +399,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 
@@ -428,7 +429,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	)
 
 	// Derive a timeout context for LDAP search (account list) using service-scoped context
-	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch()
+	ctxSearch, cancelSearch := util.GetCtxWithDeadlineLDAPSearch(lm.effectiveCfg())
 	defer cancelSearch()
 
 	ldapRequest := &bktype.LDAPRequest{
@@ -481,7 +482,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 	}
 
 	if len(accounts) == 0 {
-		level.Warn(log.Logger).Log(
+		level.Warn(lm.effectiveLogger()).Log(
 			definitions.LogKeyGUID, auth.GUID,
 			definitions.LogKeyMsg, "No accounts found in LDAP backend",
 		)
@@ -513,7 +514,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		ldapError   *ldap.Error
 	)
 
-	stopTimer := stats.PrometheusTimer(definitions.PromStoreTOTP, "ldap_store_totp_request_total")
+	stopTimer := stats.PrometheusTimer(lm.effectiveCfg(), definitions.PromStoreTOTP, "ldap_store_totp_request_total")
 
 	if stopTimer != nil {
 		defer stopTimer()
@@ -521,7 +522,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
-	if protocol, err = config.GetFile().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
 		return
 	}
 
@@ -551,7 +552,7 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 	}
 
 	// Derive a timeout context for LDAP modify using service-scoped context
-	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify()
+	ctxModify, cancelModify := util.GetCtxWithDeadlineLDAPModify(lm.effectiveCfg())
 	defer cancelModify()
 
 	ldapRequest := &bktype.LDAPRequest{

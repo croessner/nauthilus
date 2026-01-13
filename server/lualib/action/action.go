@@ -19,13 +19,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
@@ -39,7 +39,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
-	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -111,10 +110,14 @@ type Worker struct {
 
 	// DoneChan is a buffered channel of type `Done` used to signal the end of a worker.
 	DoneChan chan Done
+
+	cfg config.File
+
+	logger *slog.Logger
 }
 
 // NewWorker initializes and returns a new instance of Worker with preconfigured result mappings and request channel.
-func NewWorker() *Worker {
+func NewWorker(cfg config.File, logger *slog.Logger) *Worker {
 	resultMap := make(map[int]string, 2)
 
 	resultMap[0] = definitions.LuaSuccess
@@ -123,6 +126,8 @@ func NewWorker() *Worker {
 
 	return &Worker{
 		resultMap: resultMap,
+		cfg:       cfg,
+		logger:    logger,
 	}
 }
 
@@ -130,7 +135,7 @@ func NewWorker() *Worker {
 func (aw *Worker) Work(ctx context.Context) {
 	aw.ctx = ctx
 
-	if !config.GetFile().HaveLuaActions() {
+	if !aw.cfg.HaveLuaActions() {
 		return
 	}
 
@@ -159,8 +164,8 @@ func (aw *Worker) Work(ctx context.Context) {
 
 // loadActionScriptsFromConfiguration loads Lua action scripts from the current configuration into the worker instance.
 func (aw *Worker) loadActionScriptsFromConfiguration() {
-	for index := range config.GetFile().GetLua().Actions {
-		aw.loadScriptAction(&config.GetFile().GetLua().Actions[index])
+	for index := range aw.cfg.GetLua().Actions {
+		aw.loadScriptAction(&aw.cfg.GetLua().Actions[index])
 	}
 }
 
@@ -184,7 +189,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 	)
 
 	if scriptCompiled, err = lualib.CompileLua(scriptPath); err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(aw.logger).Log(
 			definitions.LogKeyGUID, aw.luaActionRequest.Session,
 			definitions.LogKeyMsg, "failed to compile Lua script",
 			definitions.LogKeyError, err,
@@ -201,7 +206,7 @@ func (aw *Worker) loadScript(luaAction *LuaScriptAction, scriptName string, scri
 
 // logActionsSummary logs a summary of Lua actions including session details and additional provided key-value data.
 func (aw *Worker) logActionsSummary(logs *lualib.CustomLogKeyValue) {
-	level.Info(log.Logger).Log(
+	level.Info(aw.logger).Log(
 		append([]any{
 			definitions.LogKeyGUID, aw.luaActionRequest.Session,
 			definitions.LogKeyMsg, "Lua actions finished",
@@ -252,7 +257,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		latency := time.Since(startTime)
 		logs := new(lualib.CustomLogKeyValue)
 		logs.Set(definitions.LogKeyLatency, util.FormatDurationMs(latency))
-		level.Info(log.Logger).Log(
+		level.Info(aw.logger).Log(
 			append([]any{
 				definitions.LogKeyGUID, aw.luaActionRequest.Session,
 				definitions.LogKeyMsg, "Lua action handler latency",
@@ -266,7 +271,10 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 		return
 	}
 
-	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaActionNumberOfWorkers()})
+	pool := vmpool.GetManager().GetOrCreate("action:default", vmpool.PoolOptions{
+		MaxVMs: aw.cfg.GetLuaActionNumberOfWorkers(),
+		Config: aw.cfg,
+	})
 
 	L, acqErr := pool.Acquire(aw.ctx)
 	if acqErr != nil {
@@ -354,7 +362,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 4) nauthilus_redis
-	if loader := redislib.LoaderModRedis(reqCtx); loader != nil {
+	if loader := redislib.LoaderModRedis(reqCtx, aw.cfg); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -365,8 +373,8 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 5) nauthilus_ldap (if enabled)
-	if config.GetFile().HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(reqCtx)
+	if aw.cfg.HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(reqCtx, aw.cfg)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -377,7 +385,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(reqCtx); loader != nil {
+	if loader := connmgr.LoaderModPsnet(reqCtx, aw.cfg); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -388,7 +396,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	}
 
 	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(reqCtx); loader != nil {
+	if loader := lualib.LoaderModDNS(reqCtx, aw.cfg); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -401,8 +409,8 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 	// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
-		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(reqCtx)
+		if aw.cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(reqCtx, aw.cfg)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -459,8 +467,8 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
-	if getDefaultEnvironment().GetDevMode() {
-		util.DebugModule(definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
+	if aw.cfg.GetServer().GetEnvironment().GetDevMode() {
+		util.DebugModuleWithCfg(aw.cfg, aw.logger, definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 
 	globals.RawSet(lua.LString(definitions.LuaActionResultOk), lua.LNumber(0))
@@ -476,7 +484,7 @@ func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
 func (aw *Worker) setupRequest(L *lua.LState) *lua.LTable {
 	request := L.NewTable()
 
-	aw.luaActionRequest.CommonRequest.SetupRequest(request)
+	aw.luaActionRequest.CommonRequest.SetupRequest(aw.cfg, request)
 
 	return request
 }
@@ -532,13 +540,13 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 		ssp.End()
 	}()
 
-	stopTimer := stats.PrometheusTimer(definitions.PromAction, getTaskName(aw.actionScripts[index]))
+	stopTimer := stats.PrometheusTimer(aw.cfg, definitions.PromAction, getTaskName(aw.actionScripts[index]))
 
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
-	luaCtx, luaCancel := context.WithTimeout(aw.ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(aw.ctx, aw.cfg.GetServer().GetTimeouts().GetLuaScript())
 
 	L.SetContext(luaCtx)
 
@@ -571,7 +579,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 // It uses the given index to identify the script from a collection of action scripts.
 // Errors encountered while setting up the Lua environment or executing the script are returned.
 func (aw *Worker) executeScript(L *lua.LState, index int, request *lua.LTable) error {
-	if err := lualib.PackagePath(L); err != nil {
+	if err := lualib.PackagePath(L, aw.cfg); err != nil {
 		return err
 	}
 
@@ -626,7 +634,7 @@ func (aw *Worker) logScriptFailure(index int, err error, logs *lualib.CustomLogK
 		}
 	}
 
-	level.Error(log.Logger).Log(parts...)
+	level.Error(aw.logger).Log(parts...)
 }
 
 // createResultLogMessage generates a log message based on the given result code.

@@ -17,9 +17,12 @@ package loopsfx
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/app/redifx"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/stats"
@@ -41,13 +44,19 @@ type StatsService struct {
 }
 
 // NewDefaultStatsService initializes and returns a StatsService with default settings for statistical monitoring tasks.
-func NewDefaultStatsService() *StatsService {
+func NewDefaultStatsService(cfgProvider configfx.Provider, logger *slog.Logger, redisClient redifx.Client) *StatsService {
 	return NewStatsService(
 		definitions.StatsDelay*time.Second,
 		stats.MeasureCPU,
 		func(ctx context.Context) {
 			stats.PrintStats()
-			core.SaveStatsToRedis(ctx)
+
+			snap := cfgProvider.Current()
+			if snap.File == nil {
+				return
+			}
+
+			core.SaveStatsToRedis(ctx, snap.File, logger, redisClient)
 		},
 	)
 }

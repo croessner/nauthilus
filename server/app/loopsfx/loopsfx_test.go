@@ -17,12 +17,23 @@ package loopsfx
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 )
+
+// mockCfgProvider implements configfx.Provider for testing.
+type mockCfgProvider struct {
+	snap configfx.Snapshot
+}
+
+func (m *mockCfgProvider) Current() configfx.Snapshot {
+	return m.snap
+}
 
 func TestStatsServiceStartStop(t *testing.T) {
 	svc := NewStatsService(
@@ -45,8 +56,9 @@ func TestStatsServiceStartStop(t *testing.T) {
 
 func TestBackendMonitoringServiceStartStopWhenDisabled(t *testing.T) {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+	snap := configfx.Snapshot{File: config.GetFile()}
 
-	svc := NewBackendMonitoringService(10 * time.Millisecond)
+	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -73,8 +85,9 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	_ = f.Set(definitions.FeatureBackendServersMonitoring)
 
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{Features: []*config.Feature{f}}})
+	snap := configfx.Snapshot{File: config.GetFile()}
 
-	svc := NewBackendMonitoringService(10 * time.Millisecond)
+	svc := NewBackendMonitoringService(10*time.Millisecond, &mockCfgProvider{snap: snap}, slog.Default())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -88,6 +101,7 @@ func TestBackendMonitoringServiceRestartStopsWhenDisabled(t *testing.T) {
 	}
 
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+	svc.cfgProvider = &mockCfgProvider{snap: configfx.Snapshot{File: config.GetFile()}}
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer stopCancel()

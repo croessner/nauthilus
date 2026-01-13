@@ -47,24 +47,24 @@ func NotifyGETHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 		httpStatusCode = http.StatusOK
 	)
 
-	statusTitle := frontend.GetLocalized(ctx, "Information")
+	statusTitle := frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Information")
 
 	if value, found = ctx.Get(definitions.CtxFailureKey); found {
 		if value.(bool) {
 			httpStatusCode = http.StatusBadRequest
-			statusTitle = frontend.GetLocalized(ctx, "Bad Request")
+			statusTitle = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "Bad Request")
 		}
 	}
 
 	if value, found = ctx.Get(definitions.CtxMessageKey); found {
 		switch what := value.(type) {
 		case error:
-			msg = frontend.GetLocalized(ctx, "An error occurred:") + " " + what.Error()
+			msg = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, "An error occurred:") + " " + what.Error()
 		case string:
-			msg = frontend.GetLocalized(ctx, what)
+			msg = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, what)
 		}
 	} else {
-		msg = frontend.GetLocalized(ctx, ctx.Query("message"))
+		msg = frontend.GetLocalized(ctx, deps.Cfg, deps.Logger, ctx.Query("message"))
 	}
 
 	// Fallback for non-localized messages

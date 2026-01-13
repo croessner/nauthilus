@@ -20,14 +20,12 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
 )
 
 // SetUserAccountMapping writes/updates the username → account mapping in Redis.
-//
-// Core packages should not call `rediscli.GetClient()` directly.
-// This helper uses the backend Redis seam (`getDefaultRedisClient()`).
-func SetUserAccountMapping(ctx context.Context, username, account string) error {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+func SetUserAccountMapping(ctx context.Context, cfg config.File, redisClient rediscli.Client, username, account string) error {
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
-	return getDefaultRedisClient().GetWriteHandle().HSet(ctx, key, username, account).Err()
+	return redisClient.GetWriteHandle().HSet(ctx, key, username, account).Err()
 }

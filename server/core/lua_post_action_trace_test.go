@@ -19,14 +19,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	corepkg "github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/action"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
-	_ = action.NewWorker()
+	_ = action.NewWorker(config.GetFile(), log.GetLogger())
+
+	// Use definitions to avoid unused import
+	_ = definitions.LuaActionPost
 
 	parent := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
@@ -83,6 +89,9 @@ func TestRunLuaPostAction_PropagatesParentSpanContext(t *testing.T) {
 		},
 	}
 
-	corepkg.RunLuaPostAction(args)
+	auth := corepkg.NewAuthStateFromContextWithDeps(nil, corepkg.AuthDeps{
+		Cfg: config.GetFile(),
+	}).(*corepkg.AuthState)
+	auth.RunLuaPostAction(args)
 	<-done
 }

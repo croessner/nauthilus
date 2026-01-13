@@ -35,6 +35,11 @@ var (
 	Logger *slog.Logger
 )
 
+// GetLogger returns the global logger instance.
+func GetLogger() *slog.Logger {
+	return Logger
+}
+
 type dynamicHandlerRoot struct {
 	inner    atomic.Value // stores *handlerHolder
 	instance atomic.Value // stores *stringHolder
@@ -53,6 +58,9 @@ type dynamicHandler struct {
 	root   *dynamicHandlerRoot
 	attrs  []slog.Attr
 	groups []string
+
+	cachedHandler slog.Handler
+	cachedRootVal any
 }
 
 func (h *dynamicHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -82,26 +90,38 @@ func (h *dynamicHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *dynamicHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	next := &dynamicHandler{root: h.root, groups: h.groups}
-	if len(h.attrs) > 0 {
-		next.attrs = append(next.attrs, h.attrs...)
+	if len(attrs) == 0 {
+		return h
 	}
 
-	if len(attrs) > 0 {
-		next.attrs = append(next.attrs, attrs...)
+	next := &dynamicHandler{
+		root:   h.root,
+		groups: h.groups,
+		attrs:  make([]slog.Attr, 0, len(h.attrs)+len(attrs)),
 	}
+
+	next.attrs = append(next.attrs, h.attrs...)
+	next.attrs = append(next.attrs, attrs...)
 
 	return next
 }
 
 func (h *dynamicHandler) WithGroup(name string) slog.Handler {
-	next := &dynamicHandler{root: h.root, attrs: h.attrs}
-	if len(h.groups) > 0 {
-		next.groups = append(next.groups, h.groups...)
+	if name == "" {
+		return h
 	}
 
-	if name != "" {
+	next := &dynamicHandler{
+		root:  h.root,
+		attrs: h.attrs,
+	}
+
+	if len(h.groups) > 0 {
+		next.groups = make([]string, 0, len(h.groups)+1)
+		next.groups = append(next.groups, h.groups...)
 		next.groups = append(next.groups, name)
+	} else {
+		next.groups = []string{name}
 	}
 
 	return next
@@ -115,6 +135,10 @@ func (h *dynamicHandler) current() slog.Handler {
 	v := h.root.inner.Load()
 	if v == nil {
 		return nil
+	}
+
+	if v == h.cachedRootVal && h.cachedHandler != nil {
+		return h.cachedHandler
 	}
 
 	holder, ok := v.(*handlerHolder)
@@ -131,6 +155,9 @@ func (h *dynamicHandler) current() slog.Handler {
 	if len(h.attrs) > 0 {
 		cur = cur.WithAttrs(h.attrs)
 	}
+
+	h.cachedHandler = cur
+	h.cachedRootVal = v
 
 	return cur
 }

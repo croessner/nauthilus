@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -30,6 +31,8 @@ import (
 )
 
 func TestRedisHGet(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name             string
 		key              string
@@ -76,7 +79,7 @@ func TestRedisHGet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -153,7 +156,7 @@ func TestRedisHSet(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -245,7 +248,7 @@ func TestRedisHDel(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -323,7 +326,7 @@ func TestRedisHLen(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -404,7 +407,7 @@ func TestRedisHGetAll(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -504,7 +507,7 @@ func TestRedisHIncrBy(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -597,7 +600,7 @@ func TestRedisHIncrByFloat(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -686,7 +689,7 @@ func TestRedisHExists(t *testing.T) {
 
 	L := lua.NewState()
 
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 
 	defer L.Close()
 
@@ -772,7 +775,7 @@ func TestRedisHMGet(t *testing.T) {
 	}
 
 	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile()))
 	defer L.Close()
 
 	for _, tt := range tests {

@@ -36,7 +36,7 @@ func TestConnectionManager(t *testing.T) {
 	manager = GetConnectionManager()
 
 	t.Run("Register and GetCount", func(t *testing.T) {
-		manager.Register(ctx, "127.0.0.1:8000", "local", "test")
+		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
 		_, ok := manager.GetCount("127.0.0.1:8000")
 		if !ok {
@@ -45,11 +45,11 @@ func TestConnectionManager(t *testing.T) {
 	})
 
 	t.Run("Register existing", func(t *testing.T) {
-		manager.Register(ctx, "127.0.0.1:8000", "local", "test")
+		manager.Register(ctx, config.GetFile(), "127.0.0.1:8000", "local", "test")
 
 		target := "127.0.0.1:8000"
 
-		manager.Register(ctx, target, "remote", "test")
+		manager.Register(ctx, config.GetFile(), target, "remote", "test")
 
 		count, ok := manager.GetCount(target)
 		if !ok || count != 0 {
@@ -69,7 +69,7 @@ func TestConnectionManager(t *testing.T) {
 
 		defer L.Close()
 
-		L.SetGlobal("register", L.NewFunction(manager.luaRegisterTarget(ctx)))
+		L.SetGlobal("register", L.NewFunction(manager.luaRegisterTarget(ctx, config.GetFile())))
 		L.SetGlobal("count", L.NewFunction(manager.luaCountOpenConnections))
 
 		if err := L.DoString(`register("127.0.0.1:9000", "remote", "test")`); err != nil {

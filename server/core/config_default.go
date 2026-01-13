@@ -43,6 +43,11 @@ func SetDefaultConfigFile(cfg config.File) {
 	defaultCfg.Store(cfgHolder{cfg: cfg})
 }
 
+// GetDefaultConfigFile returns the process-wide default config snapshot for core.
+func GetDefaultConfigFile() config.File {
+	return getDefaultConfigFile()
+}
+
 func getDefaultConfigFile() config.File {
 	if v := defaultCfg.Load(); v != nil {
 		if h, ok := v.(cfgHolder); ok {

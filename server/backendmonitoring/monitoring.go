@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	errorspkg "github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/stats"
@@ -40,12 +40,12 @@ type serversAlive struct {
 
 // configForMonitoring retrieves and validates the backend servers configuration for monitoring.
 // Returns a list of backend servers or an error if monitoring is disabled or no servers are configured.
-func configForMonitoring() ([]*config.BackendServer, error) {
-	if !config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
+func configForMonitoring(cfg config.File) ([]*config.BackendServer, error) {
+	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		return nil, errorspkg.ErrFeatureBackendServersMonitoringDisabled
 	}
 
-	backendServers := config.GetFile().GetBackendServers()
+	backendServers := cfg.GetBackendServers()
 	if len(backendServers) == 0 {
 		return nil, errorspkg.ErrMonitoringBackendServersEmpty
 	}
@@ -54,17 +54,17 @@ func configForMonitoring() ([]*config.BackendServer, error) {
 }
 
 // handleError processes the given error, logging messages based on its type and feature availability.
-func handleError(err error) {
-	if !config.GetFile().HasFeature(definitions.FeatureBackendServersMonitoring) {
+func handleError(cfg config.File, logger *slog.Logger, err error) {
+	if !cfg.HasFeature(definitions.FeatureBackendServersMonitoring) {
 		if stderrors.Is(err, errorspkg.ErrFeatureBackendServersMonitoringDisabled) {
-			level.Info(log.Logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
+			level.Info(logger).Log(definitions.LogKeyMsg, "Monitoring feature is not enabled")
 		}
 
 		return
 	}
 
 	if stderrors.Is(err, errorspkg.ErrMonitoringBackendServersEmpty) {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Monitoring backend servers are not configured",
 			definitions.LogKeyError, err,
 		)
@@ -72,8 +72,8 @@ func handleError(err error) {
 }
 
 // logBackendServerError logs an error related to a backend server, including details like host, port, protocol, and the error.
-func logBackendServerError(server *config.BackendServer, err error) {
-	level.Error(log.Logger).Log(
+func logBackendServerError(logger *slog.Logger, server *config.BackendServer, err error) {
+	level.Error(logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Backend server failed: %s:%d (%s)",
 			server.Host, server.Port, server.Protocol),
 		definitions.LogKeyError, err,
@@ -82,8 +82,8 @@ func logBackendServerError(server *config.BackendServer, err error) {
 }
 
 // logBackendServerDebug logs a debug message indicating that a backend server is operational, including its details.
-func logBackendServerDebug(server *config.BackendServer) {
-	level.Info(log.Logger).Log(
+func logBackendServerDebug(logger *slog.Logger, server *config.BackendServer) {
+	level.Info(logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Backend server alive: %s:%d (%s)",
 			server.Host, server.Port, server.Protocol),
 		definitions.LogKeyBackendServer, server,
@@ -110,7 +110,7 @@ func compareServers(servers []*config.BackendServer, servers2 []*config.BackendS
 }
 
 // healthCheckLoop performs periodic health checks on backend servers and updates the list of active servers atomically.
-func healthCheckLoop(servers []*config.BackendServer, oldServers *serversAlive) *serversAlive {
+func healthCheckLoop(cfg config.File, logger *slog.Logger, servers []*config.BackendServer, oldServers *serversAlive) *serversAlive {
 	var wg sync.WaitGroup
 
 	wg.Add(len(servers))
@@ -121,16 +121,16 @@ func healthCheckLoop(servers []*config.BackendServer, oldServers *serversAlive) 
 
 	for _, server := range servers {
 		go func(server *config.BackendServer) {
-			err := monitoring.NewMonitor().CheckBackendConnection(server)
+			err := monitoring.NewMonitor(cfg, logger).CheckBackendConnection(server)
 
 			serversLiveness.mu.Lock()
 			defer serversLiveness.mu.Unlock()
 
 			if err != nil {
-				logBackendServerError(server, err)
+				logBackendServerError(logger, server, err)
 			} else {
 				serversLiveness.servers = append(serversLiveness.servers, server)
-				logBackendServerDebug(server)
+				logBackendServerDebug(logger, server)
 			}
 
 			wg.Done()
@@ -151,10 +151,10 @@ func healthCheckLoop(servers []*config.BackendServer, oldServers *serversAlive) 
 
 // Run executes the backend server monitoring loop until ctx is canceled.
 // On configuration errors the loop does not run (best-effort), but the process continues.
-func Run(ctx context.Context, ticker *time.Ticker) {
-	backendServers, err := configForMonitoring()
+func Run(ctx context.Context, cfg config.File, logger *slog.Logger, ticker *time.Ticker) {
+	backendServers, err := configForMonitoring(cfg)
 	if err != nil {
-		handleError(err)
+		handleError(cfg, logger, err)
 
 		return
 	}
@@ -162,12 +162,12 @@ func Run(ctx context.Context, ticker *time.Ticker) {
 	oldServers := &serversAlive{servers: backendServers}
 
 	core.BackendServers.Update(backendServers)
-	oldServers = healthCheckLoop(backendServers, oldServers)
+	oldServers = healthCheckLoop(cfg, logger, backendServers, oldServers)
 
 	for {
 		select {
 		case <-ticker.C:
-			oldServers = healthCheckLoop(backendServers, oldServers)
+			oldServers = healthCheckLoop(cfg, logger, backendServers, oldServers)
 		case <-ctx.Done():
 			return
 		}

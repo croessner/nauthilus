@@ -29,7 +29,7 @@ func Module() fx.Option {
 	return fx.Options(
 		configfx.Module(),
 		envfx.Module(),
-		logfx.Module(),
+		logfx.Module,
 		redifx.Module(),
 	)
 }

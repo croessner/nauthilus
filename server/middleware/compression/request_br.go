@@ -43,9 +43,9 @@ func (b brReadCloser) Close() error {
 // DecompressBrRequestMiddleware returns a middleware that decompresses HTTP requests with brotli Content-Encoding.
 // It checks if the request has a Content-Encoding header with value "br"/"brotli" and if so, replaces the request body
 // with a decompressed version and clears the encoding header.
-func DecompressBrRequestMiddleware() gin.HandlerFunc {
+func DecompressBrRequestMiddleware(cfg config.File) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		compressionConfig := config.GetFile().GetServer().GetCompression()
+		compressionConfig := cfg.GetServer().GetCompression()
 
 		// Skip if compression is disabled
 		if !compressionConfig.IsEnabled() {

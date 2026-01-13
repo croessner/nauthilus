@@ -30,12 +30,12 @@ import (
 
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/bruteforce"
-	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/log/level"
+	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	"github.com/croessner/nauthilus/server/model/admin"
 	bf "github.com/croessner/nauthilus/server/model/bruteforce"
 	restdto "github.com/croessner/nauthilus/server/model/rest"
@@ -55,27 +55,15 @@ type restAdminDeps struct {
 }
 
 func (d restAdminDeps) effectiveLogger() *slog.Logger {
-	if d.Logger != nil {
-		return d.Logger
-	}
-
-	return getDefaultLogger()
+	return d.Logger
 }
 
 func (d restAdminDeps) effectiveCfg() config.File {
-	if d.Cfg != nil {
-		return d.Cfg
-	}
-
-	return getDefaultConfigFile()
+	return d.Cfg
 }
 
 func (d restAdminDeps) effectiveRedis() rediscli.Client {
-	if d.Redis != nil {
-		return d.Redis
-	}
-
-	return getDefaultRedisClient()
+	return d.Redis
 }
 
 // NewBruteForceListHandler constructs a Gin handler for the BruteForce list endpoint
@@ -84,7 +72,13 @@ func NewBruteForceListHandler(cfg config.File, logger *slog.Logger, redisClient 
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
 	return func(ctx *gin.Context) {
-		handleBruteForceListWithDeps(ctx, deps)
+		if err := deps.validate(); err != nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+
+			return
+		}
+
+		handleBruteForceList(ctx, deps)
 	}
 }
 
@@ -94,7 +88,7 @@ func NewBruteForceFlushHandler(cfg config.File, logger *slog.Logger, redisClient
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
 	return func(ctx *gin.Context) {
-		handleBruteForceRuleFlushWithDeps(ctx, deps)
+		deps.HandleBruteForceFlush(ctx)
 	}
 }
 
@@ -104,7 +98,7 @@ func NewBruteForceFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisC
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
 	return func(ctx *gin.Context) {
-		handleBruteForceRuleFlushAsyncWithDeps(ctx, deps)
+		deps.HandleBruteForceRuleFlushAsync(ctx)
 	}
 }
 
@@ -114,16 +108,17 @@ func NewConfigLoadHandler(cfg config.File, logger *slog.Logger) gin.HandlerFunc 
 	deps := restAdminDeps{Cfg: cfg, Logger: logger}
 
 	return func(ctx *gin.Context) {
-		handleConfigLoadWithDeps(ctx, deps)
+		deps.HandleConfigLoad(ctx)
 	}
 }
 
 // For brief documentation of this file please have a look at the Markdown document REST-API.md.
 
 func (a *AuthState) handleMasterUserMode() string {
-	if a.cfg().GetServer().GetMasterUser().IsEnabled() {
-		if strings.Count(a.Username, a.cfg().GetServer().GetMasterUser().GetDelimiter()) == 1 {
-			parts := strings.Split(a.Username, a.cfg().GetServer().GetMasterUser().GetDelimiter())
+	cfg := a.deps.Cfg
+	if cfg.GetServer().GetMasterUser().IsEnabled() {
+		if strings.Count(a.Username, cfg.GetServer().GetMasterUser().GetDelimiter()) == 1 {
+			parts := strings.Split(a.Username, cfg.GetServer().GetMasterUser().GetDelimiter())
 
 			if !(len(parts[0]) > 0 && len(parts[1]) > 0) {
 				return a.Username
@@ -148,21 +143,6 @@ func (a *AuthState) handleMasterUserMode() string {
 
 // HandleAuthentication handles the authentication logic based on the selected service type.
 func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
-	if a.Service == definitions.ServBasic {
-		var httpBasicAuthOk bool
-
-		// Decode HTTP basic Auth
-		a.Username, a.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
-		if !httpBasicAuthOk {
-			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
-
-			return
-		}
-	} else if a.Service == definitions.ServOryHydra {
-		a.handleMasterUserMode()
-	}
-
 	if a.ListAccounts {
 		allAccountsList := a.ListUserAccounts()
 
@@ -195,6 +175,19 @@ func (a *AuthState) HandleAuthentication(ctx *gin.Context) {
 // ProcessFeatures handles the processing of authentication-related features for a given context.
 // It determines the action to take based on various authentication results and applies the necessary response.
 func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
+	if a.Service == definitions.ServBasic {
+		var httpBasicAuthOk bool
+
+		// Decode HTTP basic Auth
+		a.Username, a.Password, httpBasicAuthOk = ctx.Request.BasicAuth()
+		if !httpBasicAuthOk {
+			ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			ctx.AbortWithError(http.StatusUnauthorized, errors.ErrUnauthorized)
+
+			return true
+		}
+	}
+
 	if a.Service == definitions.ServOryHydra {
 		a.handleMasterUserMode()
 	}
@@ -238,16 +231,44 @@ func (a *AuthState) ProcessFeatures(ctx *gin.Context) (abort bool) {
 
 // ProcessAuthentication handles the authentication logic for all services.
 func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
+	if a.Service == definitions.ServBasic {
+		var httpBasicAuthOk bool
+
+		if a.deps.Cfg.GetServer().GetBasicAuth().IsEnabled() {
+			if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
+				level.Debug(a.deps.Logger).Log(
+					definitions.LogKeyGUID, a.GUID,
+					definitions.LogKeyUsername, a.Username,
+					definitions.LogKeyMsg, "Processing HTTP Basic Auth",
+				)
+			}
+
+			httpBasicAuthOk = mdauth.CheckAndRequireBasicAuth(ctx, a.deps.Cfg)
+		} else {
+			httpBasicAuthOk = true
+		}
+
+		if httpBasicAuthOk {
+			a.AuthOK(ctx)
+		}
+
+		return
+	}
+
 	if a.Service == definitions.ServOryHydra {
 		a.handleMasterUserMode()
 	}
 
 	switch a.HandlePassword(ctx) {
 	case definitions.AuthResultOK:
-		tolerate.GetTolerate().SetIPAddress(a.Ctx(), a.ClientIP, a.Username, true)
+		if a.deps.Tolerate != nil {
+			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.ClientIP, a.Username, true)
+		}
 		a.AuthOK(ctx)
 	case definitions.AuthResultFail:
-		tolerate.GetTolerate().SetIPAddress(a.Ctx(), a.ClientIP, a.Username, false)
+		if a.deps.Tolerate != nil {
+			a.deps.Tolerate.SetIPAddress(a.Ctx(), a.ClientIP, a.Username, false)
+		}
 		a.AuthFail(ctx)
 		ctx.Abort()
 	case definitions.AuthResultTempFail:
@@ -265,13 +286,7 @@ func (a *AuthState) ProcessAuthentication(ctx *gin.Context) {
 }
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis.
-func listBlockedIPAddresses(ctx context.Context, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return listBlockedIPAddressesWithDeps(ctx, deps, filterCmd, guid)
-}
-
-func listBlockedIPAddressesWithDeps(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
+func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedIPAddresses, error) {
 	blockedIPAddresses := &bf.BlockedIPAddresses{}
 
 	if deps.Cfg == nil {
@@ -290,10 +305,11 @@ func listBlockedIPAddressesWithDeps(ctx context.Context, deps restAdminDeps, fil
 		return blockedIPAddresses, err
 	}
 
-	logger := deps.effectiveLogger()
-	key := deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
-
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 	ipAddresses, err := deps.Redis.GetReadHandle().HGetAll(ctx, key).Result()
 	if err != nil {
@@ -319,7 +335,7 @@ func listBlockedIPAddressesWithDeps(ctx context.Context, deps restAdminDeps, fil
 
 			for _, filterIPWanted := range filterCmd.IPAddress {
 				for network, bucket := range ipAddresses {
-					if util.IsInNetwork([]string{network}, guid, filterIPWanted) {
+					if util.IsInNetworkWithCfg(deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
 						filteredIPs[network] = bucket
 
 						break
@@ -337,14 +353,7 @@ func listBlockedIPAddressesWithDeps(ctx context.Context, deps restAdminDeps, fil
 	return blockedIPAddresses, nil
 }
 
-// listBlockedAccounts retrieves a list of blocked user accounts from Redis and returns them along with any potential errors.
-func listBlockedAccounts(ctx context.Context, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedAccounts, error) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return listBlockedAccountsWithDeps(ctx, deps, filterCmd, guid)
-}
-
-func listBlockedAccountsWithDeps(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedAccounts, error) {
+func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.FilterCmd, guid string) (*bf.BlockedAccounts, error) {
 	blockedAccounts := &bf.BlockedAccounts{Accounts: make(map[string][]string)}
 
 	if deps.Cfg == nil {
@@ -364,7 +373,8 @@ func listBlockedAccountsWithDeps(ctx context.Context, deps restAdminDeps, filter
 	}
 
 	logger := deps.effectiveLogger()
-	key := deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
+	cfg := deps.effectiveCfg()
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -411,7 +421,7 @@ func listBlockedAccountsWithDeps(ctx context.Context, deps restAdminDeps, filter
 		for _, account := range accounts {
 			var accountIPs []string
 
-			key = deps.Cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
+			key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + account
 			if accountIPs, err = deps.Redis.GetReadHandle().SMembers(ctx, key).Result(); err != nil {
 				stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -443,21 +453,36 @@ func listBlockedAccountsWithDeps(ctx context.Context, deps restAdminDeps, filter
 	return blockedAccounts, err
 }
 
-// HanldeBruteForceList lists all blocked IP addresses and accounts in response to a brute force attack event.
-func HanldeBruteForceList(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
+func (d restAdminDeps) validate() error {
+	if d.Cfg == nil {
+		return stderrors.New("config is nil")
+	}
 
-	handleBruteForceListWithDeps(ctx, deps)
+	if d.Redis == nil {
+		return stderrors.New("redis client is nil")
+	}
+
+	return nil
 }
 
-func handleBruteForceListWithDeps(ctx *gin.Context, deps restAdminDeps) {
-	logger := deps.effectiveLogger()
+func NewRestAdminDeps(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) restAdminDeps {
+	return restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+}
 
-	if deps.Cfg == nil {
-		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "server misconfigured"})
+func HandleBruteForceList(deps restAdminDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if err := deps.validate(); err != nil {
+			ctx.AbortWithStatus(http.StatusInternalServerError)
 
-		return
+			return
+		}
+
+		handleBruteForceList(ctx, deps)
 	}
+}
+
+func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
+	logger := deps.effectiveLogger()
 
 	// Check if JWT auth is enabled
 	if deps.Cfg.GetServer().GetJWTAuth().IsEnabled() {
@@ -508,12 +533,12 @@ func handleBruteForceListWithDeps(ctx *gin.Context, deps restAdminDeps) {
 		}
 	}
 
-	blockedIPAddresses, err := listBlockedIPAddressesWithDeps(ctx, deps, filterCmd, guid)
+	blockedIPAddresses, err := listBlockedIPAddresses(ctx, deps, filterCmd, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
 
-	blockedAccounts, err := listBlockedAccountsWithDeps(ctx, deps, filterCmd, guid)
+	blockedAccounts, err := listBlockedAccounts(ctx, deps, filterCmd, guid)
 	if err != nil {
 		httpStatusCode = http.StatusInternalServerError
 	}
@@ -532,35 +557,35 @@ func handleBruteForceListWithDeps(ctx *gin.Context, deps restAdminDeps) {
 // This function validates a provided JWT token for required roles when authentication is enabled.
 // If JWT authentication fails, appropriate HTTP error responses are returned, such as Unauthorized or Forbidden.
 // On success, it retrieves the server configuration as JSON and binds it to the request context.
-func HandleConfigLoad(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
+func (deps restAdminDeps) HandleConfigLoad(ctx *gin.Context) {
+	if err := deps.validate(); err != nil {
+		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-	handleConfigLoadWithDeps(ctx, deps)
-}
+		return
+	}
 
-func handleConfigLoadWithDeps(ctx *gin.Context, deps restAdminDeps) {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 
 	// Check if JWT auth is enabled
 	if cfg.GetServer().GetJWTAuth().IsEnabled() {
 		// Extract token
-		tokenString, err := ExtractJWTToken(ctx)
+		tokenString, err := ExtractJWTTokenWithCfg(ctx, cfg)
 		if err == nil {
 			// Validate token
-			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: cfg, Logger: getDefaultLogger(), Redis: rediscli.GetClient()})
+			claims, err := ValidateJWTToken(ctx, tokenString, JWTDeps{Cfg: cfg, Logger: logger, Redis: deps.Redis})
 			if err == nil {
-				// Check if user has the security or admin role
+				// Check if user has the config role
 				hasRequiredRole := false
 				for _, role := range claims.Roles {
-					if role == definitions.RoleAdmin {
+					if role == definitions.RoleSecurity || role == definitions.RoleAdmin {
 						hasRequiredRole = true
 						break
 					}
 				}
 
 				if !hasRequiredRole {
-					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: security or admin"})
+					ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "missing required role: config or admin"})
 
 					return
 				}
@@ -576,16 +601,16 @@ func handleConfigLoadWithDeps(ctx *gin.Context, deps restAdminDeps) {
 		}
 	}
 
-	guid := ctx.GetString(definitions.CtxGUIDKey)
-
-	level.Info(logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Loading configuration")
-
 	jsonBytes, err := cfg.GetConfigFileAsJSON()
 	if err != nil {
-		HandleJSONError(ctx, err)
+		ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to get config as JSON"})
 
 		return
 	}
+
+	guid := ctx.GetString(definitions.CtxGUIDKey)
+
+	level.Info(logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, definitions.ServLoad)
 
 	ctx.JSON(http.StatusOK, &restdto.Result{
 		GUID:      guid,
@@ -595,23 +620,14 @@ func handleConfigLoadWithDeps(ctx *gin.Context, deps restAdminDeps) {
 	})
 }
 
-// HandleUserFlush handles a user cache flush request by processing the input, flushing relevant cache keys, and sending a response.
-func HandleUserFlush(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	handleUserFlushWithDeps(ctx, deps)
-}
-
-// NewUserFlushHandler constructs a Gin handler for the user cache flush endpoint
-// using injected dependencies.
-func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+func HandleConfigLoad(deps restAdminDeps) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		handleUserFlushWithDeps(ctx, deps)
+		deps.HandleConfigLoad(ctx)
 	}
 }
 
-func handleUserFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
+// Flush User
+func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &admin.FlushUserCmd{}
 	logger := deps.effectiveLogger()
@@ -624,7 +640,7 @@ func handleUserFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
 		return
 	}
 
-	removedKeys, noUserAccoundFound := processFlushCacheWithDeps(ctx, userCmd, guid, deps)
+	removedKeys, noUserAccoundFound := processFlushCache(ctx, deps, userCmd, guid)
 
 	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
 
@@ -635,31 +651,41 @@ func handleUserFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
 	sendCacheStatus(ctx, logger, guid, userCmd, statusMsg, removedKeys)
 }
 
+// NewUserFlushHandler constructs a Gin handler for the user cache flush endpoint
+// using injected dependencies.
+func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
+	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+
+	return func(ctx *gin.Context) {
+		deps.HandleUserFlush(ctx)
+	}
+}
+
+func HandleUserFlush(deps restAdminDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		deps.HandleUserFlush(ctx)
+	}
+}
+
 // processFlushCache takes a user command and a GUID and processes the cache flush.
 // It iterates through the backends in the GetFile() and checks if the backend is BackendCache.
 // If it is, it sets useCache to true and calls processUserCmd to process the user command.
 // If there is an error during the cache flush, cacheFlushError is set to true and the loop breaks.
 // It returns cacheFlushError and useCache flags.
-func processFlushCache(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return processFlushCacheWithDeps(ctx, userCmd, guid, deps)
-}
-
-func processFlushCacheWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string, deps restAdminDeps) (removedKeys []string, noUserAccountFound bool) {
+func processFlushCache(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	cfg := deps.effectiveCfg()
 	for _, backendType := range cfg.GetServer().GetBackends() {
 		if backendType.Get() != definitions.BackendCache {
 			continue
 		}
 
-		removedKeys, noUserAccountFound = processUserCmdWithDeps(ctx, userCmd, guid, deps)
+		removedKeys, noUserAccountFound = processUserCmd(ctx, deps, userCmd, guid)
 		if noUserAccountFound {
 			break
 		}
 	}
 
-	return
+	return removedKeys, noUserAccountFound
 }
 
 // processUserCmd processes the user command by performing the following steps:
@@ -668,13 +694,7 @@ func processFlushCacheWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, gu
 // 3. Calls the prepareRedisUserKeys function to set the user keys using the user command and account name.
 // 4. Calls the removeUserFromCache function to remove the user from the cache by providing the user command, user keys, guid, and removeHash flag.
 // 5. Returns false.
-func processUserCmd(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return processUserCmdWithDeps(ctx, userCmd, guid, deps)
-}
-
-func processUserCmdWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid string, deps restAdminDeps) (removedKeys []string, noUserAccountFound bool) {
+func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
 	var (
 		result        int64
 		removeHash    bool
@@ -690,18 +710,18 @@ func processUserCmdWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid 
 	cfg := deps.effectiveCfg()
 
 	// Accept either a username (resolved via USER hash) or a direct account name
-	if accountName = backend.ResolveAccountIdentifier(ctx, userCmd.User, guid); accountName == "" {
+	if accountName = backend.ResolveAccountIdentifier(ctx.Request.Context(), cfg, logger, redisClient, userCmd.User, guid); accountName == "" {
 		return nil, true
 	}
 
-	ipAddresses, userKeys = prepareRedisUserKeysWithDeps(ctx, guid, accountName, deps)
+	ipAddresses, userKeys = prepareRedisUserKeys(ctx, deps, guid, accountName)
 
 	// Remove all buckets (bf) associated with the user
 	for _, ipAddress := range ipAddresses {
-		_, removedIPKeys, err = processBruteForceRulesWithDeps(ctx, &bf.FlushRuleCmd{
+		_, removedIPKeys, err = processBruteForceRules(ctx, deps, &bf.FlushRuleCmd{
 			IPAddress: ipAddress,
 			RuleName:  "*",
-		}, guid, deps)
+		}, guid)
 
 		if err != nil {
 			level.Error(logger).Log(
@@ -746,18 +766,12 @@ func processUserCmdWithDeps(ctx *gin.Context, userCmd *admin.FlushUserCmd, guid 
 		}
 	}
 
-	removedKeys = append(removedKeys, removeUserFromCacheWithDeps(ctx, userCmd, userKeys, guid, removeHash, deps)...)
+	removedKeys = append(removedKeys, removeUserFromCache(ctx, deps, userCmd, userKeys, guid, removeHash)...)
 
 	return removedKeys, noUserAccountFound
 }
 
-func getIPsFromPWHistSet(ctx context.Context, accountName string) ([]string, error) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return getIPsFromPWHistSetWithDeps(ctx, accountName, deps)
-}
-
-func getIPsFromPWHistSetWithDeps(ctx context.Context, accountName string, deps restAdminDeps) ([]string, error) {
+func getIPsFromPWHistSet(ctx context.Context, deps restAdminDeps, accountName string) ([]string, error) {
 	var ips []string
 
 	redisClient := deps.effectiveRedis()
@@ -777,17 +791,11 @@ func getIPsFromPWHistSetWithDeps(ctx context.Context, accountName string, deps r
 }
 
 // prepareRedisUserKeys generates a set of Redis keys related to the provided user and their IPs for cleanup or processing.
-func prepareRedisUserKeys(ctx context.Context, guid string, accountName string) ([]string, config.StringSet) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return prepareRedisUserKeysWithDeps(ctx, guid, accountName, deps)
-}
-
-func prepareRedisUserKeysWithDeps(ctx context.Context, guid string, accountName string, deps restAdminDeps) ([]string, config.StringSet) {
+func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, accountName string) ([]string, config.StringSet) {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 
-	ips, err := getIPsFromPWHistSetWithDeps(ctx, accountName, deps)
+	ips, err := getIPsFromPWHistSet(ctx, deps, accountName)
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -803,7 +811,7 @@ func prepareRedisUserKeysWithDeps(ctx context.Context, guid string, accountName 
 
 	if ips != nil {
 		// Shared scoper used to compute CIDR-scoped identifiers when configured (IPv6)
-		scoper := ipscoper.NewIPScoper()
+		scoper := ipscoper.NewIPScoper().WithCfg(cfg)
 
 		for _, ip := range ips {
 			// Compute scoped identifier for both contexts we need to clean up
@@ -862,7 +870,7 @@ func prepareRedisUserKeysWithDeps(ctx context.Context, guid string, accountName 
 
 	protocols := cfg.GetAllProtocols()
 	for index := range protocols {
-		cacheNames := backend.GetCacheNames(protocols[index], definitions.CacheAll)
+		cacheNames := backend.GetCacheNames(cfg, protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
 			userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
 		}
@@ -875,7 +883,7 @@ func prepareRedisUserKeysWithDeps(ctx context.Context, guid string, accountName 
 // Parameters: ctx is the request context, userCmd contains user info, userKeys is a set of keys to remove,
 // guid is a unique identifier for logs, and removeHash indicates whether to delete the entire hash or specific fields.
 // Returns a slice of strings representing the removed keys.
-func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
+func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool) []string {
 	// Legacy wrapper: delegate to deps-based implementation using injected defaults.
 	return removeUserFromCacheWithDeps(
 		ctx,
@@ -883,7 +891,7 @@ func removeUserFromCache(ctx context.Context, userCmd *admin.FlushUserCmd, userK
 		userKeys,
 		guid,
 		removeHash,
-		restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()},
+		deps,
 	)
 }
 
@@ -966,20 +974,10 @@ func sendCacheStatus(ctx *gin.Context, logger *slog.Logger, guid string, userCmd
 	})
 }
 
-// HandleBruteForceRuleFlush handles the flushing of brute force rules for a given IP address and rule criteria.
-// It processes the request, binds JSON input, validates data, performs the flush operation, and returns the result.
-// The function logs the operation details, including rule applicability, flushed keys, and any encountered errors.
-func HandleBruteForceRuleFlush(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	handleBruteForceRuleFlushWithDeps(ctx, deps)
-}
-
-func handleBruteForceRuleFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
+func (deps restAdminDeps) HandleBruteForceFlush(ctx *gin.Context) {
 	var (
-		ruleFlushError bool
-		removedKeys    []string
-		err            error
+		removedKeys []string
+		err         error
 	)
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
@@ -997,7 +995,7 @@ func handleBruteForceRuleFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
 
 	level.Info(logger).Log(definitions.LogKeyGUID, guid, "ip_address", ipCmd.IPAddress)
 
-	ruleFlushError, removedKeys, err = processBruteForceRulesWithDeps(ctx, ipCmd, guid, deps)
+	_, removedKeys, err = processBruteForceRules(ctx, deps, ipCmd, guid)
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -1011,7 +1009,7 @@ func handleBruteForceRuleFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
 
 	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
 
-	if ruleFlushError || len(removedKeys) == 0 {
+	if len(removedKeys) == 0 {
 		statusMsg = "not flushed"
 	}
 
@@ -1034,6 +1032,13 @@ func handleBruteForceRuleFlushWithDeps(ctx *gin.Context, deps restAdminDeps) {
 	})
 }
 
+// HandleBruteForceRuleFlush handles the flushing of brute force rules for a given IP address and rule criteria.
+func HandleBruteForceRuleFlush(deps restAdminDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		deps.HandleBruteForceFlush(ctx)
+	}
+}
+
 // --- Async job infrastructure ---
 
 const (
@@ -1047,7 +1052,7 @@ const (
 // They preserve default behavior in production builds but can be overridden in tests.
 var (
 	genJobID             = generateJobID
-	asyncStarterWithDeps = startAsyncWithDeps
+	asyncStarterWithDeps = startAsync
 	nowFunc              = time.Now
 )
 
@@ -1085,8 +1090,8 @@ func generateJobID() string {
 	return fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(b))
 }
 
-// createAsyncJobWithDeps persists a new job with QUEUED status and TTL.
-func createAsyncJobWithDeps(ctx context.Context, jobType string, deps asyncJobDeps) (string, error) {
+// createAsyncJob persists a new job with QUEUED status and TTL.
+func createAsyncJob(ctx context.Context, jobType string, deps asyncJobDeps) (string, error) {
 	if err := deps.validate(); err != nil {
 		return "", err
 	}
@@ -1118,8 +1123,8 @@ func createAsyncJobWithDeps(ctx context.Context, jobType string, deps asyncJobDe
 	return jobID, nil
 }
 
-// startAsyncWithDeps runs fn in a background goroutine using the service root context.
-func startAsyncWithDeps(deps asyncJobDeps, jobID string, guid string, fn func(context.Context) (int, []string, error)) {
+// startAsync runs fn in a background goroutine using the service root context.
+func startAsync(deps asyncJobDeps, jobID string, guid string, fn func(context.Context) (int, []string, error)) {
 	if err := deps.validate(); err != nil {
 		level.Error(deps.Logger).Log(definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "async job misconfigured", definitions.LogKeyError, err)
 
@@ -1175,17 +1180,11 @@ func NewAsyncJobStatusHandler(cfg config.File, logger *slog.Logger, redisClient 
 	deps := asyncJobDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
 
 	return func(ctx *gin.Context) {
-		handleAsyncJobStatusWithDeps(ctx, deps)
+		deps.HandleAsyncJobStatus(ctx)
 	}
 }
 
-// HandleAsyncJobStatus keeps the legacy call signature for non-migrated call sites.
-func HandleAsyncJobStatus(ctx *gin.Context) {
-	deps := asyncJobDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-	handleAsyncJobStatusWithDeps(ctx, deps)
-}
-
-func handleAsyncJobStatusWithDeps(ctx *gin.Context, deps asyncJobDeps) {
+func (deps asyncJobDeps) HandleAsyncJobStatus(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	if err := deps.validate(); err != nil {
@@ -1223,39 +1222,34 @@ func handleAsyncJobStatusWithDeps(ctx *gin.Context, deps asyncJobDeps) {
 	})
 }
 
-// HandleUserFlushAsync enqueues a user flush as a background job and returns 202 with jobId.
-func HandleUserFlushAsync(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	handleUserFlushAsyncWithDeps(ctx, deps)
-}
-
 // NewUserFlushAsyncHandler constructs a Gin handler for the async user cache flush endpoint
 // using injected dependencies.
 func NewUserFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
 	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+
 	return func(ctx *gin.Context) {
-		handleUserFlushAsyncWithDeps(ctx, deps)
+		deps.HandleUserFlushAsync(ctx)
 	}
 }
 
-func handleUserFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps) {
+func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &admin.FlushUserCmd{}
 	logger := deps.effectiveLogger()
 
 	jobDeps := asyncJobDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis}
-	jobID, err := createAsyncJobWithDeps(ctx.Request.Context(), "CACHE_FLUSH", jobDeps)
+	jobID, err := createAsyncJob(ctx.Request.Context(), "CACHE_FLUSH", jobDeps)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
 		return
 	}
 
-	asyncStarterWithDeps(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
+	startAsync(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
 		gctx := &gin.Context{}
 		gctx.Request = ctx.Request.Clone(base)
-		removedKeys, _ := processFlushCacheWithDeps(gctx, userCmd, guid, deps)
+		removedKeys, _ := processFlushCache(gctx, deps, userCmd, guid)
+
 		return len(removedKeys), removedKeys, nil
 	})
 
@@ -1278,14 +1272,14 @@ func handleUserFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps) {
 	})
 }
 
-// HandleBruteForceRuleFlushAsync enqueues a brute-force flush job and returns 202 with jobId.
-func HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	handleBruteForceRuleFlushAsyncWithDeps(ctx, deps)
+// HandleUserFlushAsync enqueues a user flush as a background job and returns 202 with jobId.
+func HandleUserFlushAsync(deps restAdminDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		deps.HandleUserFlushAsync(ctx)
+	}
 }
 
-func handleBruteForceRuleFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps) {
+func (deps restAdminDeps) HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	ipCmd := &bf.FlushRuleCmd{}
 
@@ -1296,7 +1290,7 @@ func handleBruteForceRuleFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps
 	}
 
 	jobDeps := asyncJobDeps{Cfg: deps.Cfg, Logger: deps.Logger, Redis: deps.Redis}
-	jobID, err := createAsyncJobWithDeps(ctx.Request.Context(), "BF_FLUSH", jobDeps)
+	jobID, err := createAsyncJob(ctx.Request.Context(), "BF_FLUSH", jobDeps)
 
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
@@ -1304,10 +1298,10 @@ func handleBruteForceRuleFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps
 		return
 	}
 
-	asyncStarterWithDeps(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
+	startAsync(jobDeps, jobID, guid, func(base context.Context) (int, []string, error) {
 		gctx := &gin.Context{}
 		gctx.Request = ctx.Request.Clone(base)
-		_, removed, err := processBruteForceRulesWithDeps(gctx, ipCmd, guid, deps)
+		_, removed, err := processBruteForceRules(gctx, deps, ipCmd, guid)
 
 		return len(removed), removed, err
 	})
@@ -1323,101 +1317,23 @@ func handleBruteForceRuleFlushAsyncWithDeps(ctx *gin.Context, deps restAdminDeps
 	})
 }
 
-func createBucketManagerWithDeps(ctx context.Context, guid string, ipAddress string, protocol string, oidcCID string, deps restAdminDeps) bruteforce.BucketManager {
+// HandleBruteForceRuleFlushAsync enqueues a brute-force flush job and returns 202 with jobId.
+func HandleBruteForceRuleFlushAsync(deps restAdminDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		deps.HandleBruteForceRuleFlushAsync(ctx)
+	}
+}
+
+func createBucketManager(ctx context.Context, deps restAdminDeps, guid string, ipAddress string, protocol string, oidcCID string) bruteforce.BucketManager {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 	redisClient := deps.effectiveRedis()
 
-	bm := bruteforce.NewBucketManagerWithDeps(ctx, guid, ipAddress, bruteforce.BucketManagerDeps{Cfg: cfg, Logger: logger, Redis: redisClient})
-
-	// Set the protocol if specified
-	if protocol != "" {
-		bm = bm.WithProtocol(protocol)
-	}
-
-	// Set the OIDC Client ID if specified
-	if oidcCID != "" {
-		bm = bm.WithOIDCCID(oidcCID)
-	}
-
-	return bm
-}
-
-// deleteKeyIfExists checks if a Redis key exists, deletes it if present, and returns the key or error if any occurs.
-func deleteKeyIfExists(ctx context.Context, key string, guid string) (string, error) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return deleteKeyIfExistsWithDeps(ctx, key, guid, deps)
-}
-
-func deleteKeyIfExistsWithDeps(ctx context.Context, key string, guid string, deps restAdminDeps) (string, error) {
-	logger := deps.effectiveLogger()
-	redisClient := deps.effectiveRedis()
-
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	result, err := redisClient.GetWriteHandle().Unlink(ctx, key).Result()
-	if err != nil {
-		return "", err
-	}
-
-	if result > 0 {
-		level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
-
-		return key, nil
-	}
-
-	return "", nil
-}
-
-// bulkUnlink removes all provided keys using a single write pipeline with UNLINK.
-// Returns the subset of keys that were actually removed.
-func bulkUnlink(ctx context.Context, guid string, keys []string) ([]string, error) {
-	deps := restAdminDeps{Cfg: getDefaultConfigFile(), Logger: getDefaultLogger(), Redis: getDefaultRedisClient()}
-
-	return bulkUnlinkWithDeps(ctx, guid, keys, deps)
-}
-
-func bulkUnlinkWithDeps(ctx context.Context, guid string, keys []string, deps restAdminDeps) ([]string, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-
-	logger := deps.effectiveLogger()
-	redisClient := deps.effectiveRedis()
-
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	pipe := redisClient.GetWriteHandle().Pipeline()
-	for _, k := range keys {
-		pipe.Unlink(ctx, k)
-	}
-
-	cmds, err := pipe.Exec(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	removed := make([]string, 0, len(keys))
-	for i, k := range keys {
-		if i < len(cmds) {
-			if intCmd, ok := cmds[i].(*redis.IntCmd); ok {
-				if n, _ := intCmd.Result(); n > 0 {
-					removed = append(removed, k)
-					level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", k, "status", "flushed")
-				}
-			}
-		}
-	}
-
-	return removed, nil
-}
-
-// createBucketManager creates a new bucket manager with the given parameters.
-func createBucketManager(ctx context.Context, guid string, ipAddress string, protocol string, oidcCID string) bruteforce.BucketManager {
-	var bm bruteforce.BucketManager
-
-	bm = bruteforce.NewBucketManager(ctx, guid, ipAddress)
+	bm := bruteforce.NewBucketManagerWithDeps(ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
+		Cfg:    cfg,
+		Logger: logger,
+		Redis:  redisClient,
+	})
 
 	// Set the protocol if specified
 	if protocol != "" {
@@ -1442,54 +1358,7 @@ func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *bf.FlushRuleCmd
 }
 
 // iterateCombinations processes combinations of protocols and OIDC Client IDs defined in a brute force rule.
-// It iterates through the Cartesian product of protocol and OIDC CID filters, applying the rule's logic.
-// If no protocol filters are set, it iterates only through OIDC CIDs as a fallback.
-// Adds a final safety net to ensure every protocol in the configuration file is processed.
-// Returns a slice of removed entries and an error if any issues occur.
-func iterateCombinations(ctx *gin.Context, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
-	// 1) Cartesian product of FilterByProtocol × FilterByOIDCCID
-	for _, proto := range rule.FilterByProtocol {
-		oidcCids := rule.FilterByOIDCCID
-		if len(oidcCids) == 0 {
-			oidcCids = []string{""} // protocol-only variant
-		}
-
-		for _, cid := range oidcCids {
-			bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, proto, cid)
-
-			var err error
-			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
-				return removed, err
-			}
-		}
-	}
-
-	// 2) OIDC-CID only (when no protocol filters are present)
-	if len(rule.FilterByProtocol) == 0 {
-		for _, cid := range rule.FilterByOIDCCID {
-			bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, "", cid)
-
-			var err error
-			if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
-				return removed, err
-			}
-		}
-	}
-
-	// 3) Safety net: iterate over every configured protocol
-	for _, proto := range getDefaultConfigFile().GetAllProtocols() {
-		bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, proto, "")
-
-		var err error
-		if removed, err = flushForBucket(ctx, bm, rule, cmd.RuleName, removed); err != nil {
-			return removed, err
-		}
-	}
-
-	return removed, nil
-}
-
-func iterateCombinationsWithDeps(ctx *gin.Context, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule, removed []string, deps restAdminDeps) ([]string, error) {
+func iterateCombinations(ctx *gin.Context, deps restAdminDeps, guid string, cmd *bf.FlushRuleCmd, rule *config.BruteForceRule, removed []string) ([]string, error) {
 	cfg := deps.effectiveCfg()
 
 	// 1) Cartesian product of FilterByProtocol × FilterByOIDCCID
@@ -1500,10 +1369,10 @@ func iterateCombinationsWithDeps(ctx *gin.Context, guid string, cmd *bf.FlushRul
 		}
 
 		for _, cid := range oidcCids {
-			bm := createBucketManagerWithDeps(ctx.Request.Context(), guid, cmd.IPAddress, proto, cid, deps)
+			bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, proto, cid)
 
 			var err error
-			if removed, err = flushForBucketWithDeps(ctx, bm, rule, cmd.RuleName, removed, deps); err != nil {
+			if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
 				return removed, err
 			}
 		}
@@ -1512,10 +1381,10 @@ func iterateCombinationsWithDeps(ctx *gin.Context, guid string, cmd *bf.FlushRul
 	// 2) OIDC-CID only (when no protocol filters are present)
 	if len(rule.FilterByProtocol) == 0 {
 		for _, cid := range rule.FilterByOIDCCID {
-			bm := createBucketManagerWithDeps(ctx.Request.Context(), guid, cmd.IPAddress, "", cid, deps)
+			bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, "", cid)
 
 			var err error
-			if removed, err = flushForBucketWithDeps(ctx, bm, rule, cmd.RuleName, removed, deps); err != nil {
+			if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
 				return removed, err
 			}
 		}
@@ -1523,11 +1392,76 @@ func iterateCombinationsWithDeps(ctx *gin.Context, guid string, cmd *bf.FlushRul
 
 	// 3) Safety net: iterate over every configured protocol
 	for _, proto := range cfg.GetAllProtocols() {
-		bm := createBucketManagerWithDeps(ctx.Request.Context(), guid, cmd.IPAddress, proto, "", deps)
+		bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, proto, "")
 
 		var err error
-		if removed, err = flushForBucketWithDeps(ctx, bm, rule, cmd.RuleName, removed, deps); err != nil {
+		if removed, err = flushForBucket(ctx, deps, bm, rule, cmd.RuleName, removed); err != nil {
 			return removed, err
+		}
+	}
+
+	return removed, nil
+}
+
+func deleteKeyIfExists(ctx context.Context, deps restAdminDeps, key string, guid string) (string, error) {
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+	redisClient := deps.effectiveRedis()
+
+	stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
+	defer cancel()
+
+	result, err := redisClient.GetWriteHandle().Unlink(dCtx, key).Result()
+	if err != nil {
+		return "", err
+	}
+
+	if result > 0 {
+		level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", key, "status", "flushed")
+
+		return key, nil
+	}
+
+	return "", nil
+}
+
+// bulkUnlink removes all provided keys using a single write pipeline with UNLINK.
+// Returns the subset of keys that were actually removed.
+func bulkUnlink(ctx context.Context, deps restAdminDeps, guid string, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	logger := deps.effectiveLogger()
+	cfg := deps.effectiveCfg()
+	redisClient := deps.effectiveRedis()
+
+	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+	pipe := redisClient.GetWriteHandle().Pipeline()
+	for _, k := range keys {
+		pipe.Unlink(ctx, k)
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
+	defer cancel()
+
+	cmds, err := pipe.Exec(dCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	removed := make([]string, 0, len(keys))
+	for i, k := range keys {
+		if i < len(cmds) {
+			if intCmd, ok := cmds[i].(*redis.IntCmd); ok {
+				if n, _ := intCmd.Result(); n > 0 {
+					removed = append(removed, k)
+					level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", k, "status", "flushed")
+				}
+			}
 		}
 	}
 
@@ -1535,7 +1469,7 @@ func iterateCombinationsWithDeps(ctx *gin.Context, guid string, cmd *bf.FlushRul
 }
 
 // flushForBucket deletes brute force data for a specific rule and updates the list of removed keys. Returns updated keys and error.
-func flushForBucket(ctx *gin.Context, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string, removed []string) ([]string, error) {
+func flushForBucket(ctx *gin.Context, deps restAdminDeps, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string, removed []string) ([]string, error) {
 	if key, err := bm.DeleteIPBruteForceRedis(rule, ruleName); err != nil {
 		return removed, err
 	} else if key != "" {
@@ -1544,24 +1478,7 @@ func flushForBucket(ctx *gin.Context, bm bruteforce.BucketManager, rule *config.
 
 	if bucketKey := bm.GetBruteForceBucketRedisKey(rule); bucketKey != "" {
 		var err error
-		if removed, err = flushKey(ctx, bucketKey, bm.GetBruteForceName(), removed); err != nil {
-			return removed, err
-		}
-	}
-
-	return removed, nil
-}
-
-func flushForBucketWithDeps(ctx *gin.Context, bm bruteforce.BucketManager, rule *config.BruteForceRule, ruleName string, removed []string, deps restAdminDeps) ([]string, error) {
-	if key, err := bm.DeleteIPBruteForceRedis(rule, ruleName); err != nil {
-		return removed, err
-	} else if key != "" {
-		removed = append(removed, key)
-	}
-
-	if bucketKey := bm.GetBruteForceBucketRedisKey(rule); bucketKey != "" {
-		var err error
-		if removed, err = flushKeyWithDeps(ctx, bucketKey, bm.GetBruteForceName(), removed, deps); err != nil {
+		if removed, err = flushKey(ctx, deps, bucketKey, bm.GetBruteForceName(), removed); err != nil {
 			return removed, err
 		}
 	}
@@ -1570,18 +1487,8 @@ func flushForBucketWithDeps(ctx *gin.Context, bm bruteforce.BucketManager, rule 
 }
 
 // flushKey deletes a Redis key if it exists, appends the removed key to a list, and returns the updated list with an error if any.
-func flushKey(ctx *gin.Context, key string, guid string, removed []string) ([]string, error) {
-	if rm, err := deleteKeyIfExists(ctx.Request.Context(), key, guid); err != nil {
-		return removed, err
-	} else if rm != "" {
-		removed = append(removed, rm)
-	}
-
-	return removed, nil
-}
-
-func flushKeyWithDeps(ctx *gin.Context, key string, guid string, removed []string, deps restAdminDeps) ([]string, error) {
-	if rm, err := deleteKeyIfExistsWithDeps(ctx.Request.Context(), key, guid, deps); err != nil {
+func flushKey(ctx *gin.Context, deps restAdminDeps, key string, guid string, removed []string) ([]string, error) {
+	if rm, err := deleteKeyIfExists(ctx.Request.Context(), deps, key, guid); err != nil {
 		return removed, err
 	} else if rm != "" {
 		removed = append(removed, rm)
@@ -1592,50 +1499,7 @@ func flushKeyWithDeps(ctx *gin.Context, key string, guid string, removed []strin
 
 // processBruteForceRules processes and flushes brute force rules based on the provided command and context.
 // It evaluates rule applicability, flushes matched rules, and removes derived and tolerable combinations.
-func processBruteForceRules(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
-	var trSuffixes = []string{":P", ":N"}
-
-	// Detect address family once – saves many To4() calls later
-	ip := net.ParseIP(cmd.IPAddress)
-	isIPv4 := ip.To4() != nil
-
-	// Phase 1: pre-filter rules that could possibly match
-	for _, rule := range getDefaultConfigFile().GetBruteForceRules() {
-		if !isRuleApplicable(rule, isIPv4, cmd) {
-			continue
-		}
-
-		// Phase 2: flush the exact combination given by the user
-		bm := createBucketManager(ctx.Request.Context(), guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
-		if removed, err = flushForBucket(ctx, bm, &rule, cmd.RuleName, removed); err != nil {
-			return true, removed, err
-		}
-
-		// Phase 3: flush all derived combinations (rule filters + safety net)
-		if removed, err = iterateCombinations(ctx, guid, cmd, &rule, removed); err != nil {
-			return true, removed, err
-		}
-	}
-
-	// Phase 4: always drop tolerate-bucket keys for the IP using a single pipeline
-	base := getDefaultConfigFile().GetServer().GetRedis().GetPrefix() + "bf:TR:" + cmd.IPAddress
-	keys := make([]string, 0, 1+len(trSuffixes))
-	keys = append(keys, base)
-
-	for _, s := range trSuffixes {
-		keys = append(keys, base+s)
-	}
-
-	if removedTr, berr := bulkUnlink(ctx.Request.Context(), guid, keys); berr != nil {
-		return true, removed, berr
-	} else if len(removedTr) > 0 {
-		removed = append(removed, removedTr...)
-	}
-
-	return false, removed, nil
-}
-
-func processBruteForceRulesWithDeps(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid string, deps restAdminDeps) (hadError bool, removed []string, err error) {
+func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushRuleCmd, guid string) (hadError bool, removed []string, err error) {
 	cfg := deps.effectiveCfg()
 
 	var trSuffixes = []string{":P", ":N"}
@@ -1651,13 +1515,13 @@ func processBruteForceRulesWithDeps(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid
 		}
 
 		// Phase 2: flush the exact combination given by the user
-		bm := createBucketManagerWithDeps(ctx.Request.Context(), guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID, deps)
-		if removed, err = flushForBucketWithDeps(ctx, bm, &rule, cmd.RuleName, removed, deps); err != nil {
+		bm := createBucketManager(ctx.Request.Context(), deps, guid, cmd.IPAddress, cmd.Protocol, cmd.OIDCCID)
+		if removed, err = flushForBucket(ctx, deps, bm, &rule, cmd.RuleName, removed); err != nil {
 			return true, removed, err
 		}
 
 		// Phase 3: flush all derived combinations (rule filters + safety net)
-		if removed, err = iterateCombinationsWithDeps(ctx, guid, cmd, &rule, removed, deps); err != nil {
+		if removed, err = iterateCombinations(ctx, deps, guid, cmd, &rule, removed); err != nil {
 			return true, removed, err
 		}
 	}
@@ -1671,7 +1535,7 @@ func processBruteForceRulesWithDeps(ctx *gin.Context, cmd *bf.FlushRuleCmd, guid
 		keys = append(keys, base+s)
 	}
 
-	if removedTr, berr := bulkUnlinkWithDeps(ctx.Request.Context(), guid, keys, deps); berr != nil {
+	if removedTr, berr := bulkUnlink(ctx.Request.Context(), deps, guid, keys); berr != nil {
 		return true, removed, berr
 	} else if len(removedTr) > 0 {
 		removed = append(removed, removedTr...)

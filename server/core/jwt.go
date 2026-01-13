@@ -292,7 +292,9 @@ func ValidateJWTToken(ctx context.Context, tokenString string, deps JWTDeps) (*j
 	if jwtConfig.IsStoreInRedisEnabled() {
 		storedToken, err := GetTokenFromRedis(ctx, claims.Username, deps)
 		if err != nil {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				deps.Cfg,
+				deps.Logger,
 				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token not found in Redis",
 				"error", err,
@@ -304,7 +306,9 @@ func ValidateJWTToken(ctx context.Context, tokenString string, deps JWTDeps) (*j
 
 		// Verify that the token matches the one in Redis
 		if storedToken != tokenString {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				deps.Cfg,
+				deps.Logger,
 				definitions.DbgJWT,
 				definitions.LogKeyMsg, "Token does not match the one in Redis",
 				"username", claims.Username,
@@ -738,7 +742,9 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 
 			storedRefreshToken, err := GetRefreshTokenFromRedis(ctx, claims.Subject, repl)
 			if err != nil {
-				util.DebugModule(
+				util.DebugModuleWithCfg(
+					deps.Cfg,
+					deps.Logger,
 					definitions.DbgJWT,
 					definitions.LogKeyMsg, "Refresh token not found in Redis",
 					"error", err,
@@ -751,7 +757,9 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 
 			// Verify that the refresh token matches the one in Redis
 			if storedRefreshToken != refreshToken {
-				util.DebugModule(
+				util.DebugModuleWithCfg(
+					deps.Cfg,
+					deps.Logger,
 					definitions.DbgJWT,
 					definitions.LogKeyMsg, "Refresh token does not match the one in Redis",
 					"username", claims.Subject,

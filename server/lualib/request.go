@@ -20,18 +20,12 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/util"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // commonRequestPool is a sync.Pool for CommonRequest objects to reduce memory allocations.
 var commonRequestPool = sync.Pool{
 	New: func() any {
-		util.DebugModule(
-			definitions.DbgLua,
-			definitions.LogKeyMsg, "Creating new CommonRequest object",
-		)
-
 		return &CommonRequest{}
 	},
 }
@@ -177,6 +171,15 @@ type CommonRequest struct {
 
 	// SSLFingerprint represents the SSL certificate's fingerprint for the client in the request.
 	SSLFingerprint string
+
+	// BackendServers holds the list of backend servers.
+	BackendServers []*config.BackendServer
+
+	// UsedBackendAddr holds the address of the backend server used for authentication.
+	UsedBackendAddr *string
+
+	// UsedBackendPort holds the port of the backend server used for authentication.
+	UsedBackendPort *int
 }
 
 // Reset resets all fields of the CommonRequest to their zero values.
@@ -224,15 +227,22 @@ func (c *CommonRequest) Reset() {
 	c.XSSLCipher = ""
 	c.SSLSerial = ""
 	c.SSLFingerprint = ""
+	c.BackendServers = nil
+	c.UsedBackendAddr = nil
+	c.UsedBackendPort = nil
 }
 
 // SetupRequest sets up the request object with the common request properties
-func (c *CommonRequest) SetupRequest(request *lua.LTable) *lua.LTable {
+func (c *CommonRequest) SetupRequest(cfg config.File, request *lua.LTable) *lua.LTable {
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().GetServer().GetLog().GetLogLevelName()
+	logLevel := ""
 
-	if config.GetFile().GetServer().GetLog().IsLogFormatJSON() {
-		logFormat = definitions.LogFormatJSON
+	if cfg != nil {
+		logLevel = cfg.GetServer().GetLog().GetLogLevelName()
+
+		if cfg.GetServer().GetLog().IsLogFormatJSON() {
+			logFormat = definitions.LogFormatJSON
+		}
 	}
 
 	request.RawSet(lua.LString(definitions.LuaRequestDebug), lua.LBool(c.Debug))

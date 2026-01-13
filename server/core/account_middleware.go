@@ -16,9 +16,12 @@
 package core
 
 import (
+	"log/slog"
+
 	"github.com/croessner/nauthilus/server/backend"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 )
@@ -29,12 +32,12 @@ import (
 // 2) If a username is available (header or BasicAuth), try local cache first.
 // 3) Fallback to Redis lookup.
 // Only the plain account string is stored; no additional fields are added.
-func AccountMiddleware() gin.HandlerFunc { //nolint:ireturn
+func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc { //nolint:ireturn
 	return func(c *gin.Context) {
 		guid := c.GetString(definitions.CtxGUIDKey)
 
 		// Derive username early for logging purposes
-		username := c.GetHeader(config.GetFile().GetUsername())
+		username := c.GetHeader(cfg.GetUsername())
 		if username == "" {
 			// Try HTTP BasicAuth as a secondary source
 			if u, _, ok := c.Request.BasicAuth(); ok {
@@ -43,7 +46,9 @@ func AccountMiddleware() gin.HandlerFunc { //nolint:ireturn
 		}
 
 		if v, ok := c.Get(definitions.CtxAccountKey); ok && v != nil {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				cfg,
+				logger,
 				definitions.DbgAccount,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, username,
@@ -58,7 +63,9 @@ func AccountMiddleware() gin.HandlerFunc { //nolint:ireturn
 		}
 
 		if username == "" {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				cfg,
+				logger,
 				definitions.DbgAccount,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "No username available to resolve account",
@@ -72,14 +79,14 @@ func AccountMiddleware() gin.HandlerFunc { //nolint:ireturn
 		var source string
 
 		// Prefer cached mapping (in-process/Redis) with bounded deadline
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(c)
-		account := backend.GetUserAccountFromCache(dCtx, username, guid)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(c, cfg)
+		account := backend.GetUserAccountFromCache(dCtx, cfg, logger, redisClient, username, guid)
 		cancel()
 
 		if account == "" {
 			// Final fallback: direct Redis lookup with bounded deadline
-			dCtx2, cancel2 := util.GetCtxWithDeadlineRedisRead(c)
-			acc2, _ := backend.LookupUserAccountFromRedis(dCtx2, username)
+			dCtx2, cancel2 := util.GetCtxWithDeadlineRedisRead(c, cfg)
+			acc2, _ := backend.LookupUserAccountFromRedis(dCtx2, cfg, redisClient, username)
 			cancel2()
 			account = acc2
 
@@ -93,7 +100,9 @@ func AccountMiddleware() gin.HandlerFunc { //nolint:ireturn
 		if account != "" {
 			c.Set(definitions.CtxAccountKey, account)
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				cfg,
+				logger,
 				definitions.DbgAccount,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyUsername, username,

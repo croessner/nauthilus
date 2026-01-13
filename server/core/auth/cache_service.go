@@ -17,10 +17,8 @@ package auth
 
 import (
 	"github.com/croessner/nauthilus/server/backend"
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 )
 
@@ -52,16 +50,15 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 	}
 
 	ppc := auth.CreatePositivePasswordCache()
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
+	key := auth.Cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 	// Write hash with TTL
-	backend.SaveUserDataToRedis(auth.Ctx(), auth.GUID, key, config.GetFile().GetServer().GetRedis().GetPosCacheTTL(), ppc)
+	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)
 
 	// Metric is incremented inside SaveUserDataToRedis; keep a debug log here for parity
-	level.Debug(log.Logger).Log(
+	level.Debug(auth.Logger()).Log(
 		definitions.LogKeyGUID, auth.GUID,
 		definitions.LogKeyMsg, "Stored positive cache to redis",
-		"key", key,
 	)
 
 	return nil

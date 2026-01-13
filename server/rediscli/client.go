@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"log/slog"
 	"os"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -101,7 +102,7 @@ func RedisTLSOptions(tlsCfg *config.TLS) *tls.Config {
 // usage:
 //
 //	client := newRedisFailoverClient(true)
-func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
+func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, slavesOnly bool) (redisHandle *redis.Client) {
 	fo := &redis.FailoverOptions{
 		MasterName:       redisCfg.GetSentinel().GetMasterName(),
 		SentinelAddrs:    redisCfg.GetSentinel().GetAddresses(),
@@ -143,7 +144,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 	instrumentRedisIfEnabled(redisHandle)
 
 	// Attach client-side batching hook if enabled
-	attachBatchingHookIfEnabled(redisHandle)
+	attachBatchingHookIfEnabled(cfg, logger, redisHandle)
 
 	return
 }
@@ -152,7 +153,7 @@ func newRedisFailoverClient(redisCfg *config.Redis, slavesOnly bool) (redisHandl
 // The client is created using the redis.NewClient function from the "github.com/go-redis/redis" package.
 // The address is used to specify the network address of the Redis server.
 // The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
-func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
+func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string) *redis.Client {
 	opts := &redis.Options{
 		Addr:         address,
 		Username:     redisCfg.GetStandaloneMaster().GetUsername(),
@@ -195,7 +196,7 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 	instrumentRedisIfEnabled(c)
 
 	// Attach client-side batching hook if enabled
-	attachBatchingHookIfEnabled(c)
+	attachBatchingHookIfEnabled(cfg, logger, c)
 
 	return c
 }
@@ -206,7 +207,7 @@ func newRedisClient(redisCfg *config.Redis, address string) *redis.Client {
 // Additional options include MaxRedirects, ReadTimeout, and WriteTimeout for fine-tuning the cluster behavior.
 // The function includes the TLS configuration obtained from the RedisTLSOptions function.
 // The newRedisClusterClient function returns a pointer to the redis.ClusterClient object.
-func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
+func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
 
 	options := &redis.ClusterOptions{
@@ -268,7 +269,7 @@ func newRedisClusterClient(redisCfg *config.Redis) *redis.ClusterClient {
 	instrumentRedisIfEnabled(c)
 
 	// Attach client-side batching hook if enabled
-	attachBatchingHookIfEnabled(c)
+	attachBatchingHookIfEnabled(cfg, logger, c)
 
 	return c
 }
@@ -287,7 +288,7 @@ func instrumentRedisIfEnabled(c redis.UniversalClient) {
 // read commands to replica nodes in the cluster rather than masters.
 // This function is used to create a separate client for read operations to improve performance
 // and reduce load on master nodes.
-func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient {
+func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCfg *config.Redis) *redis.ClusterClient {
 	clusterCfg := redisCfg.GetCluster()
 
 	options := &redis.ClusterOptions{
@@ -347,7 +348,7 @@ func newRedisClusterClientReadOnly(redisCfg *config.Redis) *redis.ClusterClient 
 	c := redis.NewClusterClient(options)
 
 	// Attach client-side batching hook if enabled
-	attachBatchingHookIfEnabled(c)
+	attachBatchingHookIfEnabled(cfg, logger, c)
 
 	return c
 }

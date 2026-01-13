@@ -36,30 +36,33 @@ var (
 	mgr Manager
 )
 
-// initCache initializes the underlying cache based on configuration.
-func (m *Manager) initCache() {
+func (m *Manager) initCacheWithCfg(cfg config.File) {
 	m.once.Do(func() {
-		cfg := config.GetFile().GetServer().GetRedis().GetAccountLocalCache()
+		localCacheCfg := cfg.GetServer().GetRedis().GetAccountLocalCache()
 		// If disabled, still create a tiny cache with zero TTL so Get works but never hits.
-		shards := cfg.GetShards()
-		ttl := cfg.GetTTL()
-		cleanup := cfg.GetCleanupInterval()
+		shards := localCacheCfg.GetShards()
+		ttl := localCacheCfg.GetTTL()
+		cleanup := localCacheCfg.GetCleanupInterval()
 
 		m.ttl = ttl
-		m.maxItems = cfg.GetMaxItems()
+		m.maxItems = localCacheCfg.GetMaxItems()
 		m.cache = localcache.NewMemoryShardedCache(shards, ttl, cleanup)
 	})
 }
 
 // GetManager returns the singleton cache manager instance.
-func GetManager() *Manager { mgr.initCache(); return &mgr }
+func GetManager() *Manager {
+	mgr.initCacheWithCfg(config.GetFile())
+
+	return &mgr
+}
 
 // Get returns a cached account name for the given username (if present).
 func (m *Manager) Get(username string) (string, bool) {
 	if m == nil {
 		return "", false
 	}
-	m.initCache()
+	m.initCacheWithCfg(config.GetFile())
 
 	if m.cache == nil {
 		return "", false
@@ -78,7 +81,7 @@ func (m *Manager) Set(username, account string) {
 	if m == nil {
 		return
 	}
-	m.initCache()
+	m.initCacheWithCfg(config.GetFile())
 
 	// Only set when feature is enabled
 	if !config.GetFile().GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
