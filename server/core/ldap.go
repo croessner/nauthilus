@@ -149,8 +149,6 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		attribute.String("protocol", auth.Protocol.Get()),
 	)
 
-	_ = lctx
-
 	defer lspan.End()
 
 	var (
@@ -169,27 +167,42 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
+	pCtx, pSpan := tr.Start(lctx, "ldap.passdb.search.prepare")
+	_ = pCtx
+
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if accountField, err = protocol.GetAccountField(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if attributes, err = protocol.GetAttributes(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
@@ -237,10 +250,14 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 		priority = priorityqueue.PriorityHigh
 	}
 
+	pSpan.End()
+
 	// Use priority queue instead of channel
 	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
+	_, wSpan := tr.Start(lctx, "ldap.passdb.search.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if ldapReply.Err != nil {
 		lspan.RecordError(ldapReply.Err)
@@ -294,6 +311,9 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 	if !auth.NoAuth {
 		ldapReplyChan = make(chan *bktype.LDAPReply, 1)
 
+		apCtx, apSpan := tr.Start(lctx, "ldap.passdb.auth.prepare")
+		_ = apCtx
+
 		// Derive a timeout context for LDAP bind/auth
 		dBind := lm.effectiveCfg().GetServer().GetTimeouts().GetLDAPBind()
 		ctxBind, cancelBind := context.WithTimeout(auth.Ctx(), dBind)
@@ -318,10 +338,14 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 			priority = priorityqueue.PriorityHigh
 		}
 
+		apSpan.End()
+
 		// Use priority queue instead of channel
 		priorityqueue.LDAPAuthQueue.Push(ldapUserBindRequest, priority)
 
+		_, awSpan := tr.Start(lctx, "ldap.passdb.auth.wait")
 		ldapReply = <-ldapReplyChan
+		awSpan.End()
 
 		if ldapReply.Err != nil {
 			var ldapError *ldap.Error
@@ -400,27 +424,42 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
+	pCtx, pSpan := tr.Start(actx, "ldap.accountdb.prepare")
+	_ = pCtx
+
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if accountField, err = protocol.GetAccountField(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if attributes, err = protocol.GetAttributes(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetListAccountsFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
@@ -454,9 +493,13 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 		HTTPClientContext: ctxSearch,
 	}
 
+	pSpan.End()
+
 	priorityqueue.LDAPQueue.Push(ldapRequest, priorityqueue.PriorityMedium)
 
+	_, wSpan := tr.Start(actx, "ldap.accountdb.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if ldapReply.Err != nil {
 		var ldapError *ldap.Error
@@ -523,19 +566,30 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	ldapReplyChan := make(chan *bktype.LDAPReply)
 
+	pCtx, pSpan := tr.Start(mctx, "ldap.add_totp.prepare")
+	_ = pCtx
+
 	if protocol, err = lm.effectiveCfg().GetLDAPSearchProtocol(auth.Protocol.Get(), lm.poolName); protocol == nil || err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if filter, err = protocol.GetUserFilter(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if baseDN, err = protocol.GetBaseDN(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
 	if scope, err = protocol.GetScope(); err != nil {
+		pSpan.End()
+
 		return
 	}
 
@@ -546,6 +600,8 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 
 	configField = totp.GetLDAPTOTPSecret(protocol)
 	if configField == "" {
+		pSpan.End()
+
 		err = errors.ErrLDAPConfig.WithDetail(
 			fmt.Sprintf("Missing LDAP TOTP secret field; protocol=%s", auth.Protocol.Get()))
 
@@ -589,10 +645,14 @@ func (lm *ldapManagerImpl) AddTOTPSecret(auth *AuthState, totp *mfa.TOTPSecret) 
 		priority = priorityqueue.PriorityHigh
 	}
 
+	pSpan.End()
+
 	// Use priority queue instead of channel
 	priorityqueue.LDAPQueue.Push(ldapRequest, priority)
 
+	_, wSpan := tr.Start(mctx, "ldap.add_totp.wait")
 	ldapReply = <-ldapReplyChan
+	wSpan.End()
 
 	if stderrors.As(ldapReply.Err, &ldapError) {
 		msp.RecordError(ldapError)

@@ -552,7 +552,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 		results = make([]*filtResult, 0, len(scripts))
 	)
 
-	g, egCtx := errgroup.WithContext(ctx)
+	g, egCtx := errgroup.WithContext(fctx)
 
 	pool := vmpool.GetManager().GetOrCreate("filter:default", vmpool.PoolOptions{MaxVMs: cfg.GetLuaFilterVMPoolSize(), Config: cfg})
 
@@ -571,7 +571,12 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			_ = sCtx
 
 			// Per-filter state from bounded vmpool
-			Llocal, acqErr := pool.Acquire(egCtx)
+			actx, asp := tr.Start(egCtx, "filters.vm.acquire",
+				attribute.String("name", sc.Name),
+			)
+			Llocal, acqErr := pool.Acquire(actx)
+			asp.End()
+
 			if acqErr != nil {
 				sSpan.RecordError(acqErr)
 				sSpan.End()
@@ -658,6 +663,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 			Llocal.SetContext(luaCtx)
 
 			// Prepare per-request environment so that request-local globals and module bindings are visible
+			_, mspan := tr.Start(envCtx, "filters.env.modules")
 			luapool.PrepareRequestEnv(Llocal)
 
 			// Bind request-scoped modules into reqEnv so that require() resolves correctly.
@@ -785,6 +791,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				}
 			}
 
+			mspan.End()
 			envSpan.End()
 
 			fr := &filtResult{name: sc.Name, statusText: &localStatus, backendResult: localBackendResult}

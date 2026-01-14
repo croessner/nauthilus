@@ -239,6 +239,8 @@ func (l *ldapPoolImpl) GetNumberOfWorkers() int {
 var _ LDAPPool = (*ldapPoolImpl)(nil)
 
 var (
+	trOps = monittrace.New("nauthilus/ldap_ops")
+
 	negCaches sync.Map // map[string]localcache.SimpleCache
 	negSF     singleflight.Group
 
@@ -1356,6 +1358,12 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 
 // proccessLookupRequest processes an LDAP lookup request based on its command type and manages connection states.
 func (l *ldapPoolImpl) proccessLookupRequest(index int, ldapRequest *bktype.LDAPRequest) {
+	_, span := trOps.Start(ldapRequest.HTTPClientContext, "ldap.worker.process_request",
+		attribute.String("pool", l.name),
+		attribute.Int("index", index),
+	)
+	defer span.End()
+
 	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_lookup_request_total")
 
 	defer func() {
@@ -1441,6 +1449,12 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 // processAuthRequest processes an LDAP authentication request by using a connection pool and handles related metrics.
 func (l *ldapPoolImpl) processAuthRequest(index int, ldapAuthRequest *bktype.LDAPAuthRequest) {
+	_, span := trOps.Start(ldapAuthRequest.HTTPClientContext, "ldap.worker.process_auth_request",
+		attribute.String("pool", l.name),
+		attribute.Int("index", index),
+	)
+	defer span.End()
+
 	stopTimer := stats.PrometheusTimer(l.cfg, definitions.PromBackend, "ldap_backend_auth_request_total")
 
 	defer func() {
