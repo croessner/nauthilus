@@ -113,6 +113,8 @@ var (
 	ErrLDAPConfig         = NewDetailedError("ldap_config_error")
 	ErrNoLDAPSearchResult = NewDetailedError("ldap_no_search_result")
 	ErrLDAPConnectTimeout = NewDetailedError("ldap_connect_timeout")
+	ErrLDAPSearchTimeout  = NewDetailedError("ldap_search_timeout")
+	ErrLDAPBindTimeout    = NewDetailedError("ldap_bind_timeout")
 	ErrLDAPModify         = NewDetailedError("ldap_modify_error")
 	// ErrLDAPPoolExhausted indicates that the LDAP pool could not serve the request
 	// within the allotted time (capacity token acquisition or waiting for a free
