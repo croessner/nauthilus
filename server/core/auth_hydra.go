@@ -26,8 +26,6 @@ import (
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
-	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/util"
 
 	openapi "github.com/ory/hydra-client-go/v2"
@@ -45,9 +43,9 @@ func (a *AuthState) processClaim(claimName string, claimValue string, claims map
 			}
 		}
 
-		level.Warn(log.Logger).Log(
+		a.logger().Warn(
+			fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
 			definitions.LogKeyGUID, a.GUID,
-			definitions.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from database", claimName),
 		)
 	}
 }
@@ -68,9 +66,9 @@ func applyClaim(claimKey string, attributeKey string, auth *AuthState, claims ma
 	}
 
 	if !success {
-		level.Warn(log.Logger).Log(
+		auth.logger().Warn(
+			fmt.Sprintf("Claim '%s' not applied (no value for attribute '%s')", claimKey, attributeKey),
 			definitions.LogKeyGUID, auth.GUID,
-			definitions.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from Database", claimKey),
 		)
 	}
 }
@@ -174,11 +172,14 @@ func (a *AuthState) applyClientClaimHandlers(client *config.Oauth2Client, claims
 func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 	valueApplied := false
 
-	if config.GetFile().GetOauth2().Clients[index].Claims.Groups != "" {
-		if value, found := a.GetAttribute(config.GetFile().GetOauth2().Clients[index].Claims.Groups); found {
+	if a.cfg().GetOauth2().Clients[index].Claims.Groups != "" {
+		if value, found := a.GetAttribute(a.cfg().GetOauth2().Clients[index].Claims.Groups); found {
 			var stringSlice []string
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				a.Ctx(),
+				a.Cfg(),
+				a.Logger(),
 				definitions.DbgAuth,
 				definitions.LogKeyGUID, a.GUID,
 				"groups", fmt.Sprintf("%#v", value),
@@ -195,9 +196,9 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 		}
 
 		if !valueApplied {
-			level.Warn(log.Logger).Log(
+			a.logger().Warn(
+				fmt.Sprintf("Claim '%s' malformed or not returned from Database", definitions.ClaimGroups),
 				definitions.LogKeyGUID, a.GUID,
-				definitions.LogKeyMsg, fmt.Sprintf("Claim '%s' malformed or not returned from Database", definitions.ClaimGroups),
 			)
 		}
 	}
@@ -207,25 +208,28 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAuth2Client, claims map[string]any) {
 	var claim any
 
-	customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
+	customScope := a.cfg().GetOauth2().CustomScopes[scopeIndex]
 
 	for claimIndex := range customScope.Claims {
 		customClaimName := customScope.Claims[claimIndex].Name
 		customClaimType := customScope.Claims[claimIndex].Type
 
-		for clientIndex := range config.GetFile().GetOauth2().Clients {
-			if config.GetFile().GetOauth2().Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
+		for clientIndex := range a.cfg().GetOauth2().Clients {
+			if a.cfg().GetOauth2().Clients[clientIndex].ClientId != oauth2Client.GetClientId() {
 				continue
 			}
 
 			assertOk := false
-			if claim, assertOk = config.GetFile().GetOauth2().Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
+			if claim, assertOk = a.cfg().GetOauth2().Clients[clientIndex].Claims.CustomClaims[customClaimName]; !assertOk {
 				break
 			}
 
 			if claimValue, assertOk := claim.(string); assertOk {
 				if value, found := a.GetAttribute(claimValue); found {
-					util.DebugModule(
+					util.DebugModuleWithCfg(
+						a.Ctx(),
+						a.Cfg(),
+						a.Logger(),
 						definitions.DbgAuth,
 						definitions.LogKeyGUID, a.GUID,
 						"custom_claim_name", customClaimName,
@@ -263,10 +267,10 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 							}
 						}
 					default:
-						level.Error(log.Logger).Log(
+						a.logger().Error(
+							"Unknown claim type.",
 							definitions.LogKeyGUID, a.GUID,
 							"custom_claim_name", customClaimName,
-							definitions.LogKeyMsg, "Unknown claim type.",
 							definitions.LogKeyError, fmt.Sprintf("Unknown type '%s'", customClaimType),
 						)
 					}
@@ -280,7 +284,7 @@ func (a *AuthState) processCustomClaims(scopeIndex int, oauth2Client openapi.OAu
 
 // GetOauth2SubjectAndClaims returns the subject and claims for the provided OAuth2 client
 // by combining client configuration, custom scopes, and AuthState attributes.
-func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client) (string, map[string]any) {
+func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client any) (string, map[string]any) {
 	var (
 		okay    bool
 		index   int
@@ -289,16 +293,25 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		claims  map[string]any
 	)
 
-	if config.GetFile().GetOauth2() != nil {
+	// Cast any to openapi.OAuth2Client
+	clientInterface, ok := oauth2Client.(openapi.OAuth2Client)
+	if !ok {
+		return "", nil
+	}
+
+	if a.cfg().GetOauth2() != nil {
 		claims = make(map[string]any)
 
 		clientIDFound := false
 
-		for index, client = range config.GetFile().GetOauth2().Clients {
-			if client.ClientId == oauth2Client.GetClientId() {
+		for index, client = range a.cfg().GetOauth2().Clients {
+			if client.ClientId == clientInterface.GetClientId() {
 				clientIDFound = true
 
-				util.DebugModule(
+				util.DebugModuleWithCfg(
+					a.Ctx(),
+					a.Cfg(),
+					a.Logger(),
 					definitions.DbgAuth,
 					definitions.LogKeyGUID, a.GUID,
 					definitions.LogKeyMsg, fmt.Sprintf("Found client_id: %+v", client),
@@ -312,20 +325,17 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 			}
 		}
 
-		for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
-			a.processCustomClaims(scopeIndex, oauth2Client, claims)
+		for scopeIndex := range a.cfg().GetOauth2().CustomScopes {
+			a.processCustomClaims(scopeIndex, clientInterface, claims)
 		}
 
 		if client.Subject != "" {
 			var value []any
 
 			if value, okay = a.GetAttribute(client.Subject); !okay {
-				level.Info(log.Logger).Log(
+				a.logger().Info(
+					fmt.Sprintf("SearchAttributes did not contain requested field '%s'", client.Subject),
 					definitions.LogKeyGUID, a.GUID,
-					definitions.LogKeyMsg, fmt.Sprintf(
-						"SearchAttributes did not contain requested field '%s'",
-						client.Subject,
-					),
 					"attributes", func() string {
 						var attributes []string
 
@@ -344,11 +354,11 @@ func (a *AuthState) GetOauth2SubjectAndClaims(oauth2Client openapi.OAuth2Client)
 		}
 
 		if !clientIDFound {
-			level.Warn(log.Logger).Log(definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "No client_id section found")
+			a.logger().Warn("No client_id section found", definitions.LogKeyGUID, a.GUID)
 		}
 	} else {
 		// Default result, if no oauth2/clients definition is found
-		subject = *a.AccountField
+		subject = a.AccountField
 	}
 
 	return subject, claims

@@ -21,9 +21,11 @@ import (
 	"encoding/hex"
 	errors2 "errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"net"
+	"net/netip"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,13 +35,15 @@ import (
 	"github.com/croessner/nauthilus/server/errors"
 	"github.com/croessner/nauthilus/server/ipscoper"
 	"github.com/croessner/nauthilus/server/localcache"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
+
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -106,7 +110,7 @@ var (
 
 func getMicroCache() *localcache.Cache {
 	microCacheOnce.Do(func() {
-		// Always-on micro cache with fixed conservative TTL (phase 7: flagless standard)
+		// Always-on micro cache with fixed conservative TTL (flagless standard)
 		ttl := 300 * time.Millisecond
 		microCache = localcache.NewCache(ttl, ttl)
 	})
@@ -199,6 +203,8 @@ type BucketManager interface {
 type bucketManagerImpl struct {
 	ctx context.Context
 
+	deps BucketManagerDeps
+
 	loginAttempts        uint
 	passwordsAccountSeen uint
 	passwordsTotalSeen   uint
@@ -224,10 +230,27 @@ type bucketManagerImpl struct {
 	scoper ipscoper.IPScoper
 
 	// Precalc fields (computed once per request)
-	parsedIP  net.IP
-	ipIsV4    bool
-	ipIsV6    bool
-	netByCIDR map[uint]*net.IPNet // CIDR -> network
+	parsedIP      net.IP
+	ipIsV4        bool
+	ipIsV6        bool
+	ipv6Validated bool
+	netByCIDR     map[uint]*net.IPNet // CIDR -> network
+}
+
+func (bm *bucketManagerImpl) cfg() config.File {
+	return bm.deps.Cfg
+}
+
+func (bm *bucketManagerImpl) logger() *slog.Logger {
+	return bm.deps.Logger
+}
+
+func (bm *bucketManagerImpl) redis() rediscli.Client {
+	return bm.deps.Redis
+}
+
+func (bm *bucketManagerImpl) tolerate() tolerate.Tolerate {
+	return bm.deps.Tolerate
 }
 
 // sgBurst entdoppelt parallele identische Burst-Gate-Anfragen (gleicher Burst-Key) ohne Logikänderung.
@@ -272,13 +295,11 @@ func (bm *bucketManagerImpl) GetPasswordHistory() *PasswordHistory {
 func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForceRule) (key string) {
 	// Try to reconstruct filters from PW_HIST metadata if they are missing
 	bm.loadPWHistFiltersIfMissing()
-	var ipProto string
-	var protocolPart string
-	var oidcCIDPart string
+	logger := bm.logger()
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Failed to get network for brute force rule",
 			definitions.LogKeyError, err,
@@ -287,52 +308,62 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 		return
 	}
 
-	if network == nil {
-		return
+	return bm.getBruteForceBucketRedisKeyWithNetwork(rule, network)
+}
+
+func (bm *bucketManagerImpl) getBruteForceBucketRedisKeyWithNetwork(rule *config.BruteForceRule, network *net.IPNet) (key string) {
+	if rule == nil {
+		return ""
 	}
 
+	if network == nil {
+		return ""
+	}
+
+	ipProto := ""
 	if rule.IPv4 {
 		ipProto = "4"
 	} else if rule.IPv6 {
 		ipProto = "6"
 	}
 
-	// Add protocol information to the key if the rule has FilterByProtocol specified
+	protocolPart := ""
 	if len(rule.GetFilterByProtocol()) > 0 && bm.protocol != "" {
-		// Check if the current protocol is in the FilterByProtocol list
-		protocolMatched := false
-		for _, p := range rule.FilterByProtocol {
-			if p == bm.protocol {
-				protocolMatched = true
-
-				break
-			}
-		}
-
-		if protocolMatched {
+		if containsString(rule.FilterByProtocol, bm.protocol) {
 			protocolPart = bm.protocol
 		}
 	}
 
-	// Add OIDC Client ID information to the key if the rule has FilterByOIDCCID specified
+	oidcCIDPart := ""
 	if len(rule.GetFilterByOIDCCID()) > 0 && bm.oidcCID != "" {
-		// Check if the current OIDC Client ID is in the FilterByOIDCCID list
-		oidcCIDMatched := false
-		for _, cid := range rule.FilterByOIDCCID {
-			if cid == bm.oidcCID {
-				oidcCIDMatched = true
-
-				break
-			}
-		}
-
-		if oidcCIDMatched {
+		if containsString(rule.FilterByOIDCCID, bm.oidcCID) {
 			oidcCIDPart = bm.oidcCID
 		}
 	}
 
-	key = config.GetFile().GetServer().GetRedis().GetPrefix() + "bf:" + fmt.Sprintf(
-		"%.0f:%d:%d:%s:%s", rule.Period.Seconds(), rule.CIDR, rule.FailedRequests, ipProto, network.String())
+	netStr := network.String()
+
+	// Redis Cluster: use a bucket-specific hash-tag so that keys are distributed across the cluster,
+	// while still keeping the key name (including the network) stable/readable.
+	//
+	// NOTE: We intentionally do NOT try to force all bucket-counter keys into one slot. Reads are
+	// performed via pipelined GETs to avoid CROSSSLOT issues.
+	hashTag := netStr
+	if protocolPart != "" {
+		hashTag += "|p=" + protocolPart
+	}
+
+	if oidcCIDPart != "" {
+		hashTag += "|oidc=" + oidcCIDPart
+	}
+
+	periodSeconds := int64(math.Round(rule.Period.Seconds()))
+	periodPart := strconv.FormatInt(periodSeconds, 10)
+	cidrPart := strconv.FormatUint(uint64(rule.CIDR), 10)
+	failedPart := strconv.FormatUint(uint64(rule.FailedRequests), 10)
+
+	cfg := bm.cfg()
+	key = cfg.GetServer().GetRedis().GetPrefix() + "bf:{" + hashTag + "}:" + periodPart + ":" + cidrPart + ":" + failedPart + ":" + ipProto + ":" + netStr
 
 	// Append protocol part with a separator if it exists
 	if protocolPart != "" {
@@ -346,7 +377,7 @@ func (bm *bucketManagerImpl) GetBruteForceBucketRedisKey(rule *config.BruteForce
 
 	logBruteForceRuleRedisKeyDebug(bm, rule, network, key)
 
-	return
+	return key
 }
 
 // WithUsername sets the username for the bucketManager instance.
@@ -386,7 +417,7 @@ func (bm *bucketManagerImpl) WithOIDCCID(oidcCID string) BucketManager {
 
 // LoadAllPasswordHistories loads and processes password history data for the current user and overall accounts from Redis.
 func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -400,16 +431,16 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	if key := bm.getPasswordHistoryTotalRedisKey(true); key != "" {
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		_, _ = rediscli.GetClient().GetReadHandle().Get(dCtx, key).Result()
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		_, _ = bm.redis().GetReadHandle().Get(dCtx, key).Result()
 		cancel()
 	}
 
 	if key := bm.getPasswordHistoryTotalRedisKey(false); key != "" {
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		_, _ = rediscli.GetClient().GetReadHandle().Get(dCtx, key).Result()
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		_, _ = bm.redis().GetReadHandle().Get(dCtx, key).Result()
 		cancel()
 	}
 
@@ -441,10 +472,31 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 // CheckRepeatingBruteForcer checks a set of brute force rules against a given network and updates the message if triggered.
 // Returns whether an error occurred, if a rule was already triggered, and the triggering rule index.
 func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForceRule, network **net.IPNet, message *string) (withError bool, alreadyTriggered bool, ruleNumber int) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer sp.End()
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(attribute.String("ip_family", ipFamily))
+
 	// Micro-cache fast path: reuse a very recent decision for identical semantic request key.
+	_, msp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.micro_cache_emtpy")
 	if c := getMicroCache(); c != nil {
 		if v, ok := c.Get("bfdec:" + bm.bfBurstKey()); ok {
 			if md, ok2 := v.(microDecision); ok2 && md.Block {
+				sp.SetAttributes(attribute.Bool("micro_cache.hit", true))
+
 				// find rule index by name to keep downstream behavior intact
 				for i := range rules {
 					if rules[i].Name == md.Rule {
@@ -457,6 +509,11 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 						bm.bruteForceName = md.Rule
 						*message = "Brute force attack detected (micro-cache)"
 						stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("micro").Inc()
+						sp.SetAttributes(
+							attribute.Bool("triggered", true),
+							attribute.String("rule", md.Rule),
+							attribute.Int("rule.index", i),
+						)
 
 						return false, true, i
 					}
@@ -464,13 +521,37 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 			}
 		}
 	}
+	msp.End()
+
+	sp.SetAttributes(attribute.Bool("micro_cache.hit", false))
 
 	// Ensure protocol/OIDC context is present when checking rules
+	_, lhsp := tr.Start(bm.ctx, "auth.bruteforce.repeating_check.load_pw_hist_filters_if_empty")
 	bm.loadPWHistFiltersIfMissing()
+	lhsp.End()
+
+	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
+	if bm.parsedIP == nil {
+		bm.PrepareNetcalc(rules)
+
+		// Update family info after PrepareNetcalc populated bm.parsedIP.
+		switch {
+		case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+			ipFamily = "ipv4"
+		case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+			ipFamily = "ipv6"
+		default:
+			ipFamily = "unknown"
+		}
+		sp.SetAttributes(attribute.String("ip_family", ipFamily))
+	}
 
 	var (
 		ruleName string
 	)
+
+	cfg := bm.cfg()
+	logger := bm.logger()
 
 	matchedAnyRule := false
 
@@ -484,42 +565,18 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// Gather candidates
 	*network = nil
+
+	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.repeating_check.gather_candidates")
+	defer gatherSpan.End()
+
 	for i := range rules {
-		// Protocol filter
-		if len(rules[i].FilterByProtocol) > 0 && bm.protocol != "" {
-			matched := false
-			for _, p := range rules[i].FilterByProtocol {
-				if p == bm.protocol {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
-		}
-
-		// OIDC filter
-		if len(rules[i].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
-			matched := false
-			for _, cid := range rules[i].FilterByOIDCCID {
-				if cid == bm.oidcCID {
-					matched = true
-
-					break
-				}
-			}
-
-			if !matched {
-				continue
-			}
+		if !rules[i].MatchesContext(bm.protocol, bm.oidcCID, bm.parsedIP) {
+			continue
 		}
 
 		n, nErr := bm.getNetwork(&rules[i])
 		if nErr != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to get network for brute force rule",
 				definitions.LogKeyError, nErr,
@@ -537,9 +594,14 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		candidates = append(candidates, cand{idx: i, field: n.String()})
 	}
 
+	gatherSpan.SetAttributes(
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(candidates)),
+	)
+
 	// If we have candidates, issue a single HMGET to find the first hit
 	if len(candidates) > 0 {
-		key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+		key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 		fields := make([]string, 0, len(candidates))
 		for _, c := range candidates {
@@ -550,13 +612,13 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("hmget_preresult").Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		vals, errHM := rediscli.GetClient().GetReadHandle().HMGet(dCtx, key, fields...).Result()
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		vals, errHM := bm.redis().GetReadHandle().HMGet(dCtx, key, fields...).Result()
 		cancel()
 
 		if errHM != nil {
 			// Fail-open: treat as no pre-result
-			level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("HMGET pre-result failed: %v", errHM))
+			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("HMGET pre-result failed: %v", errHM))
 		} else {
 			for i, v := range vals {
 				if v == nil {
@@ -580,6 +642,12 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 						*network = nnet
 					}
 
+					sp.SetAttributes(
+						attribute.Bool("triggered", true),
+						attribute.String("rule", ruleName),
+						attribute.Int("rule.index", ruleNumber),
+					)
+
 					return false, alreadyTriggered, ruleNumber
 				}
 			}
@@ -590,12 +658,19 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 
 	// Log a warning if no rules matched
 	if !matchedAnyRule {
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyBruteForce, "No matching brute force buckets found",
 			"protocol", bm.protocol,
 			"client_ip", bm.clientIP)
+		sp.SetAttributes(attribute.Bool("rules.matched_any", false))
 	}
+
+	sp.SetAttributes(
+		attribute.Bool("triggered", alreadyTriggered),
+		attribute.Int("candidates.total", len(candidates)),
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+	)
 
 	return withError, alreadyTriggered, ruleNumber
 }
@@ -603,8 +678,31 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 // CheckBucketOverLimit evaluates brute force rules for a given network to detect potential brute force attacks.
 // Returns flags indicating errors, if a rule was triggered, and the index of the rule that triggered the detection.
 func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule, message *string) (withError bool, ruleTriggered bool, ruleNumber int) {
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.bucket_over_limit",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Int("rules.total", len(rules)),
+	)
+	defer sp.End()
+
 	// Ensure protocol/OIDC context is present when checking rules
 	bm.loadPWHistFiltersIfMissing()
+
+	// Ensure IP/net precalc is available even if the caller didn't run PrepareNetcalc.
+	if bm.parsedIP == nil || bm.netByCIDR == nil {
+		bm.PrepareNetcalc(rules)
+	}
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(attribute.String("ip_family", ipFamily))
 
 	matchedAnyRule := false
 
@@ -615,25 +713,21 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 	}
 	cands := make([]bkcand, 0, len(rules))
 
-	for i := range rules {
-		// Skip if the rule has FilterByProtocol specified and the current protocol is not in the list
-		if len(rules[i].FilterByProtocol) > 0 && bm.protocol != "" {
-			if !containsString(rules[i].FilterByProtocol, bm.protocol) {
-				continue
-			}
-		}
+	_, gatherSpan := tr.Start(ctx, "auth.bruteforce.bucket_over_limit.gather_candidates")
 
-		// Skip if the rule has FilterByOIDCCID specified and the current OIDC Client ID is not in the list
-		if len(rules[i].FilterByOIDCCID) > 0 && bm.oidcCID != "" {
-			if !containsString(rules[i].FilterByOIDCCID, bm.oidcCID) {
-				continue
-			}
+	logger := bm.logger()
+
+	for i := range rules {
+		if !rules[i].MatchesContext(bm.protocol, bm.oidcCID, bm.parsedIP) {
+			continue
 		}
 
 		// Skip, where the current IP address does not match the current rule
 		n, nErr := bm.getNetwork(&rules[i])
 		if nErr != nil {
-			level.Error(log.Logger).Log(
+			gatherSpan.End()
+
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to get network for brute force rule",
 				definitions.LogKeyError, nErr,
@@ -648,12 +742,18 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 		}
 
 		matchedAnyRule = true
-		// Prepare key for this rule
-		key := bm.GetBruteForceBucketRedisKey(&rules[i])
+		// Prepare key for this rule (avoid calling getNetwork twice)
+		key := bm.getBruteForceBucketRedisKeyWithNetwork(&rules[i], n)
 		if key != "" {
 			cands = append(cands, bkcand{idx: i, key: key})
 		}
 	}
+
+	gatherSpan.SetAttributes(
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(cands)),
+	)
+	gatherSpan.End()
 
 	if len(cands) > 0 {
 		keys := make([]string, 0, len(cands))
@@ -661,65 +761,89 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			keys = append(keys, c.key)
 		}
 
-		// Always use MGET, even for a single candidate
-		// metrics
+		// Redis Cluster: multi-key reads (MGET) require all keys in the same hash slot.
+		// Bucket keys are intentionally distributed (hash-tag is bucket-specific), therefore read via
+		// a pipeline of GETs.
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
-		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("mget_bucket_counter").Inc()
+		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_get_bucket_counter").Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		vals, errM := rediscli.GetClient().GetReadHandle().MGet(dCtx, keys...).Result()
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		pipe := bm.redis().GetReadHandle().Pipeline()
+		cmds := make([]*redis.StringCmd, 0, len(keys))
+
+		for _, k := range keys {
+			cmds = append(cmds, pipe.Get(dCtx, k))
+		}
+
+		_, errP := pipe.Exec(dCtx)
+
 		cancel()
-		if errM != nil {
-			level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("MGET bucket counters failed: %v", errM))
-		} else {
-			if bm.bruteForceCounter == nil {
-				bm.bruteForceCounter = make(map[string]uint)
-			}
 
-			for i, raw := range vals {
-				v := uint(0)
-				if raw != nil {
-					switch t := raw.(type) {
-					case string:
-						if n, perr := strconv.ParseUint(t, 10, 64); perr == nil {
-							v = uint(n)
-						}
-					case []byte:
-						if n, perr := strconv.ParseUint(string(t), 10, 64); perr == nil {
-							v = uint(n)
-						}
+		if errP != nil && !errors2.Is(errP, redis.Nil) {
+			level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline GET bucket counters failed: %v", errP))
+		}
+
+		if bm.bruteForceCounter == nil {
+			bm.bruteForceCounter = make(map[string]uint)
+		}
+
+		for i, cmd := range cmds {
+			v := uint(0)
+			if cmd != nil {
+				if err := cmd.Err(); err == nil {
+					if n, perr := strconv.ParseUint(cmd.Val(), 10, 64); perr == nil {
+						v = uint(n)
 					}
+				} else if !errors2.Is(err, redis.Nil) {
+					level.Warn(logger).Log(
+						definitions.LogKeyGUID, bm.guid,
+						definitions.LogKeyMsg, "GET bucket counter failed",
+						"key", keys[i],
+						definitions.LogKeyError, err,
+					)
 				}
-
-				name := rules[cands[i].idx].Name
-				bm.bruteForceCounter[name] = v
 			}
 
-			// Evaluate in rule order using filled counters
-			for _, c := range cands {
-				r := &rules[c.idx]
-				if bm.bruteForceCounter[r.Name]+1 >= r.FailedRequests {
-					ruleTriggered = true
-					*message = "Brute force attack detected"
+			name := rules[cands[i].idx].Name
+			bm.bruteForceCounter[name] = v
+		}
 
-					stats.GetMetrics().GetBruteForceRejected().WithLabelValues(r.Name).Inc()
+		// Evaluate in rule order using filled counters
+		for _, c := range cands {
+			r := &rules[c.idx]
+			if bm.bruteForceCounter[r.Name]+1 >= r.FailedRequests {
+				ruleTriggered = true
+				*message = "Brute force attack detected"
 
-					ruleNumber = c.idx
+				stats.GetMetrics().GetBruteForceRejected().WithLabelValues(r.Name).Inc()
 
-					return withError, ruleTriggered, ruleNumber
-				}
+				ruleNumber = c.idx
+
+				sp.SetAttributes(
+					attribute.Bool("triggered", true),
+					attribute.String("rule", r.Name),
+					attribute.Int("rule.index", ruleNumber),
+				)
+
+				return withError, ruleTriggered, ruleNumber
 			}
 		}
 	}
 
 	// Log a warning if no rules matched
 	if !matchedAnyRule {
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyBruteForce, "No matching brute force buckets found",
 			"protocol", bm.protocol,
 			"client_ip", bm.clientIP)
 	}
+
+	sp.SetAttributes(
+		attribute.Bool("triggered", ruleTriggered),
+		attribute.Bool("rules.matched_any", matchedAnyRule),
+		attribute.Int("candidates.total", len(cands)),
+	)
 
 	return withError, ruleTriggered, ruleNumber
 }
@@ -748,7 +872,7 @@ func (bm *bucketManagerImpl) bfBurstKey() string {
 	sum := sha1.Sum([]byte(base))
 	h := hex.EncodeToString(sum[:])
 
-	return config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + h
+	return bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBFBurstPrefix + h
 }
 
 // burstLeaderGate returns true for the first caller within the small window; false for followers.
@@ -758,7 +882,7 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 	key := bm.bfBurstKey()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 
 	// Dedupliziere identische parallele Script-Aufrufe pro Burst-Key
 	resAny, err, _ := sgBurst.Do("burst:"+key, func() (any, error) {
@@ -767,14 +891,14 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 		// Redis LUA roundtrip for burst gate
 		stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("lua_increment_and_expire").Inc()
 
-		return rediscli.ExecuteScript(dCtx, "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
+		return rediscli.ExecuteScript(dCtx, bm.redis(), "IncrementAndExpire", rediscli.LuaScripts["IncrementAndExpire"], []string{key}, argTTL)
 	})
 
 	res := resAny
 
 	if err != nil {
 		// Fail-open: better to overcount than miss, and avoid blocking auth
-		level.Warn(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Burst gate script error: %v", err))
+		level.Warn(bm.logger()).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Burst gate script error: %v", err))
 
 		return true
 	}
@@ -791,7 +915,43 @@ func (bm *bucketManagerImpl) burstLeaderGate(ctx context.Context) bool {
 
 // ProcessBruteForce evaluates and handles brute force detection logic, deciding whether further actions are necessary.
 func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered bool, rule *config.BruteForceRule, network *net.IPNet, message string, setter func()) bool {
+	if rule == nil {
+		return false
+	}
+
+	tr := monittrace.New("nauthilus/bruteforce")
+	ctx, sp := tr.Start(bm.ctx, "auth.bruteforce.process",
+		attribute.String("protocol", bm.protocol),
+		attribute.String("oidc_cid", bm.oidcCID),
+		attribute.Bool("rule_triggered", ruleTriggered),
+		attribute.Bool("already_triggered", alreadyTriggered),
+	)
+	defer sp.End()
+
+	// Propagate span context to all downstream operations inside this method.
+	prevCtx := bm.ctx
+	bm.ctx = ctx
+	defer func() {
+		bm.ctx = prevCtx
+	}()
+
+	ipFamily := "unknown"
+	switch {
+	case bm.parsedIP != nil && bm.parsedIP.To4() != nil:
+		ipFamily = "ipv4"
+	case bm.parsedIP != nil && bm.parsedIP.To16() != nil:
+		ipFamily = "ipv6"
+	}
+
+	sp.SetAttributes(
+		attribute.String("ip_family", ipFamily),
+	)
+
+	logger := bm.logger()
+
 	if alreadyTriggered || ruleTriggered {
+		sp.SetAttributes(attribute.String("rule", rule.Name))
+
 		var useCache bool
 
 		// capture context flag for downstream operations (e.g., PW_HIST behavior)
@@ -805,7 +965,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 
 		logBucketRuleDebug(bm, network, rule)
 
-		for _, backendType := range config.GetFile().GetServer().GetBackends() {
+		for _, backendType := range bm.cfg().GetServer().GetBackends() {
 			if backendType.Get() == definitions.BackendCache {
 				useCache = true
 
@@ -817,7 +977,7 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		// even if the bucket rule matched. This reduces false positives and write amplification.
 		if useCache {
 			if needEnforce, err := bm.checkEnforceBruteForceComputation(); err != nil {
-				level.Error(log.Logger).Log(
+				level.Error(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Failed to check enforcement of brute force computation",
 					definitions.LogKeyError, err,
@@ -835,8 +995,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		}
 
 		if !alreadyTriggered {
-			if tolerate.GetTolerate().IsTolerated(bm.ctx, bm.clientIP) {
-				level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
+			if tol := bm.tolerate(); tol != nil && tol.IsTolerated(bm.ctx, bm.clientIP) {
+				level.Info(bm.logger()).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, "IP address is tolerated")
 
 				return false
 			}
@@ -862,9 +1022,9 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		// count this failed attempt exactly once here, but deduplicate bursts.
 		if bm.burstLeaderGate(bm.ctx) {
 			bm.SaveFailedPasswordCounterInRedis()
-			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_leader")
+			level.Info(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_leader")
 		} else {
-			level.Info(log.Logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_follower")
+			level.Info(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyLeadership, "bf_burst_follower")
 		}
 
 		logBucketMatchingRule(bm, network, rule, message)
@@ -879,6 +1039,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 			c.Set("bfdec:"+bm.bfBurstKey(), dec, 0)
 		}
 
+		sp.SetAttributes(attribute.Bool("triggered", true))
+
 		return true
 	}
 
@@ -887,6 +1049,8 @@ func (bm *bucketManagerImpl) ProcessBruteForce(ruleTriggered, alreadyTriggered b
 		dec := microDecision{Block: false, Rule: ""}
 		c.Set("bfdec:"+bm.bfBurstKey(), dec, 0)
 	}
+
+	sp.SetAttributes(attribute.Bool("triggered", false))
 
 	return false
 }
@@ -906,16 +1070,20 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 		return
 	}
 
-	key := GetPWHistIPsRedisKey(bm.accountName)
+	key := GetPWHistIPsRedisKey(bm.accountName, bm.cfg())
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 
-	alreadyLearned, err = rediscli.GetClient().GetReadHandle().SIsMember(dCtx, key, bm.clientIP).Result()
+	cfg := bm.cfg()
+	logger := bm.logger()
+
+	alreadyLearned, err = bm.redis().GetReadHandle().SIsMember(dCtx, key, bm.clientIP).Result()
+
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to check if IP address is already in PW_HIST_IPS set",
 				definitions.LogKeyError, err,
@@ -936,13 +1104,13 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	// Use pipelining for write operations to reduce network round trips
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 	defer cancel()
 
-	_, err = rediscli.ExecuteWritePipeline(dCtx, func(pipe redis.Pipeliner) error {
+	_, err = rediscli.ExecuteWritePipeline(dCtx, bm.redis(), func(pipe redis.Pipeliner) error {
 		// 1) store IP in PW_HIST_IPS set
 		pipe.SAdd(dCtx, key, bm.clientIP)
-		pipe.Expire(dCtx, key, config.GetFile().GetServer().Redis.NegCacheTTL)
+		pipe.Expire(dCtx, key, bm.cfg().GetServer().Redis.NegCacheTTL)
 
 		// 2) persist optional filters for this IP so a later request can reconstruct them
 		fields := make(map[string]any)
@@ -956,18 +1124,18 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 
 		if len(fields) > 0 {
 			// 2a) Persist under the IP-specific meta key
-			metaKeyIP := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
+			metaKeyIP := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
 			pipe.HSet(dCtx, metaKeyIP, fields)
-			pipe.Expire(dCtx, metaKeyIP, config.GetFile().GetServer().Redis.NegCacheTTL)
+			pipe.Expire(dCtx, metaKeyIP, bm.cfg().GetServer().Redis.NegCacheTTL)
 
 			// 2b) Also persist under network-based meta keys for all matching brute-force rules
-			for i := range config.GetFile().GetBruteForceRules() {
-				rule := config.GetFile().GetBruteForceRules()[i]
+			for i := range cfg.GetBruteForceRules() {
+				rule := cfg.GetBruteForceRules()[i]
 				// Reuse bm.getNetwork to respect IPv4/IPv6 flags and CIDR
 				if network, err := bm.getNetwork(&rule); err == nil && network != nil {
-					metaKeyNet := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
+					metaKeyNet := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
 					pipe.HSet(dCtx, metaKeyNet, fields)
-					pipe.Expire(dCtx, metaKeyNet, config.GetFile().GetServer().Redis.NegCacheTTL)
+					pipe.Expire(dCtx, metaKeyNet, cfg.GetServer().Redis.NegCacheTTL)
 				}
 			}
 		}
@@ -976,7 +1144,7 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Failed to store IP address in PW_HIST_IPS set",
 			definitions.LogKeyError, err,
@@ -991,15 +1159,15 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 // Logs errors encountered during Redis operations and updates Redis write metrics.
 func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	if key := bm.GetBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", key)
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", key)
 
 		// Use pipelining for write operations to reduce network round trips
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 		defer cancel()
 
-		_, err := rediscli.ExecuteWritePipeline(dCtx, func(pipe redis.Pipeliner) error {
+		_, err := rediscli.ExecuteWritePipeline(dCtx, bm.redis(), func(pipe redis.Pipeliner) error {
 			// Only increment the counter if this is not the rule that triggered
 			if bm.bruteForceName != rule.Name {
 				pipe.Incr(dCtx, key)
@@ -1012,7 +1180,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 		})
 
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(bm.logger()).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to increment brute force bucket counter",
 				definitions.LogKeyError, err,
@@ -1023,7 +1191,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 
 // SaveFailedPasswordCounterInRedis increments and persists failed password attempts in Redis for brute force protection.
 func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
@@ -1033,9 +1201,11 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		return
 	}
 
+	logger := bm.logger()
+
 	if bm.password == "" {
 		// Skip processing if password is empty
-		level.Debug(log.Logger).Log(
+		level.Debug(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Skipping SaveFailedPasswordCounterInRedis: password is empty",
 		)
@@ -1049,9 +1219,9 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
 
 	for index := range keys {
-		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "incr_key", keys[index])
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "incr_key", keys[index])
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 
 		// Prepare KEYS and ARGV for the Lua gate.
 		totalKey := bm.getPasswordHistoryTotalRedisKey(index == 0)
@@ -1060,11 +1230,11 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 			luaKeys = append(luaKeys, totalKey)
 		}
 
-		ttlSec := int64(config.GetFile().GetServer().GetRedis().GetNegCacheTTL().Seconds())
-		maxFields := int64(config.GetFile().GetServer().GetMaxPasswordHistoryEntries())
+		ttlSec := int64(bm.cfg().GetServer().GetRedis().GetNegCacheTTL().Seconds())
+		maxFields := int64(bm.cfg().GetServer().GetMaxPasswordHistoryEntries())
 
 		// Execute via central script helper to support EvalSha + auto-upload. Tests use ExpectEval.
-		res, err := rediscli.ExecuteScript(dCtx, "PwHistGate", PwHistGateScript, luaKeys, passwordHash, ttlSec, maxFields)
+		res, err := rediscli.ExecuteScript(dCtx, bm.redis(), "PwHistGate", PwHistGateScript, luaKeys, passwordHash, ttlSec, maxFields)
 
 		cancel()
 
@@ -1072,7 +1242,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		stats.GetMetrics().GetRedisWriteCounter().Add(1)
 
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to update failed password counter via Lua",
 				definitions.LogKeyError, err,
@@ -1093,12 +1263,12 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		}
 
 		if !updated {
-			level.Info(log.Logger).Log(
+			level.Info(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Too many password hashes for this account",
 			)
 		} else {
-			util.DebugModule(
+			util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(),
 				definitions.DbgBf,
 				definitions.LogKeyGUID, bm.guid,
 				"key", keys[index],
@@ -1116,7 +1286,11 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule, ruleName string) (string, error) {
 	var removedKey string
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	cfg := bm.cfg()
+	logger := bm.logger()
+	redisClient := bm.redis()
+
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 
 	// If the rule has FilterByProtocol specified, we need to check if the current protocol matches
 	if len(rule.FilterByProtocol) > 0 && bm.protocol != "" {
@@ -1155,7 +1329,7 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	// Resolve network and check current stored value via HMGET (no HGET)
 	network, err := bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Failed to get network for brute force rule",
 			definitions.LogKeyError, err,
@@ -1170,8 +1344,8 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	// Read current value with HMGET
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-	vals, err := rediscli.GetClient().GetReadHandle().HMGet(dCtxR, key, network.String()).Result()
+	dCtxR, cancelR := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	vals, err := redisClient.GetReadHandle().HMGet(dCtxR, key, network.String()).Result()
 	cancelR()
 
 	if err != nil {
@@ -1188,11 +1362,11 @@ func (bm *bucketManagerImpl) DeleteIPBruteForceRedis(rule *config.BruteForceRule
 	if current == ruleName || ruleName == "*" {
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 		defer cancel()
 
-		if removed, err := rediscli.GetClient().GetWriteHandle().HDel(dCtx, key, network.String()).Result(); err != nil {
-			level.Error(log.Logger).Log(
+		if removed, err := redisClient.GetWriteHandle().HDel(dCtx, key, network.String()).Result(); err != nil {
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to delete brute force entry",
 				definitions.LogKeyError, err,
@@ -1215,18 +1389,20 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 	}
 
 	buckets = make([]string, 0)
-	rules := config.GetFile().GetBruteForce().Buckets
+	rules := bm.cfg().GetBruteForce().Buckets
 
 	// Build candidate fields and batch HMGET
 	type fieldRef struct {
 		name, field string
 	}
 
+	logger := bm.logger()
+
 	refs := make([]fieldRef, 0, len(rules))
 	for i := range rules {
 		n, err := bm.getNetwork(&rules[i])
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Failed to get network for brute force rule",
 				definitions.LogKeyError, err,
@@ -1246,7 +1422,7 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 		return buckets, false
 	}
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
 	fields := make([]string, 0, len(refs))
 	for _, r := range refs {
 		fields = append(fields, r.field)
@@ -1254,12 +1430,12 @@ func (bm *bucketManagerImpl) IsIPAddressBlocked() (buckets []string, found bool)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
-	vals, err := rediscli.GetClient().GetReadHandle().HMGet(dCtx, key, fields...).Result()
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+	vals, err := bm.redis().GetReadHandle().HMGet(dCtx, key, fields...).Result()
 	cancel()
 
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Failed HMGET in IsIPAddressBlocked",
 			definitions.LogKeyError, err,
@@ -1289,20 +1465,32 @@ var _ BucketManager = (*bucketManagerImpl)(nil)
 // bucket filter dimensions. Buckets are CIDR-based, so also consult network-scoped meta keys.
 func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 	// If both values are already present, nothing to do
-	if bm.protocol != "" && bm.oidcCID != "" {
+	if bm == nil || (bm.protocol != "" && bm.oidcCID != "") {
 		return
 	}
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	cfg := bm.cfg()
+	if cfg == nil {
+		return
+	}
+
+	logger := bm.logger()
+	redisClient := bm.redis()
+
+	if redisClient == nil {
+		return
+	}
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, cfg)
 	defer cancel()
 
 	readOnce := func(key string) map[string]string {
 		stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		vals, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
+		vals, err := redisClient.GetReadHandle().HGetAll(dCtx, key).Result()
 		if err != nil {
 			if !errors2.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(
+				level.Error(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Failed to get protocol/OIDC Client ID from Redis metadata",
 					definitions.LogKeyError, err,
@@ -1320,7 +1508,7 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 	}
 
 	// 1) Try IP-specific meta
-	ipKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
+	ipKey := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + bm.clientIP
 	if vals := readOnce(ipKey); vals != nil {
 		if bm.protocol == "" {
 			if p, ok := vals["protocol"]; ok {
@@ -1337,10 +1525,10 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 
 	// 2) If still missing, try network-scoped meta for any rule matching this IP
 	if bm.protocol == "" || bm.oidcCID == "" {
-		for i := range config.GetFile().GetBruteForceRules() {
-			rule := config.GetFile().GetBruteForceRules()[i]
+		for i := range cfg.GetBruteForceRules() {
+			rule := cfg.GetBruteForceRules()[i]
 			if network, err := bm.getNetwork(&rule); err == nil && network != nil {
-				netKey := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
+				netKey := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistMetaKey + ":" + network.String()
 				if vals := readOnce(netKey); vals != nil {
 					if bm.protocol == "" {
 						if p, ok := vals["protocol"]; ok {
@@ -1368,8 +1556,10 @@ func (bm *bucketManagerImpl) loadPWHistFiltersIfMissing() {
 // based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
 // hashes are always tolerated within the window.
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
+	logger := bm.logger()
+
 	if bm.password == "" {
-		level.Debug(log.Logger).Log(
+		level.Debug(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Skipping isRepeatingWrongPassword: password is empty",
 		)
@@ -1390,27 +1580,29 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		acct = bm.username
 	}
 
-	cfg := config.GetFile().GetBruteForce()
-	threshold := cfg.GetRWPAllowedUniqueHashes()
+	cfg := bm.cfg()
+
+	threshold := cfg.GetBruteForce().GetRWPAllowedUniqueHashes()
 	if threshold < 1 {
 		threshold = 1
 	}
 
-	ttl := cfg.GetRWPWindow()
+	ttl := cfg.GetBruteForce().GetRWPWindow()
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
 
-	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	prefix := cfg.GetServer().GetRedis().GetPrefix()
 	allowKey := prefix + "bf:rwp:allow:" + scoped + ":" + acct
 
 	// Atomically check/add using Lua script
 	argThreshold := strconv.FormatUint(uint64(threshold), 10)
 	argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	res, execErr := rediscli.ExecuteScript(
 		dCtx,
+		bm.redis(),
 		"RWPAllowSet",
 		rediscli.LuaScripts["RWPAllowSet"],
 		[]string{allowKey},
@@ -1421,7 +1613,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	if execErr != nil {
 		// Fallback heuristic: use PW_HIST_TOTAL counters vs. current hash counter.
 		// If totals equal the current hash count, treat as repeating within window.
-		level.Warn(log.Logger).Log(
+		level.Warn(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, fmt.Sprintf("RWPAllowSet script error, using totals fallback: %v", execErr),
 		)
@@ -1434,8 +1626,8 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx)
-		m, _ := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, acctKey).Result()
+		dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+		m, _ := bm.redis().GetReadHandle().HGetAll(dCtx, acctKey).Result()
 		cancel()
 
 		cnt := 0
@@ -1454,8 +1646,8 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		getKey := func(keyName string, value int) int {
 			stats.GetMetrics().GetRedisReadCounter().Inc()
 
-			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx)
-			if s, err := rediscli.GetClient().GetReadHandle().Get(dCtx, keyName).Result(); err == nil {
+			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
+			if s, err := bm.redis().GetReadHandle().Get(dCtx, keyName).Result(); err == nil {
 				if v, e := strconv.Atoi(s); e == nil {
 					value = v
 				}
@@ -1488,7 +1680,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 			userForLog = bm.accountName
 		}
 
-		level.Info(log.Logger).Log(
+		level.Info(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyBruteForce, "RWP allowance active",
 			definitions.LogKeyUsername, userForLog,
@@ -1510,6 +1702,9 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		err       error
 	)
 
+	cfg := bm.cfg()
+	logger := bm.logger()
+
 	/*
 		- If a user exists, then check its UCN
 		  - If UCN exists, then check for repeating wrong password, else abort the request.
@@ -1524,75 +1719,76 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 
 	if bm.accountName == "" {
 		return true, err
-	} else {
-		if repeating, err = bm.isRepeatingWrongPassword(); err != nil {
-			return false, err
-		} else if repeating {
-			return false, nil
-		} else if bm.passwordHistory == nil {
-			// Known account but no negative history yet.
-			// If cold-start grace is DISABLED, we ENFORCE immediately (so complex rules can trigger/fill).
-			if !config.GetFile().GetBruteForce().GetColdStartGraceEnabled() {
-				return true, nil
-			}
+	}
 
-			// Cold-start grace is ENABLED: perform a one-time grace and learn the IP; subsequent attempts within TTL enforce.
-			// Build keys and perform an atomic cold-start + seed in Redis using preloaded Lua script
-			scoped := bm.clientIP
-			if bm.scoper != nil {
-				scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-			}
-
-			prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
-			coldKey := prefix + "bf:cold:" + scoped
-
-			// Seed is per (ip-scope, account/username, password-hash)
-			acct := bm.accountName
-			if acct == "" {
-				acct = bm.username
-			}
-
-			pwHash := util.GetHash(util.PreparePassword(bm.password))
-			seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + pwHash
-			ttl := config.GetFile().GetBruteForce().GetColdStartGraceTTL()
-			argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
-
-			dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx)
-			res, err := rediscli.ExecuteScript(
-				dCtx,
-				"ColdStartGraceSeed",
-				rediscli.LuaScripts["ColdStartGraceSeed"],
-				[]string{coldKey, seedKey},
-				argTTL,
-			)
-			cancel()
-
-			if err != nil {
-				level.Warn(log.Logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, fmt.Sprintf("Cold-start grace ExecuteScript error: %v", err),
-				)
-				bm.ProcessPWHist()
-
-				return false, nil
-			}
-
-			// res==int64(1) means grace (first observation)
-			if v, ok := res.(int64); ok && v == 1 {
-				level.Info(log.Logger).Log(
-					definitions.LogKeyGUID, bm.guid,
-					definitions.LogKeyMsg, "Cold-start grace: not enforcing and learning IP",
-					definitions.LogKeyUsername, bm.username,
-					definitions.LogKeyClientIP, bm.clientIP,
-				)
-				bm.ProcessPWHist()
-
-				return false, nil
-			}
-
-			// Subsequent observation within TTL: enforce computation so complex rules can fill/trigger.
+	if repeating, err = bm.isRepeatingWrongPassword(); err != nil {
+		return false, err
+	} else if repeating {
+		return false, nil
+	} else if bm.passwordHistory == nil {
+		// Known account but no negative history yet.
+		// If cold-start grace is DISABLED, we ENFORCE immediately (so complex rules can trigger/fill).
+		if !cfg.GetBruteForce().GetColdStartGraceEnabled() {
 			return true, nil
 		}
+
+		// Cold-start grace is ENABLED: perform a one-time grace and learn the IP; subsequent attempts within TTL enforce.
+		// Build keys and perform an atomic cold-start + seed in Redis using preloaded Lua script
+		scoped := bm.clientIP
+		if bm.scoper != nil {
+			scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
+		}
+
+		prefix := cfg.GetServer().GetRedis().GetPrefix()
+		coldKey := prefix + "bf:cold:" + scoped
+
+		// Seed is per (ip-scope, account/username, password-hash)
+		acct := bm.accountName
+		if acct == "" {
+			acct = bm.username
+		}
+
+		pwHash := util.GetHash(util.PreparePassword(bm.password))
+		seedKey := prefix + "bf:seed:" + scoped + ":" + acct + ":" + pwHash
+		ttl := cfg.GetBruteForce().GetColdStartGraceTTL()
+		argTTL := strconv.FormatInt(int64(ttl.Seconds()), 10)
+
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+		res, err := rediscli.ExecuteScript(
+			dCtx,
+			bm.redis(),
+			"ColdStartGraceSeed",
+			rediscli.LuaScripts["ColdStartGraceSeed"],
+			[]string{coldKey, seedKey},
+			argTTL,
+		)
+		cancel()
+
+		if err != nil {
+			level.Warn(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, fmt.Sprintf("Cold-start grace ExecuteScript error: %v", err),
+			)
+			bm.ProcessPWHist()
+
+			return false, nil
+		}
+
+		// res==int64(1) means grace (first observation)
+		if v, ok := res.(int64); ok && v == 1 {
+			level.Info(logger).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Cold-start grace: not enforcing and learning IP",
+				definitions.LogKeyUsername, bm.username,
+				definitions.LogKeyClientIP, bm.clientIP,
+			)
+			bm.ProcessPWHist()
+
+			return false, nil
+		}
+
+		// Subsequent observation within TTL: enforce computation so complex rules can fill/trigger.
+		return true, nil
 	}
 
 	return true, nil
@@ -1615,23 +1811,36 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 		return nil, fmt.Errorf("%s '%s'", errors.ErrWrongIPAddress, bm.clientIP)
 	}
 
-	if strings.Contains(ipAddress.String(), ":") {
-		_, err = netaddr.ParseIPv6(bm.clientIP)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	bits := 0
 	if bm.ipIsV4 || (!bm.ipIsV6 && ipAddress.To4() != nil) {
 		bm.ipIsV4 = true
+		bm.ipIsV6 = false
+
 		if !rule.IPv4 {
 			return nil, nil
 		}
+
+		ipAddress = ipAddress.To4()
+		bits = 32
 	} else if bm.ipIsV6 || ipAddress.To16() != nil {
 		bm.ipIsV6 = true
+		bm.ipIsV4 = false
+
 		if !rule.IPv6 {
 			return nil, nil
 		}
+
+		if !bm.ipv6Validated {
+			_, err = netaddr.ParseIPv6(bm.clientIP)
+			if err != nil {
+				return nil, err
+			}
+
+			bm.ipv6Validated = true
+		}
+
+		ipAddress = ipAddress.To16()
+		bits = 128
 	}
 
 	// Lookup or compute network for this CIDR
@@ -1641,10 +1850,12 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 		}
 	}
 
-	_, network, err = net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, rule.CIDR))
-	if err != nil {
-		return nil, err
+	mask := net.CIDRMask(int(rule.CIDR), bits)
+	if mask == nil {
+		return nil, fmt.Errorf("invalid CIDR %d for client IP '%s'", rule.CIDR, bm.clientIP)
 	}
+
+	network = &net.IPNet{IP: ipAddress.Mask(mask), Mask: mask}
 
 	if bm.netByCIDR != nil {
 		bm.netByCIDR[rule.CIDR] = network
@@ -1656,41 +1867,59 @@ func (bm *bucketManagerImpl) getNetwork(rule *config.BruteForceRule) (network *n
 // PrepareNetcalc precomputes parsed IP, family and unique CIDR networks for the provided rules.
 // This does not change decision logic; it only caches values for reuse within the request.
 func (bm *bucketManagerImpl) PrepareNetcalc(rules []config.BruteForceRule) {
+	if bm == nil || bm.deps.Cfg == nil {
+		return
+	}
+
+	tr := monittrace.New("nauthilus/auth")
+	_, span := tr.Start(bm.ctx, "bm.preparenetcalc")
+	defer span.End()
+
+	// Initialize the cache map if it does not exist
 	if bm.netByCIDR == nil {
 		bm.netByCIDR = make(map[uint]*net.IPNet, 8)
 	}
 
-	if bm.parsedIP == nil {
-		bm.parsedIP = net.ParseIP(bm.clientIP)
+	// Parse the client IP string into a netip.Addr (zero-allocation)
+	addr, err := netip.ParseAddr(bm.clientIP)
+	if err != nil {
+		return
 	}
 
-	// Determine family bits
-	if bm.parsedIP != nil {
-		if bm.parsedIP.To4() != nil {
-			bm.ipIsV4 = true
-			bm.ipIsV6 = false
-		} else if bm.parsedIP.To16() != nil {
-			bm.ipIsV6 = true
-			bm.ipIsV4 = false
-		}
+	// Update family flags based on the parsed address
+	bm.ipIsV4 = addr.Is4()
+	bm.ipIsV6 = addr.Is6()
+
+	// Maintain backward compatibility for fields requiring net.IP
+	if bm.parsedIP == nil {
+		bm.parsedIP = addr.AsSlice()
+	}
+
+	// netip.ParseAddr already strictly validates the address, including IPv6
+	if bm.ipIsV6 && !bm.ipv6Validated {
+		bm.ipv6Validated = true
 	}
 
 	// Precompute unique CIDR networks used by rules applicable to the detected family
 	for _, r := range rules {
-		if bm.ipIsV4 && !r.IPv4 {
+		// Filter rules by IP family
+		if (bm.ipIsV4 && !r.IPv4) || (bm.ipIsV6 && !r.IPv6) {
 			continue
 		}
 
-		if bm.ipIsV6 && !r.IPv6 {
-			continue
-		}
-
+		// Skip if this CIDR has already been computed
 		if _, ok := bm.netByCIDR[r.CIDR]; ok {
 			continue
 		}
 
-		if _, n, err := net.ParseCIDR(fmt.Sprintf("%s/%d", bm.clientIP, r.CIDR)); err == nil && n != nil {
-			bm.netByCIDR[r.CIDR] = n
+		// Create a prefix and mask the address to get the network part
+		if prefix, err := addr.Prefix(int(r.CIDR)); err == nil {
+			masked := prefix.Masked().Addr()
+
+			// Convert back to *net.IPNet for compatibility with existing business logic
+			ip := net.IP(masked.AsSlice())
+			mask := net.CIDRMask(int(r.CIDR), addr.BitLen())
+			bm.netByCIDR[r.CIDR] = &net.IPNet{IP: ip, Mask: mask}
 		}
 	}
 }
@@ -1703,14 +1932,17 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
+	cfg := bm.cfg()
+	logger := bm.logger()
+
 	if withUsername {
 		// Prefer explicit accountName; if absent, optionally fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
 			// If configured and this is a cached-block (alreadyTriggered), do not create
 			// per-username PW_HIST entries for unknown accounts to reduce key footprint.
-			if config.GetFile().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
-				level.Debug(log.Logger).Log(
+			if cfg.GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+				level.Debug(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Skipping account-scoped PW_HIST for unknown account on cached block",
 				)
@@ -1720,7 +1952,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 
 			if bm.username == "" {
 				// Skip if neither account nor username is available
-				level.Debug(log.Logger).Log(
+				level.Debug(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Skipping getPasswordHistoryRedisHashKey: no accountName or username",
 				)
@@ -1731,12 +1963,17 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":" + scoped
+		hashTag := scoped
+		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHashKey + ":{" + hashTag + "}:" + scoped
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		bm.ctx,
+		bm.cfg(),
+		bm.logger(),
 		definitions.DbgBf,
 		definitions.LogKeyGUID, bm.guid,
 		definitions.LogKeyClientIP, bm.clientIP,
@@ -1754,13 +1991,16 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
 	}
 
+	cfg := bm.cfg()
+	logger := bm.logger()
+
 	if withUsername {
 		// Prefer explicit accountName; if absent, optionally fall back to username.
 		accountName := bm.accountName
 		if accountName == "" {
 			// Respect config to reduce PW_HIST on cached-blocks
-			if config.GetFile().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
-				level.Debug(log.Logger).Log(
+			if bm.cfg().GetBruteForce().GetPWHistKnownAccountsOnlyOnAlreadyTriggered() && bm.alreadyTriggered {
+				level.Debug(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Skipping account-scoped PW_HIST total for unknown account on cached block",
 				)
@@ -1769,7 +2009,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			}
 
 			if bm.username == "" {
-				level.Debug(log.Logger).Log(
+				level.Debug(logger).Log(
 					definitions.LogKeyGUID, bm.guid,
 					definitions.LogKeyMsg, "Skipping getPasswordHistoryTotalRedisKey: no accountName or username",
 				)
@@ -1780,15 +2020,19 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 			accountName = bm.username
 		}
 
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + fmt.Sprintf(":%s:%s", accountName, scoped)
+		hashTag := accountName + ":" + scoped
+		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + fmt.Sprintf("%s:%s", accountName, scoped)
 	} else {
-		key = config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":" + scoped
+		hashTag := scoped
+		key = cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPwHistTotalKey + ":{" + hashTag + "}:" + scoped
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		bm.ctx,
+		bm.cfg(),
+		bm.logger(),
 		definitions.DbgBf,
 		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyClientIP, bm.clientIP,
 		"total_key", key,
 	)
 
@@ -1797,14 +2041,17 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 
 // checkTooManyPasswordHashes checks if the number of password hashes for a given Redis key exceeds the configured limit.
 func (bm *bucketManagerImpl) checkTooManyPasswordHashes(key string) bool {
+	var length int64
+	var err error
+
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	defer cancel()
 
-	if length, err := rediscli.GetClient().GetReadHandle().HLen(dCtx, key).Result(); err != nil {
+	if length, err = bm.redis().GetReadHandle().HLen(dCtx, key).Result(); err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(
+			level.Error(bm.logger()).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Error checking HLen",
 				definitions.LogKeyError, err,
@@ -1812,10 +2059,10 @@ func (bm *bucketManagerImpl) checkTooManyPasswordHashes(key string) bool {
 		}
 
 		return true
-	} else {
-		if length > int64(config.GetFile().GetServer().GetMaxPasswordHistoryEntries()) {
-			return true
-		}
+	}
+
+	if length > int64(bm.cfg().GetServer().GetMaxPasswordHistoryEntries()) {
+		return true
 	}
 
 	return false
@@ -1828,16 +2075,21 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 		return
 	}
 
-	util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
+	util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 	defer cancel()
 
-	if passwordHistory, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result(); err != nil {
+	var passwordHistory map[string]string
+	var err error
+
+	logger := bm.logger()
+
+	if passwordHistory, err = bm.redis().GetReadHandle().HGetAll(dCtx, key).Result(); err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Error loading password history from Redis",
 				definitions.LogKeyError, err,
@@ -1845,45 +2097,45 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 		}
 
 		return
-	} else {
-		var counterInt int
+	}
 
-		if bm.passwordHistory == nil {
-			bm.passwordHistory = new(PasswordHistory)
-			*bm.passwordHistory = make(PasswordHistory)
-		}
+	var counterInt int
 
-		for passwordHash, counter := range passwordHistory {
-			if counterInt, err = strconv.Atoi(counter); err != nil {
-				if !errors2.Is(err, redis.Nil) {
-					level.Error(log.Logger).Log(
-						definitions.LogKeyGUID, bm.guid,
-						definitions.LogKeyMsg, "Error parsing password history counter",
-						definitions.LogKeyError, err,
-					)
-				}
+	if bm.passwordHistory == nil {
+		bm.passwordHistory = new(PasswordHistory)
+		*bm.passwordHistory = make(PasswordHistory)
+	}
 
-				return
+	for passwordHash, counter := range passwordHistory {
+		if counterInt, err = strconv.Atoi(counter); err != nil {
+			if !errors2.Is(err, redis.Nil) {
+				level.Error(logger).Log(
+					definitions.LogKeyGUID, bm.guid,
+					definitions.LogKeyMsg, "Error parsing password history counter",
+					definitions.LogKeyError, err,
+				)
 			}
 
-			(*bm.passwordHistory)[passwordHash] = uint(counterInt)
+			return
 		}
+
+		(*bm.passwordHistory)[passwordHash] = uint(counterInt)
 	}
 }
 
 // loadBruteForceBucketCounter loads a brute force bucket counter for the specified rule if the feature is enabled.
 // It retrieves the bucket counter from Redis, logs the operation, and updates the in-memory counter mapping for the rule.
 func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForceRule) {
-	if !config.GetFile().HasFeature(definitions.FeatureBruteForce) {
+	if !bm.cfg().HasFeature(definitions.FeatureBruteForce) {
 		return
 	}
 
 	bucketCounter := new(bruteForceBucketCounter)
 
 	if key := bm.GetBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModule(definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
 
-		if err := loadBruteForceBucketCounterFromRedis(bm.ctx, key, bucketCounter); err != nil {
+		if err := loadBruteForceBucketCounterFromRedis(bm.ctx, bm.cfg(), bm.logger(), bm.redis(), key, bucketCounter); err != nil {
 			return
 		}
 	}
@@ -1897,11 +2149,12 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 
 // setPreResultBruteForceRedis stores a brute force rule in Redis under a hashed key, handling network resolution and errors.
 func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForceRule) {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisBruteForceHashKey
+	logger := bm.logger()
 
 	network, err := bm.getNetwork(rule)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Error getting network for brute force rule",
 			definitions.LogKeyError, err,
@@ -1909,11 +2162,11 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 	} else {
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 		defer cancel()
 
-		if err = rediscli.GetClient().GetWriteHandle().HSet(dCtx, key, network.String(), bm.bruteForceName).Err(); err != nil {
-			level.Error(log.Logger).Log(
+		if err = bm.redis().GetWriteHandle().HSet(dCtx, key, network.String(), bm.bruteForceName).Err(); err != nil {
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Error setting brute force rule in Redis",
 				definitions.LogKeyError, err,
@@ -1929,17 +2182,18 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 		return
 	}
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
+	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
+	logger := bm.logger()
 
 	// First check if the account is already a member
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 
-	isMember, err := rediscli.GetClient().GetReadHandle().SIsMember(dCtx, key, bm.accountName).Result()
+	isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, bm.accountName).Result()
 	if err != nil {
 		if !errors2.Is(err, redis.Nil) {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, bm.guid,
 				definitions.LogKeyMsg, "Error checking if account is already a member of the affected accounts set",
 				definitions.LogKeyError, err,
@@ -1960,11 +2214,11 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	// Add the account to the set
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(bm.ctx)
+	dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 	defer cancel()
 
-	if err := rediscli.GetClient().GetWriteHandle().SAdd(dCtx, key, bm.accountName).Err(); err != nil {
-		level.Error(log.Logger).Log(
+	if err := bm.redis().GetWriteHandle().SAdd(dCtx, key, bm.accountName).Err(); err != nil {
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
 			definitions.LogKeyError, err,
@@ -1972,26 +2226,39 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	}
 }
 
-// NewBucketManager creates and returns a new instance of BucketManager with the provided context, GUID, and client IP.
-func NewBucketManager(ctx context.Context, guid, clientIP string) BucketManager {
+// BucketManagerDeps bundles optional dependencies for BucketManager.
+//
+// If a field is nil, the BucketManager falls back to the legacy global singletons
+// to preserve backward-compatible behavior.
+type BucketManagerDeps struct {
+	Cfg      config.File
+	Logger   *slog.Logger
+	Redis    rediscli.Client
+	Tolerate tolerate.Tolerate
+}
+
+// NewBucketManagerWithDeps creates a new BucketManager instance that prefers injected
+// dependencies over legacy globals.
+func NewBucketManagerWithDeps(ctx context.Context, guid, clientIP string, deps BucketManagerDeps) BucketManager {
 	return &bucketManagerImpl{
 		ctx:      ctx,
+		deps:     deps,
 		guid:     guid,
 		clientIP: clientIP,
-		scoper:   ipscoper.NewIPScoper(),
+		scoper:   ipscoper.NewIPScoper().WithCfg(deps.Cfg),
 	}
 }
 
 // GetPWHistIPsRedisKey generates the Redis key for storing password history associated with IPs for a specific account.
-func GetPWHistIPsRedisKey(accountName string) string {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + accountName
+func GetPWHistIPsRedisKey(accountName string, cfg config.File) string {
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisPWHistIPsKey + ":" + accountName
 
 	return key
 }
 
 // logBucketRuleDebug logs debug information for a brute force rule, including client IP, rule details, and request counts.
 func logBucketRuleDebug(bm *bucketManagerImpl, network *net.IPNet, rule *config.BruteForceRule) {
-	util.DebugModule(definitions.DbgBf,
+	util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf,
 		definitions.LogKeyGUID, bm.guid,
 		"limit", rule.FailedRequests,
 		definitions.LogKeyClientIP, bm.clientIP,
@@ -2003,7 +2270,7 @@ func logBucketRuleDebug(bm *bucketManagerImpl, network *net.IPNet, rule *config.
 
 // logBucketMatchingRule logs information about a triggered brute force rule, including rule details and client session data.
 func logBucketMatchingRule(bm *bucketManagerImpl, network *net.IPNet, rule *config.BruteForceRule, message string) {
-	level.Info(log.Logger).Log(
+	level.Info(bm.logger()).Log(
 		definitions.LogKeyGUID, bm.guid,
 		definitions.LogKeyBruteForce, message,
 		definitions.LogKeyUsername, bm.username,
@@ -2016,7 +2283,10 @@ func logBucketMatchingRule(bm *bucketManagerImpl, network *net.IPNet, rule *conf
 // logBruteForceRuleRedisKeyDebug logs debugging information related to brute force rule configuration and Redis key generation.
 // It logs details such as rule properties, client IP, session ID, network info, and the generated Redis key.
 func logBruteForceRuleRedisKeyDebug(bm *bucketManagerImpl, rule *config.BruteForceRule, network *net.IPNet, key string) {
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		bm.ctx,
+		bm.cfg(),
+		bm.logger(),
 		definitions.DbgBf,
 		definitions.LogKeyGUID, bm.guid,
 		definitions.LogKeyClientIP, bm.clientIP,
@@ -2033,16 +2303,16 @@ func logBruteForceRuleRedisKeyDebug(bm *bucketManagerImpl, rule *config.BruteFor
 
 // loadBruteForceBucketCounterFromRedis retrieves and unmarshals a BruteForceBucketCounter from Redis by the provided key.
 // It ensures metrics tracking for Redis read operations and logs errors if Redis operations or unmarshalling fail.
-func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucketCounter *bruteForceBucketCounter) (err error) {
+func loadBruteForceBucketCounterFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, key string, bucketCounter *bruteForceBucketCounter) (err error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Count Redis roundtrip for bucket counter GET
 	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("get_bucket_counter").Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 	defer cancel()
 
-	val, err := rediscli.GetClient().GetReadHandle().Get(dCtx, key).Result()
+	val, err := redisClient.GetReadHandle().Get(dCtx, key).Result()
 	if err != nil {
 		if errors2.Is(err, redis.Nil) {
 			// treat missing as zero
@@ -2051,7 +2321,7 @@ func loadBruteForceBucketCounterFromRedis(ctx context.Context, key string, bucke
 			return nil
 		}
 
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Error loading brute force bucket counter from Redis",
 			definitions.LogKeyError, err,
 		)

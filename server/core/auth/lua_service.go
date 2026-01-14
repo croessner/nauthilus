@@ -19,11 +19,9 @@ import (
 	stderrors "errors"
 	"fmt"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/filter"
@@ -50,7 +48,7 @@ type DefaultPostAction struct{}
 func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBResult *core.PassDBResult) definitions.AuthResult {
 	auth := view.Auth()
 
-	if !config.GetFile().HaveLuaFilters() {
+	if !auth.Cfg().HaveLuaFilters() {
 		// No filters configured → treat as authorized
 		auth.Authorized = true
 
@@ -61,29 +59,33 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		return definitions.AuthResultFail
 	}
 
-	stopTimer := stats.PrometheusTimer(definitions.PromFilter, "lua_filter_request_total")
+	stopTimer := stats.PrometheusTimer(auth.Cfg(), definitions.PromFilter, "lua_filter_request_total")
 	if stopTimer != nil {
 		defer stopTimer()
 	}
 
 	backendServers := core.ListBackendServers()
-	util.DebugModule(definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
+	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
+	auth.FillCommonRequest(commonRequest)
 
-	// Set the fields (intentionally identical to previous inline code)
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = false // unavailable
+	// UserFound and Authenticated are special because they might have been
+	// updated by the passDB result after FillCommonRequest was called.
 	commonRequest.UserFound = passDBResult.UserFound
 	commonRequest.Authenticated = passDBResult.Authenticated
+
+	// Set the fields (intentionally identical to previous inline code)
+	commonRequest.Debug = auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
+	commonRequest.Repeating = auth.BFRepeating
 	commonRequest.NoAuth = auth.NoAuth
 	commonRequest.BruteForceCounter = 0 // unavailable
 	commonRequest.Service = auth.Service
 	commonRequest.Session = auth.GUID
 	commonRequest.ClientIP = auth.ClientIP
 	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.ClientNet = "" // unavailable
+	commonRequest.ClientNet = auth.BFClientNet
 	commonRequest.ClientHost = auth.ClientHost
 	commonRequest.ClientID = auth.XClientID
 	commonRequest.UserAgent = auth.UserAgent
@@ -97,8 +99,8 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.Password = auth.Password
 	commonRequest.Protocol = auth.Protocol.String()
 	commonRequest.OIDCCID = auth.OIDCCID
-	commonRequest.BruteForceName = "" // unavailable
-	commonRequest.FeatureName = ""    // unavailable
+	commonRequest.BruteForceName = auth.BruteForceName
+	commonRequest.FeatureName = auth.FeatureName
 	commonRequest.StatusMessage = &auth.StatusMessage
 	commonRequest.XSSL = auth.XSSL
 	commonRequest.XSSLSessionID = auth.XSSLSessionID
@@ -118,21 +120,27 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	commonRequest.SSLFingerprint = auth.SSLFingerprint
 
 	filterRequest := &filter.Request{
+		Session:            auth.GUID,
+		Username:           auth.Username,
+		Password:           auth.Password,
+		ClientIP:           auth.ClientIP,
+		AccountName:        auth.GetAccount(),
+		AdditionalFeatures: auth.AdditionalFeatures,
 		BackendServers:     backendServers,
-		UsedBackendAddress: &auth.UsedBackendIP,
+		UsedBackendAddr:    &auth.UsedBackendIP,
 		UsedBackendPort:    &auth.UsedBackendPort,
 		Logs:               nil,
 		Context:            auth.Context,
 		CommonRequest:      commonRequest,
 	}
 
-	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx)
+	filterResult, luaBackendResult, removeAttributes, err := filterRequest.CallFilterLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 	if err != nil {
 		if !stderrors.Is(err, errors.ErrNoFiltersDefined) {
 			// Include Lua stacktrace when available
 			var ae *lua.ApiError
 			if stderrors.As(err, &ae) && ae != nil {
-				level.Error(log.Logger).Log(
+				level.Error(auth.Logger()).Log(
 					definitions.LogKeyGUID, auth.GUID,
 					definitions.LogKeyMsg, "Error calling Lua filter",
 					definitions.LogKeyError, ae.Error(),
@@ -195,7 +203,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 		// filters accepted → authorized
 		auth.Authorized = true
 
-		auth.UsedBackendIP = *filterRequest.UsedBackendAddress
+		auth.UsedBackendIP = *filterRequest.UsedBackendAddr
 		auth.UsedBackendPort = *filterRequest.UsedBackendPort
 	}
 
@@ -214,7 +222,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 	auth := input.View.Auth()
 	passDBResult := input.Result
 
-	if !config.GetFile().HaveLuaActions() {
+	if !auth.Cfg().HaveLuaActions() {
 		return
 	}
 
@@ -236,7 +244,7 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		ParentSpan:    trace.SpanContextFromContext(auth.Ctx()),
 		StatusMessage: statusMessageCopy,
 		Request: lualib.CommonRequest{
-			Debug:               config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
+			Debug:               auth.Cfg().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug,
 			Repeating:           auth.BFRepeating,
 			UserFound:           userFound,
 			Authenticated:       passDBResult.Authenticated,
@@ -281,5 +289,5 @@ func (DefaultPostAction) Run(input core.PostActionInput) {
 		},
 	}
 
-	go core.RunLuaPostAction(args)
+	go auth.RunLuaPostAction(args)
 }

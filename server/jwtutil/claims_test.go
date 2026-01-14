@@ -1,12 +1,30 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package jwtutil
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,9 +35,12 @@ func TestHasRole(t *testing.T) {
 
 	// Set up test configuration to avoid "FileSettings not loaded" error
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
-	config.SetTestFile(&config.FileSettings{
+	testFile := &config.FileSettings{
 		Server: &config.ServerSection{},
-	})
+	}
+	config.SetTestFile(testFile)
+	util.SetDefaultConfigFile(testFile)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
 	// Set up logging
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
@@ -33,9 +54,10 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "No claims in context",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,
@@ -43,13 +65,14 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims as *jwtclaims.Claims with matching role",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user", "admin"},
 				})
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: true,
@@ -57,13 +80,14 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims as *jwtclaims.Claims with non-matching role",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, &jwtclaims.Claims{
 					Username: "testuser",
 					Roles:    []string{"user"},
 				})
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,
@@ -71,10 +95,11 @@ func TestHasRole(t *testing.T) {
 		{
 			name: "Claims in unexpected format",
 			setup: func() *gin.Context {
-				ctx := gin.Context{}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 				ctx.Set(definitions.CtxGUIDKey, "test-guid")
 				ctx.Set(definitions.CtxJWTClaimsKey, "invalid-claims")
-				return &ctx
+				return ctx
 			},
 			role:     "admin",
 			expected: false,

@@ -16,15 +16,21 @@
 package main
 
 import (
+	"context"
 	stdlog "log"
-	"os"
-	"time"
 
-	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/app/bootfx"
+	"github.com/croessner/nauthilus/server/app/envfx"
+	"github.com/croessner/nauthilus/server/app/loopsfx"
+	"github.com/croessner/nauthilus/server/app/opsfx"
+	"github.com/croessner/nauthilus/server/app/reloadfx"
+	"github.com/croessner/nauthilus/server/app/restartfx"
+	"github.com/croessner/nauthilus/server/app/signalsfx"
 	_ "github.com/croessner/nauthilus/server/core/auth"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/monitoring"
 	"github.com/croessner/nauthilus/server/svcctx"
+
+	"go.uber.org/fx"
 )
 
 var (
@@ -32,53 +38,73 @@ var (
 	buildTime = ""
 )
 
-// main is the entry point of the application. It initializes the environment, workers, monitoring, and starts the HTTP server.
+type bootstrapped struct{}
+
+// newBootstrapped runs the legacy configuration bootstrap and returns a token
+// that enforces ordering for fx providers that depend on configuration being loaded.
+func newBootstrapped() (*bootstrapped, error) {
+	if err := bootfx.SetupConfiguration(); err != nil {
+		return nil, err
+	}
+
+	return &bootstrapped{}, nil
+}
+
+// rootContextOption provides the root context and cancellation function as interface types.
+//
+// This avoids the pitfall of fx.Supply(ctx) registering the concrete implementation type
+// instead of the context.Context interface.
+func rootContextOption(ctx context.Context, cancel context.CancelFunc) fx.Option {
+	return fx.Provide(
+		func() context.Context {
+			return ctx
+		},
+		func() context.CancelFunc {
+			return cancel
+		},
+	)
+}
+
+// main is the entry point of the application.
 func main() {
-	parseFlagsAndPrintVersion()
+	bootfx.ParseFlagsAndPrintVersion(version)
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
+	stopTimeout := definitions.FxStopTimeout
 
-	if err := setupConfiguration(); err != nil {
-		stdlog.Fatalln("Unable to setup the environment. Error:", err)
+	fApp := fx.New(
+		fx.NopLogger,
+		rootContextOption(ctx, cancel),
+		fx.Provide(newBootstrapped),
+		fx.Provide(newConfigDeps),
+		fx.Provide(newLogger),
+		fx.Provide(newDbgModuleMapping),
+		fx.Provide(newRedisDeps),
+		fx.Provide(newAccountCache),
+		fx.Provide(newBackendChannel),
+		envfx.Module(),
+		loopsfx.Module(),
+		opsfx.Module(),
+		reloadfx.Module(),
+		restartfx.Module(),
+		fx.Provide(newActionWorkers),
+		fx.Provide(newContextStoreForRuntime),
+		fx.Provide(newReloadOrchestrator),
+		fx.Provide(newRestartOrchestrator),
+		fx.Invoke(registerRuntimeLifecycle),
+		signalsfx.Module(),
+	)
+
+	if err := fApp.Start(context.Background()); err != nil {
+		stdlog.Fatalln("Unable to start fx app. Error:", err)
 	}
 
-	// Initialize OpenTelemetry tracing early (no-op if disabled)
-	monitoring.GetTelemetry().Start(ctx, version)
-	defer monitoring.GetTelemetry().Shutdown(ctx)
+	<-ctx.Done()
 
-	initializeInstanceInfo()
-	debugLoadableConfig()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopTimeout)
+	defer stopCancel()
 
-	if err := setupLuaScripts(); err != nil {
-		stdlog.Fatalln("Unable to setup Lua scripts. Error:", err)
+	if err := fApp.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop fx app. Error: %v", err)
 	}
-
-	enableBlockProfile()
-
-	statsTicker := time.NewTicker(definitions.StatsDelay * time.Second)
-	monitoringTicker := time.NewTicker(definitions.BackendServerMonitoringDelay * time.Second)
-	store := newContextStore()
-
-	store.action = newContextTuple(ctx)
-
-	actionWorkers := initializeActionWorkers()
-
-	inititalizeBruteForceTolerate(ctx)
-	initializeHTTPClients()
-	core.InitPassDBResultPool()
-	setupWorkers(ctx, store, actionWorkers)
-	handleSignals(ctx, cancel, store, statsTicker, &monitoringTicker, actionWorkers)
-	setupRedis(ctx)
-
-	runLuaInitScript(ctx)
-	core.LoadStatsFromRedis(ctx)
-	startHTTPServer(ctx, store)
-	runConnectionManager(ctx)
-
-	// Backend server monitoring feature
-	go runBackendServerMonitoring(ctx, store, monitoringTicker)
-
-	startStatsLoop(ctx, statsTicker)
-
-	os.Exit(0)
 }

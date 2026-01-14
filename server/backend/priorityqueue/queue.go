@@ -1,7 +1,23 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package priorityqueue
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"time"
 
@@ -446,6 +462,68 @@ func (q *LDAPRequestQueue) Pop(poolName string) *bktype.LDAPRequest {
 	}
 }
 
+// PopWithContext removes and returns the highest priority request from the LDAPRequestQueue for a specific pool.
+//
+// It blocks if the queue is empty, but will return nil if ctx is canceled.
+func (q *LDAPRequestQueue) PopWithContext(ctx context.Context, poolName string) *bktype.LDAPRequest {
+	if ctx == nil {
+		return q.Pop(poolName)
+	}
+
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	p, ok := q.pools[poolName]
+	if !ok {
+		pq := make(LDAPRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
+	}
+
+	for {
+		for p.queue.Len() == 0 {
+			q.mutex.Unlock()
+			select {
+			case <-ctx.Done():
+				q.mutex.Lock()
+
+				return nil
+			case <-time.After(50 * time.Millisecond):
+			}
+			q.mutex.Lock()
+		}
+
+		item := heap.Pop(&p.queue).(*LDAPRequestItem)
+
+		// If the request context is already canceled, drop it and continue to next.
+		if item.Request != nil && item.Request.HTTPClientContext != nil {
+			select {
+			case <-item.Request.HTTPClientContext.Done():
+				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "lookup").Inc()
+				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
+
+				continue
+			default:
+			}
+		}
+
+		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "lookup").Observe(time.Since(item.InsertTime).Seconds())
+		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "lookup").Set(float64(p.queue.Len()))
+
+		return item.Request
+	}
+}
+
 // Push adds a request to the LDAPAuthRequestQueue with the given priority, routed by PoolName
 func (q *LDAPAuthRequestQueue) Push(request *bktype.LDAPAuthRequest, priority int) {
 	q.mutex.Lock()
@@ -550,6 +628,68 @@ func (q *LDAPAuthRequestQueue) Pop(poolName string) *bktype.LDAPAuthRequest {
 	}
 }
 
+// PopWithContext removes and returns the highest priority request from the LDAPAuthRequestQueue for a specific pool.
+//
+// It blocks if the queue is empty, but will return nil if ctx is canceled.
+func (q *LDAPAuthRequestQueue) PopWithContext(ctx context.Context, poolName string) *bktype.LDAPAuthRequest {
+	if ctx == nil {
+		return q.Pop(poolName)
+	}
+
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	p, ok := q.pools[poolName]
+	if !ok {
+		pq := make(LDAPAuthRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		p = &struct {
+			queue    LDAPAuthRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.pools[poolName] = p
+		q.poolNames[poolName] = true
+	}
+
+	for {
+		for p.queue.Len() == 0 {
+			q.mutex.Unlock()
+			select {
+			case <-ctx.Done():
+				q.mutex.Lock()
+
+				return nil
+			case <-time.After(50 * time.Millisecond):
+			}
+			q.mutex.Lock()
+		}
+
+		item := heap.Pop(&p.queue).(*LDAPAuthRequestItem)
+
+		// If the request context is already canceled, drop it and continue to next.
+		if item.Request != nil && item.Request.HTTPClientContext != nil {
+			select {
+			case <-item.Request.HTTPClientContext.Done():
+				stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, "auth").Inc()
+				stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
+
+				continue
+			default:
+			}
+		}
+
+		stats.GetMetrics().GetLdapQueueWaitSeconds().WithLabelValues(poolName, "auth").Observe(time.Since(item.InsertTime).Seconds())
+		stats.GetMetrics().GetLdapQueueDepth().WithLabelValues(poolName, "auth").Set(float64(p.queue.Len()))
+
+		return item.Request
+	}
+}
+
 // Push adds a request to the LuaRequestQueue with the given priority, routed by BackendName
 func (q *LuaRequestQueue) Push(request *bktype.LuaRequest, priority int) {
 	q.mutex.Lock()
@@ -647,6 +787,68 @@ func (q *LuaRequestQueue) Pop(backendName string) *bktype.LuaRequest {
 		}
 
 		// Record queue wait time and new depth after dequeue
+		stats.GetMetrics().GetLuaQueueWaitSeconds().WithLabelValues(backendName).Observe(time.Since(item.InsertTime).Seconds())
+		stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
+
+		return item.Request
+	}
+}
+
+// PopWithContext removes and returns the highest priority request from the LuaRequestQueue for a specific backend.
+//
+// It blocks if the queue is empty, but will return nil if ctx is canceled.
+func (q *LuaRequestQueue) PopWithContext(ctx context.Context, backendName string) *bktype.LuaRequest {
+	if ctx == nil {
+		return q.Pop(backendName)
+	}
+
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	b, ok := q.backends[backendName]
+	if !ok {
+		pq := make(LuaRequestPriorityQueue, 0)
+
+		heap.Init(&pq)
+
+		b = &struct {
+			queue    LuaRequestPriorityQueue
+			notEmpty *sync.Cond
+		}{
+			queue:    pq,
+			notEmpty: sync.NewCond(&q.mutex),
+		}
+		q.backends[backendName] = b
+		q.backendNames[backendName] = true
+	}
+
+	for {
+		for b.queue.Len() == 0 {
+			q.mutex.Unlock()
+			select {
+			case <-ctx.Done():
+				q.mutex.Lock()
+
+				return nil
+			case <-time.After(50 * time.Millisecond):
+			}
+			q.mutex.Lock()
+		}
+
+		item := heap.Pop(&b.queue).(*LuaRequestItem)
+
+		// If the request context is already canceled, drop it and continue to next.
+		if item.Request != nil && item.Request.HTTPClientContext != nil {
+			select {
+			case <-item.Request.HTTPClientContext.Done():
+				stats.GetMetrics().GetLuaQueueDroppedTotal().WithLabelValues(backendName).Inc()
+				stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
+
+				continue
+			default:
+			}
+		}
+
 		stats.GetMetrics().GetLuaQueueWaitSeconds().WithLabelValues(backendName).Observe(time.Since(item.InsertTime).Seconds())
 		stats.GetMetrics().GetLuaQueueDepth().WithLabelValues(backendName).Set(float64(b.queue.Len()))
 

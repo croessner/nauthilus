@@ -28,14 +28,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlimit "github.com/croessner/nauthilus/server/middleware/limit"
 	mdlog "github.com/croessner/nauthilus/server/middleware/logging"
 	"github.com/croessner/nauthilus/server/monitoring"
+	"github.com/croessner/nauthilus/server/rediscli"
 	approuter "github.com/croessner/nauthilus/server/router"
 
 	"github.com/gin-contrib/pprof"
@@ -45,22 +46,40 @@ import (
 	"github.com/pires/go-proxyproto"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/spf13/viper"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/net/http2"
 )
 
+type HTTPDeps struct {
+	Cfg          config.File
+	Logger       *slog.Logger
+	Env          config.Environment
+	Redis        rediscli.Client
+	AccountCache *accountcache.Manager
+}
+
 // DefaultBootstrap wires the existing bootstrapping functions.
-type DefaultBootstrap struct{}
+type DefaultBootstrap struct {
+	cfg          config.File
+	logger       *slog.Logger
+	env          config.Environment
+	redis        rediscli.Client
+	accountCache *accountcache.Manager
+}
+
+func NewDefaultBootstrap(deps HTTPDeps) DefaultBootstrap {
+	return DefaultBootstrap{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
+}
 
 // InitSessionStore creates and returns the secure cookie-backed Gin session store
 // with secure defaults (Secure, SameSite=Strict). The caller is responsible for
 // registering the sessions middleware with Gin.
-func (DefaultBootstrap) InitSessionStore() sessions.Store {
+
+func (b DefaultBootstrap) InitSessionStore() sessions.Store {
 	store := cookie.NewStore(
-		[]byte(config.GetFile().GetServer().Frontend.CookieStoreAuthKey),
-		[]byte(config.GetFile().GetServer().Frontend.CookieStoreEncKey),
+		[]byte(b.cfg.GetServer().Frontend.CookieStoreAuthKey),
+		[]byte(b.cfg.GetServer().Frontend.CookieStoreEncKey),
 	)
 	store.Options(sessions.Options{
 		Path:     "/",
@@ -73,11 +92,11 @@ func (DefaultBootstrap) InitSessionStore() sessions.Store {
 
 // InitGinLogging configures Gin's writers to use the project's logger and sets
 // Gin mode (release/debug) and color output based on configuration.
-func (DefaultBootstrap) InitGinLogging() {
-	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: log.Logger, lvl: slog.LevelDebug})
-	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: log.Logger, lvl: slog.LevelError})
+func (b DefaultBootstrap) InitGinLogging() {
+	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: b.logger, lvl: slog.LevelDebug})
+	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: b.logger, lvl: slog.LevelError})
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
+	if b.cfg.GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -85,13 +104,31 @@ func (DefaultBootstrap) InitGinLogging() {
 }
 
 // DefaultRouterComposer builds the gin.Engine and registers routes/middlewares in the exact order.
-type DefaultRouterComposer struct{}
+type DefaultRouterComposer struct {
+	cfg          config.File
+	logger       *slog.Logger
+	env          config.Environment
+	redis        rediscli.Client
+	accountCache *accountcache.Manager
+}
+
+func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
+	return DefaultRouterComposer{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis, accountCache: deps.AccountCache}
+}
 
 // ComposeEngine creates a fresh gin.Engine without any default middleware.
 // This mirrors the legacy code which constructed the engine explicitly and
 // enables ContextWithFallback so gin.Context behaves consistently as a
 // context.Context with respect to Deadline/Done/Err/Value fallbacks.
-func (DefaultRouterComposer) ComposeEngine() *gin.Engine {
+func (c DefaultRouterComposer) ComposeEngine() *gin.Engine {
+	mdauth.SetProtectMiddleware(func(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+		return ProtectEndpointMiddleware(cfg, logger)
+	})
+
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient, accountCache)
+	})
+
 	return gin.New(func(e *gin.Engine) {
 		e.ContextWithFallback = true
 	})
@@ -99,25 +136,25 @@ func (DefaultRouterComposer) ComposeEngine() *gin.Engine {
 
 // ApplyEarlyMiddlewares registers pprof (if enabled), the concurrency limiter,
 // and the structured logging middleware. The order is preserved as in the legacy code.
-func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
-	if config.GetFile().GetServer().GetInsights().IsPprofEnabled() {
+func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
+	if c.cfg.GetServer().GetInsights().IsPprofEnabled() {
 		pprof.Register(r)
 	}
 
-	mw := config.GetFile().GetServer().GetMiddlewares()
+	mw := c.cfg.GetServer().GetMiddlewares()
 
 	if mw.IsLimitEnabled() {
-		limitCounter := mdlimit.NewLimitCounter(config.GetFile().GetServer().GetMaxConcurrentRequests())
+		limitCounter := mdlimit.NewLimitCounter(c.cfg.GetServer().GetMaxConcurrentRequests())
 
-		r.Use(limitCounter.Middleware())
+		r.Use(limitCounter.MiddlewareWithLogger(c.logger))
 	}
 
 	// Tracing middleware (OpenTelemetry) – enabled if insights.tracing.enable is true
 	// and not disabled via server.disabled_endpoints.tracing
-	if config.GetFile().GetServer().GetInsights().IsTracingEnabled() {
-		tr := config.GetFile().GetServer().GetInsights().GetTracing()
+	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {
+		tr := c.cfg.GetServer().GetInsights().GetTracing()
 
-		service := monitoring.ResolveServiceName(tr.GetServiceName(), config.GetFile().GetServer().GetInstanceName(), "nauthilus-server")
+		service := monitoring.ResolveServiceName(tr.GetServiceName(), c.cfg.GetServer().GetInstanceName(), "nauthilus-server")
 
 		// Attach OpenTelemetry Gin middleware with explicit provider/propagators and a
 		// stable span name formatter (METHOD + route pattern) to simplify querying.
@@ -137,29 +174,29 @@ func (DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 
 		// Log explicitly that the Gin OpenTelemetry middleware has been attached.
 		// This helps diagnose situations where server spans are not visible in the backend.
-		level.Info(log.Logger).Log(
+		level.Info(c.logger).Log(
 			definitions.LogKeyMsg, "Gin OpenTelemetry tracing middleware attached",
 			"service", service,
 		)
 	}
 
 	if mw.IsLoggingEnabled() {
-		r.Use(mdlog.LoggerMiddleware())
+		r.Use(mdlog.LoggerMiddlewareWithLogger(c.logger))
 	}
 
 	// Make the resolved account available as early as possible in the chain.
 	// This keeps account lookups consistent for all following middlewares/handlers.
-	r.Use(mdauth.AccountMiddleware())
+	r.Use(mdauth.AccountMiddleware(c.cfg, c.logger, c.redis, c.accountCache))
 }
 
 // ApplyCoreMiddlewares configures the router builder to add recovery, trusted
 // proxies, request decompression, response compression, and metrics middleware
 // in the same order as before.
-func (DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
-	rb := approuter.NewRouter(config.GetFile())
+func (c DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
+	rb := approuter.NewRouter(c.cfg)
 	rb.Engine = r
 
-	mw := config.GetFile().GetServer().GetMiddlewares()
+	mw := c.cfg.GetServer().GetMiddlewares()
 
 	if mw.IsRecoveryEnabled() {
 		rb.WithRecovery()
@@ -185,7 +222,7 @@ func (DefaultRouterComposer) ApplyCoreMiddlewares(r *gin.Engine) {
 // RegisterRoutes wires health and metrics routes, then (if enabled) the frontend
 // routes (Hydra, 2FA, WebAuthn, Notify) and finally the backchannel routes. The
 // order is kept to preserve exact behavior of the legacy implementation.
-func (DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
+func (c DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 	setupHealth func(*gin.Engine),
 	setupMetrics func(*gin.Engine),
 	setupHydra func(*gin.Engine),
@@ -202,28 +239,37 @@ func (DefaultRouterComposer) RegisterRoutes(r *gin.Engine,
 		setupMetrics(r)
 	}
 
-	if config.GetFile().GetServer().Frontend.Enabled {
-		r.LoadHTMLGlob(viper.GetString("html_static_content_path") + "/*.html")
+	if c.cfg.GetServer().Frontend.Enabled {
+		r.LoadHTMLGlob(c.cfg.GetServer().Frontend.GetHTMLStaticContentPath() + "/*.html")
 
-		rb := approuter.NewRouter(config.GetFile())
+		rb := approuter.NewRouter(c.cfg)
 		rb.Engine = r
 
 		rb.WithFrontend(setupHydra, setup2FA, setupWebAuthn, setupNotify)
 	}
 
-	rb := approuter.NewRouter(config.GetFile())
+	rb := approuter.NewRouter(c.cfg)
 	rb.Engine = r
 
 	rb.WithBackchannel(setupBackchannel)
 }
 
 // DefaultHTTPServerFactory builds http.Server and configures HTTP/2 settings.
-type DefaultHTTPServerFactory struct{}
+type DefaultHTTPServerFactory struct {
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
+}
+
+func NewDefaultHTTPServerFactory(deps HTTPDeps) DefaultHTTPServerFactory {
+	return DefaultHTTPServerFactory{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+}
 
 // New constructs a configured *http.Server* with HTTP/2 enabled and sensible
 // timeouts. Idle timeout honors the configured keep-alive settings.
-func (DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
-	keepAliveConfig := config.GetFile().GetServer().GetKeepAlive()
+func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
+	keepAliveConfig := f.cfg.GetServer().GetKeepAlive()
 
 	idleTimeout := time.Minute
 	if keepAliveConfig.IsEnabled() && keepAliveConfig.GetTimeout() > 0 {
@@ -238,7 +284,7 @@ func (DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 	}
 
 	srv := &http.Server{
-		Addr:              config.GetFile().GetServer().Address,
+		Addr:              f.cfg.GetServer().Address,
 		Handler:           router,
 		IdleTimeout:       idleTimeout,
 		ReadTimeout:       10 * time.Second,
@@ -247,12 +293,12 @@ func (DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 	}
 
 	if err := http2.ConfigureServer(srv, h2Server); err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(f.logger).Log(
 			definitions.LogKeyMsg, "Failed to configure HTTP/2 server",
 			definitions.LogKeyError, err,
 		)
 	} else {
-		level.Info(log.Logger).Log(
+		level.Info(f.logger).Log(
 			definitions.LogKeyMsg, "HTTP/2 server configured successfully",
 		)
 	}
@@ -261,16 +307,25 @@ func (DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 }
 
 // HAProxyListenerProvider provides PROXY v2 listener when enabled.
-type HAProxyListenerProvider struct{}
+type HAProxyListenerProvider struct {
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
+}
+
+func NewHAProxyListenerProvider(deps HTTPDeps) HAProxyListenerProvider {
+	return HAProxyListenerProvider{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+}
 
 // Get returns a PROXY v2 aware listener if the feature is enabled in the
 // configuration, otherwise it returns nil.
-func (HAProxyListenerProvider) Get() *proxyproto.Listener {
-	if !config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
+func (p HAProxyListenerProvider) Get() *proxyproto.Listener {
+	if !p.cfg.GetServer().IsHAproxyProtocolEnabled() {
 		return nil
 	}
 
-	listener, err := net.Listen("tcp", config.GetFile().GetServer().GetListenAddress())
+	listener, err := net.Listen("tcp", p.cfg.GetServer().GetListenAddress())
 	if err != nil {
 		panic(err)
 	}
@@ -284,13 +339,22 @@ func (HAProxyListenerProvider) Get() *proxyproto.Listener {
 }
 
 // DefaultTLSConfigurator constructs tls.Config according to settings.
-type DefaultTLSConfigurator struct{}
+type DefaultTLSConfigurator struct {
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
+}
+
+func NewDefaultTLSConfigurator(deps HTTPDeps) DefaultTLSConfigurator {
+	return DefaultTLSConfigurator{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+}
 
 // Build assembles a *tls.Config* honoring configured CA, cipher suites,
 // minimum TLS version, NextProtos, and InsecureSkipVerify. If a CA is set,
 // it is used for both RootCAs and optional client verification (VerifyClientCertIfGiven).
-func (DefaultTLSConfigurator) Build() *tls.Config {
-	if !config.GetFile().GetServer().GetTLS().IsEnabled() {
+func (c DefaultTLSConfigurator) Build() *tls.Config {
+	if !c.cfg.GetServer().GetTLS().IsEnabled() {
 		return nil
 	}
 
@@ -298,15 +362,15 @@ func (DefaultTLSConfigurator) Build() *tls.Config {
 	var cipherSuites []uint16
 	var minTLSVersion uint16
 
-	if config.GetFile().GetServer().GetTLS().GetCAFile() != "" {
-		caCert, err := os.ReadFile(config.GetFile().GetServer().GetTLS().GetCAFile())
+	if c.cfg.GetServer().GetTLS().GetCAFile() != "" {
+		caCert, err := os.ReadFile(c.cfg.GetServer().GetTLS().GetCAFile())
 		if err != nil {
-			logAndExit("Failed to read CA certificate", err)
+			logAndExit(c.logger, "Failed to read CA certificate", err)
 		}
 
 		caCertPool = x509.NewCertPool()
 		if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-			logAndExit("Failed to parse CA certificate", err)
+			logAndExit(c.logger, "Failed to parse CA certificate", err)
 		}
 	}
 
@@ -315,7 +379,7 @@ func (DefaultTLSConfigurator) Build() *tls.Config {
 		"TLS1.3": tls.VersionTLS13,
 	}
 
-	if tlsVersion, exists := tlsVersionMap[config.GetFile().GetServer().GetTLS().GetMinTLSVersion()]; exists {
+	if tlsVersion, exists := tlsVersionMap[c.cfg.GetServer().GetTLS().GetMinTLSVersion()]; exists {
 		minTLSVersion = tlsVersion
 	} else {
 		minTLSVersion = tls.VersionTLS12
@@ -341,15 +405,15 @@ func (DefaultTLSConfigurator) Build() *tls.Config {
 		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
 	}
 
-	if len(config.GetFile().GetServer().GetTLS().GetCipherSuites()) > 0 {
-		preferredCiphers = config.GetFile().GetServer().GetTLS().GetCipherSuites()
+	if len(c.cfg.GetServer().GetTLS().GetCipherSuites()) > 0 {
+		preferredCiphers = c.cfg.GetServer().GetTLS().GetCipherSuites()
 	}
 
 	for _, cipherString := range preferredCiphers {
 		if cipher, exists := cipherMap[cipherString]; exists {
 			cipherSuites = append(cipherSuites, cipher)
 		} else {
-			level.Warn(log.Logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Cipher suite %s not found", cipherString))
+			level.Warn(c.logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Cipher suite %s not found", cipherString))
 		}
 	}
 
@@ -358,7 +422,7 @@ func (DefaultTLSConfigurator) Build() *tls.Config {
 		MinVersion:         minTLSVersion,
 		RootCAs:            caCertPool,
 		CipherSuites:       cipherSuites,
-		InsecureSkipVerify: config.GetFile().GetServer().GetTLS().GetSkipVerify(),
+		InsecureSkipVerify: c.cfg.GetServer().GetTLS().GetSkipVerify(),
 	}
 
 	if caCertPool != nil {
@@ -378,10 +442,12 @@ type DefaultServerSignals struct {
 // NewDefaultServerSignals creates a ServerSignals implementation. If enableHTTP3
 // is true, the HTTP/3 done channel will be created as well.
 func NewDefaultServerSignals(enableHTTP3 bool) *DefaultServerSignals {
-	s := &DefaultServerSignals{httpDone: make(chan Done)}
+	// Buffered channels avoid shutdown goroutines blocking indefinitely if no receiver
+	// is currently waiting for the signal (e.g. restart timeouts or reordered stop hooks).
+	s := &DefaultServerSignals{httpDone: make(chan Done, 1)}
 
 	if enableHTTP3 {
-		s.http3Done = make(chan Done)
+		s.http3Done = make(chan Done, 1)
 	}
 
 	return s
@@ -400,29 +466,45 @@ func (s *DefaultServerSignals) HTTP3Done() chan Done {
 }
 
 // DefaultTransportRunner starts HTTP/1.1+2 and optional HTTP/3, with graceful shutdown.
-type DefaultTransportRunner struct{}
+type DefaultTransportRunner struct {
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
+}
+
+func NewDefaultTransportRunner(deps HTTPDeps) DefaultTransportRunner {
+	return DefaultTransportRunner{cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis}
+}
 
 // Serve launches the HTTP/1.1+2 server (and optionally HTTP/3) and manages
 // graceful shutdown on context cancellation. Termination signals are forwarded
 // via the provided ServerSignals implementation to decouple consumers from globals.
-func (DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, signals ServerSignals) {
+func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, signals ServerSignals) {
 	// Graceful shutdown for HTTP/1.1/2
 	go func() {
 		<-ctx.Done()
 
-		waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
+		// Do not derive the shutdown context from ctx: ctx is already canceled here and would
+		// make the shutdown deadline immediately expire, preventing the listener from closing.
+		waitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		_ = srv.Shutdown(waitCtx)
 
 		if signals != nil && signals.HTTPDone() != nil {
-			signals.HTTPDone() <- Done{}
+			select {
+			case signals.HTTPDone() <- Done{}:
+			default:
+			}
 		}
 	}()
 
-	if config.GetFile().GetServer().IsHTTP3Enabled() {
+	if r.cfg.GetServer().IsHTTP3Enabled() {
 		// Serve HTTP/1.1+2 concurrently
-		go func() { serveHTTPInternal(srv, certFile, keyFile, proxy) }()
+		go func() {
+			serveHTTPInternal(r.logger, srv, certFile, keyFile, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
+		}()
 
 		h3 := &http3.Server{
 			Addr:       srv.Addr,
@@ -437,52 +519,60 @@ func (DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, certF
 			_ = h3.Close()
 
 			if signals != nil && signals.HTTP3Done() != nil {
-				signals.HTTP3Done() <- Done{}
+				select {
+				case signals.HTTP3Done() <- Done{}:
+				default:
+				}
 			}
 		}()
 
 		if err := h3.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logAndExit("HTTP/3 server error", err)
+			logAndExit(r.logger, "HTTP/3 server error", err)
 		}
 
 		return
 	}
 
 	// Only HTTP/1.1+2
-	serveHTTPInternal(srv, certFile, keyFile, proxy)
+	serveHTTPInternal(r.logger, srv, certFile, keyFile, proxy, r.cfg.GetServer().GetTLS().IsEnabled())
 }
 
 // serveHTTPInternal runs the HTTP/1.1+2 stack either directly on the TCP listener
 // or on the provided PROXY v2 listener. When TLS is enabled, it uses the given
 // certificate and key files.
-func serveHTTPInternal(srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener) {
-	if config.GetFile().GetServer().GetTLS().IsEnabled() {
+func serveHTTPInternal(logger *slog.Logger, srv *http.Server, certFile, keyFile string, proxy *proxyproto.Listener, tlsEnabled bool) {
+	if tlsEnabled {
 		if proxy == nil {
 			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 			}
 		} else {
-			logProxyHTTP3()
 			if err := srv.ServeTLS(proxy, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 			}
 		}
 
 		return
 	}
+
 	if proxy == nil {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 		}
 	} else {
 		if err := srv.Serve(proxy); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logAndExit("HTTP/1.1 and HTTP/2 server error", err)
+			logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 		}
 	}
 }
 
 // DefaultHTTPApp orchestrates all components and preserves exact behavior.
 type DefaultHTTPApp struct {
+	cfg    config.File
+	logger *slog.Logger
+	env    config.Environment
+	redis  rediscli.Client
+
 	Bootstrap         Bootstrap
 	RouterComposer    RouterComposer
 	HTTPServerFactory HTTPServerFactory
@@ -494,14 +584,19 @@ type DefaultHTTPApp struct {
 // NewDefaultHTTPApp constructs the default HTTP application facade that wires
 // together the default implementations for bootstrapping, router composition,
 // server factory, proxy listener provider, TLS configuration, and transport runner.
-func NewDefaultHTTPApp() *DefaultHTTPApp {
+func NewDefaultHTTPApp(deps HTTPDeps) *DefaultHTTPApp {
 	return &DefaultHTTPApp{
-		Bootstrap:         DefaultBootstrap{},
-		RouterComposer:    DefaultRouterComposer{},
-		HTTPServerFactory: DefaultHTTPServerFactory{},
-		ProxyProvider:     HAProxyListenerProvider{},
-		TLSConfigurator:   DefaultTLSConfigurator{},
-		TransportRunner:   DefaultTransportRunner{},
+		cfg:    deps.Cfg,
+		logger: deps.Logger,
+		env:    deps.Env,
+		redis:  deps.Redis,
+
+		Bootstrap:         NewDefaultBootstrap(deps),
+		RouterComposer:    NewDefaultRouterComposer(deps),
+		HTTPServerFactory: NewDefaultHTTPServerFactory(deps),
+		ProxyProvider:     NewHAProxyListenerProvider(deps),
+		TLSConfigurator:   NewDefaultTLSConfigurator(deps),
+		TransportRunner:   NewDefaultTransportRunner(deps),
 	}
 }
 
@@ -524,10 +619,14 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	signals ServerSignals,
 ) {
 	// Keep auth protect middleware as before
-	mdauth.SetProtectMiddleware(ProtectEndpointMiddleware)
+	mdauth.SetProtectMiddleware(func(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
+		return ProtectEndpointMiddleware(cfg, logger)
+	})
 
 	// Register account resolution middleware factory
-	mdauth.SetAccountMiddleware(AccountMiddleware)
+	mdauth.SetAccountMiddleware(func(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager) gin.HandlerFunc {
+		return AccountMiddleware(cfg, logger, redisClient, accountCache)
+	})
 
 	if err := a.Bootstrap.InitWebAuthn(); err != nil {
 		// The legacy code exits on error; keep that behavior
@@ -549,12 +648,15 @@ func (a *DefaultHTTPApp) Start(ctx context.Context,
 	a.RouterComposer.RegisterRoutes(router, setupHealth, setupMetrics, setupHydra, setup2FA, setupWebAuthn, setupNotify, setupBackchannel)
 
 	proxy := a.ProxyProvider.Get()
+	if proxy != nil {
+		logProxyHTTP3(a.cfg, a.logger)
+	}
 
 	var cert, key string
-	if config.GetFile().GetServer().GetTLS().IsEnabled() {
+	if a.cfg.GetServer().GetTLS().IsEnabled() {
 		srv.TLSConfig = a.TLSConfigurator.Build()
-		cert = config.GetFile().GetServer().GetTLS().GetCert()
-		key = config.GetFile().GetServer().GetTLS().GetKey()
+		cert = a.cfg.GetServer().GetTLS().GetCert()
+		key = a.cfg.GetServer().GetTLS().GetKey()
 	}
 
 	a.TransportRunner.Serve(ctx, srv, cert, key, proxy, signals)
@@ -585,8 +687,8 @@ func (w *customWriter) Write(data []byte) (int, error) {
 }
 
 // Helper: log and exit with code 1 (preserves legacy behavior)
-func logAndExit(message string, err error) {
-	level.Error(log.Logger).Log(
+func logAndExit(logger *slog.Logger, message string, err error) {
+	level.Error(logger).Log(
 		definitions.LogKeyMsg, message,
 		definitions.LogKeyMsg, "Exiting",
 		definitions.LogKeyError, err,
@@ -595,8 +697,8 @@ func logAndExit(message string, err error) {
 }
 
 // Helper: warn about PROXY protocol + HTTP/3 unsupported combination.
-func logProxyHTTP3() {
-	if config.GetFile().GetServer().IsHTTP3Enabled() && config.GetFile().GetServer().IsHAproxyProtocolEnabled() {
-		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
+func logProxyHTTP3(cfg config.File, logger *slog.Logger) {
+	if cfg.GetServer().IsHTTP3Enabled() && cfg.GetServer().IsHAproxyProtocolEnabled() {
+		level.Warn(logger).Log(definitions.LogKeyMsg, "PROXY protocol not supported for HTTP/3")
 	}
 }

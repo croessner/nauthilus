@@ -17,20 +17,33 @@ package redislib
 
 import (
 	"context"
+	"errors"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	"github.com/redis/go-redis/v9"
 	lua "github.com/yuin/gopher-lua"
 )
 
 // RedisHGet executes the HGET command in Redis, retrieves a field from a hash, and converts it to a Lua value type.
-func RedisHGet(ctx context.Context) lua.LGFunction {
+func RedisHGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		var handle redis.UniversalClient
+		if client != nil {
+			handle = client.GetReadHandle()
+		}
+		conn := getRedisConnectionWithFallback(L, handle)
+		if conn == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("redis client not configured"))
+
+			return 2
+		}
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		valueType := definitions.TypeString
@@ -43,10 +56,10 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		err := convert.StringCmd(client.HGet(dCtx, key, field), valueType, L)
+		err := convert.StringCmd(conn.HGet(dCtx, key, field), valueType, L)
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -59,7 +72,7 @@ func RedisHGet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHSet sets multiple field-value pairs in a Redis hash stored at the given key and returns the number of new fields added.
-func RedisHSet(ctx context.Context) lua.LGFunction {
+func RedisHSet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var kvpairs []any
 
@@ -70,7 +83,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 2 {
@@ -89,10 +102,10 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HSet(dCtx, key, kvpairs...)
+		cmd := conn.HSet(dCtx, key, kvpairs...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -107,7 +120,7 @@ func RedisHSet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHDel is a Lua function that deletes one or more fields from a Redis hash and returns the count of removed fields.
-func RedisHDel(ctx context.Context) lua.LGFunction {
+func RedisHDel(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var fields []string
 
@@ -118,7 +131,7 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 
 		for i := 3; i <= L.GetTop(); i += 1 {
@@ -127,10 +140,10 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HDel(dCtx, key, fields...)
+		cmd := conn.HDel(dCtx, key, fields...)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -145,17 +158,17 @@ func RedisHDel(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHLen returns a Lua function that retrieves the length of a Redis hash stored at the specified key.
-func RedisHLen(ctx context.Context) lua.LGFunction {
+func RedisHLen(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HLen(dCtx, key)
+		cmd := conn.HLen(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -170,17 +183,17 @@ func RedisHLen(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHGetAll retrieves all fields and values of a hash stored at the specified Redis key and returns them as a Lua table.
-func RedisHGetAll(ctx context.Context) lua.LGFunction {
+func RedisHGetAll(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HGetAll(dCtx, key)
+		cmd := conn.HGetAll(dCtx, key)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -189,9 +202,9 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 		}
 
 		table := L.NewTable()
-		for field, value := range cmd.Val() {
+		for k, v := range cmd.Val() {
 			// We cannot make a difference for the types of the values. So, all values are returned as strings
-			table.RawSetString(field, lua.LString(value))
+			table.RawSetString(k, lua.LString(v))
 		}
 
 		L.Push(table)
@@ -203,7 +216,7 @@ func RedisHGetAll(ctx context.Context) lua.LGFunction {
 // RedisHMGet retrieves values for multiple fields within a Redis hash and returns them as a Lua table.
 // The function expects parameters: pool, key, field1, field2, ...
 // It returns a Lua table mapping field -> value (string), with missing fields set to nil. On error it returns (nil, err).
-func RedisHMGet(ctx context.Context) lua.LGFunction {
+func RedisHMGet(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 4 { // pool, key, at least one field
 			L.Push(lua.LNil)
@@ -212,7 +225,7 @@ func RedisHMGet(ctx context.Context) lua.LGFunction {
 			return 2
 		}
 
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 
 		fields := make([]string, 0, L.GetTop()-2)
@@ -222,11 +235,19 @@ func RedisHMGet(ctx context.Context) lua.LGFunction {
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		vals, err := client.HMGet(dCtx, key, fields...).Result()
+		vals, err := conn.HMGet(dCtx, key, fields...).Result()
 		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				// Should not happen for HMGet, but handle for robustness
+				result := L.NewTable()
+				L.Push(result)
+
+				return 1
+			}
+
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 
@@ -257,19 +278,19 @@ func RedisHMGet(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHIncrBy increments the numerical value of a hash field in Redis by the specified amount and returns the new value.
-func RedisHIncrBy(ctx context.Context) lua.LGFunction {
+func RedisHIncrBy(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := L.CheckInt64(4)
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HIncrBy(dCtx, key, field, increment)
+		cmd := conn.HIncrBy(dCtx, key, field, increment)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -284,19 +305,19 @@ func RedisHIncrBy(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHIncrByFloat increments the float value of a field in a hash by a specified amount and returns the new value.
-func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
+func RedisHIncrByFloat(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetWriteHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetWriteHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 		increment := float64(L.CheckNumber(4))
 
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HIncrByFloat(dCtx, key, field, increment)
+		cmd := conn.HIncrByFloat(dCtx, key, field, increment)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))
@@ -311,18 +332,18 @@ func RedisHIncrByFloat(ctx context.Context) lua.LGFunction {
 }
 
 // RedisHExists checks if a specific field exists in a hash stored at a given key in Redis. It returns true or false.
-func RedisHExists(ctx context.Context) lua.LGFunction {
+func RedisHExists(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		client := getRedisConnectionWithFallback(L, rediscli.GetClient().GetReadHandle())
+		conn := getRedisConnectionWithFallback(L, client.GetReadHandle())
 		key := L.CheckString(2)
 		field := L.CheckString(3)
 
 		defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 		defer cancel()
 
-		cmd := client.HExists(dCtx, key, field)
+		cmd := conn.HExists(dCtx, key, field)
 		if cmd.Err() != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(cmd.Err().Error()))

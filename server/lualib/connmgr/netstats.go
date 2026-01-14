@@ -34,7 +34,7 @@ import (
 	psnet "github.com/shirou/gopsutil/v4/net"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"log/slog"
 )
 
 // GenericConnectionChan is a channel that carries GenericConnection updates reflecting the state of network connections.
@@ -92,14 +92,14 @@ func logError(message string, err error) {
 }
 
 // StartMonitoring begins monitoring IP updates at regular intervals using a ticker and a goroutine.
-func (m *ConnectionManager) StartMonitoring(ctx context.Context) {
+func (m *ConnectionManager) StartMonitoring(ctx context.Context, cfg config.File) {
 	m.ticker = time.NewTicker(time.Minute)
 
 	go func() {
 		for {
 			select {
 			case <-m.ticker.C:
-				m.checkForIPUpdates(ctx)
+				m.checkForIPUpdates(ctx, cfg)
 			case <-ctx.Done():
 				m.ticker.Stop()
 
@@ -128,8 +128,8 @@ func equalIPs(ipListA, ipListB []string) bool {
 }
 
 // createDeadlineContext sets a deadline for the provided context based on the server DNS timeout configuration.
-func createDeadlineContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(ctx, time.Now().Add(config.GetFile().GetServer().GetDNS().GetTimeout()*time.Second))
+func createDeadlineContext(ctx context.Context, cfg config.File) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()*time.Second))
 }
 
 // NewConnectionManager returns a new instance of ConnectionManager with an initialized targets map.
@@ -146,7 +146,7 @@ func GetConnectionManager() *ConnectionManager {
 }
 
 // checkForIPUpdates updates the IP addresses for each target in the ConnectionManager.
-func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
+func (m *ConnectionManager) checkForIPUpdates(ctx context.Context, cfg config.File) {
 	m.mu.Lock()
 
 	defer m.mu.Unlock()
@@ -157,16 +157,24 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 			continue
 		}
 
-		ctxTimeout, cancel := createDeadlineContext(ctx)
+		ctxTimeout, cancel := createDeadlineContext(ctx, cfg)
 		resolver := util.NewDNSResolver()
 
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 			attribute.String("rpc.system", "dns"),
-			semconv.PeerService("dns"),
+			attribute.String("peer.service", "dns"),
 			attribute.String("dns.question.name", host),
 			attribute.String("dns.question.type", "A|AAAA"),
 		)
+
+		hostPeer, port, ok := util.DNSResolverPeer(cfg)
+		if ok {
+			tsp.SetAttributes(
+				attribute.String("peer.hostname", hostPeer),
+				attribute.Int("peer.port", port),
+			)
+		}
 
 		ips, err := resolver.LookupHost(tctx, host)
 		if err != nil {
@@ -191,7 +199,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context) {
 }
 
 // Register adds a new target with the specified description and  direction to the ConnectionManager if it does not already exist.
-func (m *ConnectionManager) Register(ctx context.Context, target, direction string, description string) {
+func (m *ConnectionManager) Register(ctx context.Context, cfg config.File, target, direction string, description string) {
 	m.mu.Lock()
 
 	defer m.mu.Unlock()
@@ -209,7 +217,7 @@ func (m *ConnectionManager) Register(ctx context.Context, target, direction stri
 		return
 	}
 
-	ctxTimeut, cancel := createDeadlineContext(ctx)
+	ctxTimeut, cancel := createDeadlineContext(ctx, cfg)
 
 	defer cancel()
 
@@ -218,10 +226,18 @@ func (m *ConnectionManager) Register(ctx context.Context, target, direction stri
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",
 		attribute.String("rpc.system", "dns"),
-		semconv.PeerService("dns"),
+		attribute.String("peer.service", "dns"),
 		attribute.String("dns.question.name", host),
 		attribute.String("dns.question.type", "A|AAAA"),
 	)
+
+	hostPeer, port, ok := util.DNSResolverPeer(cfg)
+	if ok {
+		tsp.SetAttributes(
+			attribute.String("peer.hostname", hostPeer),
+			attribute.Int("peer.port", port),
+		)
+	}
 
 	ips, err := resolver.LookupHost(tctx, host)
 	if err != nil {
@@ -324,6 +340,22 @@ func (m *ConnectionManager) StartTicker(interval time.Duration) {
 	}
 }
 
+// StartTickerWithContext launches a ticker that triggers the update of connection counts at the specified interval.
+// The ticker is stopped and the function returns when ctx is canceled.
+func (m *ConnectionManager) StartTickerWithContext(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.UpdateCounts()
+		}
+	}
+}
+
 // luaCountOpenConnections returns the number of open connections for a given target. If the target is not registered,
 // it returns nil and an error message.
 func (m *ConnectionManager) luaCountOpenConnections(L *lua.LState) int {
@@ -343,13 +375,13 @@ func (m *ConnectionManager) luaCountOpenConnections(L *lua.LState) int {
 }
 
 // luaRegisterTarget registers a new target and its direction from Lua state into the ConnectionManager.
-func (m *ConnectionManager) luaRegisterTarget(ctx context.Context) lua.LGFunction {
+func (m *ConnectionManager) luaRegisterTarget(ctx context.Context, cfg config.File) lua.LGFunction {
 	return func(L *lua.LState) int {
 		target := L.ToString(1)
 		direction := L.ToString(2)
 		description := L.ToString(3)
 
-		m.Register(ctx, target, direction, description)
+		m.Register(ctx, cfg, target, direction, description)
 
 		return 0
 	}
@@ -359,10 +391,10 @@ func (m *ConnectionManager) luaRegisterTarget(ctx context.Context) lua.LGFunctio
 // It creates a new Lua table, assigns functions from exportsModPsnet to it,
 // and pushes it onto the Lua stack. It returns 1 to indicate that one value
 // has been pushed onto the stack.
-func LoaderModPsnet(ctx context.Context) lua.LGFunction {
+func LoaderModPsnet(ctx context.Context, cfg config.File, _ *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx),
+			definitions.LuaFnRegisterConnectionTarget: manager.luaRegisterTarget(ctx, cfg),
 			definitions.LuaFnGetConnectionTarget:      manager.luaCountOpenConnections,
 		})
 

@@ -46,9 +46,9 @@ func (z zstdReadCloser) Close() error {
 // DecompressZstdRequestMiddleware returns a middleware that decompresses HTTP requests with zstd Content-Encoding.
 // It checks if the request has a Content-Encoding header with value "zstd"/"zst" and if so, replaces the request body
 // with a decompressed version and clears the encoding header.
-func DecompressZstdRequestMiddleware() gin.HandlerFunc {
+func DecompressZstdRequestMiddleware(cfg config.File) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		compressionConfig := config.GetFile().GetServer().GetCompression()
+		compressionConfig := cfg.GetServer().GetCompression()
 
 		// Skip if compression is disabled
 		if !compressionConfig.IsEnabled() {

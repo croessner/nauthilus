@@ -24,10 +24,16 @@ import (
 	"github.com/croessner/nauthilus/server/definitions"
 )
 
-var (
-	channel     Channel
-	initChannel sync.Once
-)
+func TrySignalDone(ch chan bktype.Done) {
+	if ch == nil {
+		return
+	}
+
+	select {
+	case ch <- bktype.Done{}:
+	default:
+	}
+}
 
 // Channel is an interface comprising methods to retrieve LDAPChannel and LuaChannel instances.
 type Channel interface {
@@ -47,56 +53,36 @@ type channelImpl struct {
 
 // GetLdapChannel retrieves and returns the LDAPChannel instance associated with the channelImpl instance.
 func (c *channelImpl) GetLdapChannel() LDAPChannel {
-	c.ldapOnce.Do(func() {
-		if c.ldapChannel == nil {
-			c.ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
-		}
-	})
+	if c == nil {
+		return nil
+	}
 
 	return c.ldapChannel
 }
 
-// GetLuaChannel retrieves and returns the LuaChannel instance associated with the channelImpl.
 func (c *channelImpl) GetLuaChannel() LuaChannel {
-	c.luaOnce.Do(func() {
-		if c.luaChannel == nil {
-			c.luaChannel = NewLuaChannel(definitions.DefaultBackendName)
-		}
-	})
+	if c == nil {
+		return nil
+	}
 
 	return c.luaChannel
 }
 
 var _ Channel = &channelImpl{}
 
-// GetChannel returns a singleton instance of the Channel interface, initializing it if not already created.
-func GetChannel() Channel {
-	initChannel.Do(func() {
-		if channel == nil {
-			channel = NewChannel()
-		}
-	})
-
-	return channel
-}
-
 // NewChannel initializes and returns a new instance of the Channel interface implementation.
-func NewChannel() Channel {
-	var ldapChannel LDAPChannel
-	var luaChannel LuaChannel
+func NewChannel(cfg config.File) Channel {
+	c := &channelImpl{}
 
-	if config.GetFile().HaveLDAPBackend() {
-		ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
+	if cfg != nil && cfg.HaveLDAPBackend() {
+		c.ldapChannel = NewLDAPChannel(definitions.DefaultBackendName)
 	}
 
-	if config.GetFile().HaveLuaBackend() {
-		luaChannel = NewLuaChannel(definitions.DefaultBackendName)
+	if cfg != nil && cfg.HaveLuaBackend() {
+		c.luaChannel = NewLuaChannel(definitions.DefaultBackendName)
 	}
 
-	return &channelImpl{
-		ldapChannel: ldapChannel,
-		luaChannel:  luaChannel,
-	}
+	return c
 }
 
 // LDAPChannel defines an interface for managing LDAP-related channels for communication and operation handling.

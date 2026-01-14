@@ -19,26 +19,46 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 	"github.com/gin-gonic/gin"
 )
 
 // Handler exposes cache-related routes.
 // It mirrors the legacy behavior and delegates logic to core while honoring endpoint feature flags.
 type Handler struct {
-	cfg config.File
+	cfg  config.File
+	deps *handlerdeps.Deps
 }
 
 func New(cfg config.File) *Handler {
 	return &Handler{cfg: cfg}
 }
 
+// NewWithDeps constructs the cache handler with injected dependencies.
+//
+// Enables deps-based cache flush endpoints (avoid globals in request path).
+func NewWithDeps(deps *handlerdeps.Deps) *Handler {
+	if deps == nil {
+		return &Handler{}
+	}
+
+	return &Handler{cfg: deps.Cfg, deps: deps}
+}
+
 func (h *Handler) Register(router gin.IRouter) {
 	cg := router.Group("/" + definitions.CatCache)
 
-	cg.DELETE("/"+definitions.ServFlush, h.flush)
-	cg.DELETE("/"+definitions.ServFlush+"/async", core.HandleUserFlushAsync)
-}
+	// Prefer deps-based handlers so Redis is injected.
+	if h.deps != nil && h.deps.Cfg != nil {
+		cg.DELETE("/"+definitions.ServFlush, core.NewUserFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+		cg.DELETE("/"+definitions.ServFlush+"/async", core.NewUserFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 
-func (h *Handler) flush(ctx *gin.Context) {
-	core.HandleUserFlush(ctx)
+		return
+	}
+
+	// Legacy path (will eventually be removed when all call sites migrate to NewWithDeps)
+	adminDeps := core.NewRestAdminDeps(h.deps.Cfg, h.deps.Logger, h.deps.Redis, h.deps.Channel)
+
+	cg.DELETE("/"+definitions.ServFlush, core.HandleUserFlush(adminDeps))
+	cg.DELETE("/"+definitions.ServFlush+"/async", core.HandleUserFlushAsync(adminDeps))
 }

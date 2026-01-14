@@ -1,0 +1,65 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+package bruteforce
+
+import (
+	stdlog "log"
+	"sync"
+	"sync/atomic"
+
+	"github.com/croessner/nauthilus/server/rediscli"
+)
+
+// Redis DI seam for the bruteforce package.
+//
+// The bruteforce subsystem has both method receivers (BucketManager) and free
+// helper functions. To avoid `rediscli.GetClient()` in runtime paths, we keep a
+// package-level default client which is set at boundaries from the injected
+// `redifx.Client`.
+
+type redisHolder struct {
+	c rediscli.Client
+}
+
+var defaultRedis atomic.Value
+
+var warnMissingRedisOnce sync.Once
+
+func init() {
+	defaultRedis.Store(redisHolder{c: nil})
+}
+
+// SetDefaultRedisClient sets the bruteforce-wide default Redis client.
+func SetDefaultRedisClient(c rediscli.Client) {
+	defaultRedis.Store(redisHolder{c: c})
+}
+
+func getDefaultRedisClient() rediscli.Client {
+	if v := defaultRedis.Load(); v != nil {
+		if h, ok := v.(redisHolder); ok {
+			if h.c != nil {
+				return h.c
+			}
+		}
+	}
+
+	// Hard fail always.
+	warnMissingRedisOnce.Do(func() {
+		stdlog.Printf("ERROR: bruteforce default Redis client is not configured. Ensure the boundary calls bruteforce.SetDefaultRedisClient(...)\n")
+	})
+
+	panic("bruteforce: default Redis client not configured")
+}

@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package core_test
 
 import (
@@ -49,12 +64,12 @@ func setupMinimalConfigForBF(t *testing.T) {
 
 func TestComputeBruteForceHints_InvalidIPOrFeatureOff(t *testing.T) {
 	// Feature off by default (no test file set)
-	cn, rep := corepkg.ComputeBruteForceHints(context.Background(), "", "imap", "")
+	cn, rep := corepkg.ComputeBruteForceHints(context.Background(), config.GetFile(), rediscli.GetClient(), "", "imap", "")
 	if cn != "" || rep {
 		t.Fatalf("expected no hints for empty IP")
 	}
 
-	cn, rep = corepkg.ComputeBruteForceHints(context.Background(), "not-an-ip", "imap", "")
+	cn, rep = corepkg.ComputeBruteForceHints(context.Background(), config.GetFile(), rediscli.GetClient(), "not-an-ip", "imap", "")
 	if cn != "" || rep {
 		t.Fatalf("expected no hints for invalid IP")
 	}
@@ -76,7 +91,7 @@ func TestComputeBruteForceHints_PositiveRepeatViaRedis(t *testing.T) {
 	mock.ExpectHExists(key, "203.0.113.0/24").SetVal(true)
 
 	ctx := context.Background()
-	cn, rep := corepkg.ComputeBruteForceHints(ctx, "203.0.113.1", "imap", "")
+	cn, rep := corepkg.ComputeBruteForceHints(ctx, config.GetFile(), rediscli.GetClient(), "203.0.113.1", "imap", "")
 	if !rep {
 		t.Fatalf("expected repeating=true from redis hit")
 	}

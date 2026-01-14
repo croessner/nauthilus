@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,7 @@ func EnsureKeysInSameSlot(keys []string, hashTag string) []string {
 // UploadScript uploads a Lua script to Redis and stores its SHA1 hash.
 // If the script is already uploaded, it returns the existing SHA1 hash.
 // This function is thread-safe and can be called concurrently.
-func UploadScript(ctx context.Context, scriptName, scriptContent string) (string, error) {
+func UploadScript(ctx context.Context, client Client, scriptName, scriptContent string) (string, error) {
 	// Check if the script is already uploaded
 	scriptsMutex.RLock()
 	sha1, exists := scripts[scriptName]
@@ -154,7 +155,7 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 	// Upload the script to Redis
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	sha1, err := GetClient().GetWriteHandle().ScriptLoad(ctx, scriptContent).Result()
+	sha1, err := client.GetWriteHandle().ScriptLoad(ctx, scriptContent).Result()
 	if err != nil {
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may affect Redis operations. Check Redis connectivity and permissions.", scriptName),
@@ -166,7 +167,7 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 
 	// Store the SHA1 hash
 	scripts[scriptName] = sha1
-	util.DebugModule(definitions.DbgStats,
+	util.DebugModuleWithCfg(ctx, config.GetFile(), log.Logger, definitions.DbgStats,
 		definitions.LogKeyMsg, fmt.Sprintf("Uploaded Redis Lua script '%s' with SHA1 %s", scriptName, sha1),
 	)
 
@@ -182,7 +183,7 @@ func UploadScript(ctx context.Context, scriptName, scriptContent string) (string
 //
 // In Redis Cluster mode, this function ensures that all keys hash to the same slot by adding
 // a common hash tag if needed.
-func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys []string, args ...interface{}) (interface{}, error) {
+func ExecuteScript(ctx context.Context, client Client, scriptName, scriptContent string, keys []string, args ...interface{}) (interface{}, error) {
 	// Tracing: cover a Redis Lua script execution including retries
 	tr := monittrace.New("nauthilus/redis_batch")
 	sctx, sp := tr.Start(ctx, "redis.script",
@@ -209,7 +210,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 		// Script not found, upload it
 		var err error
 
-		sha1, err = UploadScript(sctx, scriptName, scriptContent)
+		sha1, err = UploadScript(sctx, client, scriptName, scriptContent)
 		if err != nil {
 			sp.RecordError(err)
 
@@ -217,18 +218,18 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 		}
 	}
 
-	// Get the Redis client
-	client := GetClient().GetWriteHandle()
+	// Get the Redis client handle
+	writeHandle := client.GetWriteHandle()
 
 	// Check if we're using Redis Cluster and ensure keys hash to the same slot if needed
-	if isClusterClient(client) && len(keys) > 1 {
+	if isClusterClient(writeHandle) && len(keys) > 1 {
 		keys = ensureKeysInSameSlot(keys)
 	}
 
 	// Execute the script
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	result, err := client.EvalSha(sctx, sha1, keys, args...).Result()
+	result, err := writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
 	if err != nil {
 		// Check if the error is NOSCRIPT
 		if err.Error() == "NOSCRIPT No matching script. Please use EVAL." {
@@ -239,7 +240,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			sp.SetAttributes(attribute.String("retry_reason", "noscript"))
 
 			// Re-upload the script
-			sha1, err = UploadScript(sctx, scriptName, scriptContent)
+			sha1, err = UploadScript(sctx, client, scriptName, scriptContent)
 			if err != nil {
 				sp.RecordError(err)
 
@@ -249,7 +250,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			// Try executing again
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.EvalSha(sctx, sha1, keys, args...).Result()
+			result, err = writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after re-upload. Redis scripts might have been administratively deleted. Consider restarting Nauthilus.", scriptName),
@@ -275,7 +276,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 			// Try executing again with modified keys
 			stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-			result, err = client.EvalSha(sctx, sha1, keys, args...).Result()
+			result, err = writeHandle.EvalSha(sctx, sha1, keys, args...).Result()
 			if err != nil {
 				level.Error(log.Logger).Log(
 					definitions.LogKeyMsg, fmt.Sprintf("Failed to execute Redis Lua script '%s' after fixing keys", scriptName),
@@ -308,7 +309,7 @@ func ExecuteScript(ctx context.Context, scriptName, scriptContent string, keys [
 // AuthPreflight performs a combined account lookup (HGET USER) and brute-force repeat check (HEXISTS BF)
 // using the registered AuthPreflight Lua script. It returns the mapped account (may be empty) and whether
 // the client network is considered repeating (true/false).
-func AuthPreflight(ctx context.Context, username, clientNet string) (account string, repeating bool, err error) {
+func AuthPreflight(ctx context.Context, client Client, username, clientNet string) (account string, repeating bool, err error) {
 	// Build keys with proper prefix
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
 	userKey := prefix + definitions.RedisUserHashKey
@@ -316,15 +317,15 @@ func AuthPreflight(ctx context.Context, username, clientNet string) (account str
 
 	keys := []string{userKey, bfKey}
 	// Ensure hash slot alignment if cluster
-	if isClusterClient(GetClient().GetWriteHandle()) {
+	if isClusterClient(client.GetWriteHandle()) {
 		keys = ensureKeysInSameSlot(keys)
 	}
 
 	// Use bounded context
-	dctx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	dctx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, config.GetFile())
 	defer cancel()
 
-	res, e := ExecuteScript(dctx, "AuthPreflight", LuaScripts["AuthPreflight"], keys, username, clientNet)
+	res, e := ExecuteScript(dctx, client, "AuthPreflight", LuaScripts["AuthPreflight"], keys, username, clientNet)
 	if e != nil {
 		err = e
 
@@ -356,8 +357,8 @@ func AuthPreflight(ctx context.Context, username, clientNet string) (account str
 
 // UploadAllScripts uploads all Lua scripts defined in lua_scripts.go to Redis.
 // This function should be called at program startup to ensure all scripts are available.
-func UploadAllScripts(ctx context.Context) error {
-	level.Info(log.Logger).Log(
+func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) error {
+	level.Info(logger).Log(
 		definitions.LogKeyMsg, "Uploading all Redis Lua scripts",
 	)
 
@@ -367,9 +368,9 @@ func UploadAllScripts(ctx context.Context) error {
 
 	for scriptName, scriptContent := range LuaScripts {
 		// Use the context with timeout for each script upload
-		_, err := UploadScript(ctxWithTimeout, scriptName, scriptContent)
+		_, err := UploadScript(ctxWithTimeout, client, scriptName, scriptContent)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may cause issues with Redis operations. If the problem persists, check Redis connectivity and permissions.", scriptName),
 				definitions.LogKeyError, err,
 			)
@@ -379,8 +380,8 @@ func UploadAllScripts(ctx context.Context) error {
 
 		// Check if the context has been canceled or timed out
 		if ctxWithTimeout.Err() != nil {
-			level.Error(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Timeout or cancellation while uploading Redis Lua scripts"),
+			level.Error(logger).Log(
+				definitions.LogKeyMsg, "Timeout or cancellation while uploading Redis Lua scripts",
 				definitions.LogKeyError, ctxWithTimeout.Err(),
 			)
 
@@ -388,7 +389,7 @@ func UploadAllScripts(ctx context.Context) error {
 		}
 	}
 
-	level.Info(log.Logger).Log(
+	level.Info(logger).Log(
 		definitions.LogKeyMsg, fmt.Sprintf("Successfully uploaded %d Redis Lua scripts", len(LuaScripts)),
 	)
 

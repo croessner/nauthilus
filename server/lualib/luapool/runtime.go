@@ -27,6 +27,7 @@ import (
 	stdhttp "net/http"
 	"strings"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
@@ -49,9 +50,8 @@ const (
 
 // NewLuaState creates a new Lua VM with standard libraries opened and stateless modules preloaded.
 // Context-bound modules are NOT bound here (see PrepareRequestEnv).
-func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
+func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L := lua.NewState()
-	L.OpenLibs()
 
 	// Remember the base environment (_G) to enable inheritance.
 	setBaseEnv(L, L.Get(lua.GlobalsIndex))
@@ -73,7 +73,7 @@ func NewLuaState(httpClient *stdhttp.Client) *lua.LState {
 	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc)
 	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus)
 	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache)
-	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftWhitelist)
+	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftAllow(cfg))
 	L.PreloadModule(definitions.LuaModMail, lualib.LoaderModMail)
 	L.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 

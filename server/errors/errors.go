@@ -119,9 +119,6 @@ var (
 	// connection timed out). Callers should treat this as a temporary failure and
 	// avoid mapping it to "user not found".
 	ErrLDAPPoolExhausted = NewDetailedError("ldap_pool_exhausted")
-	ErrLDAPSearchTimeout = NewDetailedError("ldap_search_timeout")
-	ErrLDAPBindTimeout   = NewDetailedError("ldap_bind_timeout")
-	ErrLDAPModifyTimeout = NewDetailedError("ldap_modify_timeout")
 )
 
 // lua.

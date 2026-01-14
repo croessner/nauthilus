@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package auth
 
 import (
@@ -30,6 +45,8 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	}
 	config.SetTestEnvironmentConfig(config.NewTestEnvironmentConfig())
 	config.SetTestFile(cfg)
+	util.SetDefaultConfigFile(cfg)
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
 	// Redis mock
@@ -37,15 +54,19 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	rediscli.NewTestClient(db)
 
 	// Prepare auth state
-	auth := &core.AuthState{
-		GUID:                "guid-123",
-		Protocol:            config.NewProtocol("imap"),
-		UsedPassDBBackend:   definitions.BackendLDAP, // will map to CacheLDAP but default cache name applies
-		SourcePassDBBackend: definitions.BackendLDAP,
-		AccountField:        "uid",
-		Password:            "secret",
-		Attributes:          map[string][]any{"uid": {"acc"}},
-	}
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg:    config.GetFile(),
+		Logger: log.GetLogger(),
+		Redis:  rediscli.GetClient(),
+	}).(*core.AuthState)
+
+	auth.GUID = "guid-123"
+	auth.Protocol = config.NewProtocol("imap")
+	auth.UsedPassDBBackend = definitions.BackendLDAP // will map to CacheLDAP but default cache name applies
+	auth.SourcePassDBBackend = definitions.BackendLDAP
+	auth.AccountField = "uid"
+	auth.Password = "secret"
+	auth.Attributes = map[string][]any{"uid": {"acc"}}
 
 	accountName := "acc"
 	cacheName := "__default__"

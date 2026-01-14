@@ -17,6 +17,7 @@ package ldappool
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,7 +51,7 @@ func (m *mockLDAPConnection) SetConn(_ *ldap.Conn) {}
 
 func (m *mockLDAPConnection) IsClosing() bool { return false }
 
-func (m *mockLDAPConnection) Search(req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
+func (m *mockLDAPConnection) Search(_ context.Context, _ config.File, _ *slog.Logger, req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
 
 	// Count calls for tests that need to assert cache hits/misses.
 	atomic.AddInt32(&m.searchCalls, 1)
@@ -70,7 +71,7 @@ func (m *mockLDAPConnection) Search(req *bktype.LDAPRequest) (bktype.AttributeMa
 	return nil, nil, nil
 }
 
-func (m *mockLDAPConnection) Modify(_ *bktype.LDAPRequest) error {
+func (m *mockLDAPConnection) Modify(_ context.Context, _ config.File, _ *slog.Logger, _ *bktype.LDAPRequest) error {
 	if m.modifyError != nil {
 		return m.modifyError
 	}
@@ -92,11 +93,11 @@ func (m *mockLDAPConnection) GetMutex() *sync.Mutex {
 	return &m.mutex
 }
 
-func (m *mockLDAPConnection) Connect(_ string, _ *config.LDAPConf) error {
+func (m *mockLDAPConnection) Connect(_ string, _ config.File, _ *slog.Logger, _ *config.LDAPConf) error {
 	return m.connError
 }
 
-func (m *mockLDAPConnection) Bind(_ string, _ *config.LDAPConf) error {
+func (m *mockLDAPConnection) Bind(_ context.Context, _ string, _ config.File, _ *slog.Logger, _ *config.LDAPConf) error {
 	return m.bindError
 }
 
@@ -109,6 +110,9 @@ func (m *mockLDAPConnection) Unbind() error {
 }
 
 func TestHandleLookupRequest(t *testing.T) {
+	// Initialize default config for LDAPConfigConnectAbortTimeout
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name              string
 		poolType          int
@@ -185,6 +189,7 @@ func TestHandleLookupRequest(t *testing.T) {
 				conf:     dummyLDAPConf,
 				poolSize: len(mockConns),
 				tokens:   make(chan Token, len(mockConns)),
+				cfg:      config.GetFile(),
 			}
 
 			// Prefill tokens to simulate available capacity equal to poolSize
@@ -242,6 +247,7 @@ func TestSemaphoreTimeout(t *testing.T) {
 		conf:     []*config.LDAPConf{{}},
 		poolSize: 1,
 		tokens:   make(chan Token, 1),
+		cfg:      config.GetFile(),
 	}
 	pool.tokens <- Token{}
 
@@ -285,6 +291,7 @@ func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
 		conn:     []LDAPConnection{m},
 		conf:     []*config.LDAPConf{conf},
 		poolSize: 1,
+		cfg:      config.GetFile(),
 	}
 
 	// Request A: non-existing user. Should set a negative cache entry for the

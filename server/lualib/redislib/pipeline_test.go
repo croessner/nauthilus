@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -26,14 +27,17 @@ import (
 )
 
 func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+	client := rediscli.NewTestClient(db)
+	SetDefaultClient(client)
+	L := lua.NewState()
+	defer L.Close()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
 	// Expectations for the pipeline: set, get, incr, hset, hget, mget
@@ -158,14 +162,16 @@ func TestRedisPipeline_MixedCommandsSuccess(t *testing.T) {
 }
 
 func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+	client := rediscli.NewTestClient(db)
+	SetDefaultClient(client)
+	L := lua.NewState()
+	defer L.Close()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
 	// Build a pipeline with an unsupported command name
@@ -199,14 +205,16 @@ func TestRedisPipeline_UnsupportedCommand(t *testing.T) {
 }
 
 func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+	client := rediscli.NewTestClient(db)
+	SetDefaultClient(client)
+	L := lua.NewState()
+	defer L.Close()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
 	// Ensure there is no uploaded script with this name
@@ -240,14 +248,16 @@ func TestRedisPipeline_RunScriptUnknownName(t *testing.T) {
 }
 
 func TestRedisPipeline_HMGET(t *testing.T) {
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
 
 	db, mock := redismock.NewClientMock()
 	if db == nil || mock == nil {
 		t.Fatalf("Failed to create Redis mock client.")
 	}
+	client := rediscli.NewTestClient(db)
+	SetDefaultClient(client)
+	L := lua.NewState()
+	defer L.Close()
+	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 	rediscli.NewTestClient(db)
 
 	// Expect HMGET returning mix of values and nil

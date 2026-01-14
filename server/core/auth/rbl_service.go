@@ -20,11 +20,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -37,17 +35,23 @@ import (
 type DefaultRBLService struct{}
 
 func (DefaultRBLService) Threshold() int {
-	r := config.GetFile().GetRBLs()
+	snap := core.GetDefaultConfigFile()
+	if snap == nil {
+		return 0
+	}
+
+	r := snap.GetRBLs()
 	if r == nil {
 		return 0
 	}
+
 	return r.GetThreshold()
 }
 
 func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, error) {
-	a := view.Auth()
+	auth := view.Auth()
 
-	rbls := config.GetFile().GetRBLs()
+	rbls := auth.Cfg().GetRBLs()
 	if rbls == nil {
 		return 0, nil
 	}
@@ -73,28 +77,30 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 			listed, rblName, rblErr := core.RBLIsListed(ctx, view, &r)
 			if rblErr != nil {
 				if strings.Contains(rblErr.Error(), "no such host") {
-					util.DebugModule(definitions.DbgRBL, definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, rblErr)
+					util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, rblErr)
 				} else {
 					if !r.IsAllowFailure() {
 						dnsResolverErr.Store(true)
 					}
 
-					level.Error(log.Logger).Log(
-						definitions.LogKeyGUID, a.GUID,
+					level.Error(auth.Logger()).Log(
+						definitions.LogKeyGUID, auth.GUID,
 						definitions.LogKeyMsg, "RBL check failed",
 						definitions.LogKeyError, rblErr,
 					)
 				}
 
 				rblChan <- 0
+
 				return
 			}
 
 			if listed {
 				stats.GetMetrics().GetRblRejected().WithLabelValues(rblName).Inc()
-				a.AdditionalLogs = append(a.AdditionalLogs, "rbl "+rblName)
-				a.AdditionalLogs = append(a.AdditionalLogs, r.Weight)
+				auth.AdditionalLogs = append(auth.AdditionalLogs, "rbl "+rblName)
+				auth.AdditionalLogs = append(auth.AdditionalLogs, r.Weight)
 				rblChan <- r.Weight
+
 				return
 			}
 

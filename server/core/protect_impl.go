@@ -16,6 +16,7 @@
 package core
 
 import (
+	"log/slog"
 	"net"
 
 	"github.com/croessner/nauthilus/server/config"
@@ -27,7 +28,7 @@ import (
 
 // ProtectEndpointMiddleware is a Gin middleware that performs authentication and security checks for HTTP requests.
 // It handles client IP extraction, brute force detection, protocol handling, and various authentication features.
-func ProtectEndpointMiddleware() gin.HandlerFunc {
+func ProtectEndpointMiddleware(cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		guid := ctx.GetString(definitions.CtxGUIDKey) // MiddleWare behind Logger!
 
@@ -38,6 +39,10 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 		clientPort := util.WithNotAvailable(ctx.GetHeader("X-Client-Port"))
 
 		auth := &AuthState{
+			deps: AuthDeps{
+				Cfg:    cfg,
+				Logger: logger,
+			},
 			HTTPClientContext: ctx,
 			HTTPClientRequest: ctx.Request,
 			NoAuth:            true,
@@ -53,7 +58,7 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 			clientIP, clientPort, _ = net.SplitHostPort(ctx.Request.RemoteAddr)
 		}
 
-		util.ProcessXForwardedFor(ctx, &clientIP, &clientPort, &auth.XSSL)
+		util.ProcessXForwardedFor(ctx, cfg, logger, &clientIP, &clientPort, &auth.XSSL)
 
 		if clientIP == "" {
 			clientIP = definitions.NotAvailable
@@ -86,7 +91,7 @@ func ProtectEndpointMiddleware() gin.HandlerFunc {
 			result := GetPassDBResultFromPool()
 			auth.PostLuaAction(result)
 			PutPassDBResultToPool(result)
-			HandleErr(ctx, errors.ErrNoTLS)
+			HandleErrWithDeps(ctx, errors.ErrNoTLS, auth.deps)
 			ctx.Abort()
 
 			return

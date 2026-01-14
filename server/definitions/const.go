@@ -17,10 +17,92 @@ package definitions
 
 import "time"
 
+// Cookie keys used by registration/login flows.
+const (
+	// CookieAccount refers to the user's account identifier.
+	CookieAccount = "account"
+
+	// CookieHaveTOTP indicates whether the user already has a TOTP secret.
+	CookieHaveTOTP = "already_have_totp"
+
+	// CookieTOTPURL holds the otpauth:// URL during TOTP registration.
+	CookieTOTPURL = "totp_url"
+
+	// CookieUserBackend records which backend authenticated the user (e.g. LDAP/Lua).
+	CookieUserBackend = "user_backend"
+
+	// CookieUniqueUserID stores a backend-specific unique user identifier.
+	CookieUniqueUserID = "unique_userid"
+
+	// CookieDisplayName stores a human-friendly display name for the user.
+	CookieDisplayName = "display_name"
+
+	// CookieLang stores the UI language preference selected during login/consent.
+	CookieLang = "lang"
+
+	// CookieUsername stores the supplied username during the login flow.
+	CookieUsername = "username"
+
+	// CookieAuthResult stores the authentication outcome (uint8 AuthResult).
+	CookieAuthResult = "auth_result"
+
+	// CookieSubject stores the OIDC subject if computed in-session.
+	CookieSubject = "subject"
+
+	// CookieRemember signals a "remember me" option for the session.
+	CookieRemember = "remember"
+
+	// CookieRegistration is used during WebAuthn device registration.
+	CookieRegistration = "webauthn_registration"
+
+	// CookieTOTPSecret temporarily holds a generated TOTP secret during flow.
+	CookieTOTPSecret = "totp_secret"
+
+	// CookieHome marks that the user reached the 2FA home page in the flow.
+	CookieHome = "home"
+)
+
 // SingleflightWaitCap defines the maximum time a follower waits for an in-process
 // singleflight result when no request deadline is present.
 // It is intentionally short to collapse parallel MUA bursts without adding noticeable latency.
 const SingleflightWaitCap = 800 * time.Millisecond
+
+// FxStopTimeout defines the total time budget for `fx.App.Stop(...)` in `server/main.go`.
+const FxStopTimeout = 10 * time.Second
+
+// FxShutdownWaitTimeout defines the best-effort budget for shutdown waits in `registerRuntimeLifecycle`.
+//
+// It is intentionally shorter than FxStopTimeout to avoid consuming the full shutdown budget.
+const FxShutdownWaitTimeout = 3 * time.Second
+
+// FxShutdownStatsFlushTimeout defines the best-effort time budget for `core.SaveStatsToRedis(...)` during shutdown.
+const FxShutdownStatsFlushTimeout = 2 * time.Second
+
+// FxShutdownTelemetryTimeout defines the best-effort time budget for telemetry shutdown.
+const FxShutdownTelemetryTimeout = 2 * time.Second
+
+// ReloadOperationTimeout defines the maximum time budget for one reload operation.
+const ReloadOperationTimeout = 30 * time.Second
+
+// RestartOperationTimeout defines the maximum time budget for one restart operation.
+const RestartOperationTimeout = 30 * time.Second
+
+// RestartRedisReadyTimeout defines the best-effort time budget for Redis readiness during an in-process restart.
+//
+// It is intentionally shorter than RestartOperationTimeout to avoid keeping HTTP down for the full restart budget
+// when Redis is temporarily unavailable.
+const RestartRedisReadyTimeout = 10 * time.Second
+
+// BackendMonitoringReloadTimeout defines the maximum time budget for restarting backend monitoring during reload.
+//
+// It is intentionally short because backend monitoring is best-effort and should not block the overall reload.
+const BackendMonitoringReloadTimeout = 2 * time.Second
+
+// LuaLDAPReplyTimeout caps the time a Lua-initiated LDAP call may wait for an LDAP reply.
+//
+// This prevents HTTP requests from hanging indefinitely when Lua filters perform LDAP calls
+// and the underlying LDAP workers are unavailable or stuck.
+const LuaLDAPReplyTimeout = 5 * time.Second
 
 // StatusClientClosedRequest is a non-standard HTTP status used by some proxies (e.g. Nginx) to indicate
 // the client closed the connection before the server could send a response.

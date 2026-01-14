@@ -17,12 +17,13 @@ package rediscli
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
@@ -141,7 +142,7 @@ var (
 )
 
 // UpdateRedisServerMetrics periodically collects and updates Redis server metrics
-func UpdateRedisServerMetrics(ctx context.Context) {
+func UpdateRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
 
@@ -150,13 +151,13 @@ func UpdateRedisServerMetrics(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			collectRedisServerMetrics(ctx)
+			collectRedisServerMetrics(ctx, cfg, logger)
 		}
 	}
 }
 
 // collectRedisServerMetrics collects Redis server metrics using the INFO command
-func collectRedisServerMetrics(ctx context.Context) {
+func collectRedisServerMetrics(ctx context.Context, cfg config.File, logger *slog.Logger) {
 	client := GetClient()
 	if client == nil {
 		return
@@ -165,28 +166,28 @@ func collectRedisServerMetrics(ctx context.Context) {
 	// Collect metrics from write handle
 	writeHandle := client.GetWriteHandle()
 	if writeHandle != nil {
-		collectMetricsFromClient(ctx, writeHandle, "write")
+		collectMetricsFromClient(ctx, logger, writeHandle, "write")
 	}
 
 	// Collect metrics from read handle if it's different from write handle
 	readHandle := client.GetReadHandle()
 	if readHandle != nil && readHandle != writeHandle {
-		collectMetricsFromClient(ctx, readHandle, "read")
+		collectMetricsFromClient(ctx, logger, readHandle, "read")
 	}
 
 	// Collect latency metrics
-	collectLatencyMetrics(ctx, writeHandle, "write")
+	collectLatencyMetrics(ctx, cfg, logger, writeHandle, "write")
 }
 
 // collectMetricsFromClient collects metrics from a Redis client using the INFO command
-func collectMetricsFromClient(ctx context.Context, client redis.UniversalClient, instance string) {
+func collectMetricsFromClient(ctx context.Context, logger *slog.Logger, client redis.UniversalClient, instance string) {
 	// Increment Redis read counter for the INFO command
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Get Redis INFO
 	infoStr, err := client.Info(ctx).Result()
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to get Redis INFO",
 			definitions.LogKeyError, err,
 		)
@@ -299,7 +300,7 @@ func updateRedisMetrics(info map[string]string, instance string) {
 }
 
 // collectLatencyMetrics collects Redis command latency metrics
-func collectLatencyMetrics(ctx context.Context, client redis.UniversalClient, instance string) {
+func collectLatencyMetrics(ctx context.Context, cfg config.File, logger *slog.Logger, client redis.UniversalClient, instance string) {
 	if client == nil {
 		return
 	}
@@ -311,7 +312,7 @@ func collectLatencyMetrics(ctx context.Context, client redis.UniversalClient, in
 	latencyCmd := client.Do(ctx, "LATENCY", "LATEST")
 	if latencyCmd.Err() != nil {
 		// LATENCY command might not be available in all Redis versions
-		util.DebugModule(definitions.DbgStats, definitions.LogKeyMsg, "Failed to get Redis LATENCY: %v", latencyCmd.Err())
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Failed to get Redis LATENCY: %v", latencyCmd.Err())
 
 		return
 	}
@@ -319,7 +320,7 @@ func collectLatencyMetrics(ctx context.Context, client redis.UniversalClient, in
 	// Parse latency response
 	latencyData, err := latencyCmd.Slice()
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to parse Redis LATENCY response",
 			definitions.LogKeyError, err,
 		)

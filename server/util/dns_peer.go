@@ -65,6 +65,6 @@ func DNSResolverPeerFromAddress(addr string) (host string, port int, ok bool) {
 // DNSResolverPeer returns the configured resolver peer (host/port) for tracing.
 // For loopback/localhost resolvers ok is false to avoid creating a misleading remote node
 // in downstream service graphs.
-func DNSResolverPeer() (host string, port int, ok bool) {
-	return DNSResolverPeerFromAddress(config.GetFile().GetServer().GetDNS().GetResolver())
+func DNSResolverPeer(cfg config.File) (host string, port int, ok bool) {
+	return DNSResolverPeerFromAddress(cfg.GetServer().GetDNS().GetResolver())
 }

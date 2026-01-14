@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -52,7 +51,7 @@ func (DefaultBootstrap) InitWebAuthn() error {
 	})
 
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(getDefaultLogger()).Log(
 			definitions.LogKeyMsg, "Failed to create WebAuthn from environment",
 			definitions.LogKeyError, err,
 		)

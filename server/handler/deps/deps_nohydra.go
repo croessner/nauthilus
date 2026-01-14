@@ -22,8 +22,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/backend/accountcache"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 )
@@ -83,11 +87,13 @@ type Services interface {
 
 // DefaultServices is the default implementation that delegates to core package handlers.
 // In non-hydra builds, hydra-related handlers are stubbed with 404 responses.
-type DefaultServices struct{}
+type DefaultServices struct {
+	deps *Deps
+}
 
 // NewDefaultServices constructs the default Services implementation
 // for non-hydra builds. All hydra-related handlers return 404 stubs.
-func NewDefaultServices() *DefaultServices { return &DefaultServices{} }
+func NewDefaultServices(deps *Deps) *DefaultServices { return &DefaultServices{deps: deps} }
 
 // notFound returns a Gin handler that responds with HTTP 404 status and a "hydra disabled" message.
 func notFound() gin.HandlerFunc {
@@ -95,57 +101,73 @@ func notFound() gin.HandlerFunc {
 }
 
 // LoginGETHandler returns a handler function that responds with a 404 status, indicating the login endpoint is disabled.
-func (DefaultServices) LoginGETHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LoginGETHandler() gin.HandlerFunc { return notFound() }
 
 // LoginPOSTHandler returns a handler function that responds with a 404 status, indicating the login endpoint is disabled.
-func (DefaultServices) LoginPOSTHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LoginPOSTHandler() gin.HandlerFunc { return notFound() }
 
 // DeviceGETHandler returns a handler function that responds with a 404 status, indicating the device endpoint is disabled.
-func (DefaultServices) DeviceGETHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) DeviceGETHandler() gin.HandlerFunc { return notFound() }
 
 // DevicePOSTHandler returns a handler function that responds with a 404 status, indicating the device endpoint is disabled.
-func (DefaultServices) DevicePOSTHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) DevicePOSTHandler() gin.HandlerFunc { return notFound() }
 
 // ConsentGETHandler returns a handler function that responds with a 404 status, indicating the consent endpoint is disabled.
-func (DefaultServices) ConsentGETHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) ConsentGETHandler() gin.HandlerFunc { return notFound() }
 
 // ConsentPOSTHandler returns a handler function that responds with a 404 status, indicating the consent endpoint is disabled.
-func (DefaultServices) ConsentPOSTHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) ConsentPOSTHandler() gin.HandlerFunc { return notFound() }
 
 // LogoutGETHandler returns a handler function that responds with a 404 status, indicating the logout endpoint is disabled.
-func (DefaultServices) LogoutGETHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LogoutGETHandler() gin.HandlerFunc { return notFound() }
 
 // LogoutPOSTHandler returns a handler function that responds with a 404 status, indicating the logout endpoint is disabled.
-func (DefaultServices) LogoutPOSTHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LogoutPOSTHandler() gin.HandlerFunc { return notFound() }
 
 // NotifyGETHandler returns a handler function that delegates to the core.NotifyGETHandler for processing GET requests.
-func (DefaultServices) NotifyGETHandler() gin.HandlerFunc { return core.NotifyGETHandler }
+func (s *DefaultServices) NotifyGETHandler() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		core.NotifyGETHandlerWithDeps(ctx, core.AuthDeps{
+			Cfg:          s.deps.Cfg,
+			Logger:       s.deps.Logger,
+			Env:          s.deps.Env,
+			Redis:        s.deps.Redis,
+			AccountCache: s.deps.AccountCache,
+			Channel:      s.deps.Channel,
+		})
+	}
+}
 
 // LoginGET2FAHandler returns a handler function that responds with a 404 status, indicating the 2FA login endpoint is disabled.
-func (DefaultServices) LoginGET2FAHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LoginGET2FAHandler() gin.HandlerFunc { return notFound() }
 
 // LoginPOST2FAHandler returns a handler function that responds with a 404 status, indicating the 2FA POST login endpoint is disabled.
-func (DefaultServices) LoginPOST2FAHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) LoginPOST2FAHandler() gin.HandlerFunc { return notFound() }
 
 // Register2FAHomeHandler returns a handler function that responds with a 404 status, indicating the 2FA home endpoint is disabled.
-func (DefaultServices) Register2FAHomeHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) Register2FAHomeHandler() gin.HandlerFunc { return notFound() }
 
 // RegisterTotpGETHandler returns a handler function that responds with a 404 status, indicating the TOTP endpoint is disabled.
-func (DefaultServices) RegisterTotpGETHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) RegisterTotpGETHandler() gin.HandlerFunc { return notFound() }
 
 // RegisterTotpPOSTHandler returns a handler function that responds with a 404 status, indicating the TOTP POST endpoint is disabled.
-func (DefaultServices) RegisterTotpPOSTHandler() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) RegisterTotpPOSTHandler() gin.HandlerFunc { return notFound() }
 
 // BeginRegistration returns a handler function that responds with a 404 status, indicating the registration endpoint is disabled.
-func (DefaultServices) BeginRegistration() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) BeginRegistration() gin.HandlerFunc { return notFound() }
 
 // FinishRegistration returns a handler function that responds with a 404 status, indicating the registration endpoint is disabled.
-func (DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() }
+func (s *DefaultServices) FinishRegistration() gin.HandlerFunc { return notFound() }
 
 // Deps aggregates top-level dependencies to be injected into handler modules.
 // Keep it minimal initially to avoid large refactors while enabling future DI.
 type Deps struct {
-	Cfg    config.File
-	Logger *slog.Logger
-	Svc    Services
+	Cfg          config.File
+	CfgProvider  configfx.Provider
+	Env          config.Environment
+	Logger       *slog.Logger
+	Redis        rediscli.Client
+	AccountCache *accountcache.Manager
+	Channel      backend.Channel
+	Svc          Services
 }

@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package accountcache
 
 import (
@@ -17,38 +32,34 @@ type Manager struct {
 	maxItems int
 }
 
-var (
-	mgr Manager
-)
-
-// initCache initializes the underlying cache based on configuration.
-func (m *Manager) initCache() {
+func (m *Manager) initCacheWithCfg(cfg config.File) {
 	m.once.Do(func() {
-		cfg := config.GetFile().GetServer().GetRedis().GetAccountLocalCache()
+		localCacheCfg := cfg.GetServer().GetRedis().GetAccountLocalCache()
 		// If disabled, still create a tiny cache with zero TTL so Get works but never hits.
-		shards := cfg.GetShards()
-		ttl := cfg.GetTTL()
-		cleanup := cfg.GetCleanupInterval()
+		shards := localCacheCfg.GetShards()
+		ttl := localCacheCfg.GetTTL()
+		cleanup := localCacheCfg.GetCleanupInterval()
 
 		m.ttl = ttl
-		m.maxItems = cfg.GetMaxItems()
+		m.maxItems = localCacheCfg.GetMaxItems()
 		m.cache = localcache.NewMemoryShardedCache(shards, ttl, cleanup)
 	})
 }
 
-// GetManager returns the singleton cache manager instance.
-func GetManager() *Manager { mgr.initCache(); return &mgr }
+// NewManager creates a new Manager instance.
+func NewManager(cfg config.File) *Manager {
+	m := &Manager{}
+	m.initCacheWithCfg(cfg)
+
+	return m
+}
 
 // Get returns a cached account name for the given username (if present).
 func (m *Manager) Get(username string) (string, bool) {
-	if m == nil {
+	if m == nil || m.cache == nil {
 		return "", false
 	}
-	m.initCache()
 
-	if m.cache == nil {
-		return "", false
-	}
 	if v, ok := m.cache.Get(username); ok {
 		if s, ok2 := v.(string); ok2 {
 			return s, true
@@ -59,18 +70,13 @@ func (m *Manager) Get(username string) (string, bool) {
 }
 
 // Set stores the mapping with the configured TTL. If disabled, it is a no-op.
-func (m *Manager) Set(username, account string) {
-	if m == nil {
+func (m *Manager) Set(cfg config.File, username, account string) {
+	if m == nil || m.cache == nil {
 		return
 	}
-	m.initCache()
 
 	// Only set when feature is enabled
-	if !config.GetFile().GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
-		return
-	}
-
-	if m.cache == nil {
+	if !cfg.GetServer().GetRedis().GetAccountLocalCache().IsEnabled() {
 		return
 	}
 

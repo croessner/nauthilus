@@ -17,21 +17,24 @@ package jwtutil
 
 import (
 	"fmt"
+	"log/slog"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtclaims"
 	"github.com/croessner/nauthilus/server/util"
 	"github.com/gin-gonic/gin"
 )
 
-// HasRole checks if the user has the specified role in their JWT token.
-// It retrieves the JWT claims from the context and checks if the user has the required role.
-// Only types that implement jwtclaims.ClaimsWithRoles are supported (which includes *jwtclaims.Claims).
-func HasRole(ctx *gin.Context, role string) bool {
+// HasRoleWithDeps checks if the user has the specified role in their JWT token using provided dependencies.
+func HasRoleWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger, role string) bool {
 	// Get JWT claims from context
 	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
 	if !exists {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, "JWT claims not found in context",
@@ -45,7 +48,10 @@ func HasRole(ctx *gin.Context, role string) bool {
 		found := cl.HasRole(role)
 		msg := fmt.Sprintf("%s role %s in JWT claims", tern(found, "Found", "Missing"), role)
 
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgJWT,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 			definitions.LogKeyMsg, msg,
@@ -55,13 +61,21 @@ func HasRole(ctx *gin.Context, role string) bool {
 	}
 
 	// If we get here, the claims are in an unexpected format
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
 		definitions.DbgJWT,
 		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
 		definitions.LogKeyMsg, fmt.Sprintf("JWT claims in unexpected format: %T", claimsValue),
 	)
 
 	return false
+}
+
+// HasRole checks if the user has the specified role in their JWT token.
+func HasRole(ctx *gin.Context, role string) bool {
+	return HasRoleWithDeps(ctx, nil, nil, role)
 }
 
 // tiny generic ternary helper (local)

@@ -1,3 +1,18 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package redislib
 
 import (
@@ -39,7 +54,7 @@ type PoolStats struct {
 	Stats *redis.PoolStats
 }
 
-// ConfigValues holds the configuration parameters for a Redis client.
+// ConfigValues holds the configuration parameters for a Redis conn.
 type ConfigValues struct {
 	// Address refers to the address of the Redis server.
 	Address string
@@ -268,7 +283,7 @@ func RegisterRedisPool(L *lua.LState) int {
 
 // GetRedisConnection retrieves a Redis connection by name. Searches through standalone, failover, and cluster pools.
 // If found, it returns the connection as a Lua userdata object. If not found, it returns nil and an error message.
-// Special case: If the name is "default", it returns the system-wide client from rediscli.GetClient().
+// Special case: If the name is "default", it returns the process-wide default conn.
 func GetRedisConnection(L *lua.LState) int {
 	var (
 		okay   bool
@@ -279,7 +294,7 @@ func GetRedisConnection(L *lua.LState) int {
 
 	// Special case for "default" pool - use the system-wide client
 	if name == "default" {
-		client = rediscli.GetClient().GetWriteHandle()
+		client = getDefaultClient().GetWriteHandle()
 	} else if client, okay = redisPools[name]; !okay {
 		if client, okay = redisFailoverPools[failoverPool{name: name}]; !okay {
 			if client, okay = redisClusterPools[name]; !okay {
@@ -303,11 +318,16 @@ func GetRedisConnection(L *lua.LState) int {
 // getRedisConnectionWithFallback returns a Redis client from Lua state or a fallback client if the Lua state contains "default".
 func getRedisConnectionWithFallback(L *lua.LState, fallbackClient redis.UniversalClient) redis.UniversalClient {
 	ud := L.Get(1)
-	if ud == lua.LString("default") {
+	if ud.Type() == lua.LTString && ud.String() == "default" {
 		return fallbackClient
 	}
 
-	client, okay := ud.(*lua.LUserData).Value.(redis.UniversalClient)
+	userData, okay := ud.(*lua.LUserData)
+	if !okay || userData == nil {
+		return fallbackClient
+	}
+
+	client, okay := userData.Value.(redis.UniversalClient)
 	if !okay {
 		return fallbackClient
 	}

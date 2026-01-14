@@ -1,7 +1,23 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package lualib
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,13 +36,13 @@ import (
 
 // LoaderModOTEL provides a context-aware OpenTelemetry Lua module.
 // It binds helper functions and userdata to create and manage spans from Lua.
-func LoaderModOTEL(ctx context.Context) lua.LGFunction {
+func LoaderModOTEL(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.NewTable()
 
 		// State holder (per-request)
-		enabled := isTracingEnabled()
-		lstate := &luaOTEL{ctx: ctx, enabled: enabled}
+		enabled := cfg.GetServer().GetInsights().GetTracing().IsEnabled()
+		lstate := &luaOTEL{ctx: ctx, enabled: enabled, logger: logger}
 
 		// Ensure metatables are registered once per state
 		ensureTracerMT(L)
@@ -72,19 +88,12 @@ func LoaderOTELStateless() lua.LGFunction {
 	}
 }
 
-func isTracingEnabled() bool {
-	if !config.IsFileLoaded() {
-		return false
-	}
-
-	return config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled()
-}
-
 // --- Internal state and helpers ---
 
 type luaOTEL struct {
 	ctx     context.Context
 	enabled bool
+	logger  *slog.Logger
 }
 
 func (s *luaOTEL) tracerFor(scope string) trace.Tracer {
@@ -259,7 +268,8 @@ func ensureSpanMT(L *lua.LState) {
 		"add_event":      spanAddEvent,
 		"set_status":     spanSetStatus,
 		"record_error":   spanRecordError,
-		"end":            spanEnd,
+		"end":            spanEnd, // Reserved ke
+		"finish":         spanEnd,
 	}))
 }
 
@@ -464,15 +474,18 @@ func spanRecordError(L *lua.LState) int {
 		return 0
 	}
 
-	v := L.CheckAny(2)
-	switch vv := v.(type) {
-	case lua.LString:
-		lsp.span.RecordError(&luaErr{msg: string(vv)})
-		lsp.span.SetStatus(codes.Error, string(vv))
-	default:
-		lsp.span.RecordError(&luaErr{msg: vv.String()})
-		lsp.span.SetStatus(codes.Error, vv.String())
+	v := L.Get(2)
+	if v == lua.LNil {
+		return 0
 	}
+
+	errStr := strings.TrimSpace(v.String())
+	if errStr == "" || errStr == "redis: nil" || errStr == "nil" {
+		return 0
+	}
+
+	lsp.span.RecordError(&luaErr{msg: errStr})
+	lsp.span.SetStatus(codes.Error, errStr)
 
 	return 0
 }

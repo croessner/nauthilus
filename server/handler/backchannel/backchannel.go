@@ -16,7 +16,6 @@
 package backchannel
 
 import (
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
 	"github.com/croessner/nauthilus/server/handler/asyncjobs"
 	"github.com/croessner/nauthilus/server/handler/auth"
@@ -24,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/server/handler/cache"
 	"github.com/croessner/nauthilus/server/handler/confighandler"
 	"github.com/croessner/nauthilus/server/handler/custom"
+	handlerdeps "github.com/croessner/nauthilus/server/handler/deps"
 
 	mdauth "github.com/croessner/nauthilus/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/server/middleware/lua"
@@ -35,17 +35,30 @@ import (
 // It mirrors the previous setupBackChannelEndpoints behavior while delegating concrete
 // route registrations to modular handlers.
 func Setup(router *gin.Engine) {
-	cfg := config.GetFile()
+	panic("backchannel.Setup is deprecated; use backchannel.SetupWithDeps with explicit dependencies")
+}
+
+func SetupWithDeps(router *gin.Engine, deps *handlerdeps.Deps) {
+	if deps == nil || deps.Cfg == nil || deps.Logger == nil {
+		panic("backchannel.SetupWithDeps requires non-nil deps (Cfg, Logger)")
+	}
+
+	if deps.Svc == nil {
+		deps.Svc = handlerdeps.NewDefaultServices(deps)
+	}
+
+	cfg := deps.Cfg
+	jwtDeps := core.JWTDeps{Cfg: cfg, Logger: deps.Logger, Redis: deps.Redis}
 
 	// Public JWT endpoints first (token and refresh)
 	if cfg.GetServer().GetJWTAuth().IsEnabled() && !cfg.GetServer().GetEndpoint().IsAuthJWTDisabled() {
 		jwtGroup := router.Group("/api/v1/jwt")
 
 		jwtGroup.Use(mdlua.LuaContextMiddleware())
-		jwtGroup.POST("/token", core.HandleJWTTokenGeneration)
+		jwtGroup.POST("/token", core.HandleJWTTokenGenerationWithDeps(jwtDeps))
 
 		if cfg.GetServer().GetJWTAuth().IsRefreshTokenEnabled() {
-			jwtGroup.POST("/refresh", core.HandleJWTTokenRefresh)
+			jwtGroup.POST("/refresh", core.HandleJWTTokenRefreshWithDeps(jwtDeps))
 		}
 	}
 
@@ -53,20 +66,20 @@ func Setup(router *gin.Engine) {
 	group := router.Group("/api/v1")
 
 	if cfg.GetServer().GetBasicAuth().IsEnabled() {
-		group.Use(mdauth.BasicAuthMiddleware())
+		group.Use(mdauth.BasicAuthMiddlewareWithDeps(cfg, deps.Logger))
 	}
 
 	if cfg.GetServer().GetJWTAuth().IsEnabled() {
-		group.Use(core.JWTAuthMiddleware())
+		group.Use(core.JWTAuthMiddlewareWithDeps(jwtDeps))
 	}
 
 	group.Use(mdlua.LuaContextMiddleware())
 
 	// Register modules
-	auth.New(cfg).Register(group)
-	bruteforce.New().Register(group)
-	confighandler.New(cfg).Register(group)
-	custom.New().Register(group)
-	cache.New(cfg).Register(group)
-	asyncjobs.New().Register(group)
+	auth.NewWithDeps(deps).Register(group)
+	bruteforce.New(deps).Register(group)
+	confighandler.NewWithDeps(deps).Register(group)
+	custom.NewWithDeps(deps.CfgProvider, deps.Logger, deps.Redis).Register(group)
+	cache.NewWithDeps(deps).Register(group)
+	asyncjobs.NewWithDeps(deps).Register(group)
 }

@@ -1,13 +1,30 @@
+// Copyright (C) 2024 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 package bruteforce
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/croessner/nauthilus/server/bruteforce"
 	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
+	"github.com/croessner/nauthilus/server/rediscli"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
@@ -107,11 +124,11 @@ func GetCustomTolerations(L *lua.LState) int {
 }
 
 // GetTolerateMap retrieves a Lua table containing authentication data for the provided IP address from the toleration system.
-func GetTolerateMap(ctx context.Context) lua.LGFunction {
+func GetTolerateMap(ctx context.Context, t tolerate.Tolerate) lua.LGFunction {
 	return func(L *lua.LState) int {
 		ipAddress := L.CheckString(1)
 
-		mapping := tolerate.GetTolerate().GetTolerateMap(ctx, ipAddress)
+		mapping := t.GetTolerateMap(ctx, ipAddress)
 		resultTable := L.NewTable()
 
 		for label, value := range mapping {
@@ -125,7 +142,7 @@ func GetTolerateMap(ctx context.Context) lua.LGFunction {
 }
 
 // IsIPAddressBlocked checks if an IP address is blocked and returns a list of buckets causing the block or nil if not blocked.
-func IsIPAddressBlocked(ctx context.Context) lua.LGFunction {
+func IsIPAddressBlocked(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var guid string
 
@@ -139,7 +156,12 @@ func IsIPAddressBlocked(ctx context.Context) lua.LGFunction {
 			guid = definitions.NotAvailable
 		}
 
-		bm := bruteforce.NewBucketManager(ctx, guid, ipAddress)
+		bm := bruteforce.NewBucketManagerWithDeps(ctx, guid, ipAddress, bruteforce.BucketManagerDeps{
+			Cfg:      cfg,
+			Logger:   logger,
+			Redis:    redis,
+			Tolerate: t,
+		})
 
 		bucketsNames, found := bm.IsIPAddressBlocked()
 		if !found {
@@ -160,15 +182,15 @@ func IsIPAddressBlocked(ctx context.Context) lua.LGFunction {
 }
 
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
-func LoaderModBruteForce(ctx context.Context) lua.LGFunction {
+func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) lua.LGFunction {
 	return func(L *lua.LState) int {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnBfSetCustomTolerations:   SetCustomTolerations,
 			definitions.LuaFnBfSetCustomToleration:    SetCustomToleration,
 			definitions.LuaFnBfDeleteCustomToleration: DeleteCustomToleration,
 			definitions.LuaFnBfGetCusotmTolerations:   GetCustomTolerations,
-			definitions.LuaFnBfGetTolerateMap:         GetTolerateMap(ctx),
-			definitions.LuaFnBfIsIPAddressBlocked:     IsIPAddressBlocked(ctx),
+			definitions.LuaFnBfGetTolerateMap:         GetTolerateMap(ctx, t),
+			definitions.LuaFnBfIsIPAddressBlocked:     IsIPAddressBlocked(ctx, cfg, logger, redis, t),
 		})
 
 		L.Push(mod)

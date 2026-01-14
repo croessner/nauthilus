@@ -23,10 +23,10 @@ import (
 )
 
 // PackagePath ensures Lua package.path contains our required paths exactly once, without unbounded growth.
-func PackagePath(L *lua.LState) error {
+func PackagePath(L *lua.LState, cfg config.File) error {
 	const defaultPath = "/usr/local/share/nauthilus/lua/?.lua;/usr/share/nauthilus/lua/?.lua;/usr/app/lua-plugins.d/share/?.lua"
 
-	cfgPath := config.GetFile().GetLuaPackagePath()
+	cfgPath := cfg.GetLuaPackagePath()
 	add := defaultPath
 	if cfgPath != "" {
 		add += ";" + cfgPath

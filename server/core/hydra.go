@@ -21,6 +21,7 @@ package core
 // See the markdown documentation for the login-, two-factor-, consent- and logout pages for a brief description.
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"net/http"
@@ -33,7 +34,7 @@ import (
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/errors"
-	"github.com/croessner/nauthilus/server/log"
+	"github.com/croessner/nauthilus/server/frontend"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/tags"
 	"github.com/croessner/nauthilus/server/util"
@@ -46,7 +47,6 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
-	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -57,375 +57,17 @@ import (
 var httpClient *http.Client
 
 // InitHTTPClient initializes the global httpClient variable with a pre-configured instance from util.NewHTTPClient.
-func InitHTTPClient() {
-	httpClient = util.NewHTTPClient()
-}
-
-// Scope represents a scope used in the ConsentPageData struct. It contains the name and description of the scope.
-// Scope represents the scope of an object.
-type Scope struct {
-	// ScopeName represents the name of the scope.
-	ScopeName string
-
-	// ScopeDescription represents a detailed description of the scope.
-	ScopeDescription string
-}
-
-// Language represents a language used in various page data structs.
-// Language represents a programming language
-type Language struct {
-	// LanguageLink represents the link associated with the language
-	LanguageLink string
-
-	// LanguageName represents the name of the language
-	LanguageName string
-}
-
-type LoginPageData struct {
-	// InDevelopment is a flag that is true, if the build-tag dev is used.
-	InDevelopment bool
-
-	// Determines if the Welcome message should be displayed
-	WantWelcome bool
-
-	// Determines if the Policy should be displayed
-	WantPolicy bool
-
-	// Determines if the Terms of Service (TOS) should be displayed
-	WantTos bool
-
-	// Determines if the About information should be displayed
-	WantAbout bool
-
-	// WantRemember is a flag for the regular login page.
-	WantRemember bool
-
-	// Indicates if there was an error
-	HaveError bool
-
-	// The title of the Login page
-	Title string
-
-	// The Welcome message
-	Welcome string
-
-	// The path or URL to logo image to be displayed
-	LogoImage string
-
-	// The alternate text for the logo image
-	LogoImageAlt string
-
-	// The name of the application
-	ApplicationName string
-
-	// The login details
-	Login string
-
-	// The placeholder for the login input form
-	LoginPlaceholder string
-
-	// The Privacy statement
-	Privacy string
-
-	// User password
-	Password string
-
-	// Placeholder for password input form
-	PasswordPlaceholder string
-
-	// The Policy terms
-	Policy string
-
-	// The URL to the policy document
-	PolicyUri string
-
-	// The Terms of Service
-	Tos string
-
-	// The URL to the Terms of Service document
-	TosUri string
-
-	// Information about the service or company
-	About string
-
-	// The URL to more About information
-	AboutUri string
-
-	// Information regarding remember functionality
-	Remember string
-
-	// Text for Submit button
-	Submit string
-
-	// Error message if any
-	ErrorMessage string
-
-	// Alternate choices text
-	Or string
-
-	// Information on the device being used
-	Device string
-
-	// CSRF security token
-	CSRFToken string
-
-	// Login challenge token
-	LoginChallenge string
-
-	// Endpoint for submitting login
-	PostLoginEndpoint string
-
-	// Endpoint for device login
-	DeviceLoginEndpoint string
-
-	// Current language code
-	LanguageTag string
-
-	// Name of the current language
-	LanguageCurrentName string
-
-	// BlockedIPAddresses of other available languages
-	LanguagePassive []Language
-}
-
-// TwoFactorData is a struct that includes parameters for processing two-factor
-// authentication. It handles various attributes ranging from welcome messages,
-// terms of service, about sections, among others.
-type TwoFactorData struct {
-	// WantWelcome indicates if a welcome message is desired
-	WantWelcome bool
-
-	// WantPolicy indicates if a policy message is required
-	WantPolicy bool
-
-	// WantTos indicates if Terms of Service is mandatory
-	WantTos bool
-
-	// WantAbout indicates if displaying 'About' information is desired
-	WantAbout bool
-
-	// Title is the title of the webpage or context
-	Title string
-
-	// Welcome is the welcome message
-	Welcome string
-
-	// LogoImage is the link of the logo image
-	LogoImage string
-
-	// LogoImageAlt is the alt text of the logo image
-	LogoImageAlt string
-
-	// ApplicationName is the name of the application
-	ApplicationName string
-
-	// Code is the two-factor authentication code
-	Code string
-
-	// Policy is the policy text
-	Policy string
-
-	// PolicyUri is the link to the policy document
-	PolicyUri string
-
-	// Tos is the Terms of Service text
-	Tos string
-
-	// TosUri is the URL to the Terms of Service document
-	TosUri string
-
-	// About holds content related to 'About Us' or 'About the Application'
-	About string
-
-	// AboutUri is the URL to the 'About Us' or 'About the application' page
-	AboutUri string
-
-	// Submit is the label for the submit action
-	Submit string
-
-	// CSRFToken is the token used for Cross-Site Request Forgery protection
-	CSRFToken string
-
-	// LoginChallenge represents the challenge used for login
-	LoginChallenge string
-
-	// User is the User ID or Name
-	User string
-
-	// PostLoginEndpoint is the API endpoint to submit login data
-	PostLoginEndpoint string
-
-	// LanguageTag houses the language tag, e.g., 'en-US'
-	LanguageTag string
-
-	// LanguageCurrentName is the fullname of the current language (e.g., 'English')
-	LanguageCurrentName string
-
-	// LanguagePassive houses a slice of the languages that are passively being used/available
-	LanguagePassive []Language
-}
-
-// LogoutPageData defines the data structure for details related to the logout page.
-type LogoutPageData struct {
-	// WantWelcome is a flag indicating if the welcome message should be displayed or not.
-	WantWelcome bool
-
-	// Title represents the title of the logout page.
-	Title string
-
-	// Welcome holds the welcome message to be displayed, if WantWelcome flag is set to true.
-	Welcome string
-
-	// LogoutMessage carries the logout message.
-	LogoutMessage string
-
-	// AcceptSubmit and RejectSubmit hold messages for submission options upon logout.
-	// These could be used for multi-step or confirmation based logout procedures.
-	AcceptSubmit string
-	RejectSubmit string
-
-	// CSRFToken represents the CSRF token for security measures.
-	CSRFToken string
-
-	// LogoutChallenge represents a challenge string for logout.
-	// It can be used for additional validation on logout requests.
-	LogoutChallenge string
-
-	// PostLogoutEndpoint is the endpoint to which requests are made after logout.
-	PostLogoutEndpoint string
-
-	// LanguageTag refers to the IETF language tag for selected language (e.g. "en-US").
-	LanguageTag string
-
-	// LanguageCurrentName is the human-readable name of the current language (e.g. "English").
-	LanguageCurrentName string
-
-	// LanguagePassive is a slice of passive languages supported by the system.
-	// These could be offered as alternative language options on the logout page.
-	LanguagePassive []Language
-}
-
-// ConsentPageData defines the data structure for managing user consent information on a web page.
-type ConsentPageData struct {
-	// WantWelcome is a boolean to indicate if a welcome message is needed.
-	WantWelcome bool
-
-	// WantPolicy is a boolean to indicate if a policy is needed.
-	WantPolicy bool
-
-	// WantTos is a boolean to indicate if Terms of Service is required.
-	WantTos bool
-
-	// WantAbout is a boolean to indicate if an "About Us" section is needed.
-	WantAbout bool
-
-	// Title represents the title of the consent page.
-	Title string
-
-	// Welcome represents welcome text message on the page.
-	Welcome string
-
-	// LogoImage represents the URI to logo image on the page.
-	LogoImage string
-
-	// LogoImageAlt is the alternative text for the Logo Image.
-	LogoImageAlt string
-
-	// ConsentMessage is the message shown on the consent page.
-	ConsentMessage string
-
-	// ApplicationName represents the name of the application asking for consent.
-	ApplicationName string
-
-	// Policy represents the text of the policy.
-	Policy string
-
-	// PolicyUri represents the URI to the policy document.
-	PolicyUri string
-
-	// Tos represents the text of the Terms of Service (ToS).
-	Tos string
-
-	// TosUri represents the URI to the Terms of Service (ToS) document.
-	TosUri string
-
-	// About represents the text of the about section.
-	About string
-
-	// AboutUri represents the URI to the about information.
-	AboutUri string
-
-	// Remember is the text related to remember user preferences on the consent page.
-	Remember string
-
-	// AcceptSubmit represents the text on the Accept button.
-	AcceptSubmit string
-
-	// RejectSubmit represents the text on the Reject button.
-	RejectSubmit string
-
-	// CSRFToken is used for CSRF protection.
-	CSRFToken string
-
-	// ConsentChallenge holds the unique consent challenge string from ORY Hydra.
-	ConsentChallenge string
-
-	// PostConsentEndpoint is the endpoint where the browser will be redirected after consent is provided.
-	PostConsentEndpoint string
-
-	// LanguageTag represents the language preference of the client.
-	LanguageTag string
-
-	// LanguageCurrentName represents the current name of the language.
-	LanguageCurrentName string
-
-	// Scopes represents the list of scopes that the app is requesting access to.
-	Scopes []Scope
-
-	// LanguagePassive represents the list of passive languages.
-	LanguagePassive []Language
-}
-
-// NotifyPageData represents page notification data.
-type NotifyPageData struct {
-	// WantWelcome indicates if a welcome message is desired.
-	WantWelcome bool
-
-	// WantPolicy indicates if a policy notification is desired.
-	WantPolicy bool
-
-	// WantTos indicates if terms of service notification is desired.
-	WantTos bool
-
-	// Title represents the title of the notification page.
-	Title string
-
-	// Welcome represents the welcome message on the notification page.
-	Welcome string
-
-	// LogoImage represents the URL of the logo displayed on the notification page.
-	LogoImage string
-
-	// LogoImageAlt represents the alternative text for the logo image.
-	LogoImageAlt string
-
-	// NotifyMessage represents the notification message displayed on the page.
-	NotifyMessage string
-
-	// LanguageTag represents the IETF language tag for the current language.
-	LanguageTag string
-
-	// LanguageCurrentName represents the name of the current language in its language.
-	LanguageCurrentName string
-
-	// LanguagePassive represents a list of other available languages.
-	LanguagePassive []Language
+func InitHTTPClient(cfg config.File) {
+	httpClient = util.NewHTTPClientWithCfg(cfg)
 }
 
 // ApiConfig is a struct that encapsulates configuration and parameters for
 // HTTP communication with OAuth2 OpenID-Connect server via OpenAPI. This includes
 // configurations for HTTP client, authorization parameters, and request context.
 type ApiConfig struct {
+	// deps holds the authentication dependencies.
+	deps AuthDeps
+
 	// httpClient is a configured HTTP client used to establish connections to the OAuth2 OpenID-connect server.
 	httpClient *http.Client
 
@@ -461,45 +103,28 @@ type ApiConfig struct {
 }
 
 // HandleErr handles an error by logging the error details and printing a goroutine dump.
-// It sets the "failure" and "message" values in the context, and then calls the notifyGETHandler function.
-// If the error is of type *errors.DetailedError, it logs the error details along with the error message.
-// Otherwise, it logs only the error message.
-// The function also prints the goroutine dump with the corresponding GUID.
-// Finally, it cleans up the session using the sessionCleaner function.
-//
-// ctx: The Gin context.
-// err: The error to handle.
-func HandleErr(ctx *gin.Context, err error) {
-	processErrorLogging(ctx, err)
+func (h *HydraHandlers) HandleErr(ctx *gin.Context, err error) {
+	HandleErrWithDeps(ctx, err, h.deps)
+}
+
+// HandleErrWithDeps is the DI-capable variant of HandleErr.
+func HandleErrWithDeps(ctx *gin.Context, err error, deps AuthDeps) {
+	processErrorLogging(ctx, err, deps)
 	sessionCleaner(ctx)
 	ctx.Set(definitions.CtxFailureKey, true)
 	ctx.Set(definitions.CtxMessageKey, err)
-	NotifyGETHandler(ctx)
+
+	h := NewHydraHandlers(deps)
+	h.NotifyGETHandler(ctx)
 }
 
 // processErrorLogging logs the error details and prints a goroutine dump.
-// It takes the Gin context and the error as inputs.
-// It retrieves the GUID from the context and logs the error using the logError function.
-// It then creates a buffer and uses the runtime.Stack function to fill the buffer with a goroutine dump.
-// Finally, it prints the goroutine dump along with the GUID to the console.
-//
-// ctx: The Gin context.
-// err: The error to log.
-// Usage example:
-//
-//	HandleErr(ctx, err)
-//	sessionCleaner(ctx)
-//	ctx.Set(definitions.CtxFailureKey, true)
-//	ctx.Set(definitions.CtxMessageKey, err)
-//	notifyGETHandler(ctx)
-//
-// See logError, definitions.CtxGUIDKey, and runtime.Stack for additional information.
-func processErrorLogging(ctx *gin.Context, err error) {
+func processErrorLogging(ctx *gin.Context, err error, deps AuthDeps) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	logError(ctx, err)
+	logError(ctx, err, deps)
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
+	if deps.Cfg.GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug && deps.Env.GetDevMode() {
 		buf := make([]byte, 1<<20)
 		stackLen := runtime.Stack(buf, false)
 
@@ -508,25 +133,20 @@ func processErrorLogging(ctx *gin.Context, err error) {
 }
 
 // logError logs the error details along with the corresponding GUID, client IP, and error message.
-// If the error is of type *errors.DetailedError, it logs the error details using log.Logger.Log method.
-// Otherwise, it logs only the error message.
-//
-// ctx: The Gin context.
-// err: The error to log.
-func logError(ctx *gin.Context, err error) {
+func logError(ctx *gin.Context, err error, deps AuthDeps) {
 	var detailedError *errors.DetailedError
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	if stderrors.As(err, &detailedError) {
-		level.Error(log.Logger).Log(
+		level.Error(deps.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, (*detailedError).GetDetails(),
 			definitions.LogKeyError, (*detailedError).Error(),
 			definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 		)
 	} else {
-		level.Error(log.Logger).Log(
+		level.Error(deps.Logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "An error occurred",
 			definitions.LogKeyError, err,
@@ -535,117 +155,19 @@ func logError(ctx *gin.Context, err error) {
 	}
 }
 
-// NotifyGETHandler handles the GET request for the notification page.
-// It sets the HTTP status code, status title, and notification message based on the context.
-// It also prepares the data for rendering the notify.html template and executes the HTML rendering.
-func NotifyGETHandler(ctx *gin.Context) {
-	var (
-		found          bool
-		msg            string
-		value          any
-		httpStatusCode = http.StatusOK
-	)
-
-	statusTitle := getLocalized(ctx, "Information")
-
-	if value, found = ctx.Get(definitions.CtxFailureKey); found {
-		if value.(bool) {
-			httpStatusCode = http.StatusBadRequest
-			statusTitle = getLocalized(ctx, "Bad Request")
-		}
-	}
-
-	if value, found = ctx.Get(definitions.CtxMessageKey); found {
-		switch what := value.(type) {
-		case error:
-			msg = getLocalized(ctx, "An error occurred:") + " " + what.Error()
-		case string:
-			msg = getLocalized(ctx, what)
-		}
-	} else {
-		msg = getLocalized(ctx, ctx.Query("message"))
-	}
-
-	// Fallback for non-localized messages
-	if msg == "" {
-		msg = ctx.Query("message")
-	}
-
-	session := sessions.Default(ctx)
-	cookieValue := session.Get(definitions.CookieLang)
-
-	languageCurrentTag := language.MustParse(cookieValue.(string))
-	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, viper.GetString("notify_page"), config.DefaultLanguageTags, languageCurrentName)
-
-	notifyData := NotifyPageData{
-		Title: statusTitle,
-		WantWelcome: func() bool {
-			if viper.GetString("notify_page_welcome") != "" {
-				return true
-			}
-
-			return false
-		}(),
-		Welcome:             viper.GetString("notify_page_welcome"),
-		LogoImage:           viper.GetString("default_logo_image"),
-		LogoImageAlt:        viper.GetString("notify_page_logo_image_alt"),
-		NotifyMessage:       msg,
-		LanguageTag:         session.Get(definitions.CookieLang).(string),
-		LanguageCurrentName: languageCurrentName,
-		LanguagePassive:     languagePassive,
-		WantTos:             false,
-		WantPolicy:          false,
-	}
-
-	ctx.HTML(httpStatusCode, "notify.html", notifyData)
-}
-
-// getLocalized is a function that returns the localized message based on the message ID and the context provided.
-// If the localization fails, an error is logged.
-func getLocalized(ctx *gin.Context, messageID string) string {
-	localizer := ctx.MustGet(definitions.CtxLocalizedKey).(*i18n.Localizer)
-
-	localizeConfig := i18n.LocalizeConfig{
-		MessageID: messageID,
-	}
-	localization, err := localizer.Localize(&localizeConfig)
-	if err != nil {
-		level.Error(log.Logger).Log(
-			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			"message_id", messageID,
-			definitions.LogKeyMsg, "Failed to get localized message",
-			definitions.LogKeyError, err,
-		)
-	}
-
-	return localization
-}
-
 // handleHydraErr handles an error by checking the status code of the http response.
-// If the status code is StatusNotFound, it calls the HandleErr function with errors.ErrUnknownJSON as the error.
-// If the status code is StatusGone, it calls the HandleErr function with errors.ErrHTTPRequestGone as the error.
-// Otherwise, it calls the HandleErr function with the original error.
-// If the http response is nil, it calls the HandleErr function with the original error.
-//
-// ctx: The Gin context.
-// err: The error to handle.
-// httpResponse: The http response object.
-// HandleErr: The function that handles an error.
-// errors.ErrUnknownJSON: The error representing an unknown JSON response.
-// errors.ErrHTTPRequestGone: The error representing a gone http request.
-func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
+func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response, deps AuthDeps) {
 	if httpResponse != nil {
 		switch httpResponse.StatusCode {
 		case http.StatusNotFound:
-			HandleErr(ctx, errors.ErrUnknownJSON)
+			HandleErrWithDeps(ctx, errors.ErrUnknownJSON, deps)
 		case http.StatusGone:
-			HandleErr(ctx, errors.ErrHTTPRequestGone)
+			HandleErrWithDeps(ctx, errors.ErrHTTPRequestGone, deps)
 		default:
-			HandleErr(ctx, err)
+			HandleErrWithDeps(ctx, err, deps)
 		}
 	} else {
-		HandleErr(ctx, err)
+		HandleErrWithDeps(ctx, err, deps)
 	}
 }
 
@@ -661,10 +183,11 @@ func handleHydraErr(ctx *gin.Context, err error, httpResponse *http.Response) {
 // The function returns lang, needCookie, and needRedirect.
 //
 //goland:noinspection GoDfaConstantCondition
-func setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
+func (h *HydraHandlers) setLanguageDetails(langFromURL string, langFromCookie string) (lang string, needCookie bool, needRedirect bool) {
 	switch {
 	case langFromURL == "" && langFromCookie == "":
 		// 1. No language from URL and no cookie is set
+		lang = h.deps.Cfg.GetServer().Frontend.GetDefaultLanguage()
 		needCookie = true
 		needRedirect = true
 	case langFromURL == "" && langFromCookie != "":
@@ -688,13 +211,20 @@ func setLanguageDetails(langFromURL string, langFromCookie string) (lang string,
 }
 
 // WithLanguageMiddleware is a middleware function that handles the language setup for the application.
+func WithLanguageMiddleware(deps AuthDeps) gin.HandlerFunc {
+	h := NewHydraHandlers(deps)
+
+	return h.WithLanguageMiddleware()
+}
+
+// WithLanguageMiddleware is a middleware function that handles the language setup for the application.
 // It tries to get the language tag from the URL and the cookie.
 // It sets the language details and creates a localizer based on the selected language.
 // It also handles CSRF token and localization in the context.
 // If the language is not found in the catalog, it aborts the request with a "Language Not Found" error.
 // If the language needs to be saved in a cookie or redirection is required, it does so accordingly.
 // Finally, it calls the next handler in the chain.
-func WithLanguageMiddleware() gin.HandlerFunc {
+func (h *HydraHandlers) WithLanguageMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var (
 			langFromURL    string
@@ -714,12 +244,15 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 			langFromCookie, _ = cookieValue.(string)
 		}
 
-		lang, needCookie, needRedirect := setLanguageDetails(langFromURL, langFromCookie)
+		lang, needCookie, needRedirect := h.setLanguageDetails(langFromURL, langFromCookie)
 		accept := ctx.GetHeader("Accept-Language")
 		tag, _ := language.MatchStrings(config.Matcher, lang, accept)
 		baseName, _ := tag.Base()
 
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx,
+			h.deps.Cfg,
+			h.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, guid,
 			"accept", accept,
@@ -738,7 +271,14 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 
 		if needCookie {
 			session.Set(definitions.CookieLang, baseName.String())
-			session.Save()
+			err := session.Save()
+			if err != nil {
+				level.Error(h.deps.Logger).Log(
+					definitions.LogKeyGUID, guid,
+					definitions.LogKeyMsg, "Failed to save session",
+					definitions.LogKeyError, err,
+				)
+			}
 		}
 
 		ctx.Set(definitions.CtxCSRFTokenKey, nosurf.Token(ctx.Request))
@@ -760,60 +300,11 @@ func WithLanguageMiddleware() gin.HandlerFunc {
 // createConfiguration returns a new instance of the openapi.Configuration struct with the provided httpClient and server configuration.
 // The httpClient parameter is used as the underlying HTTP client for API calls made by the openapi.client.
 // The server configuration is read from the "hydra_admin_uri" configuration value using viper.GetString() function.
-func createConfiguration(httpClient *http.Client) *openapi.Configuration {
+func createConfiguration(cfg config.File, httpClient *http.Client) *openapi.Configuration {
 	return &openapi.Configuration{
 		HTTPClient: httpClient,
-		Servers:    []openapi.ServerConfiguration{{URL: config.GetFile().GetServer().HydraAdminUrl}},
+		Servers:    []openapi.ServerConfiguration{{URL: cfg.GetServer().Frontend.GetHydraAdminUri()}},
 	}
-}
-
-// createUserdata creates a map containing user data from a session based on the given keys.
-// It returns a map[string]any. The function iterates through the keys and retrieves the corresponding values from the session.
-// If the value is not nil, it is added to the userData map with the key as the key in the session.
-//
-// Params:
-// - session: the session to retrieve data from
-// - keys: the keys to retrieve data for
-//
-// Returns:
-// - userData: a map containing the user data
-func createUserdata(session sessions.Session, keys ...string) map[string]any {
-	userData := make(map[string]any, len(keys))
-
-	for _, key := range keys {
-		value := session.Get(key)
-		if value != nil {
-			userData[key] = value
-		}
-	}
-
-	return userData
-}
-
-// createLanguagePassive is a function that takes a gin.Context and a slice of language.Tags as input,
-// along with the currentName string. It returns a slice of Language structs. The function iterates over
-// the languageTags slice and creates a Language struct for each tag, except the one with the currentName.
-// The Language struct has two fields: LanguageLink and LanguageName.
-// The function appends each created Language struct to the languagePassive slice, and finally returns
-// the languagePassive slice.
-func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []language.Tag, currentName string) []Language {
-	var languagePassive []Language
-
-	for _, languageTag := range languageTags {
-		languageName := cases.Title(languageTag, cases.NoLower).String(display.Self.Name(languageTag))
-		if languageName != currentName {
-			baseName, _ := languageTag.Base()
-			languagePassive = append(
-				languagePassive,
-				Language{
-					LanguageLink: destPage + "/" + baseName.String() + "?" + ctx.Request.URL.RawQuery,
-					LanguageName: languageName,
-				},
-			)
-		}
-	}
-
-	return languagePassive
 }
 
 // initialize sets up the `ApiConfig` object by initializing the HTTP client, GUID, and API client.
@@ -835,7 +326,7 @@ func createLanguagePassive(ctx *gin.Context, destPage string, languageTags []lan
 func (a *ApiConfig) initialize() {
 	a.httpClient = httpClient
 	a.guid = a.ctx.GetString(definitions.CtxGUIDKey)
-	configuration := createConfiguration(a.httpClient)
+	configuration := createConfiguration(a.deps.Cfg, a.httpClient)
 	a.apiClient = openapi.NewAPIClient(configuration)
 }
 
@@ -854,7 +345,7 @@ func (a *ApiConfig) initialize() {
 // - `handleLoginSkip` method
 // - `handleLoginNoSkip` method
 func (a *ApiConfig) handleLogin(ctx *gin.Context, skip bool) {
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
+	util.DebugModuleWithCfg(ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
 
 	if skip {
 		a.handleLoginSkip(ctx)
@@ -869,14 +360,15 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 		err           error
 		acceptRequest *openapi.OAuth2RedirectTo
 		httpResponse  *http.Response
+		subject       string
 		claims        map[string]any
 	)
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
+	util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, true))
 
 	oauth2Client := a.loginRequest.GetClient()
 
-	auth := NewAuthStateFromContext(a.ctx)
+	auth := NewAuthStateFromContextWithDeps(a.ctx, a.deps)
 
 	auth.SetNoAuth(true)
 	auth.SetProtocol(config.NewProtocol(definitions.ProtoOryHydra))
@@ -885,8 +377,8 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 	auth.SetStatusCodes(definitions.ServOryHydra)
 
 	if authStatus := auth.HandlePassword(a.ctx); authStatus == definitions.AuthResultOK {
-		if config.GetFile().GetOauth2() != nil {
-			_, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
+		if a.deps.Cfg.GetOauth2() != nil {
+			subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 		}
 	} else {
 		auth.SetClientIP(a.ctx.GetString(definitions.CtxClientIPKey))
@@ -897,15 +389,19 @@ func (a *ApiConfig) handleLoginSkip(ctx *gin.Context) {
 		return
 	}
 
+	if subject == "" {
+		subject = a.loginRequest.GetSubject()
+	}
+
 	acceptLoginRequest := a.apiClient.OAuth2API.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
 		openapi.AcceptOAuth2LoginRequest{
-			Subject: a.loginRequest.GetSubject(),
+			Subject: subject,
 			Context: claims,
 		})
 
 	acceptRequest, httpResponse, err = acceptLoginRequest.LoginChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
@@ -946,13 +442,13 @@ func (a *ApiConfig) handleLoginNoSkip() {
 		errorMessage string
 	)
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
+	util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, false))
 
 	oauth2Client := a.loginRequest.GetClient()
 
 	imageUri = oauth2Client.GetLogoUri()
 	if imageUri == "" {
-		imageUri = viper.GetString("default_logo_image")
+		imageUri = a.deps.Cfg.GetServer().Frontend.GetDefaultLogoImage()
 	}
 
 	if policyUri = oauth2Client.GetPolicyUri(); policyUri != "" {
@@ -974,38 +470,38 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, viper.GetString("login_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(a.ctx, a.deps.Cfg, a.deps.Cfg.GetServer().Frontend.GetLoginPage(), config.DefaultLanguageTags, languageCurrentName)
 
-	userData := createUserdata(session, definitions.CookieUsername, definitions.CookieAuthResult)
+	userData := frontend.CreateUserdata(session, definitions.CookieUsername, definitions.CookieAuthResult)
 
 	// Handle TOTP request
 	if authResult, found := userData[definitions.CookieAuthResult]; found {
 		if authResult != definitions.AuthResultUnset {
-			twoFactorData := &TwoFactorData{
-				Title: getLocalized(a.ctx, "Login"),
+			twoFactorData := &frontend.TwoFactorData{
+				Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
 				WantWelcome: func() bool {
-					if viper.GetString("login_page_welcome") != "" {
+					if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 						return true
 					}
 
 					return false
 				}(),
-				Welcome:             viper.GetString("login_page_welcome"),
+				Welcome:             a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 				ApplicationName:     applicationName,
 				WantAbout:           wantAbout,
-				About:               getLocalized(a.ctx, "Get further information about this application..."),
+				About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 				AboutUri:            clientUri,
 				LogoImage:           imageUri,
-				LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
+				LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 				WantPolicy:          wantPolicy,
-				Code:                getLocalized(a.ctx, "OTP-Code"),
-				Policy:              getLocalized(a.ctx, "Privacy policy"),
+				Code:                frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "OTP-Code"),
+				Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 				PolicyUri:           policyUri,
 				WantTos:             wantTos,
-				Tos:                 getLocalized(a.ctx, "Terms of service"),
+				Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 				TosUri:              tosUri,
-				Submit:              getLocalized(a.ctx, "Submit"),
-				PostLoginEndpoint:   viper.GetString("login_page"),
+				Submit:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Submit"),
+				PostLoginEndpoint:   a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
 				LanguageTag:         session.Get(definitions.CookieLang).(string),
 				LanguageCurrentName: languageCurrentName,
 				LanguagePassive:     languagePassive,
@@ -1015,11 +511,15 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 			a.ctx.HTML(http.StatusOK, "totp.html", twoFactorData)
 
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				a.ctx.Request.Context(),
+				a.deps.Cfg,
+				a.deps.Logger,
 				definitions.DbgHydra,
 				definitions.LogKeyGUID, a.guid,
 				definitions.LogKeyMsg, "Two factor authentication",
 				definitions.LogKeyUsername, userData[definitions.CookieUsername].(string),
+				definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 			)
 
 			return
@@ -1028,47 +528,47 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 	if errorMessage = a.ctx.Query("_error"); errorMessage != "" {
 		if errorMessage == definitions.PasswordFail {
-			errorMessage = getLocalized(a.ctx, definitions.PasswordFail)
+			errorMessage = frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, definitions.PasswordFail)
 		}
 
 		haveError = true
 	}
 
-	loginData := &LoginPageData{
-		Title: getLocalized(a.ctx, "Login"),
+	loginData := &frontend.LoginPageData{
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("login_page_welcome"),
+		Welcome:             a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               getLocalized(a.ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		LogoImage:           imageUri,
-		LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
+		LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               getLocalized(a.ctx, "Login"),
-		Privacy:             getLocalized(a.ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    getLocalized(a.ctx, "Please enter your username or email address"),
-		Password:            getLocalized(a.ctx, "Password"),
-		PasswordPlaceholder: getLocalized(a.ctx, "Please enter your password"),
+		Login:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Please enter your username or email address"),
+		Password:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Password"),
+		PasswordPlaceholder: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Please enter your password"),
 		WantPolicy:          wantPolicy,
-		Policy:              getLocalized(a.ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 getLocalized(a.ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Remember:            getLocalized(a.ctx, "Remember me"),
-		Submit:              getLocalized(a.ctx, "Submit"),
-		Or:                  getLocalized(a.ctx, "or"),
-		Device:              getLocalized(a.ctx, "Login with WebAuthn"),
-		PostLoginEndpoint:   viper.GetString("login_page"),
-		DeviceLoginEndpoint: viper.GetString("device_page"),
+		Remember:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Remember me"),
+		Submit:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Submit"),
+		Or:                  frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "or"),
+		Device:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Login with WebAuthn"),
+		PostLoginEndpoint:   a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
+		DeviceLoginEndpoint: a.deps.Cfg.GetServer().Frontend.GetDevicePage(),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -1085,30 +585,34 @@ func (a *ApiConfig) handleLoginNoSkip() {
 
 // logInfoLoginSkip logs the login skip event with the provided details.
 func (a *ApiConfig) logInfoLoginSkip() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, true,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyAuthSubject, a.loginRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, viper.GetString("login_page"),
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // logInfoLoginNoSkip logs information about the login operation without skipping any step.
 func (a *ApiConfig) logInfoLoginNoSkip() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
-		definitions.LogKeyUriPath, viper.GetString("login_page"),
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLoginPage(),
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
+// --- Login Block ---
+
 // LoginGETHandler Page '/login'
-func LoginGETHandler(ctx *gin.Context) {
+func (h *HydraHandlers) LoginGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -1116,12 +620,12 @@ func LoginGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := &ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
@@ -1131,7 +635,7 @@ func LoginGETHandler(ctx *gin.Context) {
 	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -1140,7 +644,7 @@ func LoginGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -1150,9 +654,19 @@ func LoginGETHandler(ctx *gin.Context) {
 	apiConfig.handleLogin(ctx, apiConfig.loginRequest.GetSkip())
 }
 
+// LoginGETHandler Page '/login' (legacy)
+func LoginGETHandler(deps AuthDeps) gin.HandlerFunc {
+	InitHTTPClient(deps.Cfg)
+
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LoginGETHandler(ctx)
+	}
+}
+
 // initializeAuthLogin initializes the AuthState struct with the necessary information for logging in.
-func initializeAuthLogin(ctx *gin.Context) (State, error) {
-	auth := NewAuthStateFromContext(ctx)
+func (h *HydraHandlers) initializeAuthLogin(ctx *gin.Context) (State, error) {
+	auth := NewAuthStateFromContextWithDeps(ctx, h.deps)
 
 	auth.SetProtocol(config.NewProtocol(definitions.ProtoOryHydra))
 	auth.SetUsername(ctx.PostForm("username"))
@@ -1308,14 +822,14 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 	)
 
 	oauth2Client := a.loginRequest.GetClient()
-	if config.GetFile().GetOauth2() != nil {
+	if a.deps.Cfg.GetOauth2() != nil {
 		subject, claims = auth.GetOauth2SubjectAndClaims(oauth2Client)
 	}
 
 	if subject == "" {
 		subject = account
 
-		level.Warn(log.Logger).Log(
+		level.Warn(a.deps.Logger).Log(
 			definitions.LogKeyGUID, a.guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Empty 'subject', using '%s' as value", account),
 		)
@@ -1340,7 +854,7 @@ func (a *ApiConfig) getSubjectAndClaims(account string, auth State) (string, map
 // - bool: Indicates whether redirection is performed or not.
 // - error: The error if any occurs.
 func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authResult definitions.AuthResult, subject string) (bool, error) {
-	if config.GetFile().GetSkipTOTP(*a.clientId) {
+	if a.deps.Cfg.GetSkipTOTP(*a.clientId) {
 		return false, nil
 	}
 
@@ -1351,7 +865,7 @@ func (a *ApiConfig) handleNonPost2FA(auth State, session sessions.Session, authR
 
 		a.ctx.Redirect(
 			http.StatusFound,
-			viper.GetString("login_page")+"?login_challenge="+a.challenge,
+			a.deps.Cfg.GetServer().Frontend.GetLoginPage()+"?login_challenge="+a.challenge,
 		)
 
 		return true, nil
@@ -1432,7 +946,7 @@ func (a *ApiConfig) isRemember(rememberPost2FA string, post2FA bool) bool {
 func (a *ApiConfig) acceptLogin(claims map[string]any, subject string, remember bool) (redirectTo string, err error) {
 	var acceptRequest *openapi.OAuth2RedirectTo
 
-	rememberFor := int64(viper.GetInt("login_remember_for"))
+	rememberFor := int64(a.deps.Cfg.GetServer().Frontend.GetLoginRememberFor())
 	acceptLoginRequest := a.apiClient.OAuth2API.AcceptOAuth2LoginRequest(a.ctx).AcceptOAuth2LoginRequest(
 		openapi.AcceptOAuth2LoginRequest{
 			Context:     claims,
@@ -1462,7 +976,8 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, auth State) {
 		definitions.LogKeyAuthSubject, subject,
 		definitions.LogKeyUsername, a.ctx.PostForm("username"),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, viper.GetString("login_page") + "/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLoginPage() + "/post",
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	}
 
 	additionalLogs := auth.GetAdditionalLogs()
@@ -1470,7 +985,7 @@ func (a *ApiConfig) logInfoLoginAccept(subject string, auth State) {
 		logs = append(logs, additionalLogs...)
 	}
 
-	level.Info(log.Logger).Log(logs...)
+	level.Info(a.deps.Logger).Log(logs...)
 }
 
 // totpValidation validates the time-based one-time password (TOTP) code against the provided account and TOTP secret.
@@ -1503,13 +1018,13 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 	var urlComponents []string
 
 	urlComponents = append(urlComponents, "otpauth://totp/")
-	urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
+	urlComponents = append(urlComponents, url.QueryEscape(a.deps.Cfg.GetServer().Frontend.GetTotpIssuer()))
 	urlComponents = append(urlComponents, ":")
 	urlComponents = append(urlComponents, account)
 	urlComponents = append(urlComponents, "?secret=")
 	urlComponents = append(urlComponents, totpSecret)
 	urlComponents = append(urlComponents, "&issuer=")
-	urlComponents = append(urlComponents, url.QueryEscape(viper.GetString("totp_issuer")))
+	urlComponents = append(urlComponents, url.QueryEscape(a.deps.Cfg.GetServer().Frontend.GetTotpIssuer()))
 	urlComponents = append(urlComponents, "&algorithm=SHA1")
 	urlComponents = append(urlComponents, "&digits=6")
 	urlComponents = append(urlComponents, "&period=30")
@@ -1521,8 +1036,11 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 		return err
 	}
 
-	if config.GetFile().GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && config.GetEnvironment().GetDevMode() {
-		util.DebugModule(
+	if a.deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && a.deps.Env.GetDevMode() {
+		util.DebugModuleWithCfg(
+			a.ctx.Request.Context(),
+			a.deps.Cfg,
+			a.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
 			"totp_key", fmt.Sprintf("%+v", key),
@@ -1531,7 +1049,7 @@ func (a *ApiConfig) totpValidation(code string, account string, totpSecret strin
 
 	codeValid, err := totp.ValidateCustom(code, key.Secret(), time.Now(), totp.ValidateOpts{
 		Period:    30,
-		Skew:      viper.GetUint("totp_skew"),
+		Skew:      a.deps.Cfg.GetServer().Frontend.GetTotpSkew(),
 		Digits:    otp.DigitsSix,
 		Algorithm: otp.AlgorithmSHA1,
 	})
@@ -1594,7 +1112,7 @@ func (a *ApiConfig) processAuthFailLogin(auth State, authResult definitions.Auth
 	session := sessions.Default(a.ctx)
 
 	if !post2FA {
-		if !config.GetFile().GetSkipTOTP(*a.clientId) {
+		if !a.deps.Cfg.GetSkipTOTP(*a.clientId) {
 			if _, found := auth.GetTOTPSecretOk(); found {
 				session.Set(definitions.CookieAuthResult, uint8(authResult))
 				session.Set(definitions.CookieUsername, a.ctx.Request.Form.Get("username"))
@@ -1621,7 +1139,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 
 	a.ctx.Redirect(
 		http.StatusFound,
-		viper.GetString("login_page")+"?login_challenge="+loginChallenge+"&_error="+definitions.PasswordFail,
+		a.deps.Cfg.GetServer().Frontend.GetLoginPage()+"?login_challenge="+loginChallenge+"&_error="+definitions.PasswordFail,
 	)
 
 	logs := []any{
@@ -1630,7 +1148,8 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyUsername, a.ctx.PostForm("username"),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-		definitions.LogKeyUriPath, viper.GetString("login_page") + "/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLoginPage() + "/post",
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	}
 
 	additionalLogs := auth.GetAdditionalLogs()
@@ -1638,7 +1157,7 @@ func (a *ApiConfig) logFailedLoginAndRedirect(ctx *gin.Context, auth State) {
 		logs = append(logs, additionalLogs...)
 	}
 
-	level.Info(log.Logger).Log(logs...)
+	level.Info(a.deps.Logger).Log(logs...)
 }
 
 // runLuaFilterAndPost filters and executes post-action Lua scripts based on the given post-2FA authentication result.
@@ -1654,10 +1173,11 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 		userFound, err = auth.userExists()
 		if err != nil {
 			if !stderrors.Is(err, redis.Nil) {
-				level.Error(log.Logger).Log(
+				level.Error(auth.GetLogger()).Log(
 					definitions.LogKeyGUID, auth.GetGUID(),
 					definitions.LogKeyMsg, "Error checking if user exists",
 					definitions.LogKeyError, err,
+					definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 				)
 			}
 		}
@@ -1680,11 +1200,11 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 	}()
 
 	passDBResult.UserFound = userFound
-	passDBResult.AccountField = &accountField
-	passDBResult.TOTPSecretField = &totpSecretField
-	passDBResult.TOTPRecoveryField = &totpRecoveryField
-	passDBResult.UniqueUserIDField = &uniqueUserIDField
-	passDBResult.DisplayNameField = &displayNameField
+	passDBResult.AccountField = accountField
+	passDBResult.TOTPSecretField = totpSecretField
+	passDBResult.TOTPRecoveryField = totpRecoveryField
+	passDBResult.UniqueUserIDField = uniqueUserIDField
+	passDBResult.DisplayNameField = displayNameField
 	passDBResult.Backend = auth.GetUsedPassDBBackend()
 	// Avoid sharing internal map by value; hand over a deep copy instead
 	passDBResult.Attributes = auth.GetAttributesCopy()
@@ -1698,7 +1218,7 @@ func runLuaFilterAndPost(ctx *gin.Context, auth State, authResult definitions.Au
 }
 
 // LoginPOSTHandler Page '/login/post'
-func LoginPOSTHandler(ctx *gin.Context) {
+func (h *HydraHandlers) LoginPOSTHandler(ctx *gin.Context) {
 	var (
 		post2FA         bool
 		authResult      definitions.AuthResult
@@ -1709,27 +1229,27 @@ func LoginPOSTHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.PostForm("ory.hydra.login_challenge")
 	if loginChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := &ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
 	apiConfig.challenge = loginChallenge
 
-	auth, err := initializeAuthLogin(ctx)
+	auth, err := h.initializeAuthLogin(ctx)
 	if err != nil {
-		HandleErr(ctx, err)
+		HandleErrWithDeps(ctx, err, h.deps)
 
 		return
 	}
 
 	authResult, recentSubject, rememberPost2FA, post2FA, err = handleSessionDataLogin(ctx, auth)
 	if err != nil {
-		HandleErr(ctx, err)
+		HandleErrWithDeps(ctx, err, h.deps)
 
 		return
 	}
@@ -1737,7 +1257,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 	apiConfig.loginRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -1746,7 +1266,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -1773,7 +1293,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 
 			authResult, err = apiConfig.processAuthOkLogin(ctx, auth, oldAuthResult, rememberPost2FA, recentSubject, post2FA, needLuaFilterAndPost)
 			if err != nil {
-				HandleErr(ctx, err)
+				HandleErrWithDeps(ctx, err, h.deps)
 			}
 
 			// If auth-results have changed, filters must have ran. Do not run them again...
@@ -1792,7 +1312,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 
 			have2FA, err = apiConfig.processAuthFailLogin(auth, oldAuthResult, post2FA)
 			if err != nil {
-				HandleErr(ctx, err)
+				HandleErrWithDeps(ctx, err, h.deps)
 
 				return
 			}
@@ -1812,7 +1332,7 @@ func LoginPOSTHandler(ctx *gin.Context) {
 
 			return
 		default:
-			HandleErr(ctx, errors.ErrUnknownCause)
+			HandleErrWithDeps(ctx, errors.ErrUnknownCause, h.deps)
 			ctx.AbortWithStatus(http.StatusInternalServerError)
 
 			return
@@ -1820,8 +1340,16 @@ func LoginPOSTHandler(ctx *gin.Context) {
 	}
 }
 
+// LoginPOSTHandler Page '/login/post' (legacy)
+func LoginPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LoginPOSTHandler(ctx)
+	}
+}
+
 // DeviceGETHandler Page '/device'
-func DeviceGETHandler(ctx *gin.Context) {
+func (h *HydraHandlers) DeviceGETHandler(ctx *gin.Context) {
 	var (
 		wantAbout    bool
 		wantPolicy   bool
@@ -1842,18 +1370,18 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	loginChallenge := ctx.Query("login_challenge")
 	if loginChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	configuration := createConfiguration(httpClient)
+	configuration := createConfiguration(h.deps.Cfg, httpClient)
 	apiClient := openapi.NewAPIClient(configuration)
 
 	loginRequest, httpResponse, err = apiClient.OAuth2API.GetOAuth2LoginRequest(ctx).LoginChallenge(
 		loginChallenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -1862,7 +1390,7 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -1871,7 +1399,7 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	imageUri = oauth2Client.GetLogoUri()
 	if imageUri == "" {
-		imageUri = viper.GetString("default_logo_image")
+		imageUri = h.deps.Cfg.GetServer().Frontend.GetDefaultLogoImage()
 	}
 
 	if policyUri = oauth2Client.GetPolicyUri(); policyUri != "" {
@@ -1893,38 +1421,38 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(ctx, viper.GetString("device_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(ctx, h.deps.Cfg, h.deps.Cfg.GetServer().Frontend.GetDevicePage(), config.DefaultLanguageTags, languageCurrentName)
 
-	loginData := &LoginPageData{
-		Title: getLocalized(ctx, "Login"),
+	loginData := &frontend.LoginPageData{
+		Title: frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if h.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("login_page_welcome"),
+		Welcome:             h.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome(),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               getLocalized(ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		LogoImage:           imageUri,
-		LogoImageAlt:        viper.GetString("login_page_logo_image_alt"),
+		LogoImageAlt:        h.deps.Cfg.GetServer().Frontend.GetLoginPageLogoImageAlt(),
 		HaveError:           haveError,
 		ErrorMessage:        errorMessage,
-		Login:               getLocalized(ctx, "Login"),
-		Privacy:             getLocalized(ctx, "We'll never share your data with anyone else."),
-		LoginPlaceholder:    getLocalized(ctx, "Please enter your username or email address"),
+		Login:               frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Login"),
+		Privacy:             frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "We'll never share your data with anyone else."),
+		LoginPlaceholder:    frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Please enter your username or email address"),
 		WantPolicy:          wantPolicy,
-		Policy:              getLocalized(ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 getLocalized(ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Submit:              getLocalized(ctx, "Submit"),
-		PostLoginEndpoint:   viper.GetString("device_page"),
-		DeviceLoginEndpoint: viper.GetString("device_page"),
+		Submit:              frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Submit"),
+		PostLoginEndpoint:   h.deps.Cfg.GetServer().Frontend.GetDevicePage(),
+		DeviceLoginEndpoint: h.deps.Cfg.GetServer().Frontend.GetDevicePage(),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
@@ -1934,18 +1462,27 @@ func DeviceGETHandler(ctx *gin.Context) {
 
 	ctx.HTML(http.StatusOK, "device.html", loginData)
 
-	level.Info(log.Logger).Log(
+	level.Info(h.deps.Logger).Log(
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *clientId,
 		definitions.LogKeyClientName, clientName,
-		definitions.LogKeyUriPath, viper.GetString("device_page"),
+		definitions.LogKeyUriPath, h.deps.Cfg.GetServer().Frontend.GetDevicePage(),
+		definitions.LogKeyClientIP, ctx.Request.RemoteAddr,
 	)
 }
 
+// DeviceGETHandler Page '/device' (legacy)
+func DeviceGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.DeviceGETHandler(ctx)
+	}
+}
+
 // DevicePOSTHandler Page '/device/post'
-func DevicePOSTHandler(ctx *gin.Context) {
-	HandleErr(ctx, stderrors.New("not implemented yet"))
+func (h *HydraHandlers) DevicePOSTHandler(ctx *gin.Context) {
+	HandleErrWithDeps(ctx, stderrors.New("not implemented yet"), h.deps)
 }
 
 // handleRequestedScopes is a function that analyzes requested scopes from the user in a session.
@@ -1963,17 +1500,17 @@ func DevicePOSTHandler(ctx *gin.Context) {
 //
 // Usage
 // This function is typically used to gather all scopes a user requested in a particular session identified by 'guid' parameter.
-func handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session sessions.Session) []Scope {
+func (a *ApiConfig) handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session sessions.Session) []frontend.Scope {
 	var (
-		scopes           []Scope
+		scopes           []frontend.Scope
 		scopeDescription string
 	)
 
 	cookieValue := session.Get(definitions.CookieLang)
 
 	for _, requestedScope := range requestedScopes {
-		scopeDescription = getScopeDescription(ctx, requestedScope, cookieValue)
-		scopes = append(scopes, Scope{ScopeName: requestedScope, ScopeDescription: scopeDescription})
+		scopeDescription = a.getScopeDescription(ctx, requestedScope, cookieValue)
+		scopes = append(scopes, frontend.Scope{ScopeName: requestedScope, ScopeDescription: scopeDescription})
 	}
 
 	return scopes
@@ -1994,24 +1531,24 @@ func handleRequestedScopes(ctx *gin.Context, requestedScopes []string, session s
 //
 // Returns:
 // String: A string corresponding to the type of OAuth scope requested
-func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
+func (a *ApiConfig) getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	switch requestedScope {
 	case definitions.ScopeOpenId:
-		return getLocalized(ctx, "Allow access to identity information")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to identity information")
 	case definitions.ScopeOfflineAccess:
-		return getLocalized(ctx, "Allow an application access to private data without your personal presence")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow an application access to private data without your personal presence")
 	case definitions.ScopeProfile:
-		return getLocalized(ctx, "Allow access to personal profile data")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to personal profile data")
 	case definitions.ScopeEmail:
-		return getLocalized(ctx, "Allow access to your email address")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your email address")
 	case definitions.ScopeAddress:
-		return getLocalized(ctx, "Allow access to your home address")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your home address")
 	case definitions.ScopePhone:
-		return getLocalized(ctx, "Allow access to your phone number")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to your phone number")
 	case definitions.ScopeGroups:
-		return getLocalized(ctx, "Allow access to group memberships")
+		return frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to group memberships")
 	default:
-		return getCustomScopeDescription(ctx, requestedScope, cookieValue)
+		return a.getCustomScopeDescription(ctx, requestedScope, cookieValue)
 	}
 }
 
@@ -2032,11 +1569,12 @@ func getScopeDescription(ctx *gin.Context, requestedScope string, cookieValue an
 //
 // Returns:
 // It returns a string representing the description of the requested scope.
-func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
+func (a *ApiConfig) getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieValue any) string {
 	var scopeDescription string
 
-	if config.GetFile().GetOauth2() != nil {
-		for _, customScope := range config.GetFile().GetOauth2().CustomScopes {
+	if a.deps.Cfg.GetOauth2() != nil {
+		for scopeIndex := range a.deps.Cfg.GetOauth2().CustomScopes {
+			customScope := a.deps.Cfg.GetOauth2().CustomScopes[scopeIndex]
 			if customScope.Name != requestedScope {
 				continue
 			}
@@ -2054,7 +1592,7 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 	}
 
 	if scopeDescription == "" {
-		scopeDescription = getLocalized(ctx, "Allow access to a specific scope")
+		scopeDescription = frontend.GetLocalized(ctx, a.deps.Cfg, a.deps.Logger, "Allow access to a specific scope")
 	}
 
 	return scopeDescription
@@ -2076,7 +1614,7 @@ func getCustomScopeDescription(ctx *gin.Context, requestedScope string, cookieVa
 //
 // Note: This method assumes that the ApiConfig object is properly initialized with the ctx field set.
 func (a *ApiConfig) HandleConsentSkip() {
-	if !(a.consentRequest.GetSkip() || config.GetFile().GetSkipConsent(*a.clientId)) {
+	if !(a.consentRequest.GetSkip() || a.deps.Cfg.GetSkipConsent(*a.clientId)) {
 		a.processConsent()
 	} else {
 		a.redirectWithConsent()
@@ -2109,13 +1647,13 @@ func (a *ApiConfig) processConsent() {
 	session := sessions.Default(a.ctx)
 
 	// Handle scopes
-	scopes := handleRequestedScopes(a.ctx, a.consentRequest.GetRequestedScope(), session)
+	scopes := a.handleRequestedScopes(a.ctx, a.consentRequest.GetRequestedScope(), session)
 
 	oauth2Client := a.consentRequest.GetClient()
 
 	imageUri = oauth2Client.GetLogoUri()
 	if imageUri == "" {
-		imageUri = viper.GetString("default_logo_image")
+		imageUri = a.deps.Cfg.GetServer().Frontend.GetDefaultLogoImage()
 	}
 
 	if policyUri = oauth2Client.GetPolicyUri(); policyUri != "" {
@@ -2134,41 +1672,41 @@ func (a *ApiConfig) processConsent() {
 
 	languageCurrentTag := language.MustParse(session.Get(definitions.CookieLang).(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, viper.GetString("consent_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(a.ctx, a.deps.Cfg, a.deps.Cfg.GetServer().Frontend.GetConsentPage(), config.DefaultLanguageTags, languageCurrentName)
 
-	consentData := &ConsentPageData{
-		Title: getLocalized(a.ctx, "Consent"),
+	consentData := &frontend.ConsentPageData{
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Consent"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("consent_page_welcome"),
+		Welcome:             a.deps.Cfg.GetServer().Frontend.GetConsentPageWelcome(),
 		LogoImage:           imageUri,
-		LogoImageAlt:        viper.GetString("consent_page_logo_image_alt"),
-		ConsentMessage:      getLocalized(a.ctx, "An application requests access to your data"),
+		LogoImageAlt:        a.deps.Cfg.GetServer().Frontend.GetConsentPageLogoImageAlt(),
+		ConsentMessage:      frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "An application requests access to your data"),
 		ApplicationName:     applicationName,
 		WantAbout:           wantAbout,
-		About:               getLocalized(a.ctx, "Get further information about this application..."),
+		About:               frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Get further information about this application..."),
 		AboutUri:            clientUri,
 		Scopes:              scopes,
 		WantPolicy:          wantPolicy,
-		Policy:              getLocalized(a.ctx, "Privacy policy"),
+		Policy:              frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Privacy policy"),
 		PolicyUri:           policyUri,
 		WantTos:             wantTos,
-		Tos:                 getLocalized(a.ctx, "Terms of service"),
+		Tos:                 frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Terms of service"),
 		TosUri:              tosUri,
-		Remember:            getLocalized(a.ctx, "Do not ask me again"),
-		AcceptSubmit:        getLocalized(a.ctx, "Accept access"),
-		RejectSubmit:        getLocalized(a.ctx, "Deny access"),
+		Remember:            frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Do not ask me again"),
+		AcceptSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Accept access"),
+		RejectSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Deny access"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
 		CSRFToken:           a.csrfToken,
 		ConsentChallenge:    a.challenge,
-		PostConsentEndpoint: viper.GetString("consent_page"),
+		PostConsentEndpoint: a.deps.Cfg.GetServer().Frontend.GetConsentPage(),
 	}
 
 	a.ctx.HTML(http.StatusOK, "consent.html", consentData)
@@ -2200,9 +1738,12 @@ func (a *ApiConfig) redirectWithConsent() {
 
 	consentContext := a.consentRequest.GetContext()
 	acceptedScopes := a.consentRequest.GetRequestedScope()
-	rememberFor := int64(viper.GetInt("login_remember_for"))
+	rememberFor := int64(a.deps.Cfg.GetServer().Frontend.GetLoginRememberFor())
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		a.ctx.Request.Context(),
+		a.deps.Cfg,
+		a.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, a.guid,
 		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
@@ -2221,13 +1762,16 @@ func (a *ApiConfig) redirectWithConsent() {
 	}
 
 	if needClaims {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			a.ctx.Request.Context(),
+			a.deps.Cfg,
+			a.deps.Logger,
 			definitions.DbgHydra,
 			definitions.LogKeyGUID, a.guid,
 			definitions.LogKeyMsg, "Scope 'openid' found, need claims",
 		)
 
-		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext)
+		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext, a.deps)
 	}
 
 	acceptConsentRequest := a.apiClient.OAuth2API.AcceptOAuth2ConsentRequest(a.ctx).AcceptOAuth2ConsentRequest(
@@ -2235,7 +1779,7 @@ func (a *ApiConfig) redirectWithConsent() {
 			GrantAccessTokenAudience: a.consentRequest.GetRequestedAccessTokenAudience(),
 			GrantScope:               acceptedScopes,
 			Remember: func() *bool {
-				if config.GetFile().GetSkipConsent(*a.clientId) {
+				if a.deps.Cfg.GetSkipConsent(*a.clientId) {
 					remember := true
 
 					return &remember
@@ -2249,7 +1793,7 @@ func (a *ApiConfig) redirectWithConsent() {
 
 	acceptRequest, httpResponse, err := acceptConsentRequest.ConsentChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
@@ -2261,32 +1805,34 @@ func (a *ApiConfig) redirectWithConsent() {
 
 // logInfoConsent logs information about the consent request.
 func (a *ApiConfig) logInfoConsent() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, false,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyAuthSubject, a.consentRequest.GetSubject(),
-		definitions.LogKeyUriPath, viper.GetString("consent_page"),
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetConsentPage(),
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // logInfoRedirectWithConsent logs an info level message with the given parameters
 // to the default logger.
 func (a *ApiConfig) logInfoRedirectWithConsent() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeySkip, true,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyAuthSubject, a.consentRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, viper.GetString("consent_page"),
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetConsentPage(),
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // ConsentGETHandler Page '/consent'
-func ConsentGETHandler(ctx *gin.Context) {
+func (h *HydraHandlers) ConsentGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2294,12 +1840,12 @@ func ConsentGETHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.Query("consent_challenge")
 	if consentChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := &ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
@@ -2309,7 +1855,7 @@ func ConsentGETHandler(ctx *gin.Context) {
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -2318,21 +1864,32 @@ func ConsentGETHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
 
 	apiConfig.clientName = oauth2Client.GetClientName()
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		h.deps.Cfg,
+		h.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, apiConfig.guid,
 		"skip_hydra", fmt.Sprintf("%v", apiConfig.consentRequest.GetSkip()),
-		"skip_config", fmt.Sprintf("%v", config.GetFile().GetSkipConsent(*apiConfig.clientId)),
+		"skip_config", fmt.Sprintf("%v", h.deps.Cfg.GetSkipConsent(*apiConfig.clientId)),
 	)
 
 	apiConfig.HandleConsentSkip()
+}
+
+// ConsentGETHandler Page '/consent' (legacy)
+func ConsentGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.ConsentGETHandler(ctx)
+	}
 }
 
 // handleConsentSubmit processes the form submission for the consent page.
@@ -2393,7 +1950,10 @@ func (a *ApiConfig) processConsentAccept() {
 		}
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		a.ctx.Request.Context(),
+		a.deps.Cfg,
+		a.deps.Logger,
 		definitions.DbgHydra,
 		definitions.LogKeyGUID, a.guid,
 		"accepted_scopes", fmt.Sprintf("%+v", acceptedScopes),
@@ -2412,12 +1972,12 @@ func (a *ApiConfig) processConsentAccept() {
 	}
 
 	if needClaims {
-		util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
+		util.DebugModuleWithCfg(a.ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, "Scope 'openid' found, need claims")
 
-		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext)
+		session = getClaimsFromConsentContext(a.guid, acceptedScopes, consentContext, a.deps)
 	}
 
-	rememberFor := int64(viper.GetInt("login_remember_for"))
+	rememberFor := int64(a.deps.Cfg.GetServer().Frontend.GetLoginRememberFor())
 	remember := false
 
 	if a.ctx.PostForm("remember") == "on" {
@@ -2435,7 +1995,7 @@ func (a *ApiConfig) processConsentAccept() {
 
 	acceptRequest, httpResponse, err := acceptConsentRequest.ConsentChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
@@ -2482,7 +2042,7 @@ func (a *ApiConfig) processConsentReject() {
 
 	rejectRequest, httpResponse, err := rejectConsentRequest.ConsentChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
@@ -2498,30 +2058,31 @@ func (a *ApiConfig) processConsentReject() {
 
 // logInfoConsentAccept logs an info level log message for accepting the consent and redirects to the specified URL.
 func (a *ApiConfig) logInfoConsentAccept() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyAuthSubject, a.consentRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, viper.GetString("consent_page")+"/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetConsentPage()+"/post",
 	)
 }
 
 // logInfoConsentReject logs the information about a rejected consent request.
 func (a *ApiConfig) logInfoConsentReject() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyClientID, *a.clientId,
 		definitions.LogKeyClientName, a.clientName,
 		definitions.LogKeyAuthSubject, a.consentRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-		definitions.LogKeyUriPath, viper.GetString("consent_page")+"/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetConsentPage()+"/post",
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // ConsentPOSTHandler Page '/consent/post'
-func ConsentPOSTHandler(ctx *gin.Context) {
+func (h *HydraHandlers) ConsentPOSTHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2529,12 +2090,12 @@ func ConsentPOSTHandler(ctx *gin.Context) {
 
 	consentChallenge := ctx.PostForm("ory.hydra.consent_challenge")
 	if consentChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := &ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
@@ -2543,7 +2104,7 @@ func ConsentPOSTHandler(ctx *gin.Context) {
 	apiConfig.consentRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2ConsentRequest(ctx).ConsentChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -2552,7 +2113,7 @@ func ConsentPOSTHandler(ctx *gin.Context) {
 
 	clientIdFound := false
 	if apiConfig.clientId, clientIdFound = oauth2Client.GetClientIdOk(); !clientIdFound {
-		HandleErr(ctx, errors.ErrHydraNoClientId)
+		HandleErrWithDeps(ctx, errors.ErrHydraNoClientId, h.deps)
 
 		return
 	}
@@ -2560,6 +2121,14 @@ func ConsentPOSTHandler(ctx *gin.Context) {
 	apiConfig.clientName = oauth2Client.GetClientName()
 
 	apiConfig.handleConsentSubmit()
+}
+
+// ConsentPOSTHandler Page '/consent/post' (legacy)
+func ConsentPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.ConsentPOSTHandler(ctx)
+	}
 }
 
 // handleLogout handles the logout functionality of the API.
@@ -2576,27 +2145,27 @@ func (a *ApiConfig) handleLogout() {
 
 	languageCurrentTag := language.MustParse(cookieValue.(string))
 	languageCurrentName := cases.Title(languageCurrentTag, cases.NoLower).String(display.Self.Name(languageCurrentTag))
-	languagePassive := createLanguagePassive(a.ctx, viper.GetString("logout_page"), config.DefaultLanguageTags, languageCurrentName)
+	languagePassive := frontend.CreateLanguagePassive(a.ctx, a.deps.Cfg, a.deps.Cfg.GetServer().Frontend.GetLogoutPage(), config.DefaultLanguageTags, languageCurrentName)
 
-	logoutData := &LogoutPageData{
-		Title: getLocalized(a.ctx, "Logout"),
+	logoutData := &frontend.LogoutPageData{
+		Title: frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Logout"),
 		WantWelcome: func() bool {
-			if viper.GetString("login_page_welcome") != "" {
+			if a.deps.Cfg.GetServer().Frontend.GetLoginPageWelcome() != "" {
 				return true
 			}
 
 			return false
 		}(),
-		Welcome:             viper.GetString("logout_page_welcome"),
-		LogoutMessage:       getLocalized(a.ctx, "Do you really want to log out?"),
-		AcceptSubmit:        getLocalized(a.ctx, "Yes"),
-		RejectSubmit:        getLocalized(a.ctx, "No"),
+		Welcome:             a.deps.Cfg.GetServer().Frontend.GetLogoutPageWelcome(),
+		LogoutMessage:       frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Do you really want to log out?"),
+		AcceptSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "Yes"),
+		RejectSubmit:        frontend.GetLocalized(a.ctx, a.deps.Cfg, a.deps.Logger, "No"),
 		LanguageTag:         session.Get(definitions.CookieLang).(string),
 		LanguageCurrentName: languageCurrentName,
 		LanguagePassive:     languagePassive,
 		CSRFToken:           a.csrfToken,
 		LogoutChallenge:     a.challenge,
-		PostLogoutEndpoint:  viper.GetString("logout_page"),
+		PostLogoutEndpoint:  a.deps.Cfg.GetServer().Frontend.GetLogoutPage(),
 	}
 
 	a.ctx.HTML(http.StatusOK, "logout.html", logoutData)
@@ -2606,15 +2175,16 @@ func (a *ApiConfig) handleLogout() {
 
 // logInfoLogout logs information about a logout action.
 func (a *ApiConfig) logInfoLogout() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
-		definitions.LogKeyUriPath, viper.GetString("logout_page"),
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLogoutPage(),
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // LogoutGETHandler Page '/logout'
-func LogoutGETHandler(ctx *gin.Context) {
+func (h *HydraHandlers) LogoutGETHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2623,12 +2193,12 @@ func LogoutGETHandler(ctx *gin.Context) {
 	// Skip logout request, if there does not exist any session for the user
 	postLogout := ctx.Query("logout")
 	if postLogout == "1" {
-		redirectTo := viper.GetString("homepage")
+		redirectTo := h.deps.Cfg.GetServer().Frontend.GetHomepage()
 		if redirectTo != "" {
 			ctx.Redirect(http.StatusFound, redirectTo)
 		} else {
 			ctx.Set(definitions.CtxMessageKey, "No active session for user found")
-			NotifyGETHandler(ctx)
+			h.NotifyGETHandler(ctx)
 		}
 
 		return
@@ -2636,12 +2206,12 @@ func LogoutGETHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.Query("logout_challenge")
 	if logoutChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
@@ -2651,17 +2221,25 @@ func LogoutGETHandler(ctx *gin.Context) {
 	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		logoutChallenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
 
 	if apiConfig.logoutRequest.GetRpInitiated() {
 		// We could skip the UI
-		util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
+		util.DebugModuleWithCfg(ctx.Request.Context(), h.deps.Cfg, h.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, apiConfig.guid, definitions.LogKeyMsg, "rp_initiated==true")
 	}
 
 	apiConfig.handleLogout()
+}
+
+// LogoutGETHandler Page '/logout' (legacy)
+func LogoutGETHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LogoutGETHandler(ctx)
+	}
 }
 
 // handleLogoutSubmit handles the logout submit action.
@@ -2717,7 +2295,7 @@ func (a *ApiConfig) acceptLogout() {
 
 	acceptRequest, httpResponse, err = acceptLogoutRequest.LogoutChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
@@ -2735,12 +2313,12 @@ func (a *ApiConfig) rejectLogout() {
 
 	httpResponse, err := rejectLogoutRequest.LogoutChallenge(a.challenge).Execute()
 	if err != nil {
-		handleHydraErr(a.ctx, err, httpResponse)
+		handleHydraErr(a.ctx, err, httpResponse, a.deps)
 
 		return
 	}
 
-	redirectTo := viper.GetString("homepage")
+	redirectTo := a.deps.Cfg.GetServer().Frontend.GetHomepage()
 	if redirectTo != "" {
 		a.ctx.Redirect(http.StatusFound, redirectTo)
 	} else {
@@ -2752,26 +2330,28 @@ func (a *ApiConfig) rejectLogout() {
 
 // logInfoLogoutAccept logs information about the logout request acceptance.
 func (a *ApiConfig) logInfoLogoutAccept() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthAccept,
-		definitions.LogKeyUriPath, viper.GetString("logout_page")+"/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLogoutPage()+"/post",
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // logInfoLogoutReject logs an info-level message indicating a rejected logout attempt.
 func (a *ApiConfig) logInfoLogoutReject() {
-	level.Info(log.Logger).Log(
+	level.Info(a.deps.Logger).Log(
 		definitions.LogKeyGUID, a.guid,
 		definitions.LogKeyAuthSubject, a.logoutRequest.GetSubject(),
 		definitions.LogKeyAuthStatus, definitions.LogKeyAuthReject,
-		definitions.LogKeyUriPath, viper.GetString("logout_page")+"/post",
+		definitions.LogKeyUriPath, a.deps.Cfg.GetServer().Frontend.GetLogoutPage()+"/post",
+		definitions.LogKeyClientIP, a.ctx.Request.RemoteAddr,
 	)
 }
 
 // LogoutPOSTHandler Page '/logout/post'
-func LogoutPOSTHandler(ctx *gin.Context) {
+func (h *HydraHandlers) LogoutPOSTHandler(ctx *gin.Context) {
 	var (
 		err          error
 		httpResponse *http.Response
@@ -2779,12 +2359,12 @@ func LogoutPOSTHandler(ctx *gin.Context) {
 
 	logoutChallenge := ctx.PostForm("ory.hydra.logout_challenge")
 	if logoutChallenge == "" {
-		HandleErr(ctx, errors.ErrNoLoginChallenge)
+		HandleErrWithDeps(ctx, errors.ErrNoLoginChallenge, h.deps)
 
 		return
 	}
 
-	apiConfig := &ApiConfig{ctx: ctx}
+	apiConfig := &ApiConfig{ctx: ctx, deps: h.deps}
 
 	apiConfig.initialize()
 
@@ -2793,7 +2373,7 @@ func LogoutPOSTHandler(ctx *gin.Context) {
 	apiConfig.logoutRequest, httpResponse, err = apiConfig.apiClient.OAuth2API.GetOAuth2LogoutRequest(ctx).LogoutChallenge(
 		apiConfig.challenge).Execute()
 	if err != nil {
-		handleHydraErr(ctx, err, httpResponse)
+		handleHydraErr(ctx, err, httpResponse, h.deps)
 
 		return
 	}
@@ -2801,8 +2381,16 @@ func LogoutPOSTHandler(ctx *gin.Context) {
 	apiConfig.handleLogoutSubmit()
 }
 
+// LogoutPOSTHandler Page '/logout/post' (legacy)
+func LogoutPOSTHandler(deps AuthDeps) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		h := NewHydraHandlers(deps)
+		h.LogoutPOSTHandler(ctx)
+	}
+}
+
 // getClaimsFromConsentContext extracts claims from consentContext based on acceptedScopes
-func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentContext any) (
+func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentContext any, deps AuthDeps) (
 	session *openapi.AcceptOAuth2ConsentRequestSession,
 ) {
 	claimDict, assertOk := consentContext.(map[string]any)
@@ -2825,10 +2413,10 @@ func getClaimsFromConsentContext(guid string, acceptedScopes []string, consentCo
 			processGroupsClaim(claimDict, claims)
 		}
 
-		processCustomScopes(claimDict, claims, acceptedScopes, index)
+		processCustomScopes(claimDict, claims, acceptedScopes, index, deps)
 	}
 
-	util.DebugModule(definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
+	util.DebugModuleWithCfg(context.Background(), deps.Cfg, deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, guid, "claims", fmt.Sprintf("%+v", claims))
 
 	session = &openapi.AcceptOAuth2ConsentRequestSession{
 		IdToken: claims,
@@ -2913,25 +2501,27 @@ func processGroupsClaim(claimDict map[string]any, claims map[string]any) {
 // - claims: A map[string]any representing the processed claims.
 // - acceptedScopes: A []string representing the list of accepted scopes.
 // - index: An int indicating the index of the accepted scope to process.
-func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int) {
-	for scopeIndex := range config.GetFile().GetOauth2().CustomScopes {
-		customScope := config.GetFile().GetOauth2().CustomScopes[scopeIndex]
+func processCustomScopes(claimDict map[string]any, claims map[string]any, acceptedScopes []string, index int, deps AuthDeps) {
+	if deps.Cfg.GetOauth2() != nil {
+		for scopeIndex := range deps.Cfg.GetOauth2().CustomScopes {
+			customScope := deps.Cfg.GetOauth2().CustomScopes[scopeIndex]
 
-		if acceptedScopes[index] != customScope.Name {
-			continue
+			if acceptedScopes[index] != customScope.Name {
+				continue
+			}
+
+			for claimIndex := range customScope.Claims {
+				customClaim := customScope.Claims[claimIndex]
+				claims = assignClaimValueByType(claimDict, customClaim.Name, customClaim.Type, claims, deps)
+			}
+
+			break
 		}
-
-		for claimIndex := range customScope.Claims {
-			customClaim := customScope.Claims[claimIndex]
-			claims = assignClaimValueByType(claimDict, customClaim.Name, customClaim.Type, claims)
-		}
-
-		break
 	}
 }
 
 // Assigns claim type-specific value and returns updated claims' map
-func assignClaimValueByType(claimDict map[string]any, customClaimName string, customClaimType string, claims map[string]any) map[string]any {
+func assignClaimValueByType(claimDict map[string]any, customClaimName string, customClaimType string, claims map[string]any, deps AuthDeps) map[string]any {
 	switch customClaimType {
 	case definitions.ClaimTypeString:
 		if value, found := claimDict[customClaimName].(string); found {
@@ -2950,7 +2540,7 @@ func assignClaimValueByType(claimDict map[string]any, customClaimName string, cu
 			claims[customClaimName] = value
 		}
 	default:
-		logUnknownClaimTypeError(customClaimName, customClaimType)
+		logUnknownClaimTypeError(customClaimName, customClaimType, deps)
 	}
 
 	return claims
@@ -2968,10 +2558,10 @@ func handleIntegerClaimType(claimDict map[string]any, customClaimName string) (i
 }
 
 // Logs error for unknown claim type
-func logUnknownClaimTypeError(customClaimName string, customClaimType string) {
-	level.Error(log.Logger).Log(
+func logUnknownClaimTypeError(customClaimName string, customClaimType string, deps AuthDeps) {
+	level.Error(deps.Logger).Log(
 		"custom_claim_name", customClaimName,
 		definitions.LogKeyMsg, "Unknown claim type",
-		definitions.LogKeyError, fmt.Eprintf("Unknown type '%s'", customClaimType),
+		definitions.LogKeyError, fmt.Errorf("Unknown type '%s'", customClaimType),
 	)
 }

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/lualib/convert"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
@@ -61,7 +62,7 @@ func setPipelineItem(L *lua.LState, item *lua.LTable, val any, err error) {
 //	})
 //
 // Returns a Lua table of results (one entry per command). For write-only commands the result is their native reply.
-func RedisPipeline(ctx context.Context) lua.LGFunction {
+func RedisPipeline(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
 		// Args:
 		// 1: redis handle (userdata or "default")
@@ -76,21 +77,21 @@ func RedisPipeline(ctx context.Context) lua.LGFunction {
 		var cancel context.CancelFunc
 
 		if mode == "read" {
-			fallback = rediscli.GetClient().GetReadHandle()
-			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx)
+			fallback = getDefaultClient().GetReadHandle()
+			dCtx, cancel = util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 
 			defer cancel()
 		} else {
-			fallback = rediscli.GetClient().GetWriteHandle()
-			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx)
+			fallback = getDefaultClient().GetWriteHandle()
+			dCtx, cancel = util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 
 			defer cancel()
 		}
 
-		client := getRedisConnectionWithFallback(L, fallback)
+		conn := getRedisConnectionWithFallback(L, fallback)
 
 		// Create pipeline on selected client
-		pipe := client.Pipeline()
+		pipe := conn.Pipeline()
 
 		// build pipeline
 		var innerErr error

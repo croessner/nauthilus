@@ -17,6 +17,7 @@ package stats
 
 import (
 	"context"
+	"log/slog"
 	"runtime"
 	"sync"
 	"time"
@@ -275,9 +276,6 @@ type Metrics interface {
 	// GetBruteForceEvalSeconds measures end-to-end latency of the brute-force evaluation path.
 	GetBruteForceEvalSeconds() prometheus.Histogram
 
-	// GetBruteForcePhaseSeconds measures sub-phase timings within the brute-force evaluation, labeled by phase.
-	GetBruteForcePhaseSeconds() *prometheus.HistogramVec
-
 	// GetBruteForceCacheHitsTotal counts in-process cache/burst gating hits within the brute-force path, labeled by kind.
 	GetBruteForceCacheHitsTotal() *prometheus.CounterVec
 
@@ -506,11 +504,6 @@ func (m *metricsImpl) GetGenericConnections() *prometheus.GaugeVec {
 // GetBruteForceEvalSeconds returns the bruteForceEvalSeconds field.
 func (m *metricsImpl) GetBruteForceEvalSeconds() prometheus.Histogram {
 	return m.bruteForceEvalSeconds
-}
-
-// GetBruteForcePhaseSeconds returns the bruteForcePhaseSeconds field.
-func (m *metricsImpl) GetBruteForcePhaseSeconds() *prometheus.HistogramVec {
-	return m.bruteForcePhaseSeconds
 }
 
 // GetBruteForceCacheHitsTotal returns the bruteForceCacheHitsTotal field.
@@ -1012,12 +1005,12 @@ func MeasureCPU(ctx context.Context) {
 // The logging is performed using the Logger from the logging package.
 // Note: The declarations of log.Logger, definitions.LogKeyStatsAlloc, util.ByteSize,
 // and other related declarations are not shown here.
-func PrintStats() {
+func PrintStats(logger *slog.Logger) {
 	var memStats runtime.MemStats
 
 	runtime.ReadMemStats(&memStats)
 
-	level.Info(log.Logger).Log(
+	level.Info(logger).Log(
 		// Heap Stats
 		definitions.LogKeyStatsHeapAlloc, util.ByteSize(memStats.HeapAlloc),
 		definitions.LogKeyStatsHeapInUse, util.ByteSize(memStats.HeapInuse),
@@ -1042,13 +1035,12 @@ func PrintStats() {
 	)
 }
 
-// HavePrometheusLabelEnabled returns true if the specified Prometheus label is enabled in the server configuration, otherwise false.
-func HavePrometheusLabelEnabled(prometheusLabel string) bool {
-	if !config.GetFile().GetServer().GetPrometheusTimer().IsEnabled() {
+func HavePrometheusLabelEnabled(cfg config.File, prometheusLabel string) bool {
+	if cfg == nil || !cfg.GetServer().GetPrometheusTimer().IsEnabled() {
 		return false
 	}
 
-	for _, label := range config.GetFile().GetServer().GetPrometheusTimer().GetLabels() {
+	for _, label := range cfg.GetServer().GetPrometheusTimer().GetLabels() {
 		if label != prometheusLabel {
 			continue
 		}
@@ -1059,16 +1051,10 @@ func HavePrometheusLabelEnabled(prometheusLabel string) bool {
 	return false
 }
 
-// PrometheusTimer is a function that takes a prometheus label (promLabel) and a prometheus observer (prometheusObserver) as arguments.
-// The function first checks if the Prometheus Timer is enabled in the server configuration (config.GetFile().GetServer().PrometheusTimer.Enabled).
-// If the Prometheus Timer is not enabled, it returns an empty function.
-// If enabled, it iterates over the labels of the Prometheus Timer specified in the server configuration (config.GetFile().GetServer().PrometheusTimer.Labels).
-// For each label, it checks if it matches with the provided promLabel. If there is a match, it creates a new timer (timer)
-// with the given prometheus observer and returns a function that observes the duration of the timer when called.
-// If there is no match, it returns an empty function.
-// This function is used to measure the time duration using Prometheus, a powerful time-series monitoring service.
-func PrometheusTimer(serviceName string, taskName string) func() {
-	if HavePrometheusLabelEnabled(serviceName) {
+// PrometheusTimer returns a closure that, when executed, stops a Prometheus timer for a given service and task.
+// If the Prometheus Timer is disabled or the specified task is not enabled in the configuration, it returns nil.
+func PrometheusTimer(cfg config.File, serviceName string, taskName string) func() {
+	if HavePrometheusLabelEnabled(cfg, serviceName) {
 		timer := prometheus.NewTimer(GetMetrics().GetFunctionDuration().WithLabelValues(serviceName, taskName))
 
 		return func() {
@@ -1088,5 +1074,22 @@ func UpdateGenericConnections() {
 		}
 
 		GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+	}
+}
+
+// UpdateGenericConnectionsWithContext reads from GenericConnectionChan and updates the GenericConnections metric.
+// It exits when ctx is canceled.
+func UpdateGenericConnectionsWithContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case conn, openConn := <-connmgr.GenericConnectionChan:
+			if !openConn {
+				return
+			}
+
+			GetMetrics().GetGenericConnections().WithLabelValues(conn.Description, conn.Target, conn.Direction).Set(float64(conn.Count))
+		}
 	}
 }

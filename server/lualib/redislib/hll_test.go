@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/go-redis/redismock/v9"
@@ -28,6 +29,8 @@ import (
 )
 
 func TestRedisPFAdd(t *testing.T) {
+	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
+
 	tests := []struct {
 		name        string
 		key         string
@@ -68,16 +71,17 @@ func TestRedisPFAdd(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
 			rediscli.NewTestClient(db)
@@ -143,16 +147,17 @@ func TestRedisPFCount(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
 			rediscli.NewTestClient(db)
@@ -218,16 +223,17 @@ func TestRedisPFMerge(t *testing.T) {
 		},
 	}
 
-	L := lua.NewState()
-	L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background()))
-	defer L.Close()
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			if db == nil || mock == nil {
 				t.Fatalf("Failed to create Redis mock client.")
 			}
+			client := rediscli.NewTestClient(db)
+			SetDefaultClient(client)
+			L := lua.NewState()
+			defer L.Close()
+			L.PreloadModule(definitions.LuaModRedis, LoaderModRedis(context.Background(), config.GetFile(), client))
 
 			tt.setupMock(mock)
 			rediscli.NewTestClient(db)

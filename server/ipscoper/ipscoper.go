@@ -42,11 +42,15 @@ type IPScoper interface {
 	// Scope returns the identifier to use for the given context. The return value can be the plain IP
 	// or a network string (e.g., 2001:db8::/64) depending on configuration and IP version.
 	Scope(ctx ScopeContext, ip string) string
+
+	WithCfg(cfg config.File) IPScoper
 }
 
 // configurableIPScoper implements IPScoper based on configuration values.
 // Currently supports IPv6 CIDR scoping for multiple contexts.
-type configurableIPScoper struct{}
+type configurableIPScoper struct {
+	cfg config.File
+}
 
 // NewIPScoper returns a new IPScoper instance without touching configuration at init time.
 // Configuration is consulted lazily during Scope calls to avoid early GetFile() usage in package init.
@@ -54,11 +58,22 @@ func NewIPScoper() IPScoper {
 	return &configurableIPScoper{}
 }
 
+func (s *configurableIPScoper) WithCfg(cfg config.File) IPScoper {
+	s.cfg = cfg
+
+	return s
+}
+
 // cidrFor returns the configured IPv6 CIDR for the given context.
 // This removes the need for duplicated switch-case logic in Scope and avoids early config access.
 func (s *configurableIPScoper) cidrFor(ctx ScopeContext) uint {
-	bf := config.GetFile().GetBruteForce()
-	luaSection := config.GetFile().GetLua()
+	cfg := s.cfg
+	if cfg == nil {
+		return 0
+	}
+
+	bf := cfg.GetBruteForce()
+	luaSection := cfg.GetLua()
 
 	var luaConf *config.LuaConf
 
@@ -89,7 +104,12 @@ func (s *configurableIPScoper) cidrFor(ctx ScopeContext) uint {
 
 // v4cidrFor returns the configured IPv4 CIDR for the given context (currently only Lua generic).
 func (s *configurableIPScoper) v4cidrFor(ctx ScopeContext) uint {
-	luaSection := config.GetFile().GetLua()
+	cfg := s.cfg
+	if cfg == nil {
+		return 0
+	}
+
+	luaSection := cfg.GetLua()
 	if luaSection == nil {
 		return 0
 	}

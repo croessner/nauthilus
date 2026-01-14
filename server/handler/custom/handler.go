@@ -16,16 +16,28 @@
 package custom
 
 import (
+	"log/slog"
+
+	"github.com/croessner/nauthilus/server/app/configfx"
+	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/gin-gonic/gin"
 )
 
 // Handler registers custom Lua hook endpoint(s).
-type Handler struct{}
+type Handler struct {
+	cfgProvider configfx.Provider
+	logger      *slog.Logger
+	redis       rediscli.Client
+}
 
 func New() *Handler {
 	return &Handler{}
 }
 
+func NewWithDeps(cfgProvider configfx.Provider, logger *slog.Logger, redis rediscli.Client) *Handler {
+	return &Handler{cfgProvider: cfgProvider, logger: logger, redis: redis}
+}
+
 func (h *Handler) Register(r gin.IRouter) {
-	r.Any("/custom/*hook", CustomRequestHandler)
+	r.Any("/custom/*hook", CustomRequestHandler(h.cfgProvider, h.logger, h.redis))
 }

@@ -16,9 +16,7 @@
 package auth
 
 import (
-	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/core"
-	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/lualib"
 	"github.com/croessner/nauthilus/server/lualib/feature"
 	"github.com/gin-gonic/gin"
@@ -33,62 +31,24 @@ type DefaultFeatureEngine struct{}
 func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bool, bool, []any, *string, error) {
 	auth := view.Auth()
 
-	accountName := auth.GetAccount()
-
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()
-
-	// Populate fields (identical to the previous inline code in FeatureLua)
-	commonRequest.Debug = config.GetFile().GetServer().GetLog().GetLogLevel() == definitions.LogLevelDebug
-	commonRequest.Repeating = false // unavailable
-	commonRequest.UserFound = accountName != ""
-	commonRequest.Authenticated = false // unavailable
-	commonRequest.NoAuth = auth.NoAuth
-	commonRequest.BruteForceCounter = 0 // unavailable
-	commonRequest.Service = auth.Service
-	commonRequest.Session = auth.GUID
-	commonRequest.ClientIP = auth.ClientIP
-	commonRequest.ClientPort = auth.XClientPort
-	commonRequest.ClientNet = "" // unavailable
-	commonRequest.ClientHost = auth.ClientHost
-	commonRequest.ClientID = auth.XClientID
-	commonRequest.UserAgent = auth.UserAgent
-	commonRequest.LocalIP = auth.XLocalIP
-	commonRequest.LocalPort = auth.XPort
-	commonRequest.Username = auth.Username
-	commonRequest.Account = accountName
-	commonRequest.AccountField = auth.GetAccountField()
-	commonRequest.UniqueUserID = "" // unavailable
-	commonRequest.DisplayName = ""  // unavailable
-	commonRequest.Password = auth.Password
-	commonRequest.Protocol = auth.Protocol.String()
-	commonRequest.OIDCCID = auth.OIDCCID
-	commonRequest.BruteForceName = "" // unavailable
-	commonRequest.FeatureName = ""    // unavailable
-	commonRequest.StatusMessage = &auth.StatusMessage
-	commonRequest.XSSL = auth.XSSL
-	commonRequest.XSSLSessionID = auth.XSSLSessionID
-	commonRequest.XSSLClientVerify = auth.XSSLClientVerify
-	commonRequest.XSSLClientDN = auth.XSSLClientDN
-	commonRequest.XSSLClientCN = auth.XSSLClientCN
-	commonRequest.XSSLIssuer = auth.XSSLIssuer
-	commonRequest.XSSLClientNotBefore = auth.XSSLClientNotBefore
-	commonRequest.XSSLClientNotAfter = auth.XSSLClientNotAfter
-	commonRequest.XSSLSubjectDN = auth.XSSLSubjectDN
-	commonRequest.XSSLIssuerDN = auth.XSSLIssuerDN
-	commonRequest.XSSLClientSubjectDN = auth.XSSLClientSubjectDN
-	commonRequest.XSSLClientIssuerDN = auth.XSSLClientIssuerDN
-	commonRequest.XSSLProtocol = auth.XSSLProtocol
-	commonRequest.XSSLCipher = auth.XSSLCipher
-	commonRequest.SSLSerial = auth.SSLSerial
-	commonRequest.SSLFingerprint = auth.SSLFingerprint
+	auth.FillCommonRequest(commonRequest)
 
 	featReq := feature.Request{
-		Context:       auth.Context,
-		CommonRequest: commonRequest,
+		Logs:               nil,
+		Context:            auth.Context,
+		HTTPClientContext:  auth.HTTPClientContext,
+		HTTPClientRequest:  auth.HTTPClientRequest,
+		NoAuth:             auth.NoAuth,
+		BruteForceCounter:  0,
+		MasterUserMode:     auth.MasterUserMode,
+		PasswordHistory:    auth.PasswordHistory,
+		AdditionalFeatures: auth.AdditionalFeatures,
+		CommonRequest:      commonRequest,
 	}
 
-	triggered, abort, err := featReq.CallFeatureLua(ctx)
+	triggered, abort, err := featReq.CallFeatureLua(ctx, auth.Cfg(), auth.Logger(), auth.Redis())
 
 	// Provide logs and status
 	var logs []any
@@ -100,7 +60,6 @@ func (DefaultFeatureEngine) Evaluate(ctx *gin.Context, view *core.StateView) (bo
 
 	newStatus := featReq.StatusMessage
 
-	// Return CommonRequest to the pool
 	lualib.PutCommonRequest(commonRequest)
 
 	return triggered, abort, logs, newStatus, err

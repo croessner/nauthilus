@@ -19,16 +19,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/croessner/nauthilus/server/backend"
+	"github.com/croessner/nauthilus/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
 	"github.com/croessner/nauthilus/server/jwtutil"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/lualib"
 	bflib "github.com/croessner/nauthilus/server/lualib/bruteforce"
@@ -37,11 +37,12 @@ import (
 	"github.com/croessner/nauthilus/server/lualib/luapool"
 	"github.com/croessner/nauthilus/server/lualib/redislib"
 	"github.com/croessner/nauthilus/server/lualib/vmpool"
+	"github.com/croessner/nauthilus/server/rediscli"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"github.com/croessner/nauthilus/server/util"
 
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -209,13 +210,16 @@ func GetHookRoles(location, method string) []string {
 // HasRequiredRoles checks if the user has any of the required roles for a hook.
 // If no roles are configured for the hook, it returns true (allowing access).
 // If JWT is not enabled or not properly configured, it returns true (allowing access).
-func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
+func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, location, method string) bool {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// Check if JWT auth is enabled
-	jwtAuth := config.GetFile().GetServer().GetJWTAuth()
+	jwtAuth := cfg.GetServer().GetJWTAuth()
 	if !jwtAuth.IsEnabled() {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "JWT authentication is not enabled, allowing access",
@@ -226,7 +230,10 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 
 	// Check if JWT auth is properly configured
 	if jwtAuth.GetSecretKey() == "" || len(jwtAuth.GetUsers()) == 0 {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "JWT authentication is not properly configured, allowing access",
@@ -237,7 +244,10 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 
 	// Get the roles required for this hook
 	requiredRoles := GetHookRoles(location, method)
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("Required roles for hook %s %s: %v", location, method, requiredRoles),
@@ -249,7 +259,10 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 		if !strings.HasPrefix(location, "/") {
 			locationWithSlash := "/" + location
 			requiredRoles = GetHookRoles(locationWithSlash, method)
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				cfg,
+				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, fmt.Sprintf("Trying with leading slash: %s, required roles: %v", locationWithSlash, requiredRoles),
@@ -258,7 +271,10 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 
 		// If still no roles are configured, allow access
 		if len(requiredRoles) == 0 {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				cfg,
+				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "No roles configured for this hook, allowing access",
@@ -270,14 +286,20 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 
 	// Check if the user has any of the required roles
 	for _, role := range requiredRoles {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Checking if user has role: %s", role),
 		)
 
 		if jwtutil.HasRole(ctx, role) {
-			util.DebugModule(
+			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
+				cfg,
+				logger,
 				definitions.DbgLua,
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, fmt.Sprintf("User has required role: %s, allowing access", role),
@@ -287,7 +309,10 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 		}
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("User does not have any of the required roles: %v, denying access", requiredRoles),
@@ -299,9 +324,9 @@ func HasRequiredRoles(ctx *gin.Context, location, method string) bool {
 // PreCompileLuaScript compiles a Lua script from the specified file path and manages the script in a thread-safe map.
 // Updates or removes entries in the LuaScripts map based on the configuration and compilation status.
 // Returns an error if the compilation fails or if the script cannot be managed properly.
-func PreCompileLuaScript(filePath string) (err error) {
+func PreCompileLuaScript(cfg config.File, filePath string) (err error) {
 	tr := monittrace.New("nauthilus/hooks")
-	ctx, sp := tr.Start(context.Background(), "hooks.precompile_script",
+	ctx, sp := tr.Start(svcctx.Get(), "hooks.precompile_script",
 		attribute.String("file", filePath),
 	)
 
@@ -332,7 +357,7 @@ func PreCompileLuaScript(filePath string) (err error) {
 	LuaScripts[filePath].Replace(luaScriptNew)
 
 	// Get all init script paths
-	initScriptPaths := config.GetFile().GetLuaInitScriptPaths()
+	initScriptPaths := cfg.GetLuaInitScriptPaths()
 
 	for luaScriptName := range LuaScripts {
 		// Check if this script is one of the init scripts
@@ -359,12 +384,12 @@ func PreCompileLuaScript(filePath string) (err error) {
 // PreCompileLuaHooks pre-compiles Lua hook scripts defined in the configuration and assigns them to specified locations and methods.
 // It also stores the roles associated with each hook for role-based access control.
 // Returns an error if the compilation or setup fails.
-func PreCompileLuaHooks() error {
+func PreCompileLuaHooks(cfg config.File) error {
 	tr := monittrace.New("nauthilus/hooks")
-	ctx, sp := tr.Start(context.Background(), "hooks.precompile_all",
+	ctx, sp := tr.Start(svcctx.Get(), "hooks.precompile_all",
 		attribute.Int("configured", func() int {
-			if config.GetFile().HaveLuaHooks() {
-				return len(config.GetFile().GetLua().Hooks)
+			if cfg.HaveLuaHooks() {
+				return len(cfg.GetLua().Hooks)
 			}
 			return 0
 		}()),
@@ -373,7 +398,7 @@ func PreCompileLuaHooks() error {
 
 	defer sp.End()
 
-	if config.GetFile().HaveLuaHooks() {
+	if cfg.HaveLuaHooks() {
 		if customLocation == nil {
 			customLocation = NewCustomLocation()
 		}
@@ -383,8 +408,8 @@ func PreCompileLuaHooks() error {
 		hookRoles = make(map[string][]string)
 		mu.Unlock()
 
-		for index := range config.GetFile().GetLua().Hooks {
-			hook := config.GetFile().GetLua().Hooks[index]
+		for index := range cfg.GetLua().Hooks {
+			hook := cfg.GetLua().Hooks[index]
 
 			script, err := NewLuaHook(hook.ScriptPath)
 			if err != nil {
@@ -408,12 +433,12 @@ func PreCompileLuaHooks() error {
 }
 
 // setupLogging configures the logging settings in the Lua state and returns a table containing the log format and level.
-func setupLogging(L *lua.LState) *lua.LTable {
+func setupLogging(cfg config.File, L *lua.LState) *lua.LTable {
 	logTable := L.NewTable()
 	logFormat := definitions.LogFormatDefault
-	logLevel := config.GetFile().GetServer().GetLog().GetLogLevelName()
+	logLevel := cfg.GetServer().GetLog().GetLogLevelName()
 
-	if config.GetFile().GetServer().GetLog().IsLogFormatJSON() {
+	if cfg.GetServer().GetLog().IsLogFormatJSON() {
 		logFormat = definitions.LogFormatJSON
 	}
 
@@ -426,7 +451,7 @@ func setupLogging(L *lua.LState) *lua.LTable {
 // runLuaCommonWrapper executes a precompiled Lua script associated with the given hook within a controlled Lua state context.
 // It applies the specified dynamic loader to register custom modules or functions, enforces a timeout for execution, and configures logging.
 // Returns an error if the script is not found or if execution fails.
-func runLuaCommonWrapper(ctx context.Context, hook string) error {
+func runLuaCommonWrapper(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
 	tr := monittrace.New("nauthilus/hooks")
 	cctx, csp := tr.Start(ctx, "hooks.execute_common",
 		attribute.String("hook", hook),
@@ -452,10 +477,13 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 		return fmt.Errorf("lua script for hook %s not found", hook)
 	}
 
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaHookVMPoolSize()})
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
+		MaxVMs: cfg.GetLuaHookVMPoolSize(),
+		Config: cfg,
+	})
 
 	L, acqErr := pool.Acquire(luaCtx)
 	if acqErr != nil {
@@ -493,7 +521,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	}
 
 	// 2) nauthilus_redis (use luaCtx deadline)
-	if loader := redislib.LoaderModRedis(luaCtx); loader != nil {
+	if loader := redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -504,8 +532,8 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	}
 
 	// 3) nauthilus_ldap (if enabled)
-	if config.GetFile().HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(luaCtx)
+	if cfg.HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -516,7 +544,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	}
 
 	// 4) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -527,7 +555,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	}
 
 	// 5) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -540,8 +568,8 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	// 5.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
-		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx)
+		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -558,7 +586,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 	}
 
 	// 6) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -568,9 +596,9 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 		}
 	}
 
-	logTable := setupLogging(L)
+	logTable := setupLogging(cfg, L)
 
-	_, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, "")
+	_, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), logTable, L, hook, "")
 	if err != nil {
 		csp.RecordError(err)
 	}
@@ -580,7 +608,7 @@ func runLuaCommonWrapper(ctx context.Context, hook string) error {
 
 // runLuaCustomWrapper executes a precompiled Lua script and returns its result or any occurring error.
 // It retrieves the script based on the HTTP request context and dynamically registers Lua libraries before execution.
-func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
+func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
 	tr := monittrace.New("nauthilus/hooks")
 	xctx, xsp := tr.Start(ctx.Request.Context(), "hooks.execute_custom",
 		attribute.String("path", ctx.Param("hook")),
@@ -597,14 +625,20 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	hook := ctx.Param("hook")
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("Looking for script for hook: %s, method: %s", hook, ctx.Request.Method),
 	)
 
 	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Script not found for hook: %s, method: %s", hook, ctx.Request.Method),
@@ -614,17 +648,23 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 		return nil, nil
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
+		cfg,
+		logger,
 		definitions.DbgLua,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, fmt.Sprintf("Script found for hook: %s, method: %s", hook, ctx.Request.Method),
 	)
 
-	luaCtx, luaCancel := context.WithTimeout(ctx, viper.GetDuration("lua_script_timeout")*time.Second)
+	luaCtx, luaCancel := context.WithTimeout(ctx, cfg.GetServer().GetTimeouts().GetLuaScript())
 
 	defer luaCancel()
 
-	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{MaxVMs: config.GetFile().GetLuaHookVMPoolSize()})
+	pool := vmpool.GetManager().GetOrCreate("hook:default", vmpool.PoolOptions{
+		MaxVMs: cfg.GetLuaHookVMPoolSize(),
+		Config: cfg,
+	})
 
 	L, acqErr := pool.Acquire(luaCtx)
 	if acqErr != nil {
@@ -682,7 +722,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	}
 
 	// 4) nauthilus_redis (use luaCtx deadline)
-	if loader = redislib.LoaderModRedis(luaCtx); loader != nil {
+	if loader = redislib.LoaderModRedis(luaCtx, cfg, redis); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -693,8 +733,8 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	}
 
 	// 5) nauthilus_ldap (if enabled)
-	if config.GetFile().HaveLDAPBackend() {
-		loader := backend.LoaderModLDAP(luaCtx)
+	if cfg.HaveLDAPBackend() {
+		loader := backend.LoaderModLDAP(luaCtx, cfg)
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -705,7 +745,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	}
 
 	// 6) nauthilus_psnet (connection monitoring)
-	if loader := connmgr.LoaderModPsnet(luaCtx); loader != nil {
+	if loader := connmgr.LoaderModPsnet(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -716,7 +756,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	}
 
 	// 7) nauthilus_dns (DNS lookups)
-	if loader := lualib.LoaderModDNS(luaCtx); loader != nil {
+	if loader := lualib.LoaderModDNS(luaCtx, cfg, logger); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -729,8 +769,8 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	// 7.1) nauthilus_opentelemetry (OTel helpers for Lua)
 	{
 		var loader lua.LGFunction
-		if config.GetFile().GetServer().GetInsights().GetTracing().IsEnabled() {
-			loader = lualib.LoaderModOTEL(luaCtx)
+		if cfg.GetServer().GetInsights().GetTracing().IsEnabled() {
+			loader = lualib.LoaderModOTEL(luaCtx, cfg, logger)
 		} else {
 			loader = lualib.LoaderOTELStateless()
 		}
@@ -747,7 +787,7 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 	}
 
 	// 8) nauthilus_brute_force (toleration and blocking helpers)
-	if loader := bflib.LoaderModBruteForce(luaCtx); loader != nil {
+	if loader := bflib.LoaderModBruteForce(luaCtx, cfg, logger, redis, tolerate.GetTolerate()); loader != nil {
 		_ = loader(L)
 		if mod, ok := L.Get(-1).(*lua.LTable); ok {
 			L.Pop(1)
@@ -757,18 +797,21 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 		}
 	}
 
-	logTable := setupLogging(L)
+	logTable := setupLogging(cfg, L)
 
-	result, err := executeAndHandleError(script.GetPrecompiledScript(), logTable, L, hook, guid)
+	result, err := executeAndHandleError(cfg, logger, script.GetPrecompiledScript(), logTable, L, hook, guid)
 	if err != nil {
 		xsp.RecordError(err)
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Error executing script for hook: %s, method: %s", hook, ctx.Request.Method),
 			definitions.LogKeyError, err,
 		)
 	} else {
-		util.DebugModule(
+		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
+			cfg,
+			logger,
 			definitions.DbgLua,
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, fmt.Sprintf("Script executed successfully for hook: %s, method: %s", hook, ctx.Request.Method),
@@ -779,13 +822,12 @@ func runLuaCustomWrapper(ctx *gin.Context) (gin.H, error) {
 }
 
 // RunLuaHook executes a precompiled Lua script based on a hook parameter from the gin.Context.
-func RunLuaHook(ctx *gin.Context) (gin.H, error) {
-	return runLuaCustomWrapper(ctx)
+func RunLuaHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client) (gin.H, error) {
+	return runLuaCustomWrapper(ctx, cfg, logger, redis)
 }
 
-// RunLuaInit initializes and runs a Lua script based on the specified hook.
-func RunLuaInit(ctx context.Context, hook string) error {
-	return runLuaCommonWrapper(ctx, hook)
+func RunLuaInit(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, hook string) error {
+	return runLuaCommonWrapper(ctx, cfg, logger, redis, hook)
 }
 
 // executeAndHandleError executes a Lua script, invoking a predefined hook and processing its results or errors.
@@ -798,13 +840,13 @@ func RunLuaInit(ctx context.Context, hook string) error {
 //
 // Returns a Gin-compatible result or an error encountered during executi
 // Returns a Gin-compatible result or an error encountered during execution.
-func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook, guid string) (result gin.H, err error) {
-	if err = lualib.PackagePath(L); err != nil {
-		processError(err, hook)
+func executeAndHandleError(cfg config.File, logger *slog.Logger, compiledScript *lua.FunctionProto, logTable *lua.LTable, L *lua.LState, hook, guid string) (result gin.H, err error) {
+	if err = lualib.PackagePath(L, cfg); err != nil {
+		processError(logger, err, hook)
 	}
 
 	if err = lualib.DoCompiledFile(L, compiledScript); err != nil {
-		processError(err, hook)
+		processError(logger, err, hook)
 	}
 
 	// Resolve the entry function nauthilus_run_hook from the request env first, then fall back to _G.
@@ -831,7 +873,7 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 		NRet:    1,
 		Protect: true,
 	}, logTable, lua.LString(guid)); err != nil {
-		processError(err, hook)
+		processError(logger, err, hook)
 	}
 
 	// Interpret the Lua return value correctly:
@@ -863,11 +905,11 @@ func executeAndHandleError(compiledScript *lua.FunctionProto, logTable *lua.LTab
 }
 
 // processError logs an error with the associated script hook for debugging or monitoring purposes.
-func processError(err error, hook string) {
+func processError(logger *slog.Logger, err error, hook string) {
 	// Include Lua stacktrace when available to simplify debugging
 	var ae *lua.ApiError
 	if errors.As(err, &ae) && ae != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			"script", hook,
 			definitions.LogKeyMsg, "Error executing script",
 			definitions.LogKeyError, ae.Error(),
@@ -877,7 +919,7 @@ func processError(err error, hook string) {
 		return
 	}
 
-	level.Error(log.Logger).Log(
+	level.Error(logger).Log(
 		"script", hook,
 		definitions.LogKeyMsg, "Error executing script",
 		definitions.LogKeyError, err,

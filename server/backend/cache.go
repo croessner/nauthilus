@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -26,13 +27,12 @@ import (
 	"github.com/croessner/nauthilus/server/backend/bktype"
 	"github.com/croessner/nauthilus/server/config"
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
-	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/croessner/nauthilus/server/rediscli"
 	"github.com/croessner/nauthilus/server/stats"
 	"github.com/croessner/nauthilus/server/util"
 
+	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
 	"github.com/go-webauthn/webauthn/webauthn"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
@@ -40,7 +40,7 @@ import (
 )
 
 // LookupUserAccountFromRedis returns the user account value from the user Redis hash.
-func LookupUserAccountFromRedis(ctx context.Context, username string) (accountName string, err error) {
+func LookupUserAccountFromRedis(ctx context.Context, cfg config.File, redisClient rediscli.Client, username string) (accountName string, err error) {
 	// Tracing span for a user account lookup in the generic backend layer
 	tr := monittrace.New("nauthilus/backend")
 	sctx, sp := tr.Start(ctx, "backend.lookup_user_account",
@@ -49,15 +49,15 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 
 	defer sp.End()
 
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
+	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserHashKey
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
 	// Use span context for Redis read deadline
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(sctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(sctx, cfg)
 	defer cancel()
 
-	accountName, err = rediscli.GetClient().GetReadHandle().HGet(dCtx, key, username).Result()
+	accountName, err = redisClient.GetReadHandle().HGet(dCtx, key, username).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			// Record real Redis errors (not a miss)
@@ -69,7 +69,6 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 		err = nil
 	}
 
-	// Annotate whether a value was found
 	sp.SetAttributes(attribute.Bool("found", accountName != ""))
 
 	return
@@ -78,20 +77,20 @@ func LookupUserAccountFromRedis(ctx context.Context, username string) (accountNa
 // LoadCacheFromRedis retrieves cache data from Redis Hash based on a provided key and populates the given structure.
 // It increments Redis read metrics and logs errors or debug information appropriately during the operation.
 // Returns whether the error originated from Redis and any encountered error during retrieval or unmarshaling.
-func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
+func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, key string, ucp *bktype.PositivePasswordCache) (isRedisErr bool, err error) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 	defer cancel()
 
 	// Get all fields from the hash
-	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
+	hashValues, err := redisClient.GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return true, nil
 		}
 
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to get cache from redis",
 			definitions.LogKeyError, err,
 		)
@@ -108,7 +107,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	if backendStr, ok := hashValues["backend"]; ok {
 		backendInt, err := strconv.Atoi(backendStr)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to parse backend value",
 				definitions.LogKeyError, err,
 			)
@@ -144,7 +143,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 	if attributesJSON, ok := hashValues["attributes"]; ok && attributesJSON != "" {
 		var attributes bktype.AttributeMapping
 		if err = jsoniter.ConfigFastest.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal attributes",
 				definitions.LogKeyError, err,
 			)
@@ -158,7 +157,7 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 		ucp.Attributes = make(bktype.AttributeMapping)
 	}
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
 
@@ -167,8 +166,8 @@ func LoadCacheFromRedis(ctx context.Context, key string, ucp *bktype.PositivePas
 
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis using Redis Hash for better memory efficiency.
 // It stores each field of the PositivePasswordCache structure as a separate hash field, with complex fields serialized as JSON.
-func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.Duration, cache *bktype.PositivePasswordCache) {
-	util.DebugModule(
+func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, guid string, key string, ttl time.Duration, cache *bktype.PositivePasswordCache) {
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
@@ -204,7 +203,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	if len(cache.Attributes) > 0 {
 		attributesJSON, err := jsoniter.ConfigFastest.Marshal(cache.Attributes)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyGUID, guid,
 				definitions.LogKeyMsg, "Failed to marshal attributes",
 				definitions.LogKeyError, err,
@@ -218,17 +217,17 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
 	// Use HSet to store the hash fields
-	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe := redisClient.GetWriteHandle().Pipeline()
 	pipe.HSet(dCtx, key, hashFields)
 	pipe.Expire(dCtx, key, ttl) // Set expiration on the hash
 
 	cmds, err := pipe.Exec(dCtx)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Failed to store password history to redis",
 			definitions.LogKeyError, err,
@@ -241,7 +240,7 @@ func SaveUserDataToRedis(ctx context.Context, guid string, key string, ttl time.
 	hsetCmd := cmds[0].(*redis.IntCmd)
 	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
-	util.DebugModule(
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		"redis", result)
@@ -277,26 +276,26 @@ func collectCacheNames(
 
 // GetCacheNames retrieves cache names for the specified protocol from either LDAP, Lua, or both backends as per the input.
 // If no cache names are found, a default cache name "__default__" is returned.
-func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
+func GetCacheNames(cfg config.File, channel Channel, requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
 	cacheNames = config.NewStringSet()
 
-	if backends == definitions.CacheAll || backends == definitions.CacheLDAP {
+	if (backends == definitions.CacheAll || backends == definitions.CacheLDAP) && channel != nil && channel.GetLdapChannel() != nil {
 		collectCacheNames(
-			GetChannel().GetLdapChannel().GetPoolNames(),
+			channel.GetLdapChannel().GetPoolNames(),
 			requestedProtocol,
 			func(req, pool string) (cacheNamer, error) {
-				return config.GetFile().GetLDAPSearchProtocol(req, pool)
+				return cfg.GetLDAPSearchProtocol(req, pool)
 			},
 			cacheNames,
 		)
 	}
 
-	if backends == definitions.CacheAll || backends == definitions.CacheLua {
+	if (backends == definitions.CacheAll || backends == definitions.CacheLua) && channel != nil && channel.GetLuaChannel() != nil {
 		collectCacheNames(
-			GetChannel().GetLuaChannel().GetBackendNames(),
+			channel.GetLuaChannel().GetBackendNames(),
 			requestedProtocol,
 			func(req, backend string) (cacheNamer, error) {
-				return config.GetFile().GetLuaSearchProtocol(req, backend)
+				return cfg.GetLuaSearchProtocol(req, backend)
 			},
 			cacheNames,
 		)
@@ -311,18 +310,18 @@ func GetCacheNames(requestedProtocol string, backends definitions.CacheNameBacke
 
 // GetWebAuthnFromRedis retrieves a User object from Redis Hash using the provided unique user ID.
 // Returns the User object or an error if retrieval or unmarshaling fails.
-func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User, err error) {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
+func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, uniqueUserId string) (user *User, err error) {
+	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + uniqueUserId
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, cfg)
 	defer cancel()
 
 	// Get all fields from the hash
-	hashValues, err := rediscli.GetClient().GetReadHandle().HGetAll(dCtx, key).Result()
+	hashValues, err := redisClient.GetReadHandle().HGetAll(dCtx, key).Result()
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to get WebAuthn user from redis",
 			definitions.LogKeyError, err,
 		)
@@ -333,7 +332,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	// If the hash is empty, treat it as a Redis nil error
 	if len(hashValues) == 0 {
 		err = redis.Nil
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "WebAuthn user not found in redis",
 			definitions.LogKeyError, err,
 		)
@@ -364,7 +363,7 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 	if credentialsJSON, ok := hashValues["credentials"]; ok && credentialsJSON != "" {
 		var credentials []webauthn.Credential
 		if err = jsoniter.ConfigFastest.Unmarshal([]byte(credentialsJSON), &credentials); err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal credentials",
 				definitions.LogKeyError, err,
 			)
@@ -383,8 +382,8 @@ func GetWebAuthnFromRedis(ctx context.Context, uniqueUserId string) (user *User,
 
 // SaveWebAuthnToRedis saves a user's WebAuthn credentials to Redis with a specified TTL using Redis Hash.
 // Returns an error if serialization or Redis storage operation fails.
-func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) error {
-	key := config.GetFile().GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
+func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.File, redisClient rediscli.Client, user *User, ttl time.Duration) error {
+	key := cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + user.Id
 
 	// Create a map for the hash fields
 	hashFields := make(map[string]any)
@@ -398,7 +397,7 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 	if len(user.Credentials) > 0 {
 		credentialsJSON, err := jsoniter.ConfigFastest.Marshal(user.Credentials)
 		if err != nil {
-			level.Error(log.Logger).Log(
+			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to marshal credentials",
 				definitions.LogKeyError, err,
 			)
@@ -411,17 +410,17 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
 	// Use pipeline to set hash and expiration in a single operation
-	pipe := rediscli.GetClient().GetWriteHandle().Pipeline()
+	pipe := redisClient.GetWriteHandle().Pipeline()
 	pipe.HSet(dCtx, key, hashFields)
 	pipe.Expire(dCtx, key, ttl) // Set expiration on the hash
 
 	cmds, err := pipe.Exec(dCtx)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to store WebAuthn user to redis",
 			definitions.LogKeyError, err,
 		)
@@ -433,24 +432,24 @@ func SaveWebAuthnToRedis(ctx context.Context, user *User, ttl time.Duration) err
 	hsetCmd := cmds[0].(*redis.IntCmd)
 	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
-	util.DebugModule(definitions.DbgCache, "redis", result)
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgCache, "redis", result)
 
 	return nil
 }
 
 // GetUserAccountFromCache fetches the user account name from Redis cache using the provided username.
 // Logs errors and increments Redis read counter. Returns an empty string if the account name is not found or an error occurs.
-func GetUserAccountFromCache(ctx context.Context, username string, guid string) (accountName string) {
+func GetUserAccountFromCache(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, accountCache *accountcache.Manager, username string, guid string) (accountName string) {
 	// First try in-process account cache when enabled
-	if acc, ok := accountcache.GetManager().Get(username); ok && acc != "" {
+	if acc, ok := accountCache.Get(username); ok && acc != "" {
 		return acc
 	}
 
 	var err error
 
-	accountName, err = LookupUserAccountFromRedis(ctx, username)
+	accountName, err = LookupUserAccountFromRedis(ctx, cfg, redisClient, username)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Failed to get user account from cache",
 			definitions.LogKeyError, err,
@@ -462,20 +461,20 @@ func GetUserAccountFromCache(ctx context.Context, username string, guid string) 
 	}
 
 	// Store positive result in in-process cache
-	accountcache.GetManager().Set(username, accountName)
+	accountCache.Set(cfg, username, accountName)
 
 	return accountName
 }
 
 // ResolveAccountIdentifier resolves an identifier that may be either a username or an account name.
 // It first tries to look up a mapping in the USER hash; if not found, it treats the identifier as an account name.
-func ResolveAccountIdentifier(ctx context.Context, identifier string, guid string) (accountName string) {
+func ResolveAccountIdentifier(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, identifier string, guid string) (accountName string) {
 	var err error
 
 	// Try to resolve username -> account name mapping
-	accountName, err = LookupUserAccountFromRedis(ctx, identifier)
+	accountName, err = LookupUserAccountFromRedis(ctx, cfg, redisClient, identifier)
 	if err != nil {
-		level.Error(log.Logger).Log(
+		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
 			definitions.LogKeyMsg, "Failed to resolve account identifier",
 			definitions.LogKeyError, err)

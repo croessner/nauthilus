@@ -18,12 +18,12 @@ package limit
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/server/definitions"
-	"github.com/croessner/nauthilus/server/log"
 	"github.com/croessner/nauthilus/server/log/level"
 	"github.com/croessner/nauthilus/server/stats"
 
@@ -50,6 +50,15 @@ func NewLimitCounter(maxConnections int32) *LimitCounter {
 // Middleware limits the number of concurrent connections handled by the server based on MaxConnections.
 // It is context-aware and prioritizes certain types of requests.
 func (lc *LimitCounter) Middleware() gin.HandlerFunc {
+	return lc.MiddlewareWithLogger(slog.Default())
+}
+
+// MiddlewareWithLogger is the logger-injected variant of Middleware.
+func (lc *LimitCounter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return func(ctx *gin.Context) {
 		// Always allow health check and metrics endpoints regardless of connection limits
 		if ctx.FullPath() == "/ping" || ctx.FullPath() == "/metrics" {
@@ -101,7 +110,7 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 					guid = ksuid.New().String()
 				}
 
-				level.Warn(log.Logger).Log(
+				level.Warn(logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
 					"path", ctx.FullPath(),
@@ -128,7 +137,7 @@ func (lc *LimitCounter) Middleware() gin.HandlerFunc {
 							guid = ksuid.New().String()
 						}
 
-						level.Warn(log.Logger).Log(
+						level.Warn(logger).Log(
 							definitions.LogKeyGUID, guid,
 							definitions.LogKeyMsg, "Long-running request detected",
 							"path", ctx.FullPath(),
