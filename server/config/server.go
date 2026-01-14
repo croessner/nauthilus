@@ -32,6 +32,8 @@ type ServerSection struct {
 	MaxPasswordHistoryEntries int32                    `mapstructure:"max_password_history_entries" validate:"omitempty,gte=1"`
 	HTTP3                     bool                     `mapstructure:"http3"`
 	HAproxyV2                 bool                     `mapstructure:"haproxy_v2"`
+	RateLimitPerSecond        float64                  `mapstructure:"rate_limit_per_second" validate:"omitempty,min=0"`
+	RateLimitBurst            int                      `mapstructure:"rate_limit_burst" validate:"omitempty,min=0"`
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
@@ -71,6 +73,7 @@ type Middlewares struct {
 	RequestDecompression *bool `mapstructure:"request_decompression" validate:"omitempty"`
 	ResponseCompression  *bool `mapstructure:"response_compression" validate:"omitempty"`
 	Metrics              *bool `mapstructure:"metrics" validate:"omitempty"`
+	Rate                 *bool `mapstructure:"rate" validate:"omitempty"`
 }
 
 // GetMiddlewares returns the middlewares section or a zero-value if nil.
@@ -103,6 +106,7 @@ func (m *Middlewares) IsResponseCompressionEnabled() bool {
 }
 
 func (m *Middlewares) IsMetricsEnabled() bool { return boolOrDefaultTrue(m.Metrics) }
+func (m *Middlewares) IsRateEnabled() bool    { return boolOrDefaultTrue(m.Rate) }
 
 // GetListenAddress retrieves the server's listen address from the ServerSection configuration.
 // Returns an empty string if the ServerSection is nil.
@@ -115,14 +119,14 @@ func (s *ServerSection) GetListenAddress() string {
 }
 
 // GetMaxConcurrentRequests retrieves the maximum number of concurrent requests allowed as configured in ServerSection.
-// Returns 10 as a default value if the ServerSection is nil.
+// Returns 1000 as a default value if the ServerSection is nil.
 func (s *ServerSection) GetMaxConcurrentRequests() int32 {
 	if s == nil {
-		return 100
+		return 1000
 	}
 
 	if s.MaxConcurrentRequests < 1 {
-		return 100
+		return 1000
 	}
 
 	return s.MaxConcurrentRequests
@@ -140,6 +144,34 @@ func (s *ServerSection) GetMaxPasswordHistoryEntries() int32 {
 	}
 
 	return s.MaxPasswordHistoryEntries
+}
+
+// GetRateLimitPerSecond returns tokens per second for the IP rate limiter.
+// Defaults to 100.0 if not configured.
+func (s *ServerSection) GetRateLimitPerSecond() float64 {
+	if s == nil {
+		return 100.0
+	}
+
+	if s.RateLimitPerSecond <= 0 {
+		return 100.0
+	}
+
+	return s.RateLimitPerSecond
+}
+
+// GetRateLimitBurst returns burst size for the IP rate limiter.
+// Defaults to 200 if not configured.
+func (s *ServerSection) GetRateLimitBurst() int {
+	if s == nil {
+		return 200
+	}
+
+	if s.RateLimitBurst <= 0 {
+		return 200
+	}
+
+	return s.RateLimitBurst
 }
 
 // IsHTTP3Enabled checks if HTTP/3 protocol support is enabled in the server configuration and returns the corresponding boolean value.

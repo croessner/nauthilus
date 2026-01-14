@@ -149,6 +149,15 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 		r.Use(limitCounter.MiddlewareWithLogger(c.logger))
 	}
 
+	if mw.IsRateEnabled() {
+		rateLimiter := mdlimit.NewIPRateLimiter(
+			mdlimit.Rate(c.cfg.GetServer().GetRateLimitPerSecond()),
+			c.cfg.GetServer().GetRateLimitBurst(),
+		)
+
+		r.Use(rateLimiter.Middleware())
+	}
+
 	// Tracing middleware (OpenTelemetry) – enabled if insights.tracing.enable is true
 	// and not disabled via server.disabled_endpoints.tracing
 	if c.cfg.GetServer().GetInsights().IsTracingEnabled() {
