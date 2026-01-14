@@ -312,7 +312,7 @@ func collectLatencyMetrics(ctx context.Context, cfg config.File, logger *slog.Lo
 	latencyCmd := client.Do(ctx, "LATENCY", "LATEST")
 	if latencyCmd.Err() != nil {
 		// LATENCY command might not be available in all Redis versions
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Failed to get Redis LATENCY: %v", latencyCmd.Err())
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Failed to get Redis LATENCY: %v", latencyCmd.Err())
 
 		return
 	}

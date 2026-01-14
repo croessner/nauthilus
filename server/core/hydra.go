@@ -343,7 +343,7 @@ func (a *ApiConfig) initialize() {
 // - `handleLoginSkip` method
 // - `handleLoginNoSkip` method
 func (a *ApiConfig) handleLogin(ctx *gin.Context, skip bool) {
-	util.DebugModuleWithCfg(a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
+	util.DebugModuleWithCfg(ctx.Request.Context(), a.deps.Cfg, a.deps.Logger, definitions.DbgHydra, definitions.LogKeyGUID, a.guid, definitions.LogKeyMsg, fmt.Sprintf("%s is %v", definitions.LogKeyLoginSkip, skip))
 
 	if skip {
 		a.handleLoginSkip(ctx)

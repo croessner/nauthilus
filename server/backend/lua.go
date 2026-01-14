@@ -113,6 +113,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, ba
 	}
 
 	util.DebugModuleWithCfg(
+		ctx,
 		cfg,
 		logger,
 		definitions.DbgLua,
@@ -364,7 +365,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	// Handle the specific return types
 	if err == nil {
-		handleReturnTypes(L, nret, luaRequest, logs)
+		handleReturnTypes(luaCtx, L, nret, luaRequest, logs)
 	}
 }
 
@@ -452,7 +453,7 @@ func executeAndHandleError(ctx context.Context, cfg config.File, logger *slog.Lo
 // L represents the Lua state machine, nret specifies the number of return values, luaRequest holds request context.
 // logs specifies the custom log key-value pairs. Validates the script output and dispatches appropriate Lua results.
 // An error is sent if the Lua script fails or returns invalid data for specified commands.
-func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
+func handleReturnTypes(ctx context.Context, L *lua.LState, nret int, luaRequest *bktype.LuaRequest, logs *lualib.CustomLogKeyValue) {
 	startTime := time.Now()
 	defer func() {
 		latency := time.Since(startTime)
@@ -478,6 +479,7 @@ func handleReturnTypes(L *lua.LState, nret int, luaRequest *bktype.LuaRequest, l
 				luaBackendResult.Logs = logs
 
 				util.DebugModule(
+					ctx,
 					definitions.DbgLua,
 					definitions.LogKeyGUID, luaRequest.Session,
 					"result", fmt.Sprintf("%+v", luaBackendResult),

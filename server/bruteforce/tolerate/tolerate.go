@@ -359,7 +359,7 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 	}
 
 	// Log the result for debugging if needed
-	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger, definitions.DbgTolerate,
+	util.DebugModuleWithCfg(sctx, t.deps.cfg, t.deps.logger, definitions.DbgTolerate,
 		definitions.LogKeyMsg, fmt.Sprintf("ZAddCountAndExpire result: %v", result),
 		"ip", ipAddress,
 		"username", username,
@@ -481,12 +481,13 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 
 					// If there are no positives, do not tolerate
 					if positive == 0 {
-						t.logDbgTolerate(ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
+						t.logDbgTolerate(ctx, ipAddress, positive, negative, 0, uint8(calculatedPct), adaptiveStr)
 
 						return false
 					}
 
 					t.logDbgTolerate(
+						ctx,
 						ipAddress,
 						positive,
 						negative,
@@ -519,6 +520,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 	maxNegative := (int64(pctTolerated) * positive) / 100
 
 	t.logDbgTolerate(
+		ctx,
 		ipAddress,
 		positive,
 		negative,
@@ -596,7 +598,7 @@ func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
 				}
 
 				if removed > 0 {
-					t.logDbgRemovedRecords(removed)
+					t.logDbgRemovedRecords(t.houseKeeperContext, removed)
 				}
 			}
 		}
@@ -664,8 +666,8 @@ func (t *tolerateImpl) getRedisKey(ipAddress string) string {
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
-func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative int64, maxNegatives int64, tolerated uint8, mode string) {
-	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger,
+func (t *tolerateImpl) logDbgTolerate(ctx context.Context, address string, positive int64, negative int64, maxNegatives int64, tolerated uint8, mode string) {
+	util.DebugModuleWithCfg(ctx, t.deps.cfg, t.deps.logger,
 		definitions.DbgTolerate,
 		definitions.LogKeyClientIP, address,
 		"positives", positive,
@@ -676,8 +678,8 @@ func (t *tolerateImpl) logDbgTolerate(address string, positive int64, negative i
 	)
 }
 
-func (t *tolerateImpl) logDbgRemovedRecords(removed int64) {
-	util.DebugModuleWithCfg(t.deps.cfg, t.deps.logger,
+func (t *tolerateImpl) logDbgRemovedRecords(ctx context.Context, removed int64) {
+	util.DebugModuleWithCfg(ctx, t.deps.cfg, t.deps.logger,
 		definitions.DbgTolerate,
 		"removed", removed,
 	)

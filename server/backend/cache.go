@@ -157,7 +157,7 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 		ucp.Attributes = make(bktype.AttributeMapping)
 	}
 
-	util.DebugModuleWithCfg(cfg, logger,
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyMsg, "Load password history from redis", "type", fmt.Sprintf("%T", *ucp))
 
@@ -167,7 +167,7 @@ func LoadCacheFromRedis(ctx context.Context, cfg config.File, logger *slog.Logge
 // SaveUserDataToRedis is a generic routine to store a cache object on Redis using Redis Hash for better memory efficiency.
 // It stores each field of the PositivePasswordCache structure as a separate hash field, with complex fields serialized as JSON.
 func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client, guid string, key string, ttl time.Duration, cache *bktype.PositivePasswordCache) {
-	util.DebugModuleWithCfg(cfg, logger,
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		definitions.LogKeyMsg, "Save password history to redis", "type", fmt.Sprintf("%T", *cache),
@@ -240,7 +240,7 @@ func SaveUserDataToRedis(ctx context.Context, cfg config.File, logger *slog.Logg
 	hsetCmd := cmds[0].(*redis.IntCmd)
 	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
-	util.DebugModuleWithCfg(cfg, logger,
+	util.DebugModuleWithCfg(ctx, cfg, logger,
 		definitions.DbgCache,
 		definitions.LogKeyGUID, guid,
 		"redis", result)
@@ -432,7 +432,7 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 	hsetCmd := cmds[0].(*redis.IntCmd)
 	result := fmt.Sprintf("Fields set: %d", hsetCmd.Val())
 
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgCache, "redis", result)
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgCache, "redis", result)
 
 	return nil
 }

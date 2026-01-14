@@ -337,12 +337,12 @@ func getDefaultLogger() *slog.Logger {
 	return defaultLogger
 }
 
-func DebugModule(module definitions.DbgModule, keyvals ...any) {
-	DebugModuleWithCfg(getDefaultConfigFile(), getDefaultLogger(), module, keyvals...)
+func DebugModule(ctx context.Context, module definitions.DbgModule, keyvals ...any) {
+	DebugModuleWithCfg(ctx, getDefaultConfigFile(), getDefaultLogger(), module, keyvals...)
 }
 
 // DebugModuleWithCfg logs debug information for a specific module if it is enabled in the configuration and logger is specified.
-func DebugModuleWithCfg(cfg config.File, logger *slog.Logger, module definitions.DbgModule, keyvals ...any) {
+func DebugModuleWithCfg(ctx context.Context, cfg config.File, logger *slog.Logger, module definitions.DbgModule, keyvals ...any) {
 	if cfg == nil || logger == nil {
 		return
 	}
@@ -364,10 +364,15 @@ func DebugModuleWithCfg(cfg config.File, logger *slog.Logger, module definitions
 
 	tracer := monittrace.New("nauthilus/util")
 
-	_, sp := tracer.Start(svcctx.Get(), "util.debugmodule",
+	dbgCtx, sp := tracer.Start(ctx, "util.debugmodule",
 		attribute.String("debug_module", moduleName),
 	)
 	defer sp.End()
+
+	// ensure downstream uses the same context if it's a gin.Context
+	if gCtx, ok := ctx.(*gin.Context); ok {
+		gCtx.Request = gCtx.Request.WithContext(dbgCtx)
+	}
 
 	enabled := false
 	for _, dbgModule := range logCfg.GetDebugModules() {
@@ -397,7 +402,7 @@ func DebugModuleWithCfg(cfg config.File, logger *slog.Logger, module definitions
 		}
 	}
 
-	level.Debug(logger).Log(attrs...)
+	level.Debug(logger).WithContext(dbgCtx).Log(attrs...)
 }
 
 // WithNotAvailable returns a default "not available" string if the given value is an empty string.
@@ -416,8 +421,9 @@ func logNetworkError(logger *slog.Logger, guid, ipOrNet string, err error) {
 }
 
 // logNetworkChecking logs the information about checking a network for the given authentication object.
-func logNetworkChecking(cfg config.File, logger *slog.Logger, guid, clientIP string, network *net.IPNet) {
+func logNetworkChecking(ctx context.Context, cfg config.File, logger *slog.Logger, guid, clientIP string, network *net.IPNet) {
 	DebugModuleWithCfg(
+		ctx,
 		cfg,
 		logger,
 		definitions.DbgWhitelist,
@@ -426,8 +432,8 @@ func logNetworkChecking(cfg config.File, logger *slog.Logger, guid, clientIP str
 }
 
 // logIPChecking logs the IP address of the client along with the IP address or network being checked.
-func logIPChecking(cfg config.File, logger *slog.Logger, guid, ipOrNet, clientIP string) {
-	DebugModuleWithCfg(cfg, logger, definitions.DbgWhitelist, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, ipOrNet))
+func logIPChecking(ctx context.Context, cfg config.File, logger *slog.Logger, guid, ipOrNet, clientIP string) {
+	DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgWhitelist, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, fmt.Sprintf("Checking: %s -> %s", clientIP, ipOrNet))
 }
 
 // IsInNetwork checks if an IP address is part of a list of networks.
@@ -436,11 +442,11 @@ func logIPChecking(cfg config.File, logger *slog.Logger, guid, ipOrNet, clientIP
 // The function logs any network errors encountered during the process.
 // The function logs the information about checking a network for the given authentication object.
 // The function logs the IP address of the client along with the IP address or network being checked.
-func IsInNetwork(networkList []string, guid, clientIP string) (matchIP bool) {
-	return IsInNetworkWithCfg(getDefaultConfigFile(), getDefaultLogger(), networkList, guid, clientIP)
+func IsInNetwork(ctx context.Context, networkList []string, guid, clientIP string) (matchIP bool) {
+	return IsInNetworkWithCfg(ctx, getDefaultConfigFile(), getDefaultLogger(), networkList, guid, clientIP)
 }
 
-func IsInNetworkWithCfg(cfg config.File, logger *slog.Logger, networkList []string, guid, clientIP string) (matchIP bool) {
+func IsInNetworkWithCfg(ctx context.Context, cfg config.File, logger *slog.Logger, networkList []string, guid, clientIP string) (matchIP bool) {
 	ipAddress := net.ParseIP(clientIP)
 
 	for _, ipOrNet := range networkList {
@@ -452,7 +458,7 @@ func IsInNetworkWithCfg(cfg config.File, logger *slog.Logger, networkList []stri
 				continue
 			}
 
-			logNetworkChecking(cfg, logger, guid, clientIP, network)
+			logNetworkChecking(ctx, cfg, logger, guid, clientIP, network)
 
 			if network.Contains(ipAddress) {
 				matchIP = true
@@ -460,7 +466,7 @@ func IsInNetworkWithCfg(cfg config.File, logger *slog.Logger, networkList []stri
 				break
 			}
 		} else {
-			logIPChecking(cfg, logger, guid, ipOrNet, clientIP)
+			logIPChecking(ctx, cfg, logger, guid, ipOrNet, clientIP)
 			if clientIP == ipOrNet {
 				matchIP = true
 
@@ -474,18 +480,19 @@ func IsInNetworkWithCfg(cfg config.File, logger *slog.Logger, networkList []stri
 
 // IsSoftWhitelisted checks whether a given clientIP is in the soft whitelist associated with a username.
 // Returns true if the clientIP matches any networks in the soft whitelist, otherwise false.
-func IsSoftWhitelisted(username, clientIP, guid string, softWhitelist config.SoftWhitelist) bool {
+func IsSoftWhitelisted(ctx context.Context, username, clientIP, guid string, softWhitelist config.SoftWhitelist) bool {
 	networks := softWhitelist.Get(username)
 	if networks == nil {
 		return false
 	}
 
-	return IsInNetwork(networks, guid, clientIP)
+	return IsInNetwork(ctx, networks, guid, clientIP)
 }
 
 // logForwarderFound logs the finding of the header "X-Forwarded-For" in the debug module.
-func logForwarderFound(cfg config.File, logger *slog.Logger, guid string) {
+func logForwarderFound(ctx context.Context, cfg config.File, logger *slog.Logger, guid string) {
 	DebugModuleWithCfg(
+		ctx,
 		cfg,
 		logger,
 		definitions.DbgAuth,
@@ -504,8 +511,9 @@ func logNoTrustedProxies(cfg config.File, logger *slog.Logger, guid, clientIP st
 }
 
 // logTrustedProxy logs the client IP matching with the forwarded address.
-func logTrustedProxy(cfg config.File, logger *slog.Logger, guid, fwdAddress, clientIP string) {
+func logTrustedProxy(ctx context.Context, cfg config.File, logger *slog.Logger, guid, fwdAddress, clientIP string) {
 	DebugModuleWithCfg(
+		ctx,
 		cfg,
 		logger,
 		definitions.DbgAuth,
@@ -528,7 +536,7 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
 	// Only trust forwarded headers from trusted proxies
-	isTrustedProxy := IsInNetworkWithCfg(cfg, logger, cfg.GetServer().GetTrustedProxies(), guid, *clientIP)
+	isTrustedProxy := IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, cfg.GetServer().GetTrustedProxies(), guid, *clientIP)
 
 	// Determine local transport security (actual connection using TLS)
 	isLocalHTTPS := ctx.Request != nil && ctx.Request.TLS != nil
@@ -540,7 +548,7 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	acceptForwarded := isTrustedProxy && proto == "https" && isLocalHTTPS
 
 	if fwdAddress != "" {
-		logForwarderFound(cfg, logger, guid)
+		logForwarderFound(ctx.Request.Context(), cfg, logger, guid)
 
 		if !acceptForwarded {
 			// Not accepted: either not from trusted proxy or header claims https while local request is not HTTPS
@@ -549,7 +557,7 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 			return
 		}
 
-		logTrustedProxy(cfg, logger, guid, fwdAddress, *clientIP)
+		logTrustedProxy(ctx.Request.Context(), cfg, logger, guid, fwdAddress, *clientIP)
 
 		*clientIP = fwdAddress
 

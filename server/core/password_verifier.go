@@ -83,6 +83,7 @@ func VerifyPasswordPipeline(ctx *gin.Context, auth *AuthState, passDBs []*PassDB
 		}
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			auth.deps.Cfg,
 			auth.deps.Logger,
 			definitions.DbgAuth,

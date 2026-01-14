@@ -32,6 +32,7 @@ func HasRoleWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger, rol
 	claimsValue, exists := ctx.Get(definitions.CtxJWTClaimsKey)
 	if !exists {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgJWT,
@@ -48,6 +49,7 @@ func HasRoleWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger, rol
 		msg := fmt.Sprintf("%s role %s in JWT claims", tern(found, "Found", "Missing"), role)
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgJWT,
@@ -60,6 +62,7 @@ func HasRoleWithDeps(ctx *gin.Context, cfg config.File, logger *slog.Logger, rol
 
 	// If we get here, the claims are in an unexpected format
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		cfg,
 		logger,
 		definitions.DbgJWT,

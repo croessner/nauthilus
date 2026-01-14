@@ -66,7 +66,7 @@ func (DefaultLuaFilter) Filter(ctx *gin.Context, view *core.StateView, passDBRes
 	}
 
 	backendServers := core.ListBackendServers()
-	util.DebugModuleWithCfg(auth.Cfg(), auth.Logger(), definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
+	util.DebugModuleWithCfg(auth.Ctx(), auth.Cfg(), auth.Logger(), definitions.DbgFeature, definitions.LogKeyMsg, fmt.Sprintf("Active backend servers: %d", len(backendServers)))
 
 	// Get a CommonRequest from the pool
 	commonRequest := lualib.GetCommonRequest()

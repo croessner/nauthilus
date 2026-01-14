@@ -439,7 +439,7 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 
 	logs := new(lualib.CustomLogKeyValue)
 
-	aw.setupGlobals(L, logs)
+	aw.setupGlobals(reqCtx, L, logs)
 
 	request := aw.setupRequest(L)
 
@@ -464,11 +464,11 @@ func (aw *Worker) handleRequest(httpRequest *http.Request) {
 }
 
 // setupGlobals initializes and registers global Lua variables and functions into the provided Lua state.
-func (aw *Worker) setupGlobals(L *lua.LState, logs *lualib.CustomLogKeyValue) {
+func (aw *Worker) setupGlobals(ctx context.Context, L *lua.LState, logs *lualib.CustomLogKeyValue) {
 	globals := L.NewTable()
 
 	if aw.cfg.GetServer().GetEnvironment().GetDevMode() {
-		util.DebugModuleWithCfg(aw.cfg, aw.logger, definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
+		util.DebugModuleWithCfg(ctx, aw.cfg, aw.logger, definitions.DbgAction, definitions.LogKeyMsg, fmt.Sprintf("%+v", aw.luaActionRequest))
 	}
 
 	globals.RawSet(lua.LString(definitions.LuaActionResultOk), lua.LNumber(0))
@@ -566,6 +566,7 @@ func (aw *Worker) runScript(index int, L *lua.LState, request *lua.LTable, logs 
 	L.Pop(1)
 
 	util.DebugModule(
+		aw.ctx,
 		definitions.DbgAction,
 		"context", fmt.Sprintf("%+v", aw.luaActionRequest.Context),
 	)

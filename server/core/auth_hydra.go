@@ -177,6 +177,7 @@ func (a *AuthState) processGroupsClaim(index int, claims map[string]any) {
 			var stringSlice []string
 
 			util.DebugModuleWithCfg(
+				a.deps.Ctx,
 				a.Cfg(),
 				a.Logger(),
 				definitions.DbgAuth,

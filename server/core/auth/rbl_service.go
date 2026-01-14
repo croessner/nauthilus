@@ -77,7 +77,7 @@ func (DefaultRBLService) Score(ctx *gin.Context, view *core.StateView) (int, err
 			listed, rblName, rblErr := core.RBLIsListed(ctx, view, &r)
 			if rblErr != nil {
 				if strings.Contains(rblErr.Error(), "no such host") {
-					util.DebugModuleWithCfg(auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, rblErr)
+					util.DebugModuleWithCfg(ctx.Request.Context(), auth.Cfg(), auth.Logger(), definitions.DbgRBL, definitions.LogKeyGUID, auth.GUID, definitions.LogKeyMsg, rblErr)
 				} else {
 					if !r.IsAllowFailure() {
 						dnsResolverErr.Store(true)

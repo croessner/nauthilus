@@ -174,7 +174,7 @@ func (globalResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason s
 	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
-	level.Warn(getDefaultLogger()).Log(keyvals...)
+	level.Warn(getDefaultLogger()).WithContext(ctx).Log(keyvals...)
 }
 
 // AuthOK is the general method to indicate authentication success.
@@ -252,7 +252,7 @@ func (w depResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason st
 	keyvals := a.LogLineTemplate("tempfail", ctx.Request.URL.Path)
 	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
 
-	level.Warn(w.deps.Logger).Log(keyvals...)
+	level.Warn(w.deps.Logger).WithContext(ctx).Log(keyvals...)
 }
 
 // sendAuthResponse sends a JSON response with the appropriate headers and content based on the AuthState.

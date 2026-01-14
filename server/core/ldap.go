@@ -327,6 +327,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 			var ldapError *ldap.Error
 
 			util.DebugModuleWithCfg(
+				auth.Ctx(),
 				lm.effectiveCfg(),
 				lm.effectiveLogger(),
 				definitions.DbgLDAP,

@@ -693,6 +693,7 @@ func RegisterTotpPOSTHandlerWithDeps(ctx *gin.Context, deps AuthDeps) {
 
 	if deps.Cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug && deps.Env.GetDevMode() {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			deps.Cfg,
 			deps.Logger,
 			definitions.DbgWebAuthn,

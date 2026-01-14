@@ -868,7 +868,7 @@ func (r *Request) CallFilterLua(ctx *gin.Context, cfg config.File, logger *slog.
 				}
 			}
 
-			util.DebugModuleWithCfg(cfg, logger, definitions.DbgFilter, logs...)
+			util.DebugModuleWithCfg(fctx, cfg, logger, definitions.DbgFilter, logs...)
 
 			if stopTimer != nil {
 				stopTimer()

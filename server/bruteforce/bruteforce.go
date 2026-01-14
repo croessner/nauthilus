@@ -1176,7 +1176,7 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 // Logs errors encountered during Redis operations and updates Redis write metrics.
 func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
 	if key := bm.GetBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", key)
+		util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", key)
 
 		// Use pipelining for write operations to reduce network round trips
 		defer stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -1236,7 +1236,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 	passwordHash := util.GetHash(util.PreparePassword(bm.password))
 
 	for index := range keys {
-		util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "incr_key", keys[index])
+		util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "incr_key", keys[index])
 
 		dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.effectiveCfg())
 
@@ -1285,7 +1285,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 				definitions.LogKeyMsg, "Too many password hashes for this account",
 			)
 		} else {
-			util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(),
+			util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(),
 				definitions.DbgBf,
 				definitions.LogKeyGUID, bm.guid,
 				"key", keys[index],
@@ -1988,6 +1988,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryRedisHashKey(withUsername bool) (
 	}
 
 	util.DebugModuleWithCfg(
+		bm.ctx,
 		bm.effectiveCfg(),
 		bm.effectiveLogger(),
 		definitions.DbgBf,
@@ -2044,6 +2045,7 @@ func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) 
 	}
 
 	util.DebugModuleWithCfg(
+		bm.ctx,
 		bm.effectiveCfg(),
 		bm.effectiveLogger(),
 		definitions.DbgBf,
@@ -2090,7 +2092,7 @@ func (bm *bucketManagerImpl) loadPasswordHistoryFromRedis(key string) {
 		return
 	}
 
-	util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
+	util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -2148,7 +2150,7 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	bucketCounter := new(bruteForceBucketCounter)
 
 	if key := bm.GetBruteForceBucketRedisKey(rule); key != "" {
-		util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
+		util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", key)
 
 		if err := loadBruteForceBucketCounterFromRedis(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), bm.effectiveRedis(), key, bucketCounter); err != nil {
 			return
@@ -2282,7 +2284,7 @@ func GetPWHistIPsRedisKey(accountName string, cfg config.File) string {
 
 // logBucketRuleDebug logs debug information for a brute force rule, including client IP, rule details, and request counts.
 func logBucketRuleDebug(bm *bucketManagerImpl, network *net.IPNet, rule *config.BruteForceRule) {
-	util.DebugModuleWithCfg(bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf,
+	util.DebugModuleWithCfg(bm.ctx, bm.effectiveCfg(), bm.effectiveLogger(), definitions.DbgBf,
 		definitions.LogKeyGUID, bm.guid,
 		"limit", rule.FailedRequests,
 		definitions.LogKeyClientIP, bm.clientIP,
@@ -2308,6 +2310,7 @@ func logBucketMatchingRule(bm *bucketManagerImpl, network *net.IPNet, rule *conf
 // It logs details such as rule properties, client IP, session ID, network info, and the generated Redis key.
 func logBruteForceRuleRedisKeyDebug(bm *bucketManagerImpl, rule *config.BruteForceRule, network *net.IPNet, key string) {
 	util.DebugModuleWithCfg(
+		bm.ctx,
 		bm.effectiveCfg(),
 		bm.effectiveLogger(),
 		definitions.DbgBf,

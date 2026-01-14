@@ -335,7 +335,7 @@ func listBlockedIPAddresses(ctx context.Context, deps restAdminDeps, filterCmd *
 
 			for _, filterIPWanted := range filterCmd.IPAddress {
 				for network, bucket := range ipAddresses {
-					if util.IsInNetworkWithCfg(deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
+					if util.IsInNetworkWithCfg(ctx, deps.Cfg, deps.Logger, []string{network}, guid, filterIPWanted) {
 						filteredIPs[network] = bucket
 
 						break

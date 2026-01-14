@@ -107,7 +107,7 @@ func (a *AuthState) FeatureLua(ctx *gin.Context) (triggered bool, abortFeatures 
 }
 
 // FeatureTLSEncryption checks, if the remote client connection was secured.
-func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
+func (a *AuthState) FeatureTLSEncryption(ctx *gin.Context) (triggered bool) {
 	if isLocalOrEmptyIP(a.ClientIP) {
 		a.logAddLocalhost(definitions.FeatureTLSEncryption)
 
@@ -124,7 +124,7 @@ func (a *AuthState) FeatureTLSEncryption() (triggered bool) {
 		defer stopTimer()
 	}
 
-	if !a.IsInNetwork(a.cfg().GetClearTextList()) {
+	if !util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), a.cfg().GetClearTextList(), a.GUID, a.ClientIP) {
 		a.logAddMessage(definitions.NoTLS, definitions.FeatureTLSEncryption)
 		a.updateLuaContext(definitions.FeatureTLSEncryption)
 
@@ -200,7 +200,7 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	if a.IsInNetwork(rbls.GetIPWhiteList()) {
+	if util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), rbls.GetIPWhiteList(), a.GUID, a.ClientIP) {
 		a.logAddMessage(definitions.Whitelisted, definitions.FeatureRBL)
 
 		return
@@ -225,6 +225,9 @@ func (a *AuthState) FeatureRBLs(ctx *gin.Context) (triggered bool, err error) {
 
 	// propagate context
 	ctx.Request = ctx.Request.WithContext(rctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(rctx)
+	}
 
 	stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromDNS, definitions.FeatureRBL)
 	if stopTimer != nil {
@@ -282,6 +285,19 @@ func (a *AuthState) checkFeatureWithWhitelist(featureName string, isWhitelisted 
 // It uses a whitelist check and processes feature actions if the Lua feature is activated.
 // Returns 'triggered' if a Lua feature is triggered, 'abortFeatures' if further features should be halted.
 func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeatures bool, err error) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.lua",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	checkFunc := func() {
 		triggered, abortFeatures, err = a.FeatureLua(ctx)
 		if err != nil {
@@ -308,8 +324,21 @@ func (a *AuthState) checkLuaFeature(ctx *gin.Context) (triggered bool, abortFeat
 // checkTLSEncryptionFeature determines if the TLS encryption feature should be processed for the current authentication state.
 // It uses a whitelist check to decide if the feature action needs to be executed based on the current auth state.
 func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.tls",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	checkFunc := func() {
-		if triggered = a.FeatureTLSEncryption(); triggered {
+		if triggered = a.FeatureTLSEncryption(ctx); triggered {
 			a.processFeatureAction(ctx, definitions.FeatureTLSEncryption, definitions.LuaActionTLS, definitions.LuaActionTLSName)
 		}
 	}
@@ -322,6 +351,19 @@ func (a *AuthState) checkTLSEncryptionFeature(ctx *gin.Context) (triggered bool)
 // checkRelayDomainsFeature evaluates if the relay domains feature should be activated for the given AuthState instance.
 // It checks if the client is whitelisted and processes the feature action accordingly.
 func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.relay_domains",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	isWhitelisted := func() bool {
 		relayDomains := a.cfg().GetRelayDomains()
 		if relayDomains == nil {
@@ -329,7 +371,7 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 		}
 
 		return relayDomains.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Username, a.ClientIP, a.GUID, relayDomains.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -346,6 +388,19 @@ func (a *AuthState) checkRelayDomainsFeature(ctx *gin.Context) (triggered bool) 
 // checkRBLFeature checks if a Real-time Blackhole List (RBL) feature is triggered for the current request.
 // Returns true if the feature is triggered and processed, otherwise false.
 func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error) {
+	tr := monittrace.New("nauthilus/auth")
+	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.features.rbl",
+		attribute.String("service", a.Service),
+		attribute.String("username", a.Username),
+	)
+
+	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(fctx)
+	}
+
+	defer fspan.End()
+
 	isWhitelisted := func() bool {
 		rbls := a.cfg().GetRBLs()
 		if rbls == nil {
@@ -353,7 +408,7 @@ func (a *AuthState) checkRBLFeature(ctx *gin.Context) (triggered bool, err error
 		}
 
 		return rbls.HasSoftWhitelist() &&
-			util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
+			util.IsSoftWhitelisted(fctx, a.Username, a.ClientIP, a.GUID, rbls.SoftWhitelist)
 	}
 
 	checkFunc := func() {
@@ -421,6 +476,9 @@ func (a *AuthState) HandleFeatures(ctx *gin.Context) definitions.AuthResult {
 
 	// propagate context so any inner call attaches to this span
 	ctx.Request = ctx.Request.WithContext(fctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(fctx)
+	}
 
 	if !a.cfg().HasFeature(definitions.FeatureBruteForce) {
 		a.refreshUserAccount()

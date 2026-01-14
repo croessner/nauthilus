@@ -57,7 +57,7 @@ func getCounterValue(logger *slog.Logger, metric *prometheus.CounterVec, lvs ...
 
 // LoadStatsFromRedis loads the prometheus statistics at startup from a Redis server.
 func LoadStatsFromRedis(ctx context.Context, cfg config.File, logger *slog.Logger, redisClient rediscli.Client) {
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Load counter statistics from redis")
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Load counter statistics from redis")
 
 	stats.GetMetrics().GetLoginsCounter().Reset()
 
@@ -123,7 +123,7 @@ func SaveStatsToRedis(ctx context.Context, cfg config.File, logger *slog.Logger,
 		return
 	}
 
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgStats, definitions.LogKeyMsg, "Save counter statistics to redis")
 
 	metrics := []Metric{
 		{Value: getCounterValue(logger, stats.GetMetrics().GetLoginsCounter(), definitions.LabelSuccess), Label: definitions.LabelSuccess},

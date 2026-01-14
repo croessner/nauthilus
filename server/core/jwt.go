@@ -293,6 +293,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string, deps JWTDeps) (*j
 		storedToken, err := GetTokenFromRedis(ctx, claims.Username, deps)
 		if err != nil {
 			util.DebugModuleWithCfg(
+				ctx,
 				deps.Cfg,
 				deps.Logger,
 				definitions.DbgJWT,
@@ -307,6 +308,7 @@ func ValidateJWTToken(ctx context.Context, tokenString string, deps JWTDeps) (*j
 		// Verify that the token matches the one in Redis
 		if storedToken != tokenString {
 			util.DebugModuleWithCfg(
+				ctx,
 				deps.Cfg,
 				deps.Logger,
 				definitions.DbgJWT,
@@ -743,6 +745,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 			storedRefreshToken, err := GetRefreshTokenFromRedis(ctx, claims.Subject, repl)
 			if err != nil {
 				util.DebugModuleWithCfg(
+					ctx,
 					deps.Cfg,
 					deps.Logger,
 					definitions.DbgJWT,
@@ -758,6 +761,7 @@ func HandleJWTTokenRefreshWithDeps(deps JWTDeps) gin.HandlerFunc {
 			// Verify that the refresh token matches the one in Redis
 			if storedRefreshToken != refreshToken {
 				util.DebugModuleWithCfg(
+					ctx,
 					deps.Cfg,
 					deps.Logger,
 					definitions.DbgJWT,

@@ -16,6 +16,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -49,6 +50,9 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 	)
 
 	ctx.Request = ctx.Request.WithContext(bctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(bctx)
+	}
 
 	defer bspan.End()
 
@@ -170,8 +174,9 @@ func (a *AuthState) handleBruteForceLuaAction(ctx *gin.Context, alreadyTriggered
 }
 
 // logBruteForceDebug logs debug information related to brute force authentication attempts.
-func (a *AuthState) logBruteForceDebug() {
+func (a *AuthState) logBruteForceDebug(ctx context.Context) {
 	util.DebugModuleWithCfg(
+		ctx,
 		a.Cfg(),
 		a.Logger(),
 		definitions.DbgBf,
@@ -251,6 +256,9 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	)
 
 	ctx.Request = ctx.Request.WithContext(cctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(cctx)
+	}
 
 	defer cspan.End()
 
@@ -293,7 +301,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	bfCfg := cfg.GetBruteForce()
 	if bfCfg != nil && bfCfg.HasSoftWhitelist() {
-		if util.IsSoftWhitelisted(a.Username, a.ClientIP, a.GUID, bfCfg.SoftWhitelist) {
+		if util.IsSoftWhitelisted(cctx, a.Username, a.ClientIP, a.GUID, bfCfg.SoftWhitelist) {
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.LogKeyBruteForce)
 			a.AdditionalLogs = append(a.AdditionalLogs, definitions.SoftWhitelisted)
 
@@ -343,7 +351,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 		return false
 	}
 
-	a.logBruteForceDebug()
+	a.logBruteForceDebug(ctx.Request.Context())
 
 	bruteForceProtocolEnabled := false
 	for _, bruteForceService := range cfg.GetServer().GetBruteForceProtocols() {
@@ -490,6 +498,9 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	)
 
 	ctx.Request = ctx.Request.WithContext(uctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(uctx)
+	}
 
 	defer uspan.End()
 
@@ -516,6 +527,7 @@ func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
 	}
 
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		a.Cfg(),
 		a.Logger(),
 		definitions.DbgBf,

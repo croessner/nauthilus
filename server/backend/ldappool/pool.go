@@ -211,6 +211,7 @@ func (l *ldapPoolImpl) Close() {
 			}
 
 			util.DebugModuleWithCfg(
+				context.Background(),
 				l.cfg,
 				l.logger,
 				definitions.DbgLDAP,
@@ -221,6 +222,7 @@ func (l *ldapPoolImpl) Close() {
 	}
 
 	util.DebugModuleWithCfg(
+		context.Background(),
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAP,
@@ -433,6 +435,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 	}
 
 	util.DebugModuleWithCfg(
+		context.Background(),
 		cfg,
 		logger,
 		definitions.DbgLDAPPool,
@@ -484,7 +487,7 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 
 // logCompletion logs a debug message indicating that the houseKeeper() method of LDAPPool has been terminated.
 func (l *ldapPoolImpl) logCompletion() {
-	util.DebugModuleWithCfg(l.cfg, l.logger, definitions.DbgLDAP, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, "houseKeeper() terminated")
+	util.DebugModuleWithCfg(context.Background(), l.cfg, l.logger, definitions.DbgLDAP, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, "houseKeeper() terminated")
 }
 
 // updateConnectionsStatus iterates through the connection pool and updates the status of each connection.
@@ -507,6 +510,7 @@ func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
 		l.conn[index].SetState(definitions.LDAPStateClosed)
 
 		util.DebugModuleWithCfg(
+			context.Background(),
 			l.cfg,
 			l.logger,
 			definitions.DbgLDAPPool,
@@ -530,6 +534,7 @@ func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
 		),
 	); err != nil {
 		util.DebugModuleWithCfg(
+			context.Background(),
 			l.cfg,
 			l.logger,
 			definitions.DbgLDAPPool,
@@ -542,7 +547,7 @@ func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
 		return 0
 	}
 
-	util.DebugModuleWithCfg(l.cfg, l.logger, definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is free", index+1))
+	util.DebugModuleWithCfg(context.Background(), l.cfg, l.logger, definitions.DbgLDAPPool, definitions.LogKeyLDAPPoolName, l.name, definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d is free", index+1))
 
 	return 1
 }
@@ -553,6 +558,7 @@ func (l *ldapPoolImpl) closeIdleConnections(openConnections int) {
 
 	stats.GetMetrics().GetLdapStaleConnections().WithLabelValues(l.name).Set(float64(needClosing))
 	util.DebugModuleWithCfg(
+		context.Background(),
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAPPool,
@@ -584,6 +590,7 @@ func (l *ldapPoolImpl) closeSingleIdleConnection(index int) bool {
 	l.conn[index].SetState(definitions.LDAPStateClosed)
 
 	util.DebugModuleWithCfg(
+		context.Background(),
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAPPool,
@@ -624,7 +631,7 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 	for index := 0; index < l.poolSize; index++ {
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
-		l.logConnectionInfo(guidStr, index)
+		l.logConnectionInfo(context.Background(), guidStr, index)
 
 		err = l.setupConnection(guidStr, bind, index)
 		if err == nil {
@@ -689,7 +696,7 @@ func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error 
 			sp.RecordError(err)
 		} else {
 			if bind {
-				err = l.conn[index].Bind(guid, l.cfg, l.logger, l.conf[index])
+				err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index])
 				if err != nil {
 					l.logConnectionError(guid, err)
 					sp.RecordError(err)
@@ -712,8 +719,9 @@ func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error 
 }
 
 // logConnectionInfo logs information about an LDAP connection including pool name, GUID, and specific connection settings.
-func (l *ldapPoolImpl) logConnectionInfo(guid string, index int) {
+func (l *ldapPoolImpl) logConnectionInfo(ctx context.Context, guid string, index int) {
 	util.DebugModuleWithCfg(
+		ctx,
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAP,
@@ -891,7 +899,7 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 
 	for {
 		for index := 0; index < len(l.conn); index++ {
-			connNumber = l.processConnection(index, guid)
+			connNumber = l.processConnection(ctx, index, guid)
 			if connNumber != definitions.LDAPPoolExhausted {
 				// Trace successful borrow under request context
 				tr := monittrace.New("nauthilus/ldap_pool")
@@ -925,14 +933,14 @@ func (l *ldapPoolImpl) getConnection(reqCtx context.Context, guid string) (connN
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.
 // It locks the connection mutex, checks its current state, and either marks it busy, attempts reconnection, or skips it.
 // Returns the connection index if usable, or LDAPPoolExhausted if no connection can be utilized.
-func (l *ldapPoolImpl) processConnection(index int, guid string) (connNumber int) {
+func (l *ldapPoolImpl) processConnection(ctx context.Context, index int, guid string) (connNumber int) {
 	l.conn[index].GetMutex().Lock()
 
 	defer l.conn[index].GetMutex().Unlock()
 
 	// Connection is already in use, skip to next.
 	if l.conn[index].GetState() == definitions.LDAPStateBusy {
-		l.logConnectionBusy(guid, index)
+		l.logConnectionBusy(ctx, guid, index)
 
 		return definitions.LDAPPoolExhausted
 	}
@@ -941,7 +949,7 @@ func (l *ldapPoolImpl) processConnection(index int, guid string) (connNumber int
 	if l.conn[index].GetState() == definitions.LDAPStateFree {
 		l.conn[index].SetState(definitions.LDAPStateBusy)
 
-		l.logConnectionUsage(guid, index)
+		l.logConnectionUsage(ctx, guid, index)
 
 		return index
 	}
@@ -958,7 +966,7 @@ func (l *ldapPoolImpl) processConnection(index int, guid string) (connNumber int
 
 		l.conn[index].SetState(definitions.LDAPStateBusy)
 
-		l.logConnectionUsage(guid, index)
+		l.logConnectionUsage(ctx, guid, index)
 
 		return index
 	}
@@ -967,8 +975,9 @@ func (l *ldapPoolImpl) processConnection(index int, guid string) (connNumber int
 }
 
 // logConnectionBusy logs the event when the connection at the given index is busy and skips to check the next connection.
-func (l *ldapPoolImpl) logConnectionBusy(guid string, index int) {
+func (l *ldapPoolImpl) logConnectionBusy(ctx context.Context, guid string, index int) {
 	util.DebugModuleWithCfg(
+		ctx,
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAP,
@@ -979,8 +988,9 @@ func (l *ldapPoolImpl) logConnectionBusy(guid string, index int) {
 }
 
 // logConnectionUsage logs debug information when a free LDAP connection is utilized by a specific GUID at a given index.
-func (l *ldapPoolImpl) logConnectionUsage(guid string, index int) {
+func (l *ldapPoolImpl) logConnectionUsage(ctx context.Context, guid string, index int) {
 	util.DebugModuleWithCfg(
+		ctx,
 		l.cfg,
 		l.logger,
 		definitions.DbgLDAP,
@@ -994,7 +1004,7 @@ func (l *ldapPoolImpl) logConnectionUsage(guid string, index int) {
 func (l *ldapPoolImpl) connectAndBindIfNeeded(guid string, index int) error {
 	err := l.conn[index].Connect(guid, l.cfg, l.logger, l.conf[index])
 	if err == nil && (l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown) {
-		err = l.conn[index].Bind(guid, l.cfg, l.logger, l.conf[index])
+		err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index])
 	}
 
 	return err
@@ -1036,7 +1046,7 @@ func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 		}
 
 		if l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown {
-			if err = l.conn[index].Bind(guid, l.cfg, l.logger, l.conf[index]); err != nil {
+			if err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index]); err != nil {
 				l.conn[index].GetConn().Close()
 
 				return
@@ -1216,7 +1226,7 @@ func (l *ldapPoolImpl) processLookupSearchRequest(index int, ldapRequest *bktype
 		var raw []*ldap.Entry
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
-			r, raw, e = l.conn[index].Search(l.cfg, l.logger, ldapRequest)
+			r, raw, e = l.conn[index].Search(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest)
 			if e == nil || !isTransientNetworkError(e) {
 				break
 			}
@@ -1335,7 +1345,7 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 		l.conn[index].GetConn().SetTimeout(to)
 	}
 
-	if err := l.conn[index].Modify(l.cfg, l.logger, ldapRequest); err != nil {
+	if err := l.conn[index].Modify(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest); err != nil {
 		ldapReply.Err = err
 
 		// error metric

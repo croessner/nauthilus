@@ -167,7 +167,7 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 
 	// Store the SHA1 hash
 	scripts[scriptName] = sha1
-	util.DebugModuleWithCfg(config.GetFile(), log.Logger, definitions.DbgStats,
+	util.DebugModuleWithCfg(ctx, config.GetFile(), log.Logger, definitions.DbgStats,
 		definitions.LogKeyMsg, fmt.Sprintf("Uploaded Redis Lua script '%s' with SHA1 %s", scriptName, sha1),
 	)
 

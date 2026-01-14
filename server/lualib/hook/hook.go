@@ -215,6 +215,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 	jwtAuth := cfg.GetServer().GetJWTAuth()
 	if !jwtAuth.IsEnabled() {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
@@ -228,6 +229,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 	// Check if JWT auth is properly configured
 	if jwtAuth.GetSecretKey() == "" || len(jwtAuth.GetUsers()) == 0 {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
@@ -241,6 +243,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 	// Get the roles required for this hook
 	requiredRoles := GetHookRoles(location, method)
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		cfg,
 		logger,
 		definitions.DbgLua,
@@ -255,6 +258,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 			locationWithSlash := "/" + location
 			requiredRoles = GetHookRoles(locationWithSlash, method)
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgLua,
@@ -266,6 +270,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 		// If still no roles are configured, allow access
 		if len(requiredRoles) == 0 {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgLua,
@@ -280,6 +285,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 	// Check if the user has any of the required roles
 	for _, role := range requiredRoles {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
@@ -289,6 +295,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 
 		if jwtutil.HasRole(ctx, role) {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgLua,
@@ -301,6 +308,7 @@ func HasRequiredRoles(ctx *gin.Context, cfg config.File, logger *slog.Logger, lo
 	}
 
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		cfg,
 		logger,
 		definitions.DbgLua,
@@ -616,6 +624,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	hook := ctx.Param("hook")
 
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		cfg,
 		logger,
 		definitions.DbgLua,
@@ -625,6 +634,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 
 	if script = customLocation.GetScript(hook, ctx.Request.Method); script == nil {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,
@@ -637,6 +647,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 	}
 
 	util.DebugModuleWithCfg(
+		ctx.Request.Context(),
 		cfg,
 		logger,
 		definitions.DbgLua,
@@ -796,6 +807,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger)
 		)
 	} else {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgLua,

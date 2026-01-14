@@ -226,7 +226,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 		feature := LuaFeatures.LuaScripts[idx]
 
 		g.Go(func() error {
-			util.DebugModuleWithCfg(cfg, logger, definitions.DbgFeature,
+			util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature,
 				definitions.LogKeyGUID, r.Session,
 				definitions.LogKeyMsg, "Executing feature script",
 				"name", feature.Name,
@@ -483,7 +483,7 @@ func (r *Request) executeScripts(ctx *gin.Context, cfg config.File, logger *slog
 				}
 			}
 
-			util.DebugModuleWithCfg(cfg, logger, definitions.DbgFeature, logs...)
+			util.DebugModuleWithCfg(egCtx, cfg, logger, definitions.DbgFeature, logs...)
 
 			if stopTimer != nil {
 				stopTimer()
@@ -552,7 +552,7 @@ func (r *Request) handleError(logger *slog.Logger, luaCancel context.CancelFunc,
 }
 
 // generateLog creates a log entry with details about a Lua feature execution, including triggered state, abort flag, and result.
-func (r *Request) generateLog(cfg config.File, logger *slog.Logger, triggered, abortFeatures bool, ret int, scriptName string) {
+func (r *Request) generateLog(ctx context.Context, cfg config.File, logger *slog.Logger, triggered, abortFeatures bool, ret int, scriptName string) {
 	logs := []any{
 		definitions.LogKeyGUID, r.Session,
 		"name", scriptName,
@@ -570,7 +570,7 @@ func (r *Request) generateLog(cfg config.File, logger *slog.Logger, triggered, a
 		}
 	}
 
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgFeature, logs...)
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgFeature, logs...)
 }
 
 // formatResult returns a string representation of the given integer result.

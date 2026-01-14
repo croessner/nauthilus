@@ -1267,7 +1267,7 @@ func (a *AuthState) IsMasterUser() bool {
 
 // IsInNetwork checks an IP address against a network and returns true if it matches.
 func (a *AuthState) IsInNetwork(networkList []string) (matchIP bool) {
-	return util.IsInNetworkWithCfg(a.Cfg(), a.Logger(), networkList, a.GUID, a.ClientIP)
+	return util.IsInNetworkWithCfg(a.Ctx(), a.Cfg(), a.Logger(), networkList, a.GUID, a.ClientIP)
 }
 
 // verifyPassword takes in an array of PassDBMap and performs the following steps:
@@ -1356,6 +1356,7 @@ func ProcessPassDBResult(ctx *gin.Context, passDBResult *PassDBResult, auth *Aut
 	}
 
 	util.DebugModuleWithCfg(
+		auth.Ctx(),
 		auth.deps.Cfg,
 		auth.deps.Logger,
 		definitions.DbgAuth,
@@ -1424,6 +1425,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 			ctx.Set(definitions.CtxAccountKey, acc)
 
 			util.DebugModuleWithCfg(
+				auth.Ctx(),
 				auth.deps.Cfg,
 				auth.deps.Logger,
 				definitions.DbgAccount,
@@ -1463,7 +1465,9 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 						definitions.LogKeyError, werr,
 					)
 				} else {
-					util.DebugModuleWithCfg(auth.deps.Cfg, auth.deps.Logger, definitions.DbgAccount,
+					util.DebugModuleWithCfg(
+						auth.Ctx(),
+						auth.deps.Cfg, auth.deps.Logger, definitions.DbgAccount,
 						definitions.LogKeyGUID, auth.GUID,
 						definitions.LogKeyUsername, auth.Username,
 						definitions.LogKeyMsg, "Synchronized nt:USER mapping",
@@ -1814,13 +1818,13 @@ func (a *AuthState) HandlePassword(ctx *gin.Context) (authResult definitions.Aut
 // - definitions.LogKeyMsg
 func (a *AuthState) usernamePasswordChecks() definitions.AuthResult {
 	if a.Username == "" {
-		util.DebugModuleWithCfg(a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Empty username")
+		util.DebugModuleWithCfg(a.Ctx(), a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Empty username")
 
 		return definitions.AuthResultEmptyUsername
 	}
 
 	if !a.NoAuth && a.Password == "" {
-		util.DebugModuleWithCfg(a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Empty password")
+		util.DebugModuleWithCfg(a.Ctx(), a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, definitions.LogKeyMsg, "Empty password")
 
 		return definitions.AuthResultEmptyPassword
 	}
@@ -1942,6 +1946,9 @@ func (a *AuthState) processVerifyPassword(ctx *gin.Context, passDBs []*PassDBMap
 
 	// ensure downstream uses the same context
 	ctx.Request = ctx.Request.WithContext(vctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(vctx)
+	}
 	defer vspan.End()
 
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_verify_password_total"); stop != nil {
@@ -2157,6 +2164,9 @@ func (a *AuthState) authenticateUser(ctx *gin.Context, useCache bool, backendPos
 	)
 
 	ctx.Request = ctx.Request.WithContext(actx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(actx)
+	}
 
 	defer aspan.End()
 
@@ -2230,6 +2240,9 @@ func (a *AuthState) FilterLua(passDBResult *PassDBResult, ctx *gin.Context) defi
 	)
 
 	ctx.Request = ctx.Request.WithContext(lctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(lctx)
+	}
 
 	defer lspan.End()
 
@@ -2282,7 +2295,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	for _, accountDB := range accounts {
 		result, err := accountDB.fn(a)
 
-		util.DebugModuleWithCfg(a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
+		util.DebugModuleWithCfg(a.Ctx(), a.Cfg(), a.Logger(), definitions.DbgAuth, definitions.LogKeyGUID, a.GUID, "backendType", accountDB.backend.String(), "result", fmt.Sprintf("%v", result))
 
 		if err == nil {
 			accountList = append(accountList, result...)
@@ -2437,7 +2450,7 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 
 	switch ctx.Query("mode") {
 	case "no-auth":
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
+		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=no-auth")
 
 		// Check if JWT is enabled and user has the required role
 		if cfg.GetServer().GetJWTAuth().IsEnabled() {
@@ -2453,7 +2466,7 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 			a.NoAuth = true
 		}
 	case "list-accounts":
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
+		util.DebugModuleWithCfg(ctx.Request.Context(), cfg, logger, definitions.DbgAuth, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "mode=list-accounts")
 
 		// Check if JWT is enabled and user has the required role
 		if cfg.GetServer().GetJWTAuth().IsEnabled() {
@@ -3105,7 +3118,11 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		attribute.String("username", a.Username),
 	)
 
-	_ = lcCtx
+	// ensure downstream uses the same context
+	ctx.Request = ctx.Request.WithContext(lcCtx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(lcCtx)
+	}
 
 	defer lcSpan.End()
 
@@ -3156,6 +3173,9 @@ func (a *AuthState) PreproccessAuthRequest(ctx *gin.Context) (reject bool) {
 
 	// propagate for any nested calls
 	ctx.Request = ctx.Request.WithContext(pctx)
+	if a.HTTPClientRequest != nil {
+		a.HTTPClientRequest = a.HTTPClientRequest.WithContext(pctx)
+	}
 
 	var cacheHit bool
 	if found := a.GetFromLocalCache(ctx); !found {

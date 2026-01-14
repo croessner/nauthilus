@@ -33,6 +33,7 @@ import (
 
 	"github.com/croessner/nauthilus/server/definitions"
 	monittrace "github.com/croessner/nauthilus/server/monitoring/trace"
+	"github.com/croessner/nauthilus/server/svcctx"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -66,6 +67,7 @@ func (l lazyFormat) LogValue() slog.Value {
 // Logger is an interface for logging key-value pairs with a flexible and customizable structure.
 type Logger interface {
 	Log(keyvals ...any) error
+	WithContext(context.Context) Logger
 }
 
 // slogLevelLogger is a structured logger that logs messages at a specified slog.Level with additional configuration.
@@ -117,13 +119,18 @@ func Error(l *slog.Logger) Logger {
 	return &slogLevelLogger{l: l, lvl: slog.LevelError, addSource: globalAddSource.Load()}
 }
 
+// WithContext returns a new Logger instance bound to the specified context for contextual logging.
+func (s *slogLevelLogger) WithContext(ctx context.Context) Logger {
+	return &slogLevelLogger{l: s.l, lvl: s.lvl, ctx: ctx, addSource: s.addSource}
+}
+
 // Log implements Logger. It parses the keyvals, extracts an optional "msg"
 // string, and forwards the remaining pairs as attributes to slog on the
 // configured level. Unknown or invalid key/value pairs are skipped.
 func (s *slogLevelLogger) Log(keyvals ...any) (err error) {
 	ctx := s.ctx
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = svcctx.Get()
 	}
 
 	tracer := monittrace.New("nauthilus/log/level")
@@ -272,3 +279,5 @@ func levelToDefaultMessage(lvl slog.Level, sp trace.Span) string {
 		return "log"
 	}
 }
+
+var _ Logger = (*slogLevelLogger)(nil)

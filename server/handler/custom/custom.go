@@ -38,6 +38,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 		// Check if custom hooks are enabled
 		if snap.File.GetServer().GetEndpoint().IsCustomHooksDisabled() {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				snap.File,
 				logger,
 				definitions.DbgHTTP,
@@ -54,6 +55,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 		hookMethod := ctx.Request.Method
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			snap.File,
 			logger,
 			definitions.DbgHTTP,
@@ -64,6 +66,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 		// Check if the user has the required roles for this hook
 		if !hook.HasRequiredRoles(ctx, snap.File, logger, hookName, hookMethod) {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				snap.File,
 				logger,
 				definitions.DbgHTTP,
@@ -76,6 +79,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 		}
 
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			snap.File,
 			logger,
 			definitions.DbgHTTP,
@@ -93,6 +97,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 			ctx.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{definitions.LogKeyMsg: err.Error()})
 		} else if result != nil {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				snap.File,
 				logger,
 				definitions.DbgHTTP,
@@ -110,6 +115,7 @@ func CustomRequestHandler(cfgProvider configfx.Provider, logger *slog.Logger) gi
 			}
 		} else {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				snap.File,
 				logger,
 				definitions.DbgHTTP,

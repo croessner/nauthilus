@@ -92,6 +92,7 @@ func GetLocalized(ctx *gin.Context, cfg config.File, logger *slog.Logger, messag
 	localization, err := localizer.Localize(&localizeConfig)
 	if err != nil {
 		util.DebugModuleWithCfg(
+			ctx.Request.Context(),
 			cfg,
 			logger,
 			definitions.DbgHydra,

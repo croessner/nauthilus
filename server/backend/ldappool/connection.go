@@ -16,6 +16,7 @@
 package ldappool
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	stderrors "errors"
@@ -60,7 +61,7 @@ type LDAPConnection interface {
 	Connect(guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error
 
 	// Bind attempts to authenticate and establish a bound state for the LDAP connection using the provided credentials.
-	Bind(guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error
+	Bind(ctx context.Context, guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error
 
 	// Unbind gracefully disconnects the LDAP connection by sending an unbind request to the server and returns any error encountered.
 	Unbind() error
@@ -69,10 +70,10 @@ type LDAPConnection interface {
 	IsClosing() bool
 
 	// Search executes an LDAP search request based on the specified LDAPRequest and returns the results, raw entries, or an error.
-	Search(cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
+	Search(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 
 	// Modify performs an LDAP modify operation based on the provided LDAP request and returns an error if the operation fails.
-	Modify(cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) error
+	Modify(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) error
 }
 
 // LDAPConnectionImpl represents the connection with an LDAP server.
@@ -154,7 +155,7 @@ EndlessLoop:
 			target := pickTarget(pool, ldapConf.ServerURIs, ldapConf)
 			idx := indexOfTarget(ldapConf.ServerURIs, target)
 
-			l.logURIInfo(cfg, logger, guid, ldapConf, idx, retryCount)
+			l.logURIInfo(context.Background(), cfg, logger, guid, ldapConf, idx, retryCount)
 
 			u, _ := url.Parse(target)
 			if u.Scheme == "ldaps" || ldapConf.StartTLS {
@@ -165,7 +166,7 @@ EndlessLoop:
 			}
 
 			incInflight(pool, target)
-			err = l.dialAndStartTLS(cfg, logger, guid, ldapConf, idx, tlsConfig)
+			err = l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx, tlsConfig)
 			if err != nil {
 				decInflight(pool, target)
 				cbOnFailure(pool, target, ldapConf)
@@ -193,7 +194,7 @@ EndlessLoop:
 		}
 
 		if connected {
-			util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
+			util.DebugModuleWithCfg(context.Background(), cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
 
 			break EndlessLoop
 		}
@@ -212,12 +213,12 @@ EndlessLoop:
 }
 
 // Bind establishes a connection to the LDAP server using either SASL External or simple bind based on the configuration provided.
-func (l *LDAPConnectionImpl) Bind(guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error {
+func (l *LDAPConnectionImpl) Bind(ctx context.Context, guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error {
 	if ldapConf.SASLExternal {
-		return l.externalBind(cfg, logger, guid)
+		return l.externalBind(ctx, cfg, logger, guid)
 	}
 
-	return l.simpleBind(cfg, logger, guid, ldapConf)
+	return l.simpleBind(ctx, cfg, logger, guid, ldapConf)
 }
 
 // Unbind closes the LDAP connection and unbinds from the server.
@@ -233,7 +234,7 @@ func (l *LDAPConnectionImpl) IsClosing() bool {
 }
 
 // Search performs an LDAP search based on the provided LDAPRequest and returns the corresponding results or an error.
-func (l *LDAPConnectionImpl) Search(cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (result bktype.AttributeMapping, rawResult []*ldap.Entry, err error) {
+func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (result bktype.AttributeMapping, rawResult []*ldap.Entry, err error) {
 	var searchResult *ldap.SearchResult
 
 	if ldapRequest.MacroSource != nil {
@@ -245,7 +246,7 @@ func (l *LDAPConnectionImpl) Search(cfg config.File, logger *slog.Logger, ldapRe
 
 	ldapRequest.Filter = util.RemoveCRLFFromQueryOrFilter(ldapRequest.Filter, "")
 
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, ldapRequest.GUID, "filter", ldapRequest.Filter)
 
 	// Apply LDAP SizeLimit/TimeLimit from connection config if available
 	sizeLimit := 0
@@ -317,7 +318,7 @@ func (l *LDAPConnectionImpl) Search(cfg config.File, logger *slog.Logger, ldapRe
 }
 
 // Modify applies changes to an LDAP entry based on the given LDAP request and returns an error if any operation fails.
-func (l *LDAPConnectionImpl) Modify(cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (err error) {
+func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (err error) {
 	var (
 		assertOk           bool
 		distinguishedNames any
@@ -326,7 +327,7 @@ func (l *LDAPConnectionImpl) Modify(cfg config.File, logger *slog.Logger, ldapRe
 	)
 
 	if ldapRequest.ModifyDN == "" {
-		if result, _, err = l.Search(cfg, logger, ldapRequest); err != nil {
+		if result, _, err = l.Search(ctx, cfg, logger, ldapRequest); err != nil {
 			return
 		}
 
@@ -792,7 +793,7 @@ func (l *LDAPConnectionImpl) setTLSConfig(u *url.URL, ldapConf *config.LDAPConf)
 }
 
 // dialAndStartTLS dials the LDAP server and starts a TLS connection if configured.
-func (l *LDAPConnectionImpl) dialAndStartTLS(cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int, tlsConfig *tls.Config) error {
+func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int, tlsConfig *tls.Config) error {
 	var err error
 
 	l.conn, err = ldap.DialURL(ldapConf.ServerURIs[ldapCounter], ldap.DialWithTLSConfig(tlsConfig))
@@ -807,15 +808,16 @@ func (l *LDAPConnectionImpl) dialAndStartTLS(cfg config.File, logger *slog.Logge
 			return err
 		}
 
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "STARTTLS")
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "STARTTLS")
 	}
 
 	return nil
 }
 
 // logURIInfo logs the URI information and connection attempt details for debugging purposes.
-func (l *LDAPConnectionImpl) logURIInfo(cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int, retryLimit int) {
+func (l *LDAPConnectionImpl) logURIInfo(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int, retryLimit int) {
 	util.DebugModuleWithCfg(
+		ctx,
 		cfg,
 		logger,
 		definitions.DbgLDAP,
@@ -839,8 +841,8 @@ func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan bktype.Do
 }
 
 // externalBind performs SASL/EXTERNAL authentication using the provided GUID and logs debug information when enabled.
-func (l *LDAPConnectionImpl) externalBind(cfg config.File, logger *slog.Logger, guid string) error {
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "SASL/EXTERNAL")
+func (l *LDAPConnectionImpl) externalBind(ctx context.Context, cfg config.File, logger *slog.Logger, guid string) error {
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "SASL/EXTERNAL")
 
 	err := l.conn.ExternalBind()
 	if err != nil {
@@ -848,7 +850,7 @@ func (l *LDAPConnectionImpl) externalBind(cfg config.File, logger *slog.Logger, 
 	}
 
 	if cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
-		l.displayWhoAmI(cfg, logger, guid)
+		l.displayWhoAmI(ctx, cfg, logger, guid)
 	}
 
 	return nil
@@ -857,12 +859,12 @@ func (l *LDAPConnectionImpl) externalBind(cfg config.File, logger *slog.Logger, 
 // simpleBind performs a simple LDAP bind operation using the provided GUID and LDAP configuration.
 // It initializes the binding process by passing the provided credentials to the LDAP connection.
 // Returns an error if the binding fails.
-func (l *LDAPConnectionImpl) simpleBind(cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf) error {
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
-	util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
+func (l *LDAPConnectionImpl) simpleBind(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf) error {
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "simple bind")
+	util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_dn", ldapConf.BindDN)
 
 	if cfg.GetServer().GetEnvironment().GetDevMode() {
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "bind_password", ldapConf.BindPW)
 	}
 
 	_, err := l.conn.SimpleBind(&ldap.SimpleBindRequest{
@@ -875,16 +877,16 @@ func (l *LDAPConnectionImpl) simpleBind(cfg config.File, logger *slog.Logger, gu
 	}
 
 	if cfg.GetServer().GetLog().GetLogLevel() >= definitions.LogLevelDebug {
-		l.displayWhoAmI(cfg, logger, guid)
+		l.displayWhoAmI(ctx, cfg, logger, guid)
 	}
 
 	return nil
 }
 
 // displayWhoAmI logs the result of the LDAP "Who Am I?" operation for debugging purposes if there is no error.
-func (l *LDAPConnectionImpl) displayWhoAmI(cfg config.File, logger *slog.Logger, guid string) {
+func (l *LDAPConnectionImpl) displayWhoAmI(ctx context.Context, cfg config.File, logger *slog.Logger, guid string) {
 	res, err := l.conn.WhoAmI(nil) //nolint:govet // Ignore
 	if err == nil {
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "whoami", fmt.Sprintf("%+v", res))
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, "whoami", fmt.Sprintf("%+v", res))
 	}
 }

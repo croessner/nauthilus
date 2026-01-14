@@ -47,6 +47,7 @@ func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscl
 
 		if v, ok := c.Get(definitions.CtxAccountKey); ok && v != nil {
 			util.DebugModuleWithCfg(
+				c.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgAccount,
@@ -64,6 +65,7 @@ func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscl
 
 		if username == "" {
 			util.DebugModuleWithCfg(
+				c.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgAccount,
@@ -101,6 +103,7 @@ func AccountMiddleware(cfg config.File, logger *slog.Logger, redisClient rediscl
 			c.Set(definitions.CtxAccountKey, account)
 
 			util.DebugModuleWithCfg(
+				c.Request.Context(),
 				cfg,
 				logger,
 				definitions.DbgAccount,

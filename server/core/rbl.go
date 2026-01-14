@@ -141,6 +141,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 	for _, result := range results {
 		if result.String() == rbl.GetReturnCode() {
 			util.DebugModuleWithCfg(
+				ctx.Request.Context(),
 				a.Cfg(),
 				a.Logger(),
 				definitions.DbgRBL,
@@ -154,6 +155,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 		for _, returnCode := range rbl.GetReturnCodes() {
 			if result.String() == returnCode {
 				util.DebugModuleWithCfg(
+					ctx.Request.Context(),
 					a.Cfg(),
 					a.Logger(),
 					definitions.DbgRBL,
@@ -173,7 +175,7 @@ func (a *AuthState) isListed(ctx *gin.Context, rbl *config.RBL) (rblListStatus b
 func (a *AuthState) processRBL(ctx *gin.Context, rbl *config.RBL, rblChan chan int, dnsResolverErr *atomic.Bool) {
 	isListed, rblName, rblErr := a.isListed(ctx, rbl)
 	if rblErr != nil {
-		handleRBLError(a.Cfg(), a.Logger(), a.GUID, rblErr, rbl, dnsResolverErr)
+		handleRBLError(ctx.Request.Context(), a.Cfg(), a.Logger(), a.GUID, rblErr, rbl, dnsResolverErr)
 		handleRBLOutcome(rblChan, 0)
 
 		return
@@ -196,9 +198,9 @@ func handleRBLOutcome(rblChan chan int, weight int) {
 }
 
 // handleRBLError handles errors encountered during RBL checks, logs them, and updates failure status if needed.
-func handleRBLError(cfg config.File, logger *slog.Logger, guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
+func handleRBLError(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, err error, rbl *config.RBL, dnsResolverErr *atomic.Bool) {
 	if strings.Contains(err.Error(), "no such host") {
-		util.DebugModuleWithCfg(cfg, logger, definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
+		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgRBL, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, err)
 	} else {
 		if !rbl.IsAllowFailure() {
 			dnsResolverErr.Store(true)
